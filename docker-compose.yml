@@ -62,8 +62,13 @@ services:
   airflow-webserver:
     image: apache/airflow:2.10.4-python3.12
     container_name: etf-atlas-airflow
+    user: root
     environment:
+      TZ: Asia/Seoul
+      PIP_ROOT_USER_ACTION: ignore
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__DEFAULT_TIMEZONE: Asia/Seoul
+      AIRFLOW__WEBSERVER__DEFAULT_UI_TIMEZONE: Asia/Seoul
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-etf_atlas}
       AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-}
       AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
@@ -86,7 +91,9 @@ services:
       - etf-network
     command: >
       bash -c "
-        pip install --no-cache-dir -r /opt/airflow/requirements.txt &&
+        ln -snf /usr/share/zoneinfo/Asia/Seoul /etc/localtime &&
+        echo 'Asia/Seoul' > /etc/timezone &&
+        python -m pip install --no-cache-dir -r /opt/airflow/requirements.txt &&
         airflow db migrate &&
         airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com || true &&
         airflow scheduler &

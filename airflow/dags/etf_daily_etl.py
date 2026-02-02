@@ -90,11 +90,15 @@ def execute_cypher(cur, cypher_query, params=None):
         for key, value in params.items():
             if value is None:
                 cypher_query = cypher_query.replace(f'${key}', 'null')
-            elif isinstance(value, str):
-                escaped = value.replace("'", "\\'").replace('"', '\\"')
-                cypher_query = cypher_query.replace(f'${key}', f"'{escaped}'")
+            elif isinstance(value, bool):
+                cypher_query = cypher_query.replace(f'${key}', 'true' if value else 'false')
             elif isinstance(value, (int, float)):
                 cypher_query = cypher_query.replace(f'${key}', str(value))
+            else:
+                # 모든 다른 타입은 문자열로 변환
+                str_value = str(value) if value is not None else ''
+                escaped = str_value.replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"')
+                cypher_query = cypher_query.replace(f'${key}', f"'{escaped}'")
 
     sql = f"""
         SELECT * FROM cypher('etf_graph', $$
@@ -228,6 +232,7 @@ def collect_etf_metadata(**context):
 def collect_holdings(**context):
     """Task 3: ETF 구성종목 수집 및 AGE에 저장"""
     from pykrx import stock
+    import pandas as pd
     import time
 
     ti = context['ti']
@@ -253,13 +258,28 @@ def collect_holdings(**context):
                     log.warning(f"No holdings data for {ticker}")
                     continue
 
-                for _, row in df.iterrows():
-                    stock_code = str(row.get('티커', row.get('종목코드', '')))
-                    stock_name = str(row.get('종목명', ''))
-                    weight = float(row.get('비중', 0))
-                    shares = int(row.get('주수', 0)) if row.get('주수') else 0
+                for idx, row in df.iterrows():
+                    # 인덱스가 종목 코드 (티커)
+                    stock_code = str(idx)
 
-                    if not stock_code or not stock_name:
+                    # 종목명은 별도 API 호출로 조회
+                    try:
+                        stock_name = stock.get_market_ticker_name(stock_code)
+                    except Exception:
+                        stock_name = None
+
+                    # stock_name이 None이거나 빈 값이면 stock_code로 대체
+                    if not stock_name or (hasattr(stock_name, '__len__') and len(stock_name) == 0):
+                        stock_name = stock_code
+                    else:
+                        stock_name = str(stock_name)  # 명시적으로 문자열 변환
+
+                    weight = float(row.get('비중', 0))
+                    # '계약수' 또는 '주수' 컬럼 사용
+                    shares_val = row.get('계약수', row.get('주수', 0))
+                    shares = int(shares_val) if shares_val and not pd.isna(shares_val) else 0
+
+                    if not stock_code:
                         continue
 
                     # Create Stock node

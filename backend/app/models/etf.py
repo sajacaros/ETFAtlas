@@ -64,6 +64,10 @@ class ETFPrice(Base):
     low_price = Column(Numeric(12, 2))
     close_price = Column(Numeric(12, 2))
     volume = Column(BigInteger)
+    nav = Column(Numeric(14, 2))           # 순자산가치 (NAV)
+    market_cap = Column(BigInteger)         # 시가총액
+    net_assets = Column(BigInteger)         # 순자산총액
+    trade_value = Column(BigInteger)        # 거래대금
     created_at = Column(DateTime, default=datetime.utcnow)
 
     etf = relationship("ETF", back_populates="prices")

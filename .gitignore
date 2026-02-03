@@ -58,3 +58,6 @@ temp/
 
 # Claude
 .claude/
+
+# reference
+ref/

@@ -10,4 +10,5 @@ dependencies = [
     "pyvis>=0.3.2",
     "networkx>=3.0",
     "pandas>=2.0.0",
+    "pykrx==1.2.3",
 ]

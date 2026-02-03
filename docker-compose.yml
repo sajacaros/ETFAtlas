@@ -78,6 +78,7 @@ services:
       _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_USER:-admin}
       _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_PASSWORD:-admin}
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-etf_atlas}
+      KRX_AUTH_KEY: ${KRX_AUTH_KEY:-}
     ports:
       - "${AIRFLOW_PORT:-8080}:8080"
     volumes:

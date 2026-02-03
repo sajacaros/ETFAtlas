@@ -110,7 +110,7 @@ def execute_cypher(cur, cypher_query, params=None):
 
 
 def collect_etf_list(**context):
-    """Task 1: ETF 목록 수집"""
+    """Task 1: ETF 전체 목록 수집 (메타데이터용)"""
     from pykrx import stock
 
     date = context['ds_nodash']
@@ -118,19 +118,97 @@ def collect_etf_list(**context):
 
     try:
         tickers = stock.get_etf_ticker_list(date)
-        log.info(f"Found {len(tickers)} ETFs")
-
-        filtered_tickers = filter_etf_universe(tickers, date)
-        log.info(f"After filtering: {len(filtered_tickers)} ETFs")
-
-        return filtered_tickers
+        log.info(f"Found {len(tickers)} ETFs (all)")
+        return tickers
     except Exception as e:
         log.error(f"Failed to collect ETF list: {e}")
         raise
 
 
+def filter_etf_list(**context):
+    """Task 1-1: ETF 필터링 (구성목록/가격 수집용)"""
+    ti = context['ti']
+    date = context['ds_nodash']
+
+    all_tickers = ti.xcom_pull(task_ids='collect_etf_list')
+
+    if not all_tickers:
+        log.warning("No tickers to filter")
+        return []
+
+    filtered_tickers = filter_etf_universe(all_tickers, date)
+    log.info(f"Filtered: {len(filtered_tickers)} ETFs from {len(all_tickers)} total")
+
+    return filtered_tickers
+
+
+def get_etf_aum_from_krx(date: str) -> dict:
+    """KRX Open API에서 ETF 순자산총액(AUM) 조회
+
+    Returns:
+        dict: {ticker: aum} 형태, ticker는 6자리 숫자코드
+    """
+    import requests
+    import os
+
+    auth_key = os.environ.get('KRX_AUTH_KEY', '')
+    if not auth_key:
+        log.warning("KRX_AUTH_KEY not set, skipping AUM filter")
+        return None
+
+    # date format: YYYYMMDD
+    url = f"https://openapi.krx.co.kr/svc/sample/apis/etp/etf_bydd_trd?basDd={date}"
+    headers = {"AUTH_KEY": auth_key}
+
+    try:
+        resp = requests.get(url, headers=headers, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+
+        if 'OutBlock_1' not in data:
+            log.warning(f"KRX API response has no OutBlock_1: {data}")
+            return None
+
+        # ISU_CD는 '069500' 또는 '0131W0' 형태
+        # pykrx ticker는 6자리 숫자만 사용 (069500)
+        aum_dict = {}
+        for item in data['OutBlock_1']:
+            isu_cd = item.get('ISU_CD', '')
+            # 6자리 숫자인 경우만 사용 (일부 ETF는 영문자 포함)
+            if len(isu_cd) == 6 and isu_cd.isdigit():
+                ticker = isu_cd
+            elif len(isu_cd) >= 6:
+                # 앞 6자리가 숫자인 경우 사용
+                ticker = isu_cd[:6]
+                if not ticker.isdigit():
+                    continue
+            else:
+                continue
+
+            try:
+                aum = int(item.get('INVSTASST_NETASST_TOTAMT', 0))
+                aum_dict[ticker] = aum
+            except (ValueError, TypeError):
+                continue
+
+        log.info(f"Retrieved AUM data for {len(aum_dict)} ETFs from KRX API")
+        return aum_dict
+
+    except requests.exceptions.RequestException as e:
+        log.error(f"KRX API request failed: {e}")
+        return None
+    except Exception as e:
+        log.error(f"Failed to parse KRX API response: {e}")
+        return None
+
+
 def filter_etf_universe(tickers: list, date: str) -> list:
-    """ETF 유니버스 필터링"""
+    """ETF 유니버스 필터링
+
+    필터링 조건:
+    1. 키워드 제외: 레버리지, 인버스, 합성, 채권, 원자재, 통화, 리츠 등
+    2. 순자산총액(AUM) 1000억원 이상 (KRX API 사용 시)
+    """
     from pykrx import stock
 
     EXCLUDE_KEYWORDS = [
@@ -144,33 +222,31 @@ def filter_etf_universe(tickers: list, date: str) -> list:
         '리츠', 'REITs', 'REIT',
     ]
 
-    MIN_ASSET_BILLION = 1000
-    MIN_ASSET_WON = MIN_ASSET_BILLION * 100_000_000
+    MIN_AUM_BILLION = 1000
+    MIN_AUM_WON = MIN_AUM_BILLION * 100_000_000  # 1000억원
 
-    try:
-        df_cap = stock.get_market_cap(date, date, "ALL")
-        log.info(f"Retrieved market cap data for {len(df_cap)} items")
-    except Exception as e:
-        log.error(f"Failed to get market cap data: {e}")
-        df_cap = None
+    # KRX API에서 AUM 조회 (AUTH_KEY 설정된 경우만)
+    aum_dict = get_etf_aum_from_krx(date)
 
     filtered = []
     skipped_by_keyword = 0
-    skipped_by_asset = 0
+    skipped_by_aum = 0
 
     for ticker in tickers:
         try:
             name = stock.get_etf_ticker_name(ticker)
             name_lower = name.lower() if name else ''
 
+            # 1. 키워드 필터링
             if any(kw.lower() in name_lower for kw in EXCLUDE_KEYWORDS):
                 skipped_by_keyword += 1
                 continue
 
-            if df_cap is not None and ticker in df_cap.index:
-                market_cap = df_cap.loc[ticker].get('시가총액', 0)
-                if market_cap < MIN_ASSET_WON:
-                    skipped_by_asset += 1
+            # 2. AUM 필터링 (KRX API 사용 가능한 경우만)
+            if aum_dict is not None:
+                aum = aum_dict.get(ticker, 0)
+                if aum < MIN_AUM_WON:
+                    skipped_by_aum += 1
                     continue
 
             filtered.append(ticker)
@@ -179,7 +255,7 @@ def filter_etf_universe(tickers: list, date: str) -> list:
             log.warning(f"Failed to check ETF {ticker}: {e}")
             continue
 
-    log.info(f"Filtered: {len(filtered)} ETFs (excluded by keyword: {skipped_by_keyword}, by asset: {skipped_by_asset})")
+    log.info(f"Filtered: {len(filtered)} ETFs (excluded by keyword: {skipped_by_keyword}, by AUM: {skipped_by_aum})")
     return filtered
 
 
@@ -203,13 +279,21 @@ def collect_etf_metadata(**context):
             try:
                 name = stock.get_etf_ticker_name(ticker)
 
-                # Create or update ETF node in Apache AGE
-                cypher = """
+                # Create or update ETF node in Apache AGE (MERGE와 SET을 분리 - AGE 버그 우회)
+                cypher_merge = """
                     MERGE (e:ETF {code: $code})
+                    RETURN e
+                """
+                execute_cypher(cur, cypher_merge, {
+                    'code': ticker
+                })
+
+                cypher_set = """
+                    MATCH (e:ETF {code: $code})
                     SET e.name = $name, e.updated_at = $updated_at
                     RETURN e
                 """
-                execute_cypher(cur, cypher, {
+                execute_cypher(cur, cypher_set, {
                     'code': ticker,
                     'name': name,
                     'updated_at': datetime.now().isoformat()
@@ -230,13 +314,13 @@ def collect_etf_metadata(**context):
 
 
 def collect_holdings(**context):
-    """Task 3: ETF 구성종목 수집 및 AGE에 저장"""
+    """Task 3: ETF 구성종목 수집 및 AGE에 저장 (필터링된 ETF만)"""
     from pykrx import stock
     import pandas as pd
     import time
 
     ti = context['ti']
-    tickers = ti.xcom_pull(task_ids='collect_etf_list')
+    tickers = ti.xcom_pull(task_ids='filter_etf_list')
     date_str = context['ds']
 
     if not tickers:
@@ -258,21 +342,32 @@ def collect_holdings(**context):
                     log.warning(f"No holdings data for {ticker}")
                     continue
 
+                # 비중순으로 정렬하여 상위 20개만 수집
+                if '비중' in df.columns:
+                    df = df.sort_values('비중', ascending=False).head(20)
+                else:
+                    df = df.head(20)
+
                 for idx, row in df.iterrows():
                     # 인덱스가 종목 코드 (티커)
                     stock_code = str(idx)
 
                     # 종목명은 별도 API 호출로 조회
                     try:
-                        stock_name = stock.get_market_ticker_name(stock_code)
+                        result = stock.get_market_ticker_name(stock_code)
+                        # DataFrame이 반환된 경우 None 처리
+                        if isinstance(result, pd.DataFrame):
+                            stock_name = None
+                        else:
+                            stock_name = result
                     except Exception:
                         stock_name = None
 
                     # stock_name이 None이거나 빈 값이면 stock_code로 대체
-                    if not stock_name or (hasattr(stock_name, '__len__') and len(stock_name) == 0):
+                    if stock_name is None or (isinstance(stock_name, str) and len(stock_name) == 0):
                         stock_name = stock_code
                     else:
-                        stock_name = str(stock_name)  # 명시적으로 문자열 변환
+                        stock_name = str(stock_name)
 
                     weight = float(row.get('비중', 0))
                     # '계약수' 또는 '주수' 컬럼 사용
@@ -282,26 +377,44 @@ def collect_holdings(**context):
                     if not stock_code:
                         continue
 
-                    # Create Stock node
-                    cypher_stock = """
+                    # Create Stock node (MERGE와 SET을 분리 - AGE 버그 우회)
+                    cypher_stock_merge = """
                         MERGE (s:Stock {code: $code})
+                        RETURN s
+                    """
+                    execute_cypher(cur, cypher_stock_merge, {
+                        'code': stock_code
+                    })
+
+                    cypher_stock_set = """
+                        MATCH (s:Stock {code: $code})
                         SET s.name = $name
                         RETURN s
                     """
-                    execute_cypher(cur, cypher_stock, {
+                    execute_cypher(cur, cypher_stock_set, {
                         'code': stock_code,
                         'name': stock_name
                     })
 
-                    # Create HOLDS edge with date property
-                    cypher_holds = """
+                    # Create HOLDS edge (MERGE와 SET을 분리 - AGE 버그 우회)
+                    cypher_holds_merge = """
                         MATCH (e:ETF {code: $etf_code})
                         MATCH (s:Stock {code: $stock_code})
                         MERGE (e)-[h:HOLDS {date: $date}]->(s)
+                        RETURN h
+                    """
+                    execute_cypher(cur, cypher_holds_merge, {
+                        'etf_code': ticker,
+                        'stock_code': stock_code,
+                        'date': date_str
+                    })
+
+                    cypher_holds_set = """
+                        MATCH (e:ETF {code: $etf_code})-[h:HOLDS {date: $date}]->(s:Stock {code: $stock_code})
                         SET h.weight = $weight, h.shares = $shares
                         RETURN h
                     """
-                    execute_cypher(cur, cypher_holds, {
+                    execute_cypher(cur, cypher_holds_set, {
                         'etf_code': ticker,
                         'stock_code': stock_code,
                         'date': date_str,
@@ -327,12 +440,12 @@ def collect_holdings(**context):
 
 
 def collect_prices(**context):
-    """Task 4: ETF 가격 데이터 수집 (관계형 테이블에 저장 - 시계열 데이터)"""
+    """Task 4: ETF 가격 데이터 수집 (필터링된 ETF만, 관계형 테이블에 저장)"""
     from pykrx import stock
     import time
 
     ti = context['ti']
-    tickers = ti.xcom_pull(task_ids='collect_etf_list')
+    tickers = ti.xcom_pull(task_ids='filter_etf_list')
     date_str = context['ds']
     date_nodash = context['ds_nodash']
 
@@ -390,10 +503,10 @@ def collect_prices(**context):
 
 
 def detect_portfolio_changes(**context):
-    """Task 5: 포트폴리오 변화 감지 및 AGE에 저장"""
+    """Task 5: 포트폴리오 변화 감지 및 AGE에 저장 (필터링된 ETF만)"""
 
     ti = context['ti']
-    tickers = ti.xcom_pull(task_ids='collect_etf_list')
+    tickers = ti.xcom_pull(task_ids='filter_etf_list')
     today = context['ds']
     yesterday = (datetime.strptime(today, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d')
 
@@ -562,6 +675,12 @@ task_collect_etf_list = PythonOperator(
     dag=dag,
 )
 
+task_filter_etf_list = PythonOperator(
+    task_id='filter_etf_list',
+    python_callable=filter_etf_list,
+    dag=dag,
+)
+
 task_collect_metadata = PythonOperator(
     task_id='collect_etf_metadata',
     python_callable=collect_etf_metadata,
@@ -587,7 +706,10 @@ task_detect_changes = PythonOperator(
 )
 
 # Define dependencies
-start >> task_collect_etf_list >> task_collect_metadata
-task_collect_metadata >> [task_collect_holdings, task_collect_prices]
+# 전체 ETF 목록 수집 후 분기:
+# - 메타데이터: 전체 ETF 수집
+# - 필터링 후: 구성목록/가격만 필터링된 ETF 수집
+start >> task_collect_etf_list >> [task_collect_metadata, task_filter_etf_list]
+task_filter_etf_list >> [task_collect_holdings, task_collect_prices]
 task_collect_holdings >> task_detect_changes >> end
 task_collect_prices >> end

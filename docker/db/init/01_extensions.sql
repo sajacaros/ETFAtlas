@@ -49,6 +49,10 @@ CREATE TABLE IF NOT EXISTS etf_prices (
     low_price DECIMAL(12, 2),
     close_price DECIMAL(12, 2),
     volume BIGINT,
+    nav DECIMAL(14, 2),           -- 순자산가치 (NAV)
+    market_cap BIGINT,            -- 시가총액
+    net_assets BIGINT,            -- 순자산총액
+    trade_value BIGINT,           -- 거래대금
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (etf_code, date)
 );

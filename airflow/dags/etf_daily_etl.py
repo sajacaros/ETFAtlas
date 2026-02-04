@@ -126,11 +126,15 @@ def collect_etf_list(**context):
 
 
 def fetch_krx_data(**context):
-    """Task 1-1: KRX API에서 일별매매정보 조회"""
+    """Task 1-1: KRX API에서 일별매매정보 조회 (최근 거래일 자동 탐색)"""
     date = context['ds_nodash']
 
-    krx_data = get_krx_daily_data(date)
-    log.info(f"Fetched {len(krx_data)} ETFs from KRX API")
+    krx_data, actual_date = get_krx_daily_data(date)
+    log.info(f"Fetched {len(krx_data)} ETFs from KRX API (trading date: {actual_date})")
+
+    # 실제 거래일을 XCom에 저장
+    ti = context['ti']
+    ti.xcom_push(key='trading_date', value=actual_date)
 
     # XCom은 직렬화가 필요하므로 dict 리스트로 변환
     return [
@@ -153,53 +157,148 @@ def fetch_krx_data(**context):
 
 
 def filter_etf_list(**context):
-    """Task 1-2: ETF 필터링 (구성목록 수집용)"""
-    ti = context['ti']
+    """Task 1-2: DB 유니버스 기반 ETF 필터링 (구성목록 수집용)
 
-    all_tickers = ti.xcom_pull(task_ids='collect_etf_list')
+    - DB의 etf_universe 테이블에서 기존 ETF 목록 읽기
+    - 새로운 ETF 중 조건(500억 이상 + 필터 통과) 충족하면 유니버스에 추가
+    - 한번 등록된 ETF는 계속 유지
+    """
+    ti = context['ti']
     krx_data_dicts = ti.xcom_pull(task_ids='fetch_krx_data')
 
-    if not all_tickers:
-        log.warning("No tickers to filter")
-        return []
+    conn = get_db_connection()
+    cur = conn.cursor()
 
-    if not krx_data_dicts:
-        log.warning("No KRX data available, cannot filter")
-        return []
+    try:
+        # 1. 기존 유니버스 ETF 목록 읽기
+        cur.execute("SELECT code FROM etf_universe WHERE is_active = TRUE")
+        existing_codes = set(row[0] for row in cur.fetchall())
+        log.info(f"Existing universe: {len(existing_codes)} ETFs")
 
-    # dict를 다시 객체로 변환
-    from krx_api_client import ETFDailyData
-    krx_data = [ETFDailyData(**d) for d in krx_data_dicts]
+        # 2. 새로운 ETF 확인 및 추가
+        if krx_data_dicts:
+            new_candidates = check_new_universe_candidates(krx_data_dicts, existing_codes)
 
-    filtered_tickers = filter_etf_universe(all_tickers, krx_data)
-    log.info(f"Filtered: {len(filtered_tickers)} ETFs from {len(all_tickers)} total")
+            for candidate in new_candidates:
+                cur.execute('''
+                    INSERT INTO etf_universe (code, name, index_name, initial_net_assets)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (code) DO NOTHING
+                ''', (candidate['code'], candidate['name'], candidate.get('index_name', ''), candidate['net_assets']))
+                existing_codes.add(candidate['code'])
 
-    return filtered_tickers
+            if new_candidates:
+                conn.commit()
+                log.info(f"Added {len(new_candidates)} new ETFs to universe")
+
+        universe_tickers = list(existing_codes)
+        log.info(f"Total universe: {len(universe_tickers)} ETFs")
+        return universe_tickers
+
+    finally:
+        cur.close()
+        conn.close()
 
 
-def get_krx_daily_data(date: str) -> list:
-    """KRX Open API에서 ETF 일별매매정보 조회
+def check_new_universe_candidates(krx_data_dicts: list, existing_codes: set) -> list:
+    """새로운 유니버스 후보 ETF 확인
+
+    조건:
+    - 기존 유니버스에 없음
+    - 순자산 500억 이상
+    - 제외 키워드 미포함
+    - 해외 관련 키워드 미포함
+    """
+    FOREIGN_NAME_KEYWORDS = [
+        '미국', '중국', '차이나', '일본', '인도', '베트남', '대만', '유럽', '독일',
+        '글로벌', 'Global', 'China', 'Japan', 'India', 'US', 'USA',
+        'S&P', 'NASDAQ', '나스닥', '다우존스',
+        'MSCI', '선진국', '신흥국', '아시아',
+        '테슬라', 'Tesla', '엔비디아', 'NVIDIA', '구글', 'Google',
+        '애플', 'Apple', '아마존', 'Amazon', '팔란티어', 'Palantir',
+        '브로드컴', 'Broadcom', '알리바바', 'Alibaba',
+        '월드', 'World', '국제금', '금액티브',
+    ]
+
+    EXCLUDE_KEYWORDS = [
+        '레버리지', '인버스', '2X', '곱버스', '2배', '3배',
+        '합성', '선물', '파생', 'synthetic', '혼합',
+        '커버드콜', '커버드', 'covered', '프리미엄',
+        '채권', '국채', '회사채', '크레딧', '금리', '국공채', '단기채', '장기채',
+        '금융채', '특수채', 'TDF', '전단채', '은행채',
+        '국고채', 'TRF',
+        '금현물', '골드', 'gold', '은현물', '실버', 'silver', '원유', 'WTI', '구리', '원자재',
+        '달러', '엔화', '유로', '원화', '통화', 'USD', 'JPY', 'EUR',
+        '머니마켓', 'CD', '단기', 'MMF', 'CMA',
+        '리츠', 'REITs', 'REIT',
+    ]
+
+    MIN_AUM = 500 * 100_000_000  # 500억
+
+    candidates = []
+    for item in krx_data_dicts:
+        code = item['code']
+        if code in existing_codes:
+            continue
+
+        name = item['name']
+        name_lower = name.lower()
+        net_assets = item.get('net_assets', 0)
+
+        # 조건 확인
+        if net_assets < MIN_AUM:
+            continue
+        if any(kw.lower() in name_lower for kw in EXCLUDE_KEYWORDS):
+            continue
+        if any(kw.lower() in name_lower or kw in name for kw in FOREIGN_NAME_KEYWORDS):
+            continue
+
+        candidates.append({
+            'code': code,
+            'name': name,
+            'index_name': '',  # KRX 일별매매정보에는 index_name이 없음
+            'net_assets': net_assets
+        })
+
+    return candidates
+
+
+def get_krx_daily_data(date: str) -> tuple[list, str]:
+    """KRX Open API에서 ETF 일별매매정보 조회 (최근 거래일 자동 탐색)
 
     Args:
         date: 기준일자 (YYYYMMDD 형식)
 
     Returns:
-        list: ETFDailyData 리스트, 실패 시 빈 리스트
+        tuple: (ETFDailyData 리스트, 실제 조회된 날짜), 실패 시 (빈 리스트, 빈 문자열)
     """
     import os
+    from datetime import datetime, timedelta
     from krx_api_client import KRXApiClient
 
     auth_key = os.environ.get('KRX_AUTH_KEY', '')
     if not auth_key:
         log.warning("KRX_AUTH_KEY not set, cannot fetch KRX data")
-        return []
+        return [], ''
 
     try:
         client = KRXApiClient(auth_key)
-        return client.get_etf_daily_trading(date)
+
+        # 주어진 날짜부터 최대 7일 전까지 거래일 탐색
+        base_date = datetime.strptime(date, '%Y%m%d')
+        for i in range(7):
+            check_date = (base_date - timedelta(days=i)).strftime('%Y%m%d')
+            result = client.get_etf_daily_trading(check_date)
+            if result:
+                if i > 0:
+                    log.info(f"No data for {date}, using latest trading day: {check_date}")
+                return result, check_date
+
+        log.warning(f"No trading data found within 7 days from {date}")
+        return [], ''
     except Exception as e:
         log.error(f"Failed to get KRX daily data: {e}")
-        return []
+        return [], ''
 
 
 def get_etf_aum_from_krx_data(krx_data: list) -> dict:
@@ -227,9 +326,9 @@ def filter_etf_universe(tickers: list, krx_data: list) -> list:
     """
     EXCLUDE_KEYWORDS = [
         '레버리지', '인버스', '2X', '곱버스', '2배', '3배',
-        '합성', '선물', '파생', 'synthetic',
+        '합성', '선물', '파생', 'synthetic', '혼합',
         '커버드콜', '커버드', 'covered', '프리미엄',
-        '채권', '국채', '회사채', '크레딧', '금리', '국공채', '단기채', '장기채',
+        '채권', '국채', '회사채', '크레딧', '금리', '국공채', '단기채', '장기채', '은행채',
         '금현물', '골드', 'gold', '은현물', '실버', 'silver', '원유', 'WTI', '구리', '원자재',
         '달러', '엔화', '유로', '원화', '통화', 'USD', 'JPY', 'EUR',
         '머니마켓', 'CD', '단기', 'MMF', 'CMA',
@@ -279,12 +378,12 @@ def filter_etf_universe(tickers: list, krx_data: list) -> list:
 
 
 def collect_etf_metadata(**context):
-    """Task 2: ETF 메타데이터 수집 및 AGE에 저장"""
+    """Task 2: ETF 메타데이터 수집 및 AGE에 저장 (필터링된 ETF만)"""
     from pykrx import stock
     import time
 
     ti = context['ti']
-    tickers = ti.xcom_pull(task_ids='collect_etf_list')
+    tickers = ti.xcom_pull(task_ids='filter_etf_list')
 
     if not tickers:
         log.warning("No tickers to process")
@@ -340,7 +439,9 @@ def collect_holdings(**context):
 
     ti = context['ti']
     tickers = ti.xcom_pull(task_ids='filter_etf_list')
-    date_str = context['ds']
+    trading_date = ti.xcom_pull(task_ids='fetch_krx_data', key='trading_date')
+    # trading_date는 YYYYMMDD 형식, date_str은 YYYY-MM-DD 형식으로 변환
+    date_str = f"{trading_date[:4]}-{trading_date[4:6]}-{trading_date[6:8]}" if trading_date else context['ds']
 
     if not tickers:
         log.warning("No tickers to process")
@@ -459,22 +560,15 @@ def collect_holdings(**context):
 
 
 def collect_prices(**context):
-    """Task 4: ETF 가격 데이터 수집 (KRX API 데이터 사용, 필터링된 ETF만)"""
+    """Task 4: ETF 가격 데이터 수집 (KRX API 데이터 사용, 모든 ETF)"""
     ti = context['ti']
-    tickers = ti.xcom_pull(task_ids='filter_etf_list')
     krx_data_dicts = ti.xcom_pull(task_ids='fetch_krx_data')
-    date_str = context['ds']
-
-    if not tickers:
-        log.warning("No tickers to process")
-        return
+    trading_date = ti.xcom_pull(task_ids='fetch_krx_data', key='trading_date')
+    date_str = f"{trading_date[:4]}-{trading_date[4:6]}-{trading_date[6:8]}" if trading_date else context['ds']
 
     if not krx_data_dicts:
         log.warning("No KRX data available")
         return
-
-    # KRX 데이터를 딕셔너리로 변환
-    krx_dict = {d['code']: d for d in krx_data_dicts}
 
     conn = get_db_connection()
     cur = conn.cursor()
@@ -482,11 +576,9 @@ def collect_prices(**context):
     success_count = 0
 
     try:
-        for ticker in tickers:
+        # 모든 KRX 데이터에 대해 가격 저장
+        for krx_item in krx_data_dicts:
             try:
-                krx_item = krx_dict.get(ticker)
-                if not krx_item:
-                    continue
 
                 cur.execute("""
                     INSERT INTO etf_prices (
@@ -505,7 +597,7 @@ def collect_prices(**context):
                         net_assets = EXCLUDED.net_assets,
                         trade_value = EXCLUDED.trade_value
                 """, (
-                    ticker,
+                    krx_item['code'],
                     date_str,
                     krx_item['open_price'],
                     krx_item['high_price'],
@@ -521,7 +613,7 @@ def collect_prices(**context):
                 success_count += 1
 
             except Exception as e:
-                log.warning(f"Failed to save prices for {ticker}: {e}")
+                log.warning(f"Failed to save prices for {krx_item.get('code', 'unknown')}: {e}")
                 continue
 
         conn.commit()
@@ -537,7 +629,9 @@ def detect_portfolio_changes(**context):
 
     ti = context['ti']
     tickers = ti.xcom_pull(task_ids='filter_etf_list')
-    today = context['ds']
+    trading_date = ti.xcom_pull(task_ids='fetch_krx_data', key='trading_date')
+    today = f"{trading_date[:4]}-{trading_date[4:6]}-{trading_date[6:8]}" if trading_date else context['ds']
+    # 이전 거래일 계산 (간단히 1일 전으로, 추후 개선 필요)
     yesterday = (datetime.strptime(today, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d')
 
     if not tickers:
@@ -743,11 +837,12 @@ task_detect_changes = PythonOperator(
 
 # Define dependencies
 # 1. ETF 목록(pykrx) + KRX 데이터를 병렬로 수집
-# 2. 두 데이터를 기반으로 필터링 + 메타데이터 수집
-# 3. 필터링된 ETF에 대해 구성목록/가격 수집
+# 2. 두 데이터를 기반으로 필터링
+# 3. 필터링된 ETF만 메타데이터 + 구성종목 수집
+# 4. 가격: 모든 ETF 수집 (KRX 데이터 기반)
 start >> [task_collect_etf_list, task_fetch_krx_data]
 [task_collect_etf_list, task_fetch_krx_data] >> task_filter_etf_list
-task_collect_etf_list >> task_collect_metadata
-task_filter_etf_list >> [task_collect_holdings, task_collect_prices]
+task_filter_etf_list >> [task_collect_metadata, task_collect_holdings]
+task_fetch_krx_data >> task_collect_prices  # 가격은 모든 ETF 대상
 task_collect_holdings >> task_detect_changes >> end
 [task_collect_prices, task_collect_metadata] >> end

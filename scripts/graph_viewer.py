@@ -16,7 +16,7 @@ st.set_page_config(
     page_title="ETF Atlas Graph Viewer",
     page_icon="📊",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 # Custom CSS
@@ -24,8 +24,16 @@ st.markdown("""
 <style>
     /* 메인 컨테이너 */
     .main .block-container {
-        padding-top: 2rem;
-        padding-bottom: 2rem;
+        padding-top: 0.5rem;
+        padding-bottom: 1rem;
+    }
+
+    /* Streamlit 기본 패딩 조정 */
+    .st-emotion-cache-zy6yx3 {
+        padding-top: 3rem !important;
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+        padding-bottom: 0 !important;
     }
 
     /* 헤더 스타일 */
@@ -238,12 +246,58 @@ def get_holds_count(cur):
 
 
 def get_etf_list(cur, limit=100):
-    """ETF 목록 조회"""
+    """ETF 목록 조회 (HOLDS 관계가 있는 유니버스 ETF만, AUM 순)"""
+    # 그래프에서 ETF 목록 조회
+    sql_graph = """
+        SELECT * FROM cypher('etf_graph', $$
+            MATCH (e:ETF)-[:HOLDS]->(:Stock)
+            RETURN DISTINCT e.code, e.name
+        $$) as (code agtype, name agtype);
+    """
+    cur.execute(sql_graph)
+    graph_results = cur.fetchall()
+
+    etf_codes = [str(row[0]).strip('"') for row in graph_results]
+    etf_names = {str(row[0]).strip('"'): str(row[1]).strip('"') for row in graph_results}
+
+    if not etf_codes:
+        return pd.DataFrame()
+
+    # etf_prices에서 최신 net_assets 조회 (AUM 순 정렬)
+    placeholders = ','.join(['%s'] * len(etf_codes))
+    sql_aum = f"""
+        SELECT DISTINCT ON (etf_code) etf_code, net_assets
+        FROM etf_prices
+        WHERE etf_code IN ({placeholders})
+        ORDER BY etf_code, date DESC
+    """
+    cur.execute(sql_aum, etf_codes)
+    aum_results = cur.fetchall()
+
+    # AUM 매핑
+    aum_map = {row[0]: row[1] or 0 for row in aum_results}
+
+    # 데이터 생성 및 AUM 순 정렬
+    data = []
+    for code in etf_codes:
+        data.append({
+            "code": code,
+            "name": etf_names.get(code, ""),
+            "aum": aum_map.get(code, 0)
+        })
+
+    df = pd.DataFrame(data)
+    df = df.sort_values("aum", ascending=False).head(limit)
+    return df[["code", "name"]]
+
+
+def get_stock_list(cur, limit=1000):
+    """Stock 목록 조회 (ETF가 보유한 종목만)"""
     sql = """
         SELECT * FROM cypher('etf_graph', $$
-            MATCH (e:ETF)
-            RETURN e.code, e.name
-            ORDER BY e.code
+            MATCH (:ETF)-[:HOLDS]->(s:Stock)
+            RETURN DISTINCT s.code, s.name
+            ORDER BY s.name
             LIMIT %s
         $$) as (code agtype, name agtype);
     """
@@ -328,10 +382,11 @@ def get_stock_etfs(cur, stock_code):
 
 
 def create_etf_graph(cur, etf_code, etf_name, limit=20):
-    """ETF 중심 그래프 생성"""
+    """ETF 중심 그래프 생성 (원형 레이아웃, 비중순 배치)"""
+    import math
     G = nx.Graph()
 
-    # ETF 노드 추가
+    # ETF 노드 추가 (중앙)
     G.add_node(
         etf_code,
         label=f"{etf_name}\n({etf_code})" if etf_name else etf_code,
@@ -341,35 +396,40 @@ def create_etf_graph(cur, etf_code, etf_name, limit=20):
         font={"size": 14, "color": "#1e293b", "face": "arial", "bold": True},
         borderWidth=3,
         borderWidthSelected=5,
-        shadow=True
+        shadow=True,
+        x=0,
+        y=0
     )
 
-    # 구성종목 조회
+    # 구성종목 조회 (비중순 정렬됨)
     df = get_etf_holdings(cur, etf_code)
 
     if df.empty:
         return G
 
-    # 상위 N개 종목만 표시
     df = df.head(limit)
+    num_nodes = len(df)
     max_weight = df["비중(%)"].max() if not df.empty else 1
-    # max_weight가 0이거나 NaN인 경우 1로 설정
     if pd.isna(max_weight) or max_weight == 0:
         max_weight = 1
 
-    for _, row in df.iterrows():
+    # 원형 배치 (12시 방향부터 시계방향, 비중 높은순)
+    radius = 250
+    for idx, (_, row) in enumerate(df.iterrows()):
         stock_code = row["종목코드"]
         stock_name = row["종목명"]
         weight = row["비중(%)"]
 
-        # weight가 NaN인 경우 0으로 처리
         if pd.isna(weight):
             weight = 0
 
-        # 크기 계산 (비중에 비례)
         node_size = 15 + (weight / max_weight) * 25
 
-        # Stock 노드 추가
+        # 각도 계산 (12시 방향 = -90도부터 시계방향)
+        angle = -math.pi/2 + (2 * math.pi * idx / num_nodes)
+        x = radius * math.cos(angle)
+        y = radius * math.sin(angle)
+
         G.add_node(
             stock_code,
             label=f"{stock_name}\n{weight:.1f}%",
@@ -378,10 +438,11 @@ def create_etf_graph(cur, etf_code, etf_name, limit=20):
             title=f"종목: {stock_name}\n코드: {stock_code}\n비중: {weight:.2f}%",
             font={"size": 11, "color": "#1e293b"},
             borderWidth=2,
-            shadow=True
+            shadow=True,
+            x=x,
+            y=y
         )
 
-        # HOLDS 엣지 추가
         edge_width = 1 + (weight / max_weight) * 4
         G.add_edge(
             etf_code, stock_code,
@@ -393,30 +454,15 @@ def create_etf_graph(cur, etf_code, etf_name, limit=20):
     return G
 
 
-def create_stock_graph(cur, stock_code, limit=20):
-    """종목 중심 그래프 생성 (역추적)"""
+def create_stock_graph(cur, stock_code, stock_name=None, limit=20):
+    """종목 중심 그래프 생성 (원형 레이아웃, 비중순 배치)"""
+    import math
     G = nx.Graph()
 
-    # 보유 ETF 조회
-    df = get_stock_etfs(cur, stock_code)
+    if not stock_name:
+        stock_name = stock_code
 
-    if df.empty:
-        G.add_node(
-            stock_code,
-            label=stock_code,
-            color=COLORS["stock_primary"],
-            size=40,
-            title=f"종목: {stock_code}",
-            font={"size": 14, "color": "#1e293b", "bold": True},
-            borderWidth=3,
-            shadow=True
-        )
-        return G
-
-    # 종목명 가져오기 (첫 번째 결과에서)
-    stock_name = stock_code
-
-    # Stock 노드 추가
+    # Stock 노드 추가 (중앙)
     G.add_node(
         stock_code,
         label=f"{stock_name}\n({stock_code})",
@@ -426,29 +472,40 @@ def create_stock_graph(cur, stock_code, limit=20):
         font={"size": 14, "color": "#1e293b", "bold": True},
         borderWidth=3,
         borderWidthSelected=5,
-        shadow=True
+        shadow=True,
+        x=0,
+        y=0
     )
 
-    # 상위 N개 ETF만 표시
+    # 보유 ETF 조회 (비중순 정렬됨)
+    df = get_stock_etfs(cur, stock_code)
+
+    if df.empty:
+        return G
+
     df = df.head(limit)
+    num_nodes = len(df)
     max_weight = df["비중(%)"].max() if not df.empty else 1
-    # max_weight가 0이거나 NaN인 경우 1로 설정
     if pd.isna(max_weight) or max_weight == 0:
         max_weight = 1
 
-    for _, row in df.iterrows():
+    # 원형 배치 (12시 방향부터 시계방향, 비중 높은순)
+    radius = 250
+    for idx, (_, row) in enumerate(df.iterrows()):
         etf_code = row["ETF코드"]
         etf_name = row["ETF명"]
         weight = row["비중(%)"]
 
-        # weight가 NaN인 경우 0으로 처리
         if pd.isna(weight):
             weight = 0
 
-        # 크기 계산 (비중에 비례)
         node_size = 15 + (weight / max_weight) * 25
 
-        # ETF 노드 추가
+        # 각도 계산 (12시 방향 = -90도부터 시계방향)
+        angle = -math.pi/2 + (2 * math.pi * idx / num_nodes)
+        x = radius * math.cos(angle)
+        y = radius * math.sin(angle)
+
         display_name = etf_name[:12] + "..." if len(etf_name) > 12 else etf_name
         G.add_node(
             etf_code,
@@ -458,10 +515,11 @@ def create_stock_graph(cur, stock_code, limit=20):
             title=f"ETF: {etf_name}\n코드: {etf_code}\n비중: {weight:.2f}%",
             font={"size": 11, "color": "#1e293b"},
             borderWidth=2,
-            shadow=True
+            shadow=True,
+            x=x,
+            y=y
         )
 
-        # HOLDS 엣지 추가
         edge_width = 1 + (weight / max_weight) * 4
         G.add_edge(
             etf_code, stock_code,
@@ -473,7 +531,7 @@ def create_stock_graph(cur, stock_code, limit=20):
     return G
 
 
-def render_graph(G, height="600px"):
+def render_graph(G, height="700px"):
     """NetworkX 그래프를 PyVis로 렌더링"""
     if len(G.nodes()) == 0:
         st.warning("표시할 데이터가 없습니다.")
@@ -489,7 +547,7 @@ def render_graph(G, height="600px"):
     )
     net.from_nx(G)
 
-    # 개선된 물리 엔진 설정
+    # 고정 원형 레이아웃 설정
     net.set_options("""
     {
         "nodes": {
@@ -514,30 +572,13 @@ def render_graph(G, height="600px"):
             }
         },
         "physics": {
-            "forceAtlas2Based": {
-                "gravitationalConstant": -80,
-                "centralGravity": 0.015,
-                "springLength": 150,
-                "springConstant": 0.05,
-                "damping": 0.4
-            },
-            "maxVelocity": 50,
-            "solver": "forceAtlas2Based",
-            "timestep": 0.35,
-            "stabilization": {
-                "enabled": true,
-                "iterations": 200,
-                "updateInterval": 25
-            }
+            "enabled": false
         },
         "interaction": {
             "hover": true,
             "tooltipDelay": 100,
-            "hideEdgesOnDrag": true,
-            "navigationButtons": true,
-            "keyboard": {
-                "enabled": true
-            }
+            "zoomView": true,
+            "dragView": true
         }
     }
     """)
@@ -549,7 +590,7 @@ def render_graph(G, height="600px"):
             html_content = html_file.read()
         os.unlink(f.name)
 
-    # HTML에 스타일 추가
+    # HTML에 스타일 및 클릭 이벤트 추가
     custom_style = """
     <style>
         body { margin: 0; padding: 0; }
@@ -559,6 +600,25 @@ def render_graph(G, height="600px"):
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
         }
     </style>
+    <script>
+        // 노드 클릭 시 URL 파라미터 변경
+        document.addEventListener('DOMContentLoaded', function() {
+            setTimeout(function() {
+                if (typeof network !== 'undefined') {
+                    network.on('click', function(params) {
+                        if (params.nodes.length > 0) {
+                            var nodeId = params.nodes[0];
+                            // 부모 창 URL 변경
+                            var url = new URL(window.parent.location.href);
+                            url.searchParams.set('selected_node', nodeId);
+                            window.parent.history.pushState({}, '', url);
+                            window.parent.location.reload();
+                        }
+                    });
+                }
+            }, 1000);
+        });
+    </script>
     """
     html_content = html_content.replace("</head>", f"{custom_style}</head>")
 
@@ -603,15 +663,6 @@ def style_dataframe(df, highlight_col=None):
 
 
 def main():
-    # 헤더
-    st.markdown("""
-        <h1 style="text-align: center; margin-bottom: 0;">
-            📊 ETF Atlas Graph Viewer
-        </h1>
-        <p style="text-align: center; color: #64748b; margin-top: 0.5rem; margin-bottom: 2rem;">
-            Apache AGE 기반 ETF-Stock 관계 그래프 시각화 도구
-        </p>
-    """, unsafe_allow_html=True)
 
     # DB 연결
     try:
@@ -642,12 +693,19 @@ def main():
 
         st.markdown("---")
         st.markdown("## ⚙️ 표시 설정")
-        node_limit = st.slider(
-            "표시할 노드 수",
+        stock_limit = st.slider(
+            "종목 표시 수",
             min_value=5,
-            max_value=50,
-            value=20,
-            help="그래프에 표시할 최대 노드 수를 설정합니다."
+            max_value=30,
+            value=15,
+            help="ETF 선택 시 표시할 구성종목 수 (비중 높은순)"
+        )
+        etf_limit = st.slider(
+            "ETF 표시 수",
+            min_value=5,
+            max_value=30,
+            value=10,
+            help="종목 선택 시 표시할 ETF 수 (비중 높은순)"
         )
 
         st.markdown("---")
@@ -668,107 +726,64 @@ def main():
         """, unsafe_allow_html=True)
 
     # 탭 구성
-    tab1, tab2, tab3 = st.tabs(["🔍 ETF 탐색", "🔄 종목 역추적", "📋 데이터 조회"])
+    tab1, tab2 = st.tabs(["🔍 그래프 탐색", "📋 데이터 조회"])
 
     with tab1:
-        st.markdown("### ETF 구성종목 그래프")
-        st.caption("ETF를 선택하면 해당 ETF의 구성종목을 그래프로 시각화합니다.")
-
-        # ETF 목록 조회
-        with st.spinner("ETF 목록 조회 중..."):
+        # ETF, 종목 목록 조회
+        with st.spinner("데이터 조회 중..."):
             etf_df = get_etf_list(cur, limit=1000)
+            stock_df = get_stock_list(cur, limit=2000)
 
-        if etf_df.empty:
-            st.warning("⚠️ ETF 데이터가 없습니다.")
+        if etf_df.empty and stock_df.empty:
+            st.warning("⚠️ 데이터가 없습니다.")
         else:
-            # ETF 선택
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                etf_options = [f"{row['code']} - {row['name']}" for _, row in etf_df.iterrows()]
-                selected_etf = st.selectbox(
-                    "ETF 선택",
-                    etf_options,
-                    label_visibility="collapsed",
-                    placeholder="ETF를 선택하세요..."
-                )
+            # ETF와 종목을 합쳐서 옵션 생성
+            options = []
+            etf_codes = set()
+            stock_codes = set()
+            for _, row in etf_df.iterrows():
+                options.append(f"[ETF] {row['name']} ({row['code']})")
+                etf_codes.add(row['code'])
+            for _, row in stock_df.iterrows():
+                options.append(f"[종목] {row['name']} ({row['code']})")
+                stock_codes.add(row['code'])
 
-            if selected_etf:
-                etf_code = selected_etf.split(" - ")[0]
-                etf_name = selected_etf.split(" - ")[1] if " - " in selected_etf else ""
+            # URL 파라미터에서 선택된 노드 확인
+            selected_node = st.query_params.get("selected_node", None)
+            default_index = 0
+            if selected_node:
+                # 해당 노드를 찾아서 선택
+                for i, opt in enumerate(options):
+                    if f"({selected_node})" in opt:
+                        default_index = i
+                        break
 
-                # 그래프 생성 및 표시
-                with st.spinner("그래프 생성 중..."):
-                    G = create_etf_graph(cur, etf_code, etf_name, limit=node_limit)
-                    render_graph(G, height="550px")
+            selected = st.selectbox(
+                "ETF 또는 종목 선택",
+                options,
+                index=default_index,
+                label_visibility="collapsed",
+                placeholder="ETF 또는 종목을 선택하세요..."
+            )
 
-                # 구성종목 테이블
-                st.markdown("### 📋 구성종목 목록")
-                holdings_df = get_etf_holdings(cur, etf_code)
-                if not holdings_df.empty:
-                    styled_df = style_dataframe(holdings_df)
-                    st.dataframe(
-                        styled_df,
-                        use_container_width=True,
-                        height=400
-                    )
+            if selected:
+                # 선택된 항목 파싱
+                is_etf = selected.startswith("[ETF]")
+                name = selected.split("] ")[1].rsplit(" (", 1)[0]
+                code = selected.split("(")[-1].rstrip(")")
 
-                    # 다운로드 버튼
-                    col1, col2, col3 = st.columns([1, 1, 2])
-                    with col1:
-                        st.download_button(
-                            "📥 CSV 다운로드",
-                            holdings_df.to_csv(index=False, encoding='utf-8-sig'),
-                            f"{etf_code}_holdings.csv",
-                            "text/csv"
-                        )
+                if is_etf:
+                    # ETF 선택: 보유 종목 표시 (비중 높은순)
+                    with st.spinner("그래프 생성 중..."):
+                        G = create_etf_graph(cur, code, name, limit=stock_limit)
+                        render_graph(G, height="700px")
                 else:
-                    st.info("ℹ️ 구성종목 데이터가 없습니다.")
+                    # 종목 선택: 보유 ETF 표시 (비중 높은순)
+                    with st.spinner("그래프 생성 중..."):
+                        G = create_stock_graph(cur, code, stock_name=name, limit=etf_limit)
+                        render_graph(G, height="700px")
 
     with tab2:
-        st.markdown("### 종목 → ETF 역추적")
-        st.caption("특정 종목을 입력하면 해당 종목을 보유한 ETF들을 찾아 그래프로 시각화합니다.")
-
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            stock_code = st.text_input(
-                "종목 코드",
-                value="005930",
-                placeholder="종목 코드 입력 (예: 005930)",
-                label_visibility="collapsed"
-            )
-        with col2:
-            search_clicked = st.button("🔍 검색", use_container_width=True)
-
-        if stock_code:
-            # 그래프 생성 및 표시
-            with st.spinner("그래프 생성 중..."):
-                G = create_stock_graph(cur, stock_code, limit=node_limit)
-                render_graph(G, height="550px")
-
-            # ETF 목록 테이블
-            st.markdown(f"### 📋 {stock_code}을(를) 보유한 ETF 목록")
-            etf_list_df = get_stock_etfs(cur, stock_code)
-            if not etf_list_df.empty:
-                styled_df = style_dataframe(etf_list_df)
-                st.dataframe(
-                    styled_df,
-                    use_container_width=True,
-                    height=400
-                )
-
-                # 다운로드 버튼
-                col1, col2, col3 = st.columns([1, 1, 2])
-                with col1:
-                    st.download_button(
-                        "📥 CSV 다운로드",
-                        etf_list_df.to_csv(index=False, encoding='utf-8-sig'),
-                        f"{stock_code}_etfs.csv",
-                        "text/csv"
-                    )
-            else:
-                st.info("ℹ️ 해당 종목을 보유한 ETF가 없습니다.")
-
-    with tab3:
         st.markdown("### 데이터 조회")
 
         query_type = st.radio(

@@ -245,6 +245,137 @@ def get_holds_count(cur):
     return int(result[0][0]) if result else 0
 
 
+def get_company_count(cur):
+    """Company 노드 수 조회"""
+    result = execute_cypher(cur, "MATCH (c:Company) RETURN count(c)")
+    return int(result[0][0]) if result else 0
+
+
+def get_sector_count(cur):
+    """Sector 노드 수 조회"""
+    result = execute_cypher(cur, "MATCH (s:Sector) RETURN count(s)")
+    return int(result[0][0]) if result else 0
+
+
+def get_market_count(cur):
+    """Market 노드 수 조회"""
+    result = execute_cypher(cur, "MATCH (m:Market) RETURN count(m)")
+    return int(result[0][0]) if result else 0
+
+
+def get_company_list(cur):
+    """운용사 목록 조회 (ETF 수 포함)"""
+    query = """
+        MATCH (c:Company)<-[:MANAGED_BY]-(e:ETF)
+        RETURN c.name, count(e) as etf_count
+        ORDER BY count(e) DESC
+    """
+    sql = f"""
+        SELECT * FROM cypher('etf_graph', $$
+            {query}
+        $$) as (name agtype, etf_count agtype);
+    """
+    cur.execute(sql)
+    results = cur.fetchall()
+
+    data = []
+    for row in results:
+        data.append({
+            "운용사": str(row[0]).strip('"') if row[0] else "",
+            "ETF 수": int(row[1]) if row[1] else 0
+        })
+    return pd.DataFrame(data)
+
+
+def get_etfs_by_company(cur, company_name):
+    """특정 운용사의 ETF 목록"""
+    query = f"""
+        MATCH (c:Company {{name: '{company_name}'}})<-[:MANAGED_BY]-(e:ETF)
+        RETURN e.code, e.name
+        ORDER BY e.name
+    """
+    sql = f"""
+        SELECT * FROM cypher('etf_graph', $$
+            {query}
+        $$) as (code agtype, name agtype);
+    """
+    cur.execute(sql)
+    results = cur.fetchall()
+
+    data = []
+    for row in results:
+        data.append({
+            "ETF코드": str(row[0]).strip('"') if row[0] else "",
+            "ETF명": str(row[1]).strip('"') if row[1] else ""
+        })
+    return pd.DataFrame(data)
+
+
+def get_market_list(cur):
+    """시장 목록 조회"""
+    query = """
+        MATCH (m:Market)
+        RETURN m.name
+        ORDER BY m.name
+    """
+    sql = f"""
+        SELECT * FROM cypher('etf_graph', $$
+            {query}
+        $$) as (name agtype);
+    """
+    cur.execute(sql)
+    results = cur.fetchall()
+    return [str(row[0]).strip('"') for row in results if row[0]]
+
+
+def get_sectors_by_market(cur, market_name):
+    """특정 시장의 섹터 목록 (종목 수 포함)"""
+    query = f"""
+        MATCH (m:Market {{name: '{market_name}'}})<-[:PART_OF]-(sec:Sector)<-[:BELONGS_TO]-(s:Stock)
+        RETURN sec.name, count(s) as stock_count
+        ORDER BY count(s) DESC
+    """
+    sql = f"""
+        SELECT * FROM cypher('etf_graph', $$
+            {query}
+        $$) as (name agtype, stock_count agtype);
+    """
+    cur.execute(sql)
+    results = cur.fetchall()
+
+    data = []
+    for row in results:
+        data.append({
+            "섹터": str(row[0]).strip('"') if row[0] else "",
+            "종목 수": int(row[1]) if row[1] else 0
+        })
+    return pd.DataFrame(data)
+
+
+def get_stocks_by_sector(cur, sector_name):
+    """특정 섹터의 종목 목록"""
+    query = f"""
+        MATCH (sec:Sector {{name: '{sector_name}'}})<-[:BELONGS_TO]-(s:Stock)
+        RETURN s.code, s.name
+        ORDER BY s.name
+    """
+    sql = f"""
+        SELECT * FROM cypher('etf_graph', $$
+            {query}
+        $$) as (code agtype, name agtype);
+    """
+    cur.execute(sql)
+    results = cur.fetchall()
+
+    data = []
+    for row in results:
+        data.append({
+            "종목코드": str(row[0]).strip('"') if row[0] else "",
+            "종목명": str(row[1]).strip('"') if row[1] else ""
+        })
+    return pd.DataFrame(data)
+
+
 def get_etf_list(cur, limit=100):
     """ETF 목록 조회 (HOLDS 관계가 있는 유니버스 ETF만, AUM 순)"""
     # 그래프에서 ETF 목록 조회
@@ -381,6 +512,19 @@ def get_stock_etfs(cur, stock_code):
     return pd.DataFrame(data)
 
 
+def get_etf_code_name_map(cur):
+    """ETF 코드-이름 매핑 조회"""
+    sql = """
+        SELECT * FROM cypher('etf_graph', $$
+            MATCH (e:ETF)
+            RETURN e.code, e.name
+        $$) as (code agtype, name agtype);
+    """
+    cur.execute(sql)
+    results = cur.fetchall()
+    return {str(row[0]).strip('"'): str(row[1]).strip('"') for row in results if row[0]}
+
+
 def create_etf_graph(cur, etf_code, etf_name, limit=20):
     """ETF 중심 그래프 생성 (원형 레이아웃, 비중순 배치)"""
     import math
@@ -407,6 +551,9 @@ def create_etf_graph(cur, etf_code, etf_name, limit=20):
     if df.empty:
         return G
 
+    # ETF 코드-이름 매핑 조회 (구성종목 중 ETF 판별용)
+    etf_map = get_etf_code_name_map(cur)
+
     df = df.head(limit)
     num_nodes = len(df)
     max_weight = df["비중(%)"].max() if not df.empty else 1
@@ -416,8 +563,8 @@ def create_etf_graph(cur, etf_code, etf_name, limit=20):
     # 원형 배치 (12시 방향부터 시계방향, 비중 높은순)
     radius = 250
     for idx, (_, row) in enumerate(df.iterrows()):
-        stock_code = row["종목코드"]
-        stock_name = row["종목명"]
+        holding_code = row["종목코드"]
+        holding_name = row["종목명"]
         weight = row["비중(%)"]
 
         if pd.isna(weight):
@@ -430,12 +577,25 @@ def create_etf_graph(cur, etf_code, etf_name, limit=20):
         x = radius * math.cos(angle)
         y = radius * math.sin(angle)
 
+        # 구성종목이 ETF인지 확인
+        is_holding_etf = holding_code in etf_map
+        if is_holding_etf:
+            # ETF인 경우 ETF 이름 사용
+            display_name = etf_map[holding_code]
+            node_color = COLORS["etf_primary"]
+            node_type = "ETF"
+        else:
+            # Stock인 경우 기존 이름 사용
+            display_name = holding_name
+            node_color = COLORS["stock_primary"]
+            node_type = "종목"
+
         G.add_node(
-            stock_code,
-            label=f"{stock_name}\n{weight:.1f}%",
-            color=COLORS["stock_primary"],
+            holding_code,
+            label=f"{display_name}\n{weight:.1f}%",
+            color=node_color,
             size=node_size,
-            title=f"종목: {stock_name}\n코드: {stock_code}\n비중: {weight:.2f}%",
+            title=f"{node_type}: {display_name}\n코드: {holding_code}\n비중: {weight:.2f}%",
             font={"size": 11, "color": "#1e293b"},
             borderWidth=2,
             shadow=True,
@@ -445,7 +605,7 @@ def create_etf_graph(cur, etf_code, etf_name, limit=20):
 
         edge_width = 1 + (weight / max_weight) * 4
         G.add_edge(
-            etf_code, stock_code,
+            etf_code, holding_code,
             width=edge_width,
             color={"color": COLORS["edge_color"], "highlight": COLORS["highlight"]},
             title=f"비중: {weight:.2f}%"
@@ -682,12 +842,21 @@ def main():
             etf_count = get_etf_count(cur)
             stock_count = get_stock_count(cur)
             holds_count = get_holds_count(cur)
+            company_count = get_company_count(cur)
+            sector_count = get_sector_count(cur)
+            market_count = get_market_count(cur)
 
         col1, col2 = st.columns(2)
         with col1:
             st.metric("ETF", f"{etf_count:,}")
         with col2:
             st.metric("종목", f"{stock_count:,}")
+
+        col3, col4 = st.columns(2)
+        with col3:
+            st.metric("운용사", f"{company_count:,}")
+        with col4:
+            st.metric("섹터", f"{sector_count:,}")
 
         st.metric("보유관계", f"{holds_count:,}")
 
@@ -726,7 +895,7 @@ def main():
         """, unsafe_allow_html=True)
 
     # 탭 구성
-    tab1, tab2 = st.tabs(["🔍 그래프 탐색", "📋 데이터 조회"])
+    tab1, tab2, tab3 = st.tabs(["🔍 그래프 탐색", "🏢 운용사/섹터", "📋 데이터 조회"])
 
     with tab1:
         # ETF, 종목 목록 조회
@@ -784,6 +953,98 @@ def main():
                         render_graph(G, height="700px")
 
     with tab2:
+        st.markdown("### 운용사/섹터 조회")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("#### 🏢 운용사별 ETF")
+
+            # 운용사 목록 조회
+            with st.spinner("운용사 목록 조회 중..."):
+                company_df = get_company_list(cur)
+
+            if company_df.empty:
+                st.info("운용사 데이터가 없습니다.")
+            else:
+                # 운용사 선택
+                company_options = [f"{row['운용사']} ({row['ETF 수']}개)" for _, row in company_df.iterrows()]
+                selected_company = st.selectbox(
+                    "운용사 선택",
+                    company_options,
+                    key="company_select"
+                )
+
+                if selected_company:
+                    company_name = selected_company.rsplit(" (", 1)[0]
+
+                    # 해당 운용사의 ETF 목록
+                    with st.spinner("ETF 목록 조회 중..."):
+                        etf_by_company = get_etfs_by_company(cur, company_name)
+
+                    st.markdown(f"**{company_name}** - {len(etf_by_company)}개 ETF")
+                    st.dataframe(etf_by_company, use_container_width=True, height=400)
+
+                    st.download_button(
+                        "📥 CSV 다운로드",
+                        etf_by_company.to_csv(index=False, encoding='utf-8-sig'),
+                        f"{company_name}_etf_list.csv",
+                        "text/csv",
+                        key="company_download"
+                    )
+
+        with col2:
+            st.markdown("#### 📊 섹터별 종목")
+
+            # 시장 목록 조회
+            with st.spinner("시장 목록 조회 중..."):
+                market_list = get_market_list(cur)
+
+            if not market_list:
+                st.info("시장/섹터 데이터가 없습니다.")
+            else:
+                # 시장 선택
+                selected_market = st.selectbox(
+                    "시장 선택",
+                    market_list,
+                    key="market_select"
+                )
+
+                if selected_market:
+                    # 해당 시장의 섹터 목록
+                    with st.spinner("섹터 목록 조회 중..."):
+                        sector_df = get_sectors_by_market(cur, selected_market)
+
+                    if sector_df.empty:
+                        st.info("섹터 데이터가 없습니다.")
+                    else:
+                        # 섹터 선택
+                        sector_options = [f"{row['섹터']} ({row['종목 수']}개)" for _, row in sector_df.iterrows()]
+                        selected_sector = st.selectbox(
+                            "섹터 선택",
+                            sector_options,
+                            key="sector_select"
+                        )
+
+                        if selected_sector:
+                            sector_name = selected_sector.rsplit(" (", 1)[0]
+
+                            # 해당 섹터의 종목 목록
+                            with st.spinner("종목 목록 조회 중..."):
+                                stocks_by_sector = get_stocks_by_sector(cur, sector_name)
+
+                            st.markdown(f"**{selected_market} > {sector_name}** - {len(stocks_by_sector)}개 종목")
+                            st.dataframe(stocks_by_sector, use_container_width=True, height=400)
+
+                            st.download_button(
+                                "📥 CSV 다운로드",
+                                stocks_by_sector.to_csv(index=False, encoding='utf-8-sig'),
+                                f"{sector_name}_stock_list.csv",
+                                "text/csv",
+                                key="sector_download"
+                            )
+
+    with tab3:
         st.markdown("### 데이터 조회")
 
         query_type = st.radio(

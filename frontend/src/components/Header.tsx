@@ -7,7 +7,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Search, BookmarkIcon, Sparkles, User, LogOut } from 'lucide-react'
+import { Search, BookmarkIcon, Sparkles, PieChart, User, LogOut } from 'lucide-react'
 
 export default function Header() {
   const { user, isAuthenticated, logout } = useAuth()
@@ -33,6 +33,13 @@ export default function Header() {
             >
               <BookmarkIcon className="w-4 h-4" />
               워치리스트
+            </Link>
+            <Link
+              to="/portfolio"
+              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+            >
+              <PieChart className="w-4 h-4" />
+              포트폴리오
             </Link>
             <Link
               to="/ai"

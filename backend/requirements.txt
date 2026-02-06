@@ -16,3 +16,4 @@ anthropic>=0.77.0
 pgvector>=0.2.5
 alembic>=1.18.3
 smolagents>=1.24.0
+yfinance>=1.1.0

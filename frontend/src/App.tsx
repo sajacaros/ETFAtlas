@@ -5,6 +5,7 @@ import HomePage from './app/HomePage'
 import ETFDetailPage from './app/ETFDetailPage'
 import WatchlistPage from './app/WatchlistPage'
 import AIPage from './app/AIPage'
+import PortfolioPage from './app/PortfolioPage'
 import LoginPage from './app/LoginPage'
 import AuthCallbackPage from './app/AuthCallbackPage'
 import { Toaster } from './components/ui/toaster'
@@ -19,6 +20,7 @@ function App() {
             <Route path="/" element={<HomePage />} />
             <Route path="/etf/:code" element={<ETFDetailPage />} />
             <Route path="/watchlist" element={<WatchlistPage />} />
+            <Route path="/portfolio" element={<PortfolioPage />} />
             <Route path="/ai" element={<AIPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/auth/callback" element={<AuthCallbackPage />} />

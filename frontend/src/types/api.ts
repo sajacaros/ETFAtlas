@@ -89,3 +89,60 @@ export interface RecommendationResponse {
   insights: Insight[]
   summary: string
 }
+
+// Portfolio types
+export type CalculationBase = 'CURRENT_TOTAL' | 'TARGET_AMOUNT'
+export type AdjustmentStatus = 'BUY' | 'SELL' | 'HOLD'
+
+export interface Portfolio {
+  id: number
+  name: string
+  calculation_base: CalculationBase
+  target_total_amount: number | null
+}
+
+export interface TargetAllocationItem {
+  id: number
+  portfolio_id: number
+  ticker: string
+  target_weight: number
+}
+
+export interface HoldingItem {
+  id: number
+  portfolio_id: number
+  ticker: string
+  quantity: number
+}
+
+export interface PortfolioDetail {
+  id: number
+  name: string
+  calculation_base: CalculationBase
+  target_total_amount: number | null
+  target_allocations: TargetAllocationItem[]
+  holdings: HoldingItem[]
+}
+
+export interface CalculationRow {
+  ticker: string
+  name: string
+  target_weight: number
+  current_price: number
+  target_amount: number
+  target_quantity: number
+  holding_quantity: number
+  holding_amount: number
+  required_quantity: number
+  adjustment_amount: number
+  status: AdjustmentStatus
+}
+
+export interface CalculationResult {
+  rows: CalculationRow[]
+  base_amount: number
+  total_weight: number
+  total_holding_amount: number
+  total_adjustment_amount: number
+  weight_warning: string | null
+}

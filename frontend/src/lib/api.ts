@@ -12,6 +12,11 @@ import type {
   Signal,
   Insight,
   RecommendationResponse,
+  Portfolio,
+  PortfolioDetail,
+  TargetAllocationItem,
+  HoldingItem,
+  CalculationResult,
 } from '@/types/api'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
@@ -118,6 +123,55 @@ export const aiApi = {
   },
   getInsights: async () => {
     const { data } = await api.get<Insight[]>('/ai/insights')
+    return data
+  },
+}
+
+// Portfolio
+export const portfolioApi = {
+  getAll: async () => {
+    const { data } = await api.get<Portfolio[]>('/portfolios/')
+    return data
+  },
+  get: async (id: number) => {
+    const { data } = await api.get<PortfolioDetail>(`/portfolios/${id}`)
+    return data
+  },
+  create: async (params: { name: string; calculation_base: string; target_total_amount?: number | null }) => {
+    const { data } = await api.post<Portfolio>('/portfolios/', params)
+    return data
+  },
+  update: async (id: number, params: { name?: string; calculation_base?: string; target_total_amount?: number | null }) => {
+    const { data } = await api.put<Portfolio>(`/portfolios/${id}`, params)
+    return data
+  },
+  delete: async (id: number) => {
+    await api.delete(`/portfolios/${id}`)
+  },
+  addTarget: async (portfolioId: number, params: { ticker: string; target_weight: number }) => {
+    const { data } = await api.post<TargetAllocationItem>(`/portfolios/${portfolioId}/targets`, params)
+    return data
+  },
+  updateTarget: async (portfolioId: number, targetId: number, params: { target_weight: number }) => {
+    const { data } = await api.put<TargetAllocationItem>(`/portfolios/${portfolioId}/targets/${targetId}`, params)
+    return data
+  },
+  deleteTarget: async (portfolioId: number, targetId: number) => {
+    await api.delete(`/portfolios/${portfolioId}/targets/${targetId}`)
+  },
+  addHolding: async (portfolioId: number, params: { ticker: string; quantity: number }) => {
+    const { data } = await api.post<HoldingItem>(`/portfolios/${portfolioId}/holdings`, params)
+    return data
+  },
+  updateHolding: async (portfolioId: number, holdingId: number, params: { quantity: number }) => {
+    const { data } = await api.put<HoldingItem>(`/portfolios/${portfolioId}/holdings/${holdingId}`, params)
+    return data
+  },
+  deleteHolding: async (portfolioId: number, holdingId: number) => {
+    await api.delete(`/portfolios/${portfolioId}/holdings/${holdingId}`)
+  },
+  calculate: async (portfolioId: number) => {
+    const { data } = await api.get<CalculationResult>(`/portfolios/${portfolioId}/calculate`)
     return data
   },
 }

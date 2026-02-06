@@ -16,6 +16,50 @@ import logging
 
 log = logging.getLogger(__name__)
 
+# ETF 이름 prefix → 운용사 매핑
+ETF_COMPANY_MAP = {
+    # 삼성
+    'KODEX': '삼성자산운용',
+    'KoAct': '삼성액티브자산운용',
+    # 미래에셋
+    'TIGER': '미래에셋자산운용',
+    # KB
+    'RISE': 'KB자산운용',
+    # 한국투자
+    'ACE': '한국투자신탁운용',
+    # NH아문디
+    'HANARO': 'NH아문디자산운용',
+    # 신한
+    'SOL': '신한자산운용',
+    # 한화
+    'PLUS': '한화자산운용',
+    # 키움
+    'KIWOOM': '키움자산운용',
+    # 하나
+    '1Q': '하나자산운용',
+    # 타임폴리오
+    'TIMEFOLIO': '타임폴리오자산운용',
+    'TIME': '타임폴리오자산운용',
+    # 우리
+    'WON': '우리자산운용',
+    # 기타
+    '마이다스': '마이다스자산운용',
+    '파워': '교보악사자산운용',
+    'BNK': 'BNK자산운용',
+    'DAISHIN343': '대신자산운용',
+    'HK': '흥국자산운용',
+    'UNICORN': '현대자산운용',
+}
+
+
+def get_company_from_etf_name(name: str) -> str:
+    """ETF 이름에서 운용사 추출"""
+    for prefix, company in ETF_COMPANY_MAP.items():
+        if name.startswith(prefix):
+            return company
+    return '기타'
+
+
 default_args = {
     'owner': 'etf-atlas',
     'depends_on_past': False,
@@ -417,6 +461,27 @@ def collect_etf_metadata(**context):
                     'updated_at': datetime.now().isoformat()
                 })
 
+                # Company 노드 생성 및 MANAGED_BY 관계 연결
+                company = get_company_from_etf_name(name)
+                cypher_company_merge = """
+                    MERGE (c:Company {name: $company})
+                    RETURN c
+                """
+                execute_cypher(cur, cypher_company_merge, {
+                    'company': company
+                })
+
+                cypher_managed_by = """
+                    MATCH (e:ETF {code: $code})
+                    MATCH (c:Company {name: $company})
+                    MERGE (e)-[:MANAGED_BY]->(c)
+                    RETURN 1
+                """
+                execute_cypher(cur, cypher_managed_by, {
+                    'code': ticker,
+                    'company': company
+                })
+
                 time.sleep(0.1)
 
             except Exception as e:
@@ -447,6 +512,31 @@ def collect_holdings(**context):
         log.warning("No tickers to process")
         return
 
+    # ETF 티커 목록 조회 (보유종목이 ETF인지 확인용)
+    etf_tickers = set(stock.get_etf_ticker_list(trading_date if trading_date else context['ds_nodash']))
+
+    # 종목 -> (시장, 섹터) 매핑 생성
+    stock_sector_map = {}
+    query_date = trading_date if trading_date else context['ds_nodash']
+
+    for market in ['KOSPI', 'KOSDAQ']:
+        try:
+            # 해당 시장의 업종 인덱스 목록 조회
+            sector_codes = stock.get_index_ticker_list(query_date, market)
+            for sector_code in sector_codes:
+                try:
+                    sector_name = stock.get_index_ticker_name(sector_code)
+                    sector_tickers = stock.get_index_portfolio_deposit_file(sector_code, query_date)
+                    if sector_tickers is not None:
+                        for ticker in sector_tickers:
+                            stock_sector_map[ticker] = (market, sector_name)
+                except Exception:
+                    continue
+        except Exception as e:
+            log.warning(f"Failed to get sector info for {market}: {e}")
+
+    log.info(f"Built sector map for {len(stock_sector_map)} stocks")
+
     conn = get_db_connection()
     cur = init_age(conn)
 
@@ -472,9 +562,15 @@ def collect_holdings(**context):
                     # 인덱스가 종목 코드 (티커)
                     stock_code = str(idx)
 
-                    # 종목명은 별도 API 호출로 조회
+                    # 보유종목이 ETF인지 확인
+                    is_etf = stock_code in etf_tickers
+
+                    # 종목명 조회 (ETF면 ETF명, 아니면 주식명)
                     try:
-                        result = stock.get_market_ticker_name(stock_code)
+                        if is_etf:
+                            result = stock.get_etf_ticker_name(stock_code)
+                        else:
+                            result = stock.get_market_ticker_name(stock_code)
                         # DataFrame이 반환된 경우 None 처리
                         if isinstance(result, pd.DataFrame):
                             stock_name = None
@@ -508,13 +604,56 @@ def collect_holdings(**context):
 
                     cypher_stock_set = """
                         MATCH (s:Stock {code: $code})
-                        SET s.name = $name
+                        SET s.name = $name, s.is_etf = $is_etf
                         RETURN s
                     """
                     execute_cypher(cur, cypher_stock_set, {
                         'code': stock_code,
-                        'name': stock_name
+                        'name': stock_name,
+                        'is_etf': is_etf
                     })
+
+                    # Stock -> Sector -> Market 관계 생성 (ETF가 아닌 경우만)
+                    if not is_etf and stock_code in stock_sector_map:
+                        market, sector = stock_sector_map[stock_code]
+
+                        # Market 노드 생성
+                        cypher_market = """
+                            MERGE (m:Market {name: $market})
+                            RETURN m
+                        """
+                        execute_cypher(cur, cypher_market, {'market': market})
+
+                        # Sector 노드 생성
+                        cypher_sector = """
+                            MERGE (sec:Sector {name: $sector})
+                            RETURN sec
+                        """
+                        execute_cypher(cur, cypher_sector, {'sector': sector})
+
+                        # Sector -> Market 관계 (PART_OF)
+                        cypher_sector_market = """
+                            MATCH (sec:Sector {name: $sector})
+                            MATCH (m:Market {name: $market})
+                            MERGE (sec)-[:PART_OF]->(m)
+                            RETURN 1
+                        """
+                        execute_cypher(cur, cypher_sector_market, {
+                            'sector': sector,
+                            'market': market
+                        })
+
+                        # Stock -> Sector 관계 (BELONGS_TO)
+                        cypher_stock_sector = """
+                            MATCH (s:Stock {code: $code})
+                            MATCH (sec:Sector {name: $sector})
+                            MERGE (s)-[:BELONGS_TO]->(sec)
+                            RETURN 1
+                        """
+                        execute_cypher(cur, cypher_stock_sector, {
+                            'code': stock_code,
+                            'sector': sector
+                        })
 
                     # Create HOLDS edge (MERGE와 SET을 분리 - AGE 버그 우회)
                     cypher_holds_merge = """
@@ -789,6 +928,91 @@ def detect_changes(etf_code: str, today_holdings: dict, yesterday_holdings: dict
     return changes
 
 
+def collect_stock_prices(**context):
+    """Task 6: Stock 가격 데이터 수집 (is_etf=false인 Stock만)"""
+    from pykrx import stock
+
+    ti = context['ti']
+    trading_date = ti.xcom_pull(task_ids='fetch_krx_data', key='trading_date')
+    date_str = f"{trading_date[:4]}-{trading_date[4:6]}-{trading_date[6:8]}" if trading_date else context['ds']
+
+    conn = get_db_connection()
+    cur = init_age(conn)
+
+    try:
+        # 1. 그래프에서 is_etf=false인 Stock 코드 목록 조회
+        cypher_stocks = """
+            MATCH (s:Stock)
+            WHERE s.is_etf = false
+            RETURN s.code
+        """
+        results = execute_cypher(cur, cypher_stocks, {})
+        stock_codes = set()
+        for row in results:
+            if row[0]:
+                import json
+                data = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+                if data:
+                    stock_codes.add(str(data).strip('"'))
+
+        if not stock_codes:
+            log.warning("No stocks to collect prices for")
+            return
+
+        log.info(f"Collecting prices for {len(stock_codes)} stocks")
+
+        # 2. pykrx로 해당 날짜 전체 주식 OHLCV 조회 (한 번에)
+        df = stock.get_market_ohlcv_by_ticker(trading_date if trading_date else context['ds_nodash'])
+
+        if df is None or df.empty:
+            log.warning("No market OHLCV data available")
+            return
+
+        # 3. stock_codes에 해당하는 것만 필터링해서 저장
+        cur_db = conn.cursor()
+        success_count = 0
+
+        for code in stock_codes:
+            if code in df.index:
+                try:
+                    row = df.loc[code]
+                    cur_db.execute("""
+                        INSERT INTO stock_prices (
+                            stock_code, date, open_price, high_price, low_price, close_price,
+                            volume, change_rate
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (stock_code, date) DO UPDATE SET
+                            open_price = EXCLUDED.open_price,
+                            high_price = EXCLUDED.high_price,
+                            low_price = EXCLUDED.low_price,
+                            close_price = EXCLUDED.close_price,
+                            volume = EXCLUDED.volume,
+                            change_rate = EXCLUDED.change_rate
+                    """, (
+                        code,
+                        date_str,
+                        float(row.get('시가', 0)),
+                        float(row.get('고가', 0)),
+                        float(row.get('저가', 0)),
+                        float(row.get('종가', 0)),
+                        int(row.get('거래량', 0)),
+                        float(row.get('등락률', 0))
+                    ))
+                    success_count += 1
+                except Exception as e:
+                    log.warning(f"Failed to save stock price for {code}: {e}")
+                    continue
+
+        conn.commit()
+        cur_db.close()
+        log.info(f"Stock price collection complete. Success: {success_count}")
+
+    finally:
+        cur.close()
+        conn.close()
+
+
 # Define tasks
 start = EmptyOperator(task_id='start', dag=dag)
 end = EmptyOperator(task_id='end', dag=dag)
@@ -835,14 +1059,21 @@ task_detect_changes = PythonOperator(
     dag=dag,
 )
 
+task_collect_stock_prices = PythonOperator(
+    task_id='collect_stock_prices',
+    python_callable=collect_stock_prices,
+    dag=dag,
+)
+
 # Define dependencies
 # 1. ETF 목록(pykrx) + KRX 데이터를 병렬로 수집
 # 2. 두 데이터를 기반으로 필터링
 # 3. 필터링된 ETF만 메타데이터 + 구성종목 수집
 # 4. 가격: 모든 ETF 수집 (KRX 데이터 기반)
+# 5. Stock 가격: 구성종목 수집 후 is_etf=false인 Stock만 수집
 start >> [task_collect_etf_list, task_fetch_krx_data]
 [task_collect_etf_list, task_fetch_krx_data] >> task_filter_etf_list
 task_filter_etf_list >> [task_collect_metadata, task_collect_holdings]
 task_fetch_krx_data >> task_collect_prices  # 가격은 모든 ETF 대상
-task_collect_holdings >> task_detect_changes >> end
-[task_collect_prices, task_collect_metadata] >> end
+task_collect_holdings >> [task_collect_stock_prices, task_detect_changes]
+[task_collect_stock_prices, task_detect_changes, task_collect_prices, task_collect_metadata] >> end

@@ -1,6 +1,7 @@
 -- Enable extensions
 CREATE EXTENSION IF NOT EXISTS age;
 CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 -- Load AGE
 LOAD 'age';
@@ -36,6 +37,20 @@ CREATE TABLE IF NOT EXISTS users (
     name VARCHAR(255),
     picture VARCHAR(512),
     google_id VARCHAR(255) UNIQUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ETFs (전체 ETF 메타데이터 - 검색용)
+CREATE TABLE IF NOT EXISTS etfs (
+    id SERIAL PRIMARY KEY,
+    code VARCHAR(20) UNIQUE NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    issuer VARCHAR(255),
+    category VARCHAR(100),
+    net_assets BIGINT,
+    expense_ratio NUMERIC(5, 4),
+    inception_date DATE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -137,6 +152,8 @@ CREATE INDEX IF NOT EXISTS idx_watchlist_items_etf_code ON watchlist_items(etf_c
 CREATE INDEX IF NOT EXISTS idx_portfolios_user_id ON portfolios(user_id);
 CREATE INDEX IF NOT EXISTS idx_target_allocations_portfolio_id ON target_allocations(portfolio_id);
 CREATE INDEX IF NOT EXISTS idx_holdings_portfolio_id ON holdings(portfolio_id);
+CREATE INDEX IF NOT EXISTS idx_etfs_name_trgm ON etfs USING GIN (name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_etfs_code_trgm ON etfs USING GIN (code gin_trgm_ops);
 
 -- Grant permissions
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO postgres;

@@ -1,7 +1,7 @@
 from typing import List, Optional
 from datetime import date, timedelta
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, text
 from ..models.etf import ETF, Stock, ETFHolding, ETFPrice
 
 
@@ -10,9 +10,25 @@ class ETFService:
         self.db = db
 
     def search_etfs(self, query: str, limit: int = 20) -> List[ETF]:
-        return self.db.query(ETF).filter(
-            (ETF.code.ilike(f"%{query}%")) | (ETF.name.ilike(f"%{query}%"))
-        ).limit(limit).all()
+        rows = self.db.execute(
+            text("""
+                SELECT code
+                FROM etfs
+                WHERE name % :q OR code ILIKE :like_q
+                ORDER BY
+                    (code ILIKE :like_q) DESC,
+                    similarity(name, :q) DESC
+                LIMIT :lim
+            """),
+            {"q": query, "like_q": f"%{query}%", "lim": limit}
+        ).fetchall()
+        if not rows:
+            return []
+        codes = [row.code for row in rows]
+        etfs = self.db.query(ETF).filter(ETF.code.in_(codes)).all()
+        # Preserve the order from the SQL query
+        code_to_etf = {etf.code: etf for etf in etfs}
+        return [code_to_etf[code] for code in codes if code in code_to_etf]
 
     def get_etf_by_code(self, code: str) -> Optional[ETF]:
         return self.db.query(ETF).filter(ETF.code == code).first()

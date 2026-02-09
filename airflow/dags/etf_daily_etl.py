@@ -1013,6 +1013,44 @@ def collect_stock_prices(**context):
         conn.close()
 
 
+def sync_etfs_to_rdb(**context):
+    """모든 ETF 메타데이터를 etfs RDB 테이블에 동기화"""
+    ti = context['ti']
+    krx_data_dicts = ti.xcom_pull(task_ids='fetch_krx_data')
+    if not krx_data_dicts:
+        log.warning("No KRX data available for RDB sync")
+        return
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    success_count = 0
+
+    try:
+        for item in krx_data_dicts:
+            try:
+                issuer = get_company_from_etf_name(item['name'])
+                cur.execute("""
+                    INSERT INTO etfs (code, name, issuer, net_assets, updated_at)
+                    VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
+                    ON CONFLICT (code) DO UPDATE SET
+                        name = EXCLUDED.name,
+                        issuer = EXCLUDED.issuer,
+                        net_assets = EXCLUDED.net_assets,
+                        updated_at = CURRENT_TIMESTAMP
+                """, (item['code'], item['name'], issuer, item['net_assets']))
+                success_count += 1
+            except Exception as e:
+                log.warning(f"Failed to sync ETF {item.get('code', 'unknown')}: {e}")
+                continue
+
+        conn.commit()
+        log.info(f"Synced {success_count} ETFs to RDB etfs table")
+
+    finally:
+        cur.close()
+        conn.close()
+
+
 # Define tasks
 start = EmptyOperator(task_id='start', dag=dag)
 end = EmptyOperator(task_id='end', dag=dag)
@@ -1065,15 +1103,22 @@ task_collect_stock_prices = PythonOperator(
     dag=dag,
 )
 
+task_sync_etfs_to_rdb = PythonOperator(
+    task_id='sync_etfs_to_rdb',
+    python_callable=sync_etfs_to_rdb,
+    dag=dag,
+)
+
 # Define dependencies
 # 1. ETF 목록(pykrx) + KRX 데이터를 병렬로 수집
 # 2. 두 데이터를 기반으로 필터링
 # 3. 필터링된 ETF만 메타데이터 + 구성종목 수집
 # 4. 가격: 모든 ETF 수집 (KRX 데이터 기반)
-# 5. Stock 가격: 구성종목 수집 후 is_etf=false인 Stock만 수집
+# 5. RDB sync: 모든 ETF 메타를 etfs 테이블에 동기화 (KRX 데이터 기반)
+# 6. Stock 가격: 구성종목 수집 후 is_etf=false인 Stock만 수집
 start >> [task_collect_etf_list, task_fetch_krx_data]
 [task_collect_etf_list, task_fetch_krx_data] >> task_filter_etf_list
 task_filter_etf_list >> [task_collect_metadata, task_collect_holdings]
-task_fetch_krx_data >> task_collect_prices  # 가격은 모든 ETF 대상
+task_fetch_krx_data >> [task_collect_prices, task_sync_etfs_to_rdb]  # 가격 + RDB sync는 모든 ETF 대상
 task_collect_holdings >> [task_collect_stock_prices, task_detect_changes]
-[task_collect_stock_prices, task_detect_changes, task_collect_prices, task_collect_metadata] >> end
+[task_sync_etfs_to_rdb, task_collect_stock_prices, task_detect_changes, task_collect_prices, task_collect_metadata] >> end

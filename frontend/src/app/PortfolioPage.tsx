@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Trash2, ArrowLeft, AlertTriangle, RefreshCw, Pencil, Check, BarChart3 } from 'lucide-react'
+import { Plus, Trash2, ArrowLeft, AlertTriangle, RefreshCw, Pencil, Check, BarChart3, Eye, EyeOff } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -19,6 +19,7 @@ import { useToast } from '@/hooks/use-toast'
 import type { Portfolio, PortfolioDetail, CalculationResult, CalculationBase, DashboardSummary } from '@/types/api'
 import PortfolioTable from '@/components/PortfolioTable'
 import AddTickerDialog from '@/components/AddTickerDialog'
+import { useAmountVisibility, formatMaskedNumber } from '@/hooks/useAmountVisibility'
 
 function formatNumber(n: number): string {
   return new Intl.NumberFormat('ko-KR').format(Math.round(n))
@@ -28,6 +29,7 @@ export default function PortfolioPage() {
   const { isAuthenticated } = useAuth()
   const { toast } = useToast()
   const navigate = useNavigate()
+  const { visible: amountVisible, toggle: toggleAmount } = useAmountVisibility()
 
   const [portfolios, setPortfolios] = useState<Portfolio[]>([])
   const [loading, setLoading] = useState(true)
@@ -171,7 +173,7 @@ export default function PortfolioPage() {
       setDetail({ ...detail, ...updated })
       setPortfolios(portfolios.map((p) => (p.id === selectedId ? { ...p, ...updated } : p)))
 
-      if (field === 'target_total_amount') {
+      if (field === 'target_total_amount' && !isEditing) {
         loadCalc(selectedId)
       }
     } catch {
@@ -185,7 +187,6 @@ export default function PortfolioPage() {
       const updated = await portfolioApi.update(selectedId, { calculation_base: base })
       setDetail({ ...detail, ...updated })
       setPortfolios(portfolios.map((p) => (p.id === selectedId ? { ...p, ...updated } : p)))
-      loadCalc(selectedId)
     } catch {
       toast({ title: '업데이트 실패', variant: 'destructive' })
     }
@@ -197,7 +198,6 @@ export default function PortfolioPage() {
     try {
       await portfolioApi.addHolding(selectedId, { ticker: 'CASH', quantity: amount })
       await loadDetail(selectedId)
-      loadCalc(selectedId)
     } catch {
       toast({ title: '예수금 업데이트 실패', variant: 'destructive' })
     }
@@ -210,7 +210,7 @@ export default function PortfolioPage() {
       if (quantity > 0) {
         await portfolioApi.addHolding(selectedId, { ticker, quantity })
       }
-      await Promise.all([loadDetail(selectedId), loadCalc(selectedId)])
+      await loadDetail(selectedId)
       toast({ title: '종목이 추가되었습니다' })
     } catch {
       toast({ title: '종목 추가 실패', variant: 'destructive' })
@@ -221,7 +221,6 @@ export default function PortfolioPage() {
     if (!selectedId) return
     try {
       await portfolioApi.updateTarget(selectedId, targetId, { target_weight: weight })
-      loadCalc(selectedId)
     } catch {
       toast({ title: '비중 업데이트 실패', variant: 'destructive' })
     }
@@ -236,7 +235,6 @@ export default function PortfolioPage() {
         await portfolioApi.addHolding(selectedId, { ticker, quantity })
         await loadDetail(selectedId)
       }
-      loadCalc(selectedId)
     } catch {
       toast({ title: '수량 업데이트 실패', variant: 'destructive' })
     }
@@ -247,7 +245,7 @@ export default function PortfolioPage() {
     try {
       if (targetId) await portfolioApi.deleteTarget(selectedId, targetId)
       if (holdingId) await portfolioApi.deleteHolding(selectedId, holdingId)
-      await Promise.all([loadDetail(selectedId), loadCalc(selectedId)])
+      await loadDetail(selectedId)
       toast({ title: '종목이 삭제되었습니다' })
     } catch {
       toast({ title: '삭제 실패', variant: 'destructive' })
@@ -547,19 +545,34 @@ export default function PortfolioPage() {
           <CardContent className="py-4">
             <div className="flex flex-wrap items-center gap-6">
               <div>
-                <p className="text-sm text-muted-foreground">총 평가금액</p>
+                <div className="flex items-center gap-1">
+                  <p className="text-sm text-muted-foreground">총 평가금액</p>
+                  <button
+                    onClick={toggleAmount}
+                    className="text-muted-foreground hover:text-foreground transition-colors p-0.5"
+                    aria-label={amountVisible ? '금액 숨기기' : '금액 보기'}
+                  >
+                    {amountVisible ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                  </button>
+                </div>
                 <p className="text-2xl font-bold font-mono">
-                  {formatNumber(totalSummary.current_value)}원
+                  {formatMaskedNumber(totalSummary.current_value, amountVisible)}{amountVisible && '원'}
                 </p>
               </div>
               {totalSummary.daily && (
                 <div>
                   <p className="text-sm text-muted-foreground">전일대비</p>
                   <p className={`text-lg font-mono font-semibold ${totalSummary.daily.amount >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
-                    {totalSummary.daily.amount >= 0 ? '+' : ''}{formatNumber(totalSummary.daily.amount)}원
-                    <span className="text-sm ml-1">
-                      ({totalSummary.daily.rate >= 0 ? '+' : ''}{totalSummary.daily.rate.toFixed(2)}%)
-                    </span>
+                    {amountVisible ? (
+                      <>
+                        {totalSummary.daily.amount >= 0 ? '+' : ''}{formatNumber(totalSummary.daily.amount)}원
+                        <span className="text-sm ml-1">
+                          ({totalSummary.daily.rate >= 0 ? '+' : ''}{totalSummary.daily.rate.toFixed(2)}%)
+                        </span>
+                      </>
+                    ) : (
+                      '••••••'
+                    )}
                   </p>
                 </div>
               )}
@@ -568,17 +581,6 @@ export default function PortfolioPage() {
                   <p className="text-sm text-muted-foreground">YTD</p>
                   <p className={`text-lg font-mono font-semibold ${totalSummary.ytd.amount >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
                     {totalSummary.ytd.rate >= 0 ? '+' : ''}{totalSummary.ytd.rate.toFixed(2)}%
-                  </p>
-                </div>
-              )}
-              {totalSummary.cumulative && (
-                <div>
-                  <p className="text-sm text-muted-foreground">누적 수익</p>
-                  <p className={`text-lg font-mono font-semibold ${totalSummary.cumulative.amount >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
-                    {totalSummary.cumulative.amount >= 0 ? '+' : ''}{formatNumber(totalSummary.cumulative.amount)}원
-                    <span className="text-sm ml-1">
-                      ({totalSummary.cumulative.rate >= 0 ? '+' : ''}{totalSummary.cumulative.rate.toFixed(2)}%)
-                    </span>
                   </p>
                 </div>
               )}
@@ -620,12 +622,28 @@ export default function PortfolioPage() {
                 </Button>
               </CardHeader>
               <CardContent>
-                <div className="text-sm text-muted-foreground">
-                  {p.calculation_base === 'CURRENT_TOTAL' ? '보유 총액 기준' : '목표 금액 기준'}
-                  {p.target_total_amount && (
-                    <span className="ml-2 font-mono">
-                      ({formatNumber(p.target_total_amount)}원)
-                    </span>
+                <div>
+                  {p.current_value != null && p.current_value_date ? (
+                    <>
+                      <p className="text-lg font-bold font-mono">
+                        <span className="text-sm font-normal text-muted-foreground">
+                          종가({p.current_value_date.slice(2).replace(/-/g, '/')}):
+                        </span>{' '}
+                        {formatMaskedNumber(p.current_value, amountVisible)}{amountVisible && '원'}
+                      </p>
+                      <p className={`text-sm font-mono ${(p.daily_change_rate ?? 0) >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
+                        {amountVisible ? (
+                          <>
+                            {(p.daily_change_amount ?? 0) >= 0 ? '+' : ''}{formatNumber(p.daily_change_amount ?? 0)}원
+                            ({(p.daily_change_rate ?? 0) >= 0 ? '+' : ''}{(p.daily_change_rate ?? 0).toFixed(2)}%)
+                          </>
+                        ) : (
+                          '••••••'
+                        )}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">평가금액 없음</p>
                   )}
                 </div>
                 <Button

@@ -1013,78 +1013,6 @@ def collect_stock_prices(**context):
         conn.close()
 
 
-def snapshot_portfolios(**context):
-    """포트폴리오 스냅샷 저장 - 각 포트폴리오의 일별 평가금액/증감 기록"""
-    from decimal import Decimal
-
-    ti = context['ti']
-    trading_date = ti.xcom_pull(task_ids='fetch_krx_data', key='trading_date')
-    if not trading_date:
-        log.warning("No trading_date available, skipping snapshot")
-        return
-
-    date_str = f"{trading_date[:4]}-{trading_date[4:6]}-{trading_date[6:8]}"
-
-    conn = get_db_connection()
-    cur = conn.cursor()
-
-    try:
-        cur.execute("SELECT DISTINCT portfolio_id FROM holdings")
-        portfolio_ids = [row[0] for row in cur.fetchall()]
-
-        if not portfolio_ids:
-            log.info("No portfolios with holdings found")
-            return
-
-        snapshot_count = 0
-        for pid in portfolio_ids:
-            cur.execute("SELECT ticker, quantity FROM holdings WHERE portfolio_id = %s", (pid,))
-            holdings = cur.fetchall()
-
-            total_value = Decimal('0')
-            for ticker, qty in holdings:
-                if ticker == 'CASH':
-                    total_value += qty
-                else:
-                    cur.execute("""
-                        SELECT close_price FROM etf_prices
-                        WHERE etf_code = %s AND date = %s
-                    """, (ticker, date_str))
-                    row = cur.fetchone()
-                    if row:
-                        total_value += qty * row[0]
-
-            # 전일 스냅샷 조회
-            cur.execute("""
-                SELECT total_value FROM portfolio_snapshots
-                WHERE portfolio_id = %s AND date < %s
-                ORDER BY date DESC LIMIT 1
-            """, (pid, date_str))
-            prev = cur.fetchone()
-            prev_value = prev[0] if prev else None
-            change_amount = total_value - prev_value if prev_value else None
-            change_rate = float(change_amount / prev_value * 100) if prev_value and prev_value != 0 else None
-
-            # UPSERT
-            cur.execute("""
-                INSERT INTO portfolio_snapshots (portfolio_id, date, total_value, prev_value, change_amount, change_rate, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, NOW())
-                ON CONFLICT (portfolio_id, date)
-                DO UPDATE SET total_value = EXCLUDED.total_value,
-                              prev_value = EXCLUDED.prev_value,
-                              change_amount = EXCLUDED.change_amount,
-                              change_rate = EXCLUDED.change_rate
-            """, (pid, date_str, total_value, prev_value, change_amount, change_rate))
-            snapshot_count += 1
-
-        conn.commit()
-        log.info(f"Snapshot complete. Saved {snapshot_count} portfolio snapshots")
-
-    finally:
-        cur.close()
-        conn.close()
-
-
 def sync_etfs_to_rdb(**context):
     """모든 ETF 메타데이터를 etfs RDB 테이블에 동기화"""
     ti = context['ti']
@@ -1117,6 +1045,191 @@ def sync_etfs_to_rdb(**context):
 
         conn.commit()
         log.info(f"Synced {success_count} ETFs to RDB etfs table")
+
+    finally:
+        cur.close()
+        conn.close()
+
+
+def tag_new_etfs(**context):
+    """Tag 미분류 ETF에 LLM 기반 태그 자동 부여
+
+    1. AGE에서 TAGGED 관계가 없는 ETF 목록 조회
+    2. 각 ETF의 보유종목 TOP 10 조회
+    3. GPT-4.1-mini로 태그 분류 (10개씩 배치)
+    4. Tag 노드 + TAGGED 관계 저장
+    """
+    import os
+    import json as json_module
+    import re
+
+    def parse_agtype(value):
+        """AGE agtype 값에서 ::vertex, ::edge 등 타입 접미사를 제거 후 JSON 파싱"""
+        if not value:
+            return None
+        s = str(value)
+        # ::vertex, ::edge, ::path 등 접미사 제거
+        s = re.sub(r'::(?:vertex|edge|path|text|integer|float|boolean)\s*$', '', s)
+        try:
+            return json_module.loads(s)
+        except (json_module.JSONDecodeError, ValueError):
+            return s.strip('"')
+
+    api_key = os.environ.get('OPENAI_API_KEY', '')
+    if not api_key:
+        log.warning("OPENAI_API_KEY not set, skipping ETF tagging")
+        return
+
+    conn = get_db_connection()
+    cur = init_age(conn)
+
+    try:
+        # 1. 전체 ETF 목록 조회 (노드 전체 반환 — execute_cypher는 단일 컬럼만 지원)
+        all_etfs_result = execute_cypher(cur, """
+            MATCH (e:ETF)
+            RETURN e
+        """)
+        all_etfs = {}
+        for row in all_etfs_result:
+            if row[0]:
+                data = parse_agtype(row[0])
+                if isinstance(data, dict):
+                    props = data.get('properties', data)
+                    code = props.get('code', '')
+                    name = props.get('name', '')
+                    if code:
+                        all_etfs[code] = name
+
+        if not all_etfs:
+            log.info("No ETFs found in graph")
+            return
+
+        # 2. 이미 태그된 ETF 제외
+        tagged_result = execute_cypher(cur, """
+            MATCH (e:ETF)-[:TAGGED]->(t:Tag)
+            RETURN e.code
+        """)
+        tagged_codes = set()
+        for row in tagged_result:
+            if row[0]:
+                data = parse_agtype(row[0])
+                if data:
+                    tagged_codes.add(str(data).strip('"'))
+
+        untagged = {code: name for code, name in all_etfs.items() if code not in tagged_codes}
+        if not untagged:
+            log.info("All ETFs are already tagged")
+            return
+
+        log.info(f"Found {len(untagged)} untagged ETFs (total: {len(all_etfs)}, tagged: {len(tagged_codes)})")
+
+        # 3. 각 ETF의 보유종목 TOP 10 조회 (종목명만 — 태그 분류에 충분)
+        etf_holdings = {}
+        for code in untagged:
+            holdings_result = execute_cypher(cur, """
+                MATCH (e:ETF {code: $code})-[h:HOLDS]->(s:Stock)
+                RETURN s.name
+                ORDER BY h.weight DESC
+                LIMIT 10
+            """, {'code': code})
+
+            holdings = []
+            for row in holdings_result:
+                if row[0]:
+                    stock_name = parse_agtype(row[0])
+                    if stock_name and isinstance(stock_name, str):
+                        holdings.append(stock_name)
+
+            etf_holdings[code] = holdings
+
+        # 4. LLM 배치 호출
+        from langchain_openai import ChatOpenAI
+        from langchain_core.prompts import ChatPromptTemplate
+        from pydantic import BaseModel
+
+        class ETFTagResult(BaseModel):
+            code: str
+            tags: list[str]
+
+        class ETFTagBatchResult(BaseModel):
+            results: list[ETFTagResult]
+
+        llm = ChatOpenAI(
+            model="gpt-4.1-mini",
+            temperature=0,
+            api_key=api_key,
+        )
+        structured_llm = llm.with_structured_output(ETFTagBatchResult)
+
+        system_prompt = """한국 주식시장 ETF 분류 전문가입니다.
+ETF 이름과 주요 보유종목을 보고, 적절한 태그를 1~3개 부여하세요.
+
+태그 예시:
+- 산업: 반도체, 2차전지, 바이오, 자동차, 금융, 건설, 화학, 에너지, 철강, 조선, 통신, 유통, 엔터
+- 테마: AI, 로봇, 친환경, 우주항공, 방산, 원전, K뷰티
+- 스타일: 대형주, 중소형주, 배당, 가치, 성장, 고배당
+- 지수: 시장지수
+
+규칙:
+- 코스피200, 코스닥150 같은 시장 대표 지수 ETF는 "시장지수" 태그
+- 가능한 구체적인 산업/테마 태그를 우선 사용
+- 새로운 태그 생성 가능하되, 기존 태그와 중복되지 않도록 주의"""
+
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            ("human", "다음 ETF들을 분류해주세요:\n\n{etf_list}"),
+        ])
+
+        chain = prompt | structured_llm
+
+        # 10개씩 배치 처리
+        untagged_list = list(untagged.items())
+        batch_size = 10
+        total_tagged = 0
+
+        for i in range(0, len(untagged_list), batch_size):
+            batch = untagged_list[i:i + batch_size]
+
+            # ETF 정보 텍스트 생성
+            etf_texts = []
+            for code, name in batch:
+                holdings = etf_holdings.get(code, [])
+                holdings_str = ", ".join(holdings[:10]) if holdings else "보유종목 정보 없음"
+                etf_texts.append(f"- [{code}] {name}: {holdings_str}")
+
+            etf_list_text = "\n".join(etf_texts)
+
+            try:
+                result = chain.invoke({"etf_list": etf_list_text})
+
+                # 5. Tag 노드 + TAGGED 관계 저장
+                for etf_tag in result.results:
+                    for tag_name in etf_tag.tags:
+                        # Tag 노드 MERGE
+                        execute_cypher(cur, """
+                            MERGE (t:Tag {name: $tag_name})
+                            RETURN t
+                        """, {'tag_name': tag_name})
+
+                        # TAGGED 관계 MERGE
+                        execute_cypher(cur, """
+                            MATCH (e:ETF {code: $code})
+                            MATCH (t:Tag {name: $tag_name})
+                            MERGE (e)-[:TAGGED]->(t)
+                            RETURN 1
+                        """, {'code': etf_tag.code, 'tag_name': tag_name})
+
+                    total_tagged += 1
+
+                conn.commit()
+                log.info(f"Tagged batch {i // batch_size + 1}: {len(batch)} ETFs")
+
+            except Exception as e:
+                log.warning(f"Failed to tag batch {i // batch_size + 1}: {e}")
+                conn.rollback()
+                continue
+
+        log.info(f"ETF tagging complete. Tagged: {total_tagged}/{len(untagged)}")
 
     finally:
         cur.close()
@@ -1181,9 +1294,9 @@ task_sync_etfs_to_rdb = PythonOperator(
     dag=dag,
 )
 
-task_snapshot_portfolios = PythonOperator(
-    task_id='snapshot_portfolios',
-    python_callable=snapshot_portfolios,
+task_tag_new_etfs = PythonOperator(
+    task_id='tag_new_etfs',
+    python_callable=tag_new_etfs,
     dag=dag,
 )
 
@@ -1194,10 +1307,12 @@ task_snapshot_portfolios = PythonOperator(
 # 4. 가격: 모든 ETF 수집 (KRX 데이터 기반)
 # 5. RDB sync: 모든 ETF 메타를 etfs 테이블에 동기화 (KRX 데이터 기반)
 # 6. Stock 가격: 구성종목 수집 후 is_etf=false인 Stock만 수집
+# 7. ETF 태깅: 메타데이터 + 구성종목 수집 완료 후 LLM 기반 태그 분류
+# NOTE: 포트폴리오 스냅샷은 portfolio_snapshot DAG로 분리됨
 start >> [task_collect_etf_list, task_fetch_krx_data]
 [task_collect_etf_list, task_fetch_krx_data] >> task_filter_etf_list
 task_filter_etf_list >> [task_collect_metadata, task_collect_holdings]
 task_fetch_krx_data >> [task_collect_prices, task_sync_etfs_to_rdb]  # 가격 + RDB sync는 모든 ETF 대상
 task_collect_holdings >> [task_collect_stock_prices, task_detect_changes]
-task_collect_prices >> task_snapshot_portfolios  # 가격 수집 후 포트폴리오 스냅샷
-[task_sync_etfs_to_rdb, task_collect_stock_prices, task_detect_changes, task_snapshot_portfolios, task_collect_metadata] >> end
+[task_collect_metadata, task_collect_holdings] >> task_tag_new_etfs  # 메타+구성종목 완료 후 태깅
+[task_sync_etfs_to_rdb, task_collect_stock_prices, task_detect_changes, task_collect_prices, task_tag_new_etfs] >> end

@@ -21,6 +21,10 @@ class PortfolioResponse(BaseModel):
     name: str
     calculation_base: str
     target_total_amount: Optional[Decimal] = None
+    current_value: Optional[Decimal] = None
+    current_value_date: Optional[str] = None
+    daily_change_amount: Optional[Decimal] = None
+    daily_change_rate: Optional[float] = None
 
     class Config:
         from_attributes = True

@@ -47,10 +47,9 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        VITE_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
     container_name: etf-atlas-frontend
-    environment:
-      VITE_API_URL: ${VITE_API_URL:-http://localhost:9601}
-      VITE_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
     ports:
       - "${FRONTEND_PORT:-9600}:80"
     depends_on:

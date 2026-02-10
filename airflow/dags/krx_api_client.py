@@ -94,11 +94,9 @@ class KRXApiClient:
         """API 응답 아이템을 ETFDailyData로 변환"""
         code = item.get("ISU_CD", "")
 
-        # 6자리 숫자 코드만 처리 (일부 ETF는 영문자 포함)
+        # 6자리 코드 추출 (영문자 포함 코드도 허용, 예: 0131V0)
         if len(code) >= 6:
             ticker = code[:6]
-            if not ticker.isdigit():
-                return None
         else:
             return None
 

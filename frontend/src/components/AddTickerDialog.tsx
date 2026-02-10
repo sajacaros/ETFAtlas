@@ -54,7 +54,7 @@ export default function AddTickerDialog({ onAdd }: AddTickerDialogProps) {
 
     setSearching(true)
     try {
-      const results = await etfsApi.search(query, 5)
+      const results = await etfsApi.search(query, 10)
       setSearchResults(results.map((r) => ({ code: r.code, name: r.name })))
     } catch {
       setSearchResults([])

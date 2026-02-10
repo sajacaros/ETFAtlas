@@ -10,18 +10,21 @@ class ETFService:
         self.db = db
 
     def search_etfs(self, query: str, limit: int = 20) -> List[ETF]:
+        stripped = query.replace(" ", "")
         rows = self.db.execute(
             text("""
                 SELECT code
                 FROM etfs
-                WHERE name ILIKE :like_q OR code ILIKE :like_q OR LOWER(name) % LOWER(:q)
+                WHERE name ILIKE :like_q OR code ILIKE :like_q
+                   OR REPLACE(name, ' ', '') ILIKE :like_stripped
+                   OR LOWER(name) % LOWER(:q)
                 ORDER BY
                     (code ILIKE :like_q) DESC,
-                    (name ILIKE :like_q) DESC,
+                    (name ILIKE :like_q OR REPLACE(name, ' ', '') ILIKE :like_stripped) DESC,
                     similarity(LOWER(name), LOWER(:q)) DESC
                 LIMIT :lim
             """),
-            {"q": query, "like_q": f"%{query}%", "lim": limit}
+            {"q": query, "like_q": f"%{query}%", "like_stripped": f"%{stripped}%", "lim": limit}
         ).fetchall()
         if not rows:
             return []

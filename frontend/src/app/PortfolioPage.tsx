@@ -16,7 +16,7 @@ import {
 import { portfolioApi } from '@/lib/api'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/use-toast'
-import type { Portfolio, PortfolioDetail, CalculationResult, CalculationBase } from '@/types/api'
+import type { Portfolio, PortfolioDetail, CalculationResult, CalculationBase, DashboardSummary } from '@/types/api'
 import PortfolioTable from '@/components/PortfolioTable'
 import AddTickerDialog from '@/components/AddTickerDialog'
 
@@ -42,6 +42,9 @@ export default function PortfolioPage() {
   const [newBase, setNewBase] = useState<CalculationBase>('CURRENT_TOTAL')
   const [newAmount, setNewAmount] = useState('')
 
+  // Total summary
+  const [totalSummary, setTotalSummary] = useState<DashboardSummary | null>(null)
+
   // Edit mode
   const [isEditing, setIsEditing] = useState(false)
 
@@ -62,7 +65,16 @@ export default function PortfolioPage() {
         setLoading(false)
       }
     }
+    const fetchTotalSummary = async () => {
+      try {
+        const { summary } = await portfolioApi.getTotalDashboard()
+        setTotalSummary(summary)
+      } catch {
+        // 스냅샷이 없는 경우 무시
+      }
+    }
     fetchPortfolios()
+    fetchTotalSummary()
   }, [isAuthenticated])
 
   const loadDetail = useCallback(async (id: number) => {
@@ -529,6 +541,51 @@ export default function PortfolioPage() {
           </DialogContent>
         </Dialog>
       </div>
+
+      {totalSummary && portfolios.length > 0 && (
+        <Card>
+          <CardContent className="py-4">
+            <div className="flex flex-wrap items-center gap-6">
+              <div>
+                <p className="text-sm text-muted-foreground">총 평가금액</p>
+                <p className="text-2xl font-bold font-mono">
+                  {formatNumber(totalSummary.current_value)}원
+                </p>
+              </div>
+              {totalSummary.daily && (
+                <div>
+                  <p className="text-sm text-muted-foreground">전일대비</p>
+                  <p className={`text-lg font-mono font-semibold ${totalSummary.daily.amount >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
+                    {totalSummary.daily.amount >= 0 ? '+' : ''}{formatNumber(totalSummary.daily.amount)}원
+                    <span className="text-sm ml-1">
+                      ({totalSummary.daily.rate >= 0 ? '+' : ''}{totalSummary.daily.rate.toFixed(2)}%)
+                    </span>
+                  </p>
+                </div>
+              )}
+              {totalSummary.ytd && (
+                <div>
+                  <p className="text-sm text-muted-foreground">YTD</p>
+                  <p className={`text-lg font-mono font-semibold ${totalSummary.ytd.amount >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
+                    {totalSummary.ytd.rate >= 0 ? '+' : ''}{totalSummary.ytd.rate.toFixed(2)}%
+                  </p>
+                </div>
+              )}
+              {totalSummary.cumulative && (
+                <div>
+                  <p className="text-sm text-muted-foreground">누적 수익</p>
+                  <p className={`text-lg font-mono font-semibold ${totalSummary.cumulative.amount >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
+                    {totalSummary.cumulative.amount >= 0 ? '+' : ''}{formatNumber(totalSummary.cumulative.amount)}원
+                    <span className="text-sm ml-1">
+                      ({totalSummary.cumulative.rate >= 0 ? '+' : ''}{totalSummary.cumulative.rate.toFixed(2)}%)
+                    </span>
+                  </p>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {portfolios.length === 0 ? (
         <Card>

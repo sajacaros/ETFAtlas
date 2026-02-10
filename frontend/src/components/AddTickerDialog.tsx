@@ -73,7 +73,7 @@ export default function AddTickerDialog({ onAdd }: AddTickerDialogProps) {
   const handleSubmit = () => {
     if (!validated || !targetWeight) return
     const tickerValue = ticker.toUpperCase() === 'CASH' ? 'CASH' : ticker
-    onAdd(tickerValue, parseFloat(targetWeight), parseFloat(quantity || '0'))
+    onAdd(tickerValue, parseFloat(targetWeight), parseInt(quantity || '0', 10))
     reset()
     setOpen(false)
   }
@@ -99,26 +99,30 @@ export default function AddTickerDialog({ onAdd }: AddTickerDialogProps) {
         <div className="space-y-4">
           <div className="space-y-2">
             <Label>ETF 코드 (또는 CASH)</Label>
-            <Input
-              placeholder="종목코드 또는 이름 검색"
-              value={ticker}
-              onChange={(e) => handleSearch(e.target.value)}
-            />
-            {searching && <p className="text-xs text-muted-foreground">검색 중...</p>}
-            {searchResults.length > 0 && (
-              <div className="border rounded-md max-h-40 overflow-y-auto">
-                {searchResults.map((r) => (
-                  <button
-                    key={r.code}
-                    className="w-full text-left px-3 py-2 hover:bg-muted text-sm flex justify-between"
-                    onClick={() => handleSelectTicker(r.code, r.name)}
-                  >
-                    <span className="font-mono">{r.code}</span>
-                    <span className="text-muted-foreground">{r.name}</span>
-                  </button>
-                ))}
-              </div>
-            )}
+            <div className="relative">
+              <Input
+                placeholder="종목코드 또는 이름 검색"
+                value={ticker}
+                onChange={(e) => handleSearch(e.target.value)}
+              />
+              {(searching || searchResults.length > 0) && (
+                <div className="absolute z-50 w-full mt-1 border rounded-md max-h-40 overflow-y-auto bg-background shadow-md">
+                  {searching && (
+                    <p className="text-xs text-muted-foreground px-3 py-2">검색 중...</p>
+                  )}
+                  {searchResults.map((r) => (
+                    <button
+                      key={r.code}
+                      className="w-full text-left px-3 py-2 hover:bg-muted text-sm flex justify-between"
+                      onClick={() => handleSelectTicker(r.code, r.name)}
+                    >
+                      <span className="font-mono">{r.code}</span>
+                      <span className="text-muted-foreground">{r.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             {validated && tickerName && (
               <p className="text-sm text-green-600">{tickerName}</p>
             )}

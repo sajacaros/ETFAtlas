@@ -118,13 +118,18 @@ def calculate_portfolio(
         required_quantity = target_quantity - qty
         adjustment_amount = (required_quantity * price).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
 
-        # Status
-        if required_quantity > 0:
-            status = "BUY"
-        elif required_quantity < 0:
-            status = "SELL"
-        else:
+        # Status: compare current weight vs target weight
+        current_weight = (holding_amount * Decimal("100") / base_amount).quantize(
+            Decimal("0.1"), rounding=ROUND_HALF_UP
+        ) if base_amount > 0 else Decimal("0")
+        weight_diff = abs(weight - current_weight)
+
+        if weight_diff < Decimal("1"):
             status = "HOLD"
+        elif required_quantity > 0:
+            status = "BUY"
+        else:
+            status = "SELL"
 
         total_weight += weight
         total_holding_amount += holding_amount

@@ -14,10 +14,11 @@ class ETFService:
             text("""
                 SELECT code
                 FROM etfs
-                WHERE name % :q OR code ILIKE :like_q
+                WHERE name ILIKE :like_q OR code ILIKE :like_q OR LOWER(name) % LOWER(:q)
                 ORDER BY
                     (code ILIKE :like_q) DESC,
-                    similarity(name, :q) DESC
+                    (name ILIKE :like_q) DESC,
+                    similarity(LOWER(name), LOWER(:q)) DESC
                 LIMIT :lim
             """),
             {"q": query, "like_q": f"%{query}%", "lim": limit}

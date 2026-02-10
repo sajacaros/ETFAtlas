@@ -101,3 +101,29 @@ class PortfolioDetailResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# --- Dashboard ---
+class DashboardSummaryItem(BaseModel):
+    amount: Decimal
+    rate: float
+
+
+class DashboardSummary(BaseModel):
+    current_value: Decimal
+    cumulative: DashboardSummaryItem
+    daily: Optional[DashboardSummaryItem] = None
+    monthly: Optional[DashboardSummaryItem] = None
+    yearly: Optional[DashboardSummaryItem] = None
+    ytd: Optional[DashboardSummaryItem] = None
+
+
+class ChartDataPoint(BaseModel):
+    date: str
+    total_value: Decimal
+    cumulative_rate: float
+
+
+class DashboardResponse(BaseModel):
+    summary: DashboardSummary
+    chart_data: list[ChartDataPoint]

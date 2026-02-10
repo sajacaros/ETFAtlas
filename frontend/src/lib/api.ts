@@ -17,6 +17,7 @@ import type {
   TargetAllocationItem,
   HoldingItem,
   CalculationResult,
+  DashboardResponse,
 } from '@/types/api'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
@@ -172,6 +173,14 @@ export const portfolioApi = {
   },
   calculate: async (portfolioId: number) => {
     const { data } = await api.get<CalculationResult>(`/portfolios/${portfolioId}/calculate`)
+    return data
+  },
+  getDashboard: async (portfolioId: number) => {
+    const { data } = await api.get<DashboardResponse>(`/portfolios/${portfolioId}/dashboard`)
+    return data
+  },
+  getTotalDashboard: async () => {
+    const { data } = await api.get<DashboardResponse>('/portfolios/dashboard/total')
     return data
   },
 }

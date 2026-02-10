@@ -1013,6 +1013,78 @@ def collect_stock_prices(**context):
         conn.close()
 
 
+def snapshot_portfolios(**context):
+    """포트폴리오 스냅샷 저장 - 각 포트폴리오의 일별 평가금액/증감 기록"""
+    from decimal import Decimal
+
+    ti = context['ti']
+    trading_date = ti.xcom_pull(task_ids='fetch_krx_data', key='trading_date')
+    if not trading_date:
+        log.warning("No trading_date available, skipping snapshot")
+        return
+
+    date_str = f"{trading_date[:4]}-{trading_date[4:6]}-{trading_date[6:8]}"
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("SELECT DISTINCT portfolio_id FROM holdings")
+        portfolio_ids = [row[0] for row in cur.fetchall()]
+
+        if not portfolio_ids:
+            log.info("No portfolios with holdings found")
+            return
+
+        snapshot_count = 0
+        for pid in portfolio_ids:
+            cur.execute("SELECT ticker, quantity FROM holdings WHERE portfolio_id = %s", (pid,))
+            holdings = cur.fetchall()
+
+            total_value = Decimal('0')
+            for ticker, qty in holdings:
+                if ticker == 'CASH':
+                    total_value += qty
+                else:
+                    cur.execute("""
+                        SELECT close_price FROM etf_prices
+                        WHERE etf_code = %s AND date = %s
+                    """, (ticker, date_str))
+                    row = cur.fetchone()
+                    if row:
+                        total_value += qty * row[0]
+
+            # 전일 스냅샷 조회
+            cur.execute("""
+                SELECT total_value FROM portfolio_snapshots
+                WHERE portfolio_id = %s AND date < %s
+                ORDER BY date DESC LIMIT 1
+            """, (pid, date_str))
+            prev = cur.fetchone()
+            prev_value = prev[0] if prev else None
+            change_amount = total_value - prev_value if prev_value else None
+            change_rate = float(change_amount / prev_value * 100) if prev_value and prev_value != 0 else None
+
+            # UPSERT
+            cur.execute("""
+                INSERT INTO portfolio_snapshots (portfolio_id, date, total_value, prev_value, change_amount, change_rate, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                ON CONFLICT (portfolio_id, date)
+                DO UPDATE SET total_value = EXCLUDED.total_value,
+                              prev_value = EXCLUDED.prev_value,
+                              change_amount = EXCLUDED.change_amount,
+                              change_rate = EXCLUDED.change_rate
+            """, (pid, date_str, total_value, prev_value, change_amount, change_rate))
+            snapshot_count += 1
+
+        conn.commit()
+        log.info(f"Snapshot complete. Saved {snapshot_count} portfolio snapshots")
+
+    finally:
+        cur.close()
+        conn.close()
+
+
 def sync_etfs_to_rdb(**context):
     """모든 ETF 메타데이터를 etfs RDB 테이블에 동기화"""
     ti = context['ti']
@@ -1109,6 +1181,12 @@ task_sync_etfs_to_rdb = PythonOperator(
     dag=dag,
 )
 
+task_snapshot_portfolios = PythonOperator(
+    task_id='snapshot_portfolios',
+    python_callable=snapshot_portfolios,
+    dag=dag,
+)
+
 # Define dependencies
 # 1. ETF 목록(pykrx) + KRX 데이터를 병렬로 수집
 # 2. 두 데이터를 기반으로 필터링
@@ -1121,4 +1199,5 @@ start >> [task_collect_etf_list, task_fetch_krx_data]
 task_filter_etf_list >> [task_collect_metadata, task_collect_holdings]
 task_fetch_krx_data >> [task_collect_prices, task_sync_etfs_to_rdb]  # 가격 + RDB sync는 모든 ETF 대상
 task_collect_holdings >> [task_collect_stock_prices, task_detect_changes]
-[task_sync_etfs_to_rdb, task_collect_stock_prices, task_detect_changes, task_collect_prices, task_collect_metadata] >> end
+task_collect_prices >> task_snapshot_portfolios  # 가격 수집 후 포트폴리오 스냅샷
+[task_sync_etfs_to_rdb, task_collect_stock_prices, task_detect_changes, task_snapshot_portfolios, task_collect_metadata] >> end

@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { Plus, Trash2, ArrowLeft, AlertTriangle } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Plus, Trash2, ArrowLeft, AlertTriangle, RefreshCw, Pencil, Check, BarChart3 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -26,6 +27,7 @@ function formatNumber(n: number): string {
 export default function PortfolioPage() {
   const { isAuthenticated } = useAuth()
   const { toast } = useToast()
+  const navigate = useNavigate()
 
   const [portfolios, setPortfolios] = useState<Portfolio[]>([])
   const [loading, setLoading] = useState(true)
@@ -40,9 +42,13 @@ export default function PortfolioPage() {
   const [newBase, setNewBase] = useState<CalculationBase>('CURRENT_TOTAL')
   const [newAmount, setNewAmount] = useState('')
 
+  // Edit mode
+  const [isEditing, setIsEditing] = useState(false)
+
   // Settings editing
   const [editName, setEditName] = useState('')
   const [editAmount, setEditAmount] = useState('')
+  const [editCash, setEditCash] = useState('')
 
   useEffect(() => {
     if (!isAuthenticated) return
@@ -65,6 +71,9 @@ export default function PortfolioPage() {
       setDetail(d)
       setEditName(d.name)
       setEditAmount(d.target_total_amount ? String(d.target_total_amount) : '')
+      const cashHolding = d.holdings.find((h) => h.ticker === 'CASH')
+      const cashQty = cashHolding ? Math.round(Number(cashHolding.quantity)) : 0
+      setEditCash(cashQty > 0 ? formatNumber(cashQty) : '')
     } catch {
       toast({ title: '포트폴리오 로드 실패', variant: 'destructive' })
     }
@@ -82,9 +91,26 @@ export default function PortfolioPage() {
     }
   }, [])
 
+  const clearSelection = useCallback(() => {
+    setSelectedId(null)
+    setDetail(null)
+    setCalcResult(null)
+    setIsEditing(false)
+  }, [])
+
+  useEffect(() => {
+    const handlePopState = () => {
+      clearSelection()
+    }
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [clearSelection])
+
   const selectPortfolio = useCallback(async (id: number) => {
     setSelectedId(id)
-    await Promise.all([loadDetail(id), loadCalc(id)])
+    window.history.pushState({ portfolioId: id }, '')
+    await loadDetail(id)
+    loadCalc(id)
   }, [loadDetail, loadCalc])
 
   const handleCreate = async () => {
@@ -107,6 +133,7 @@ export default function PortfolioPage() {
   }
 
   const handleDelete = async (id: number) => {
+    if (!window.confirm('정말 이 포트폴리오를 삭제하시겠습니까?')) return
     try {
       await portfolioApi.delete(id)
       setPortfolios(portfolios.filter((p) => p.id !== id))
@@ -152,6 +179,18 @@ export default function PortfolioPage() {
     }
   }
 
+  const handleUpdateCash = async (value: string) => {
+    if (!selectedId) return
+    const amount = parseInt(value.replace(/,/g, '') || '0', 10)
+    try {
+      await portfolioApi.addHolding(selectedId, { ticker: 'CASH', quantity: amount })
+      await loadDetail(selectedId)
+      loadCalc(selectedId)
+    } catch {
+      toast({ title: '예수금 업데이트 실패', variant: 'destructive' })
+    }
+  }
+
   const handleAddTicker = async (ticker: string, targetWeight: number, quantity: number) => {
     if (!selectedId) return
     try {
@@ -176,17 +215,22 @@ export default function PortfolioPage() {
     }
   }
 
-  const handleUpdateQuantity = async (holdingId: number, quantity: number) => {
+  const handleUpdateQuantity = async (ticker: string, quantity: number, holdingId?: number) => {
     if (!selectedId) return
     try {
-      await portfolioApi.updateHolding(selectedId, holdingId, { quantity })
+      if (holdingId) {
+        await portfolioApi.updateHolding(selectedId, holdingId, { quantity })
+      } else {
+        await portfolioApi.addHolding(selectedId, { ticker, quantity })
+        await loadDetail(selectedId)
+      }
       loadCalc(selectedId)
     } catch {
       toast({ title: '수량 업데이트 실패', variant: 'destructive' })
     }
   }
 
-  const handleDeleteTicker = async (ticker: string, targetId?: number, holdingId?: number) => {
+  const handleDeleteTicker = async (_ticker: string, targetId?: number, holdingId?: number) => {
     if (!selectedId) return
     try {
       if (targetId) await portfolioApi.deleteTarget(selectedId, targetId)
@@ -224,27 +268,61 @@ export default function PortfolioPage() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => {
-              setSelectedId(null)
-              setDetail(null)
-              setCalcResult(null)
-            }}
+            onClick={() => window.history.back()}
           >
             <ArrowLeft className="w-4 h-4 mr-1" />
             목록
           </Button>
-          <Input
-            className="text-xl font-bold border-none shadow-none h-auto py-1 px-2 max-w-xs"
-            value={editName}
-            onChange={(e) => setEditName(e.target.value)}
-            onBlur={() => handleUpdateSettings('name', editName)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                handleUpdateSettings('name', editName)
-                ;(e.target as HTMLInputElement).blur()
-              }
-            }}
-          />
+          {isEditing ? (
+            <Input
+              className="text-xl font-bold border-none shadow-none h-auto py-1 px-2 max-w-xs"
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              onBlur={() => handleUpdateSettings('name', editName)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  handleUpdateSettings('name', editName)
+                  ;(e.target as HTMLInputElement).blur()
+                }
+              }}
+            />
+          ) : (
+            <h2 className="text-xl font-bold py-1 px-2">{detail.name}</h2>
+          )}
+          <div className="flex items-center gap-2 ml-auto">
+            {calcLoading && <span className="text-sm text-muted-foreground">계산 중...</span>}
+            {isEditing && <AddTickerDialog onAdd={handleAddTicker} />}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={calcLoading}
+              onClick={() => selectedId && Promise.all([loadDetail(selectedId), loadCalc(selectedId)])}
+            >
+              <RefreshCw className={`w-4 h-4 ${calcLoading ? 'animate-spin' : ''}`} />
+            </Button>
+            <Button
+              variant={isEditing ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => {
+                if (isEditing && selectedId) {
+                  Promise.all([loadDetail(selectedId), loadCalc(selectedId)])
+                }
+                setIsEditing(!isEditing)
+              }}
+            >
+              {isEditing ? (
+                <>
+                  <Check className="w-4 h-4 mr-1" />
+                  편집 완료
+                </>
+              ) : (
+                <>
+                  <Pencil className="w-4 h-4 mr-1" />
+                  편집
+                </>
+              )}
+            </Button>
+          </div>
         </div>
 
         {/* Settings bar */}
@@ -253,41 +331,83 @@ export default function PortfolioPage() {
             <div className="flex flex-wrap items-center gap-6">
               <div className="flex items-center gap-2">
                 <Label className="text-sm whitespace-nowrap">계산 기준:</Label>
-                <div className="flex gap-1">
-                  <Button
-                    size="sm"
-                    variant={detail.calculation_base === 'CURRENT_TOTAL' ? 'default' : 'outline'}
-                    onClick={() => handleChangeBase('CURRENT_TOTAL')}
-                  >
-                    보유 총액
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={detail.calculation_base === 'TARGET_AMOUNT' ? 'default' : 'outline'}
-                    onClick={() => handleChangeBase('TARGET_AMOUNT')}
-                  >
-                    목표 금액
-                  </Button>
-                </div>
+                {isEditing ? (
+                  <div className="flex gap-1">
+                    <Button
+                      size="sm"
+                      variant={detail.calculation_base === 'CURRENT_TOTAL' ? 'default' : 'outline'}
+                      onClick={() => handleChangeBase('CURRENT_TOTAL')}
+                    >
+                      보유 총액
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={detail.calculation_base === 'TARGET_AMOUNT' ? 'default' : 'outline'}
+                      onClick={() => handleChangeBase('TARGET_AMOUNT')}
+                    >
+                      목표 금액
+                    </Button>
+                  </div>
+                ) : (
+                  <span className="text-sm font-medium">
+                    {detail.calculation_base === 'CURRENT_TOTAL' ? '보유 총액' : '목표 금액'}
+                  </span>
+                )}
               </div>
+
+              {detail.calculation_base === 'CURRENT_TOTAL' && (
+                <div className="flex items-center gap-2">
+                  <Label className="text-sm whitespace-nowrap">예수금:</Label>
+                  {isEditing ? (
+                    <Input
+                      type="text"
+                      inputMode="numeric"
+                      className="w-40 h-8"
+                      value={editCash}
+                      onChange={(e) => {
+                        const raw = e.target.value.replace(/,/g, '')
+                        if (raw === '' || /^\d+$/.test(raw)) {
+                          setEditCash(raw === '' ? '' : formatNumber(parseInt(raw, 10)))
+                        }
+                      }}
+                      onBlur={() => handleUpdateCash(editCash)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          handleUpdateCash(editCash)
+                          ;(e.target as HTMLInputElement).blur()
+                        }
+                      }}
+                      placeholder="예: 500,000"
+                    />
+                  ) : (
+                    <span className="font-mono text-sm">{editCash || '0'}원</span>
+                  )}
+                </div>
+              )}
 
               {detail.calculation_base === 'TARGET_AMOUNT' && (
                 <div className="flex items-center gap-2">
                   <Label className="text-sm whitespace-nowrap">목표 금액:</Label>
-                  <Input
-                    type="number"
-                    className="w-40 h-8"
-                    value={editAmount}
-                    onChange={(e) => setEditAmount(e.target.value)}
-                    onBlur={() => handleUpdateSettings('target_total_amount', editAmount)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        handleUpdateSettings('target_total_amount', editAmount)
-                        ;(e.target as HTMLInputElement).blur()
-                      }
-                    }}
-                    placeholder="예: 10000000"
-                  />
+                  {isEditing ? (
+                    <Input
+                      type="number"
+                      className="w-40 h-8"
+                      value={editAmount}
+                      onChange={(e) => setEditAmount(e.target.value)}
+                      onBlur={() => handleUpdateSettings('target_total_amount', editAmount)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          handleUpdateSettings('target_total_amount', editAmount)
+                          ;(e.target as HTMLInputElement).blur()
+                        }
+                      }}
+                      placeholder="예: 10000000"
+                    />
+                  ) : (
+                    <span className="font-mono text-sm">
+                      {editAmount ? formatNumber(parseFloat(editAmount)) : '0'}원
+                    </span>
+                  )}
                 </div>
               )}
 
@@ -311,13 +431,15 @@ export default function PortfolioPage() {
           </div>
         )}
 
-        {/* Actions */}
-        <div className="flex items-center justify-between">
-          <AddTickerDialog onAdd={handleAddTicker} />
-          {calcLoading && <span className="text-sm text-muted-foreground">계산 중...</span>}
-        </div>
-
         {/* Table */}
+        {calcLoading && !calcResult && (
+          <Card>
+            <CardContent className="py-16 text-center">
+              <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-3 text-muted-foreground" />
+              <p className="text-muted-foreground">종목 데이터를 계산하고 있습니다...</p>
+            </CardContent>
+          </Card>
+        )}
         {calcResult && (
           <PortfolioTable
             rows={calcResult.rows}
@@ -326,6 +448,7 @@ export default function PortfolioPage() {
             totalAdjustmentAmount={calcResult.total_adjustment_amount}
             targetAllocations={detail.target_allocations}
             holdings={detail.holdings}
+            isEditing={isEditing}
             onUpdateWeight={handleUpdateWeight}
             onUpdateQuantity={handleUpdateQuantity}
             onDeleteTicker={handleDeleteTicker}
@@ -339,7 +462,13 @@ export default function PortfolioPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">포트폴리오</h1>
+        <div className="flex items-center gap-4">
+          <h1 className="text-3xl font-bold">포트폴리오</h1>
+          <Button variant="outline" size="sm" onClick={() => navigate('/portfolio/dashboard')}>
+            <BarChart3 className="w-4 h-4 mr-1" />
+            통합 대시보드
+          </Button>
+        </div>
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger asChild>
             <Button>
@@ -442,6 +571,18 @@ export default function PortfolioPage() {
                     </span>
                   )}
                 </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-3"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    navigate(`/portfolio/${p.id}/dashboard`)
+                  }}
+                >
+                  <BarChart3 className="w-4 h-4 mr-1" />
+                  대시보드
+                </Button>
               </CardContent>
             </Card>
           ))}

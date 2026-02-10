@@ -40,7 +40,42 @@ async def get_portfolios(
     db: Session = Depends(get_db)
 ):
     portfolios = db.query(Portfolio).filter(Portfolio.user_id == user_id).all()
-    return portfolios
+
+    # 각 포트폴리오의 최신 스냅샷에서 current_value 가져오기
+    latest_sub = db.query(
+        PortfolioSnapshot.portfolio_id,
+        func.max(PortfolioSnapshot.date).label('max_date'),
+    ).filter(
+        PortfolioSnapshot.portfolio_id.in_([p.id for p in portfolios]),
+    ).group_by(PortfolioSnapshot.portfolio_id).subquery()
+
+    latest_values = db.query(
+        PortfolioSnapshot.portfolio_id,
+        PortfolioSnapshot.total_value,
+        PortfolioSnapshot.date,
+        PortfolioSnapshot.change_amount,
+        PortfolioSnapshot.change_rate,
+    ).join(
+        latest_sub,
+        (PortfolioSnapshot.portfolio_id == latest_sub.c.portfolio_id) &
+        (PortfolioSnapshot.date == latest_sub.c.max_date),
+    ).all()
+
+    value_map = {row.portfolio_id: row for row in latest_values}
+
+    return [
+        PortfolioResponse(
+            id=p.id,
+            name=p.name,
+            calculation_base=p.calculation_base,
+            target_total_amount=p.target_total_amount,
+            current_value=value_map[p.id].total_value if p.id in value_map else None,
+            current_value_date=value_map[p.id].date.isoformat() if p.id in value_map else None,
+            daily_change_amount=value_map[p.id].change_amount if p.id in value_map else None,
+            daily_change_rate=value_map[p.id].change_rate if p.id in value_map else None,
+        )
+        for p in portfolios
+    ]
 
 
 @router.post("/", response_model=PortfolioResponse, status_code=status.HTTP_201_CREATED)

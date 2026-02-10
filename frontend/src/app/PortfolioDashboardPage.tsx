@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Eye, EyeOff } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { portfolioApi } from '@/lib/api'
 import { useAuth } from '@/hooks/useAuth'
 import type { DashboardResponse, DashboardSummaryItem } from '@/types/api'
+import { useAmountVisibility, formatMaskedNumber } from '@/hooks/useAmountVisibility'
 import {
   LineChart,
   Line,
@@ -28,9 +29,11 @@ function formatRate(rate: number): string {
 function SummaryCard({
   title,
   item,
+  amountVisible,
 }: {
   title: string
   item: DashboardSummaryItem | null
+  amountVisible: boolean
 }) {
   if (!item) {
     return (
@@ -62,7 +65,11 @@ function SummaryCard({
           {formatRate(item.rate)}
         </p>
         <p className={`text-sm ${colorClass}`}>
-          {item.amount >= 0 ? '+' : ''}{formatNumber(item.amount)}원
+          {amountVisible ? (
+            <>{item.amount >= 0 ? '+' : ''}{formatNumber(item.amount)}원</>
+          ) : (
+            '••••••'
+          )}
         </p>
       </CardContent>
     </Card>
@@ -74,6 +81,7 @@ export default function PortfolioDashboardPage() {
   const { isAuthenticated } = useAuth()
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null)
   const [loading, setLoading] = useState(true)
+  const { visible: amountVisible, toggle: toggleAmount } = useAmountVisibility()
   const isTotal = !id
 
   useEffect(() => {
@@ -156,32 +164,49 @@ export default function PortfolioDashboardPage() {
 
       {/* Summary Cards */}
       <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
-        <SummaryCard title="전일대비" item={summary.daily} />
-        <SummaryCard title="전달대비" item={summary.monthly} />
-        <SummaryCard title="전년대비" item={summary.yearly} />
-        <SummaryCard title="올해 수익률 (YTD)" item={summary.ytd} />
+        <SummaryCard title="전일대비" item={summary.daily} amountVisible={amountVisible} />
+        <SummaryCard title="전달대비" item={summary.monthly} amountVisible={amountVisible} />
+        <SummaryCard title="전년대비" item={summary.yearly} amountVisible={amountVisible} />
+        <SummaryCard title="올해 수익률 (YTD)" item={summary.ytd} amountVisible={amountVisible} />
       </div>
 
-      {/* Cumulative Banner */}
+      {/* Current Value + Daily Change Banner */}
       <Card>
         <CardContent className="py-4">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <p className="text-sm text-muted-foreground">현재 평가금액</p>
+              <div className="flex items-center gap-1">
+                <p className="text-sm text-muted-foreground">현재 평가금액</p>
+                <button
+                  onClick={toggleAmount}
+                  className="text-muted-foreground hover:text-foreground transition-colors p-0.5"
+                  aria-label={amountVisible ? '금액 숨기기' : '금액 보기'}
+                >
+                  {amountVisible ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                </button>
+              </div>
               <p className="text-2xl font-bold font-mono">
-                {formatNumber(summary.current_value)}원
+                {formatMaskedNumber(summary.current_value, amountVisible)}{amountVisible && '원'}
               </p>
             </div>
-            <div className="text-right">
-              <p className="text-sm text-muted-foreground">누적 수익</p>
-              <p
-                className={`text-lg font-bold ${summary.cumulative.rate >= 0 ? 'text-red-500' : 'text-blue-500'}`}
-              >
-                {summary.cumulative.amount >= 0 ? '+' : ''}
-                {formatNumber(summary.cumulative.amount)}원 (
-                {formatRate(summary.cumulative.rate)})
-              </p>
-            </div>
+            {summary.daily && (
+              <div className="text-right">
+                <p className="text-sm text-muted-foreground">전일대비</p>
+                <p
+                  className={`text-lg font-bold ${summary.daily.rate >= 0 ? 'text-red-500' : 'text-blue-500'}`}
+                >
+                  {amountVisible ? (
+                    <>
+                      {summary.daily.amount >= 0 ? '+' : ''}
+                      {formatNumber(summary.daily.amount)}원 (
+                      {formatRate(summary.daily.rate)})
+                    </>
+                  ) : (
+                    '••••••'
+                  )}
+                </p>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -202,11 +227,11 @@ export default function PortfolioDashboardPage() {
               />
               <YAxis
                 tick={{ fontSize: 12 }}
-                tickFormatter={(v) => formatNumber(v)}
+                tickFormatter={(v) => amountVisible ? formatNumber(v) : '••••'}
               />
               <Tooltip
                 formatter={(value: number) => [
-                  `${formatNumber(value)}원`,
+                  amountVisible ? `${formatNumber(value)}원` : '••••••',
                   '평가금액',
                 ]}
                 labelFormatter={(label) => label}
@@ -223,42 +248,6 @@ export default function PortfolioDashboardPage() {
         </CardContent>
       </Card>
 
-      {/* Cumulative Rate Chart */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">누적 수익률</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={chart_data}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis
-                dataKey="date"
-                tick={{ fontSize: 12 }}
-                tickFormatter={(v) => v.slice(5)}
-              />
-              <YAxis
-                tick={{ fontSize: 12 }}
-                tickFormatter={(v) => `${v}%`}
-              />
-              <Tooltip
-                formatter={(value: number) => [
-                  `${value.toFixed(2)}%`,
-                  '누적 수익률',
-                ]}
-                labelFormatter={(label) => label}
-              />
-              <Line
-                type="monotone"
-                dataKey="cumulative_rate"
-                stroke="#10b981"
-                strokeWidth={2}
-                dot={false}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </CardContent>
-      </Card>
     </div>
   )
 }

@@ -99,6 +99,10 @@ export interface Portfolio {
   name: string
   calculation_base: CalculationBase
   target_total_amount: number | null
+  current_value: number | null
+  current_value_date: string | null
+  daily_change_amount: number | null
+  daily_change_rate: number | null
 }
 
 export interface TargetAllocationItem {
@@ -145,6 +149,24 @@ export interface CalculationResult {
   total_holding_amount: number
   total_adjustment_amount: number
   weight_warning: string | null
+}
+
+// Tag types
+export interface Tag {
+  name: string
+  etf_count: number
+}
+
+export interface TagETF {
+  code: string
+  name: string
+  net_assets: number | null
+}
+
+export interface TagHolding {
+  stock_code: string
+  stock_name: string
+  weight: number
 }
 
 // Dashboard types

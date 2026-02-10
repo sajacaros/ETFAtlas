@@ -1,12 +1,12 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { Search } from 'lucide-react'
+import { Search, ChevronDown, ChevronRight } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
-import { etfsApi, stocksApi } from '@/lib/api'
-import type { ETF, Stock, ETFByStock } from '@/types/api'
+import { etfsApi, stocksApi, tagsApi } from '@/lib/api'
+import type { ETF, Stock, ETFByStock, Tag, TagETF, TagHolding } from '@/types/api'
 
 export default function HomePage() {
   const [searchQuery, setSearchQuery] = useState('')
@@ -16,6 +16,20 @@ export default function HomePage() {
   const [etfsByStock, setEtfsByStock] = useState<ETFByStock[]>([])
   const [selectedStock, setSelectedStock] = useState<Stock | null>(null)
   const [loading, setLoading] = useState(false)
+
+  // Tag tab state
+  const [tags, setTags] = useState<Tag[]>([])
+  const [selectedTag, setSelectedTag] = useState<string | null>(null)
+  const [tagETFs, setTagETFs] = useState<TagETF[]>([])
+  const [expandedETF, setExpandedETF] = useState<string | null>(null)
+  const [holdings, setHoldings] = useState<Record<string, TagHolding[]>>({})
+  const [tagLoading, setTagLoading] = useState(false)
+
+  useEffect(() => {
+    if (activeTab === 'tag' && tags.length === 0) {
+      tagsApi.getAll().then(setTags).catch(console.error)
+    }
+  }, [activeTab, tags.length])
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) return
@@ -50,6 +64,37 @@ export default function HomePage() {
     }
   }
 
+  const handleTagClick = async (tagName: string) => {
+    if (selectedTag === tagName) return
+    setSelectedTag(tagName)
+    setExpandedETF(null)
+    setTagLoading(true)
+    try {
+      const etfs = await tagsApi.getETFs(tagName)
+      setTagETFs(etfs)
+    } catch (error) {
+      console.error('Failed to fetch tag ETFs:', error)
+    } finally {
+      setTagLoading(false)
+    }
+  }
+
+  const handleETFExpand = async (etfCode: string) => {
+    if (expandedETF === etfCode) {
+      setExpandedETF(null)
+      return
+    }
+    setExpandedETF(etfCode)
+    if (!holdings[etfCode] && selectedTag) {
+      try {
+        const h = await tagsApi.getHoldings(selectedTag, etfCode)
+        setHoldings((prev) => ({ ...prev, [etfCode]: h }))
+      } catch (error) {
+        console.error('Failed to fetch holdings:', error)
+      }
+    }
+  }
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       handleSearch()
@@ -65,23 +110,26 @@ export default function HomePage() {
         </p>
       </div>
 
-      <div className="max-w-2xl mx-auto">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-5 h-5" />
-          <Input
-            placeholder="ETF 또는 종목명을 검색하세요..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyDown={handleKeyDown}
-            className="pl-10 h-12 text-lg"
-          />
+      {activeTab !== 'tag' && (
+        <div className="max-w-2xl mx-auto">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-5 h-5" />
+            <Input
+              placeholder="ETF 또는 종목명을 검색하세요..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={handleKeyDown}
+              className="pl-10 h-12 text-lg"
+            />
+          </div>
         </div>
-      </div>
+      )}
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="max-w-4xl mx-auto">
-        <TabsList className="grid w-full grid-cols-2">
+        <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="etf">ETF 검색</TabsTrigger>
           <TabsTrigger value="stock">종목 검색</TabsTrigger>
+          <TabsTrigger value="tag">태그 분류</TabsTrigger>
         </TabsList>
 
         <TabsContent value="etf" className="mt-6">
@@ -188,6 +236,102 @@ export default function HomePage() {
                   </div>
                 ) : null}
               </div>
+            </div>
+          )}
+        </TabsContent>
+
+        <TabsContent value="tag" className="mt-6">
+          {/* Tag badge chips */}
+          <div className="flex flex-wrap gap-2 mb-6">
+            {tags.map((tag) => (
+              <Badge
+                key={tag.name}
+                variant={selectedTag === tag.name ? 'default' : 'outline'}
+                className="cursor-pointer text-sm px-3 py-1"
+                onClick={() => handleTagClick(tag.name)}
+              >
+                {tag.name} ({tag.etf_count})
+              </Badge>
+            ))}
+            {tags.length === 0 && (
+              <div className="text-center py-8 text-muted-foreground w-full">
+                태그를 불러오는 중...
+              </div>
+            )}
+          </div>
+
+          {/* ETF list for selected tag */}
+          {selectedTag && (
+            <div>
+              {tagLoading ? (
+                <div className="text-center py-8 text-muted-foreground">불러오는 중...</div>
+              ) : tagETFs.length > 0 ? (
+                <div className="space-y-2">
+                  {tagETFs.map((etf) => (
+                    <Card key={etf.code}>
+                      <CardContent className="p-0">
+                        <div
+                          className="flex items-center justify-between p-4 cursor-pointer hover:bg-muted/50 transition-colors"
+                          onClick={() => handleETFExpand(etf.code)}
+                        >
+                          <div className="flex items-center gap-2">
+                            {expandedETF === etf.code ? (
+                              <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                            ) : (
+                              <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                            )}
+                            <div>
+                              <Link
+                                to={`/etf/${etf.code}`}
+                                className="font-medium hover:underline"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {etf.name}
+                              </Link>
+                              <div className="text-sm text-muted-foreground">{etf.code}</div>
+                            </div>
+                          </div>
+                          {etf.net_assets != null && (
+                            <span className="text-sm text-muted-foreground whitespace-nowrap">
+                              {etf.net_assets >= 1_0000_0000
+                                ? `${(etf.net_assets / 1_0000_0000).toFixed(0)}억원`
+                                : `${(etf.net_assets / 1_0000).toFixed(0)}만원`}
+                            </span>
+                          )}
+                        </div>
+                        {/* Holdings accordion */}
+                        {expandedETF === etf.code && (
+                          <div className="border-t px-4 py-3 bg-muted/30">
+                            {holdings[etf.code] ? (
+                              holdings[etf.code].length > 0 ? (
+                                <div className="space-y-2">
+                                  {holdings[etf.code].map((h) => (
+                                    <div
+                                      key={h.stock_code}
+                                      className="flex justify-between items-center text-sm"
+                                    >
+                                      <span>{h.stock_name} <span className="text-muted-foreground">({h.stock_code})</span></span>
+                                      <span className="font-medium">{h.weight.toFixed(2)}%</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="text-sm text-muted-foreground">보유종목 정보가 없습니다</div>
+                              )
+                            ) : (
+                              <div className="text-sm text-muted-foreground">불러오는 중...</div>
+                            )}
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8 text-muted-foreground">
+                  해당 태그에 속한 ETF가 없습니다
+                </div>
+              )}
             </div>
           )}
         </TabsContent>

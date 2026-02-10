@@ -18,6 +18,9 @@ import type {
   HoldingItem,
   CalculationResult,
   DashboardResponse,
+  Tag,
+  TagETF,
+  TagHolding,
 } from '@/types/api'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
@@ -181,6 +184,22 @@ export const portfolioApi = {
   },
   getTotalDashboard: async () => {
     const { data } = await api.get<DashboardResponse>('/portfolios/dashboard/total')
+    return data
+  },
+}
+
+// Tags
+export const tagsApi = {
+  getAll: async () => {
+    const { data } = await api.get<Tag[]>('/tags/')
+    return data
+  },
+  getETFs: async (name: string) => {
+    const { data } = await api.get<TagETF[]>(`/tags/${encodeURIComponent(name)}/etfs`)
+    return data
+  },
+  getHoldings: async (name: string, etfCode: string) => {
+    const { data } = await api.get<TagHolding[]>(`/tags/${encodeURIComponent(name)}/etfs/${etfCode}/holdings`)
     return data
   },
 }

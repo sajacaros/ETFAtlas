@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Numeric, UniqueConstraint
+from sqlalchemy import Column, Integer, String, DateTime, Date, Float, ForeignKey, Numeric, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from ..database import Base
@@ -18,6 +18,7 @@ class Portfolio(Base):
     user = relationship("User", back_populates="portfolios")
     target_allocations = relationship("TargetAllocation", back_populates="portfolio", cascade="all, delete-orphan")
     holdings = relationship("Holding", back_populates="portfolio", cascade="all, delete-orphan")
+    snapshots = relationship("PortfolioSnapshot", back_populates="portfolio", cascade="all, delete-orphan")
 
 
 class TargetAllocation(Base):
@@ -46,3 +47,20 @@ class Holding(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     portfolio = relationship("Portfolio", back_populates="holdings")
+
+
+class PortfolioSnapshot(Base):
+    __tablename__ = "portfolio_snapshots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=False)
+    date = Column(Date, nullable=False)
+    total_value = Column(Numeric(15, 2), nullable=False)
+    prev_value = Column(Numeric(15, 2), nullable=True)
+    change_amount = Column(Numeric(15, 2), nullable=True)
+    change_rate = Column(Float, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint('portfolio_id', 'date', name='uq_portfolio_snapshot_date'),)
+
+    portfolio = relationship("Portfolio", back_populates="snapshots")

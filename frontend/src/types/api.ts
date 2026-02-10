@@ -146,3 +146,29 @@ export interface CalculationResult {
   total_adjustment_amount: number
   weight_warning: string | null
 }
+
+// Dashboard types
+export interface DashboardSummaryItem {
+  amount: number
+  rate: number
+}
+
+export interface DashboardSummary {
+  current_value: number
+  cumulative: DashboardSummaryItem
+  daily: DashboardSummaryItem | null
+  monthly: DashboardSummaryItem | null
+  yearly: DashboardSummaryItem | null
+  ytd: DashboardSummaryItem | null
+}
+
+export interface ChartDataPoint {
+  date: string
+  total_value: number
+  cumulative_rate: number
+}
+
+export interface DashboardResponse {
+  summary: DashboardSummary
+  chart_data: ChartDataPoint[]
+}

@@ -123,6 +123,19 @@ CREATE TABLE IF NOT EXISTS holdings (
     UNIQUE(portfolio_id, ticker)
 );
 
+-- Portfolio Snapshots (포트폴리오 일별 스냅샷)
+CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+    id SERIAL PRIMARY KEY,
+    portfolio_id INTEGER REFERENCES portfolios(id) ON DELETE CASCADE,
+    date DATE NOT NULL,
+    total_value DECIMAL(15, 2) NOT NULL,
+    prev_value DECIMAL(15, 2),
+    change_amount DECIMAL(15, 2),
+    change_rate DOUBLE PRECISION,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_portfolio_snapshot_date UNIQUE (portfolio_id, date)
+);
+
 -- Vector embeddings for semantic search
 CREATE TABLE IF NOT EXISTS etf_embeddings (
     etf_code VARCHAR(20) PRIMARY KEY,
@@ -154,6 +167,8 @@ CREATE INDEX IF NOT EXISTS idx_target_allocations_portfolio_id ON target_allocat
 CREATE INDEX IF NOT EXISTS idx_holdings_portfolio_id ON holdings(portfolio_id);
 CREATE INDEX IF NOT EXISTS idx_etfs_name_trgm ON etfs USING GIN (name gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_etfs_code_trgm ON etfs USING GIN (code gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_portfolio_id ON portfolio_snapshots(portfolio_id);
+CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_date ON portfolio_snapshots(date);
 
 -- Grant permissions
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO postgres;

@@ -184,6 +184,30 @@ export interface TotalHoldingsResponse {
   total_value: number
 }
 
+// Chat types
+export interface ChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+export interface ToolCall {
+  name: string
+  arguments: string
+}
+
+export interface ChatStep {
+  step_number: number
+  code: string
+  observations: string
+  tool_calls: ToolCall[]
+  error: string | null
+}
+
+export interface ChatResponse {
+  answer: string
+  steps: ChatStep[]
+}
+
 // Similar ETF types
 export interface SimilarETF {
   etf_code: string

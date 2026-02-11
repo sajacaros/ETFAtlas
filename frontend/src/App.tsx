@@ -6,6 +6,7 @@ import HomePage from './app/HomePage'
 import ETFDetailPage from './app/ETFDetailPage'
 import WatchlistPage from './app/WatchlistPage'
 import AIPage from './app/AIPage'
+import ChatPage from './app/ChatPage'
 import PortfolioPage from './app/PortfolioPage'
 import PortfolioDashboardPage from './app/PortfolioDashboardPage'
 import LoginPage from './app/LoginPage'
@@ -27,6 +28,7 @@ function App() {
             <Route path="/portfolio/dashboard" element={<PortfolioDashboardPage />} />
             <Route path="/portfolio/:id/dashboard" element={<PortfolioDashboardPage />} />
             <Route path="/ai" element={<AIPage />} />
+            <Route path="/chat" element={<ChatPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/auth/callback" element={<AuthCallbackPage />} />
           </Routes>

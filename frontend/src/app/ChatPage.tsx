@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, KeyboardEvent } from 'react'
-import { Send, Loader2, MessageCircle, ChevronRight } from 'lucide-react'
+import { Send, Loader2, MessageCircle, ChevronRight, Trash2 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -86,10 +86,24 @@ export default function ChatPage() {
     <div className="max-w-3xl mx-auto flex flex-col" style={{ height: 'calc(100vh - 7rem)' }}>
       {/* Header */}
       <div className="mb-4">
-        <h1 className="text-2xl font-bold flex items-center gap-2">
-          <MessageCircle className="w-6 h-6" />
-          ETF 챗봇
-        </h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <MessageCircle className="w-6 h-6" />
+            ETF 챗봇
+          </h1>
+          {messages.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => { setMessages([]); setStreamingSteps([]) }}
+              disabled={isLoading}
+              className="text-muted-foreground hover:text-destructive"
+            >
+              <Trash2 className="w-4 h-4 mr-1" />
+              대화 초기화
+            </Button>
+          )}
+        </div>
         <p className="text-muted-foreground">
           ETF에 대해 자유롭게 질문하세요. 그래프 DB에서 데이터를 조회하여 답변합니다.
         </p>

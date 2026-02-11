@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List
 from decimal import Decimal
+from datetime import date
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from ..database import get_db
 from ..models.portfolio import Portfolio, TargetAllocation, Holding, PortfolioSnapshot
+from ..models.etf import ETFPrice
 from ..utils.jwt import get_current_user_id
 from ..schemas.portfolio import (
     PortfolioCreate, PortfolioUpdate, PortfolioResponse,
@@ -13,6 +15,7 @@ from ..schemas.portfolio import (
     CalculationResponse, CalculationRowResponse,
     PortfolioDetailResponse,
     DashboardResponse, DashboardSummary, DashboardSummaryItem, ChartDataPoint,
+    BackfillSnapshotResponse,
 )
 from ..domain.portfolio_calculation import (
     calculate_portfolio, TargetInput, HoldingInput,
@@ -255,6 +258,93 @@ async def get_portfolio_dashboard(
     ).order_by(PortfolioSnapshot.date.asc()).all()
 
     return _build_dashboard_response(snapshots)
+
+
+# --- Backfill Snapshots ---
+
+def _get_latest_trading_date(db: Session) -> date | None:
+    """etf_prices 테이블에서 최신 거래일을 조회한다 (주말 제외)."""
+    from sqlalchemy import extract
+    row = db.query(func.max(ETFPrice.date)).filter(
+        ETFPrice.close_price.isnot(None),
+        ETFPrice.close_price > 0,
+        extract('dow', ETFPrice.date).notin_([0, 6]),  # 일=0, 토=6
+    ).scalar()
+    return row
+
+
+def _fetch_prices_by_yfinance(tickers: list[str], trading_date: date) -> dict[str, Decimal]:
+    """yfinance로 특정 거래일의 종가를 조회한다."""
+    import yfinance as yf
+    from datetime import timedelta
+
+    prices: dict[str, Decimal] = {}
+    # yfinance history는 end를 exclusive로 처리하므로 +1일
+    start = trading_date.isoformat()
+    end = (trading_date + timedelta(days=1)).isoformat()
+
+    for ticker in tickers:
+        try:
+            yf_ticker = f"{ticker}.KS"
+            hist = yf.Ticker(yf_ticker).history(start=start, end=end)
+            if not hist.empty and hist['Close'].iloc[0] > 0:
+                prices[ticker] = Decimal(str(int(hist['Close'].iloc[0])))
+        except Exception:
+            pass
+
+    return prices
+
+
+@router.post("/{portfolio_id}/backfill-snapshots", response_model=BackfillSnapshotResponse)
+async def backfill_snapshots(
+    portfolio_id: int,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    portfolio = _get_portfolio_or_404(db, portfolio_id, user_id)
+
+    # 기존 스냅샷 존재 시 409
+    existing = db.query(PortfolioSnapshot).filter(
+        PortfolioSnapshot.portfolio_id == portfolio_id,
+    ).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Snapshots already exist for this portfolio")
+
+    # 보유 종목 조회
+    holdings = db.query(Holding).filter(Holding.portfolio_id == portfolio.id).all()
+    if not holdings:
+        raise HTTPException(status_code=400, detail="No holdings in this portfolio")
+
+    # 최신 거래일 조회
+    trading_date = _get_latest_trading_date(db)
+    if not trading_date:
+        raise HTTPException(status_code=400, detail="No trading date found")
+
+    # ETF 종목의 종가를 yfinance로 조회
+    tickers = [h.ticker for h in holdings if h.ticker != 'CASH']
+    prices = _fetch_prices_by_yfinance(tickers, trading_date) if tickers else {}
+
+    missing = [t for t in tickers if t not in prices]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Price not found for: {', '.join(missing)}")
+
+    # 평가금액 계산
+    total_value = Decimal('0')
+    for h in holdings:
+        if h.ticker == 'CASH':
+            total_value += Decimal(str(h.quantity))
+        else:
+            total_value += Decimal(str(h.quantity)) * prices[h.ticker]
+
+    snapshot = PortfolioSnapshot(
+        portfolio_id=portfolio.id,
+        date=trading_date,
+        total_value=total_value,
+    )
+    db.add(snapshot)
+    db.commit()
+
+    return BackfillSnapshotResponse(created=1)
 
 
 # --- Target Allocations ---

@@ -131,3 +131,8 @@ class ChartDataPoint(BaseModel):
 class DashboardResponse(BaseModel):
     summary: DashboardSummary
     chart_data: list[ChartDataPoint]
+
+
+# --- Backfill ---
+class BackfillSnapshotResponse(BaseModel):
+    created: int

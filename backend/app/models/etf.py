@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Date, Numeric, BigInteger, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, Date, Numeric, BigInteger, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from pgvector.sqlalchemy import Vector
@@ -20,7 +20,6 @@ class ETF(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     holdings = relationship("ETFHolding", back_populates="etf", cascade="all, delete-orphan")
-    prices = relationship("ETFPrice", back_populates="etf", cascade="all, delete-orphan")
     embedding = relationship("ETFEmbedding", back_populates="etf", uselist=False, cascade="all, delete-orphan")
 
 
@@ -55,9 +54,10 @@ class ETFHolding(Base):
 
 class ETFPrice(Base):
     __tablename__ = "etf_prices"
+    __table_args__ = (UniqueConstraint("etf_code", "date", name="uq_etf_prices_code_date"),)
 
     id = Column(Integer, primary_key=True, index=True)
-    etf_id = Column(Integer, ForeignKey("etfs.id", ondelete="CASCADE"), nullable=False)
+    etf_code = Column(String(20), nullable=False)
     date = Column(Date, nullable=False)
     open_price = Column(Numeric(12, 2))
     high_price = Column(Numeric(12, 2))
@@ -69,8 +69,6 @@ class ETFPrice(Base):
     net_assets = Column(BigInteger)         # 순자산총액
     trade_value = Column(BigInteger)        # 거래대금
     created_at = Column(DateTime, default=datetime.utcnow)
-
-    etf = relationship("ETF", back_populates="prices")
 
 
 class ETFEmbedding(Base):

@@ -27,10 +27,10 @@ class ETFResponse(BaseModel):
 class HoldingResponse(BaseModel):
     stock_code: str
     stock_name: str
-    sector: str | None
+    sector: str | None = None
     weight: float
-    shares: int | None
-    recorded_at: date
+    shares: int | None = None
+    recorded_at: str | None = None
 
 
 class HoldingChangeResponse(BaseModel):
@@ -79,28 +79,21 @@ async def get_etf(code: str, db: Session = Depends(get_db)):
 @router.get("/{code}/holdings", response_model=List[HoldingResponse])
 async def get_etf_holdings(
     code: str,
-    date: Optional[date] = None,
     db: Session = Depends(get_db)
 ):
-    etf_service = ETFService(db)
-    etf = etf_service.get_etf_by_code(code)
-    if not etf:
-        raise HTTPException(status_code=404, detail="ETF not found")
-    holdings = etf_service.get_etf_holdings(etf.id, date)
+    graph_service = GraphService(db)
+    holdings = graph_service.get_etf_holdings_full(code)
     return holdings
 
 
 @router.get("/{code}/changes", response_model=List[HoldingChangeResponse])
 async def get_holdings_changes(
     code: str,
-    days: int = Query(30, ge=1, le=365),
+    period: str = Query("1d", regex="^(1d|1w|1m)$"),
     db: Session = Depends(get_db)
 ):
-    etf_service = ETFService(db)
-    etf = etf_service.get_etf_by_code(code)
-    if not etf:
-        raise HTTPException(status_code=404, detail="ETF not found")
-    changes = etf_service.get_holdings_changes(etf.id, days)
+    graph_service = GraphService(db)
+    changes = graph_service.get_etf_holdings_changes(code, period)
     return changes
 
 
@@ -116,6 +109,15 @@ async def get_etf_prices(
         raise HTTPException(status_code=404, detail="ETF not found")
     prices = etf_service.get_etf_prices(etf.code, days)
     return prices
+
+
+@router.get("/{code}/tags", response_model=List[str])
+async def get_etf_tags(
+    code: str,
+    db: Session = Depends(get_db)
+):
+    graph_service = GraphService(db)
+    return graph_service.get_tags_by_etf(code)
 
 
 @router.get("/{code}/similar", response_model=List[SimilarETFResponse])

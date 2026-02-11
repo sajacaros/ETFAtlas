@@ -9,7 +9,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts'
-import { TrendingUp, TrendingDown, Minus, BookmarkPlus } from 'lucide-react'
+import { TrendingUp, TrendingDown, Minus, BookmarkPlus, ChevronDown, ChevronRight } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
@@ -44,8 +44,11 @@ export default function ETFDetailPage() {
   const [changes, setChanges] = useState<HoldingChange[]>([])
   const [prices, setPrices] = useState<Price[]>([])
   const [watchlists, setWatchlists] = useState<Watchlist[]>([])
+  const [tags, setTags] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [changePeriod, setChangePeriod] = useState<'1d' | '1w' | '1m'>('1d')
+  const [priceChartOpen, setPriceChartOpen] = useState(false)
 
   useEffect(() => {
     if (!code) return
@@ -53,16 +56,18 @@ export default function ETFDetailPage() {
     const fetchData = async () => {
       setLoading(true)
       try {
-        const [etfData, holdingsData, changesData, pricesData] = await Promise.all([
+        const [etfResult, holdingsResult, changesResult, pricesResult, tagsResult] = await Promise.allSettled([
           etfsApi.get(code),
           etfsApi.getHoldings(code),
           etfsApi.getChanges(code),
           etfsApi.getPrices(code),
+          etfsApi.getTags(code),
         ])
-        setEtf(etfData)
-        setHoldings(holdingsData)
-        setChanges(changesData)
-        setPrices(pricesData)
+        if (etfResult.status === 'fulfilled') setEtf(etfResult.value)
+        if (holdingsResult.status === 'fulfilled') setHoldings(holdingsResult.value)
+        if (changesResult.status === 'fulfilled') setChanges(changesResult.value)
+        if (pricesResult.status === 'fulfilled') setPrices(pricesResult.value)
+        if (tagsResult.status === 'fulfilled') setTags(tagsResult.value)
       } catch (error) {
         console.error('Failed to fetch ETF data:', error)
       } finally {
@@ -72,6 +77,11 @@ export default function ETFDetailPage() {
 
     fetchData()
   }, [code])
+
+  useEffect(() => {
+    if (!code) return
+    etfsApi.getChanges(code, changePeriod).then(setChanges).catch(() => {})
+  }, [code, changePeriod])
 
   const handleAddToWatchlist = async () => {
     if (!isAuthenticated) {
@@ -140,10 +150,12 @@ export default function ETFDetailPage() {
     return <div className="text-center py-12">ETF를 찾을 수 없습니다</div>
   }
 
-  const chartData = prices.map((p) => ({
-    date: p.date,
-    close: p.close,
-  })).reverse()
+  const chartData = prices
+    .filter((p) => p.close != null)
+    .map((p) => ({
+      date: p.date,
+      close: p.close,
+    }))
 
   return (
     <div className="space-y-6">
@@ -185,72 +197,81 @@ export default function ETFDetailPage() {
         </Dialog>
       </div>
 
-      <div className="grid md:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-muted-foreground">운용사</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl font-semibold">{etf.issuer || '-'}</div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Card className="py-3">
+          <CardContent className="pb-0 pt-0">
+            <p className="text-xs text-muted-foreground">운용사</p>
+            <p className="text-sm font-semibold mt-1">{etf.issuer || '-'}</p>
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-muted-foreground">카테고리</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl font-semibold">{etf.category || '-'}</div>
+        <Card className="py-3">
+          <CardContent className="pb-0 pt-0">
+            <p className="text-xs text-muted-foreground">카테고리</p>
+            <div className="flex flex-wrap gap-1 mt-1">
+              {tags.length > 0
+                ? tags.map((tag) => (
+                    <Badge key={tag} variant="secondary" className="text-xs">
+                      {tag}
+                    </Badge>
+                  ))
+                : <p className="text-sm font-semibold">-</p>
+              }
+            </div>
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-muted-foreground">순자산</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl font-semibold">
+        <Card className="py-3">
+          <CardContent className="pb-0 pt-0">
+            <p className="text-xs text-muted-foreground">순자산</p>
+            <p className="text-sm font-semibold mt-1">
               {etf.net_assets ? `${(etf.net_assets / 100000000).toFixed(0)}억원` : '-'}
-            </div>
+            </p>
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-muted-foreground">보수율</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl font-semibold">
+        <Card className="py-3">
+          <CardContent className="pb-0 pt-0">
+            <p className="text-xs text-muted-foreground">보수율</p>
+            <p className="text-sm font-semibold mt-1">
               {etf.expense_ratio ? `${etf.expense_ratio}%` : '-'}
-            </div>
+            </p>
           </CardContent>
         </Card>
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle>가격 추이</CardTitle>
+        <CardHeader
+          className={`cursor-pointer select-none ${priceChartOpen ? '' : 'py-3'}`}
+          onClick={() => setPriceChartOpen(!priceChartOpen)}
+        >
+          <CardTitle className={`flex items-center gap-2 ${priceChartOpen ? '' : 'text-sm'}`}>
+            {priceChartOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+            가격 추이
+          </CardTitle>
         </CardHeader>
-        <CardContent>
-          <div className="h-[300px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis
-                  dataKey="date"
-                  tick={{ fontSize: 12 }}
-                  tickFormatter={(value) => value.slice(5)}
-                />
-                <YAxis tick={{ fontSize: 12 }} domain={['auto', 'auto']} />
-                <Tooltip />
-                <Line
-                  type="monotone"
-                  dataKey="close"
-                  stroke="#2563eb"
-                  strokeWidth={2}
-                  dot={false}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
+        {priceChartOpen && (
+          <CardContent>
+            <div className="h-[200px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="date"
+                    tick={{ fontSize: 12 }}
+                    tickFormatter={(value) => value.slice(5)}
+                  />
+                  <YAxis tick={{ fontSize: 12 }} domain={['auto', 'auto']} />
+                  <Tooltip />
+                  <Line
+                    type="monotone"
+                    dataKey="close"
+                    stroke="#2563eb"
+                    strokeWidth={2}
+                    dot={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        )}
       </Card>
 
       <Tabs defaultValue="holdings">
@@ -287,6 +308,18 @@ export default function ETFDetailPage() {
         </TabsContent>
 
         <TabsContent value="changes" className="mt-4">
+          <div className="flex gap-1 mb-3">
+            {(['1d', '1w', '1m'] as const).map((p) => (
+              <Button
+                key={p}
+                size="sm"
+                variant={changePeriod === p ? 'default' : 'outline'}
+                onClick={() => setChangePeriod(p)}
+              >
+                {p === '1d' ? '전일' : p === '1w' ? '1주' : '1개월'}
+              </Button>
+            ))}
+          </div>
           <Card>
             <Table>
               <TableHeader>

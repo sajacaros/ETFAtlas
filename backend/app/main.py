@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
-from .routers import auth, stocks, etfs, watchlist, ai, portfolio, tags
+from .routers import auth, stocks, etfs, watchlist, ai, portfolio, tags, chat
 
 settings = get_settings()
 
@@ -30,6 +30,7 @@ app.include_router(watchlist.router, prefix="/api/watchlist", tags=["Watchlist"]
 app.include_router(ai.router, prefix="/api/ai", tags=["AI"])
 app.include_router(portfolio.router, prefix="/api/portfolios", tags=["Portfolio"])
 app.include_router(tags.router, prefix="/api/tags", tags=["Tags"])
+app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 
 
 @app.get("/")

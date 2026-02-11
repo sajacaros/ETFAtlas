@@ -114,7 +114,7 @@ async def get_etf_prices(
     etf = etf_service.get_etf_by_code(code)
     if not etf:
         raise HTTPException(status_code=404, detail="ETF not found")
-    prices = etf_service.get_etf_prices(etf.id, days)
+    prices = etf_service.get_etf_prices(etf.code, days)
     return prices
 
 

@@ -115,12 +115,12 @@ class ETFService:
 
         return sorted(changes, key=lambda x: abs(x["weight_change"]), reverse=True)
 
-    def get_etf_prices(self, etf_id: int, days: int = 365) -> List[dict]:
+    def get_etf_prices(self, etf_code: str, days: int = 365) -> List[dict]:
         end_date = date.today()
         start_date = end_date - timedelta(days=days)
 
         prices = self.db.query(ETFPrice).filter(
-            ETFPrice.etf_id == etf_id,
+            ETFPrice.etf_code == etf_code,
             ETFPrice.date >= start_date,
             ETFPrice.date <= end_date
         ).order_by(ETFPrice.date).all()

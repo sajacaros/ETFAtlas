@@ -53,7 +53,7 @@ class ETFRecommenderAgent:
 
     def _analyze_etf(self, etf: ETF) -> Optional[Dict[str, Any]]:
         """개별 ETF 분석"""
-        prices = self.etf_service.get_etf_prices(etf.id, days=30)
+        prices = self.etf_service.get_etf_prices(etf.code, days=30)
         if not prices or len(prices) < 5:
             return None
 

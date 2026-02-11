@@ -38,6 +38,9 @@ export default function PortfolioPage() {
   const [calcResult, setCalcResult] = useState<CalculationResult | null>(null)
   const [calcLoading, setCalcLoading] = useState(false)
 
+  // Backfill
+  const [backfillLoading, setBackfillLoading] = useState<number | null>(null)
+
   // Create dialog
   const [createOpen, setCreateOpen] = useState(false)
   const [newName, setNewName] = useState('')
@@ -162,6 +165,21 @@ export default function PortfolioPage() {
     }
   }
 
+  const handleBackfill = async (id: number) => {
+    setBackfillLoading(id)
+    try {
+      const result = await portfolioApi.backfillSnapshots(id)
+      const data = await portfolioApi.getAll()
+      setPortfolios(data)
+      toast({ title: `스냅샷 ${result.created}개가 생성되었습니다` })
+    } catch (err: unknown) {
+      const message = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '스냅샷 생성 실패'
+      toast({ title: message, variant: 'destructive' })
+    } finally {
+      setBackfillLoading(null)
+    }
+  }
+
   const handleUpdateSettings = async (field: string, value: string) => {
     if (!selectedId || !detail) return
     try {
@@ -187,6 +205,7 @@ export default function PortfolioPage() {
       const updated = await portfolioApi.update(selectedId, { calculation_base: base })
       setDetail({ ...detail, ...updated })
       setPortfolios(portfolios.map((p) => (p.id === selectedId ? { ...p, ...updated } : p)))
+      loadCalc(selectedId)
     } catch {
       toast({ title: '업데이트 실패', variant: 'destructive' })
     }
@@ -198,6 +217,7 @@ export default function PortfolioPage() {
     try {
       await portfolioApi.addHolding(selectedId, { ticker: 'CASH', quantity: amount })
       await loadDetail(selectedId)
+      loadCalc(selectedId)
     } catch {
       toast({ title: '예수금 업데이트 실패', variant: 'destructive' })
     }
@@ -211,6 +231,7 @@ export default function PortfolioPage() {
         await portfolioApi.addHolding(selectedId, { ticker, quantity })
       }
       await loadDetail(selectedId)
+      loadCalc(selectedId)
       toast({ title: '종목이 추가되었습니다' })
     } catch {
       toast({ title: '종목 추가 실패', variant: 'destructive' })
@@ -221,6 +242,8 @@ export default function PortfolioPage() {
     if (!selectedId) return
     try {
       await portfolioApi.updateTarget(selectedId, targetId, { target_weight: weight })
+      await loadDetail(selectedId)
+      loadCalc(selectedId)
     } catch {
       toast({ title: '비중 업데이트 실패', variant: 'destructive' })
     }
@@ -233,8 +256,9 @@ export default function PortfolioPage() {
         await portfolioApi.updateHolding(selectedId, holdingId, { quantity })
       } else {
         await portfolioApi.addHolding(selectedId, { ticker, quantity })
-        await loadDetail(selectedId)
       }
+      await loadDetail(selectedId)
+      loadCalc(selectedId)
     } catch {
       toast({ title: '수량 업데이트 실패', variant: 'destructive' })
     }
@@ -246,6 +270,7 @@ export default function PortfolioPage() {
       if (targetId) await portfolioApi.deleteTarget(selectedId, targetId)
       if (holdingId) await portfolioApi.deleteHolding(selectedId, holdingId)
       await loadDetail(selectedId)
+      loadCalc(selectedId)
       toast({ title: '종목이 삭제되었습니다' })
     } catch {
       toast({ title: '삭제 실패', variant: 'destructive' })
@@ -643,7 +668,22 @@ export default function PortfolioPage() {
                       </p>
                     </>
                   ) : (
-                    <p className="text-sm text-muted-foreground">평가금액 없음</p>
+                    <div>
+                      <p className="text-sm text-muted-foreground">평가금액 없음</p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="mt-2"
+                        disabled={backfillLoading === p.id}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleBackfill(p.id)
+                        }}
+                      >
+                        <RefreshCw className={`w-3 h-3 mr-1 ${backfillLoading === p.id ? 'animate-spin' : ''}`} />
+                        {backfillLoading === p.id ? '생성 중...' : '스냅샷 생성'}
+                      </Button>
+                    </div>
                   )}
                 </div>
                 <Button

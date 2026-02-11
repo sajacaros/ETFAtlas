@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS etfs (
 
 -- ETF Prices (시계열 데이터 - 관계형 테이블이 효율적)
 CREATE TABLE IF NOT EXISTS etf_prices (
+    id SERIAL PRIMARY KEY,
     etf_code VARCHAR(20) NOT NULL,
     date DATE NOT NULL,
     open_price DECIMAL(12, 2),
@@ -69,7 +70,7 @@ CREATE TABLE IF NOT EXISTS etf_prices (
     net_assets BIGINT,            -- 순자산총액
     trade_value BIGINT,           -- 거래대금
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (etf_code, date)
+    UNIQUE (etf_code, date)
 );
 
 -- Watchlists

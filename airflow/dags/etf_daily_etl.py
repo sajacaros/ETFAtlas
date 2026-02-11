@@ -546,6 +546,8 @@ def filter_etf_universe(tickers: list, krx_data: list) -> list:
 def collect_etf_metadata(**context):
     """Task 2: ETF 메타데이터 수집 및 AGE에 저장 (필터링된 ETF만)"""
     from pykrx import stock
+    from pykrx.website.krx.etx.core import ETF_전종목기본종목
+    from math import ceil
     import time
 
     ti = context['ti']
@@ -555,10 +557,26 @@ def collect_etf_metadata(**context):
         log.warning("No tickers to process")
         return
 
+    # ETF 전종목 기본정보 일괄 조회 (보수율 포함)
+    fee_map = {}
+    try:
+        fee_df = ETF_전종목기본종목().fetch()
+        for _, row in fee_df.iterrows():
+            code = row['ISU_SRT_CD']
+            try:
+                raw = float(row['ETF_TOT_FEE'])
+                fee_map[code] = ceil(raw * 100) / 100  # 소수점 2째자리 올림
+            except (ValueError, TypeError):
+                pass
+        log.info(f"Loaded expense ratio for {len(fee_map)} ETFs")
+    except Exception as e:
+        log.warning(f"Failed to fetch ETF fee data: {e}")
+
     conn = get_db_connection()
     cur = init_age(conn)
 
     try:
+        fee_update_count = 0
         for ticker in tickers:
             try:
                 name = stock.get_etf_ticker_name(ticker)
@@ -572,16 +590,23 @@ def collect_etf_metadata(**context):
                     'code': ticker
                 })
 
-                cypher_set = """
-                    MATCH (e:ETF {code: $code})
-                    SET e.name = $name, e.updated_at = $updated_at
-                    RETURN e
-                """
-                execute_cypher(cur, cypher_set, {
+                expense_ratio = fee_map.get(ticker)
+                set_parts = "e.name = $name, e.updated_at = $updated_at"
+                params = {
                     'code': ticker,
                     'name': name,
                     'updated_at': datetime.now().isoformat()
-                })
+                }
+                if expense_ratio is not None:
+                    set_parts += ", e.expense_ratio = $expense_ratio"
+                    params['expense_ratio'] = expense_ratio
+
+                cypher_set = f"""
+                    MATCH (e:ETF {{code: $code}})
+                    SET {set_parts}
+                    RETURN e
+                """
+                execute_cypher(cur, cypher_set, params)
 
                 # Company 노드 생성 및 MANAGED_BY 관계 연결
                 company = get_company_from_etf_name(name)
@@ -604,6 +629,9 @@ def collect_etf_metadata(**context):
                     'company': company
                 })
 
+                if expense_ratio is not None:
+                    fee_update_count += 1
+
                 time.sleep(0.1)
 
             except Exception as e:
@@ -611,7 +639,7 @@ def collect_etf_metadata(**context):
                 continue
 
         conn.commit()
-        log.info(f"Saved metadata for {len(tickers)} ETFs to Apache AGE")
+        log.info(f"Saved metadata for {len(tickers)} ETFs to Apache AGE (expense_ratio updated: {fee_update_count})")
 
     finally:
         cur.close()

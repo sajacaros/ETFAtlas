@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { portfolioApi } from '@/lib/api'
 import { useAuth } from '@/hooks/useAuth'
-import type { DashboardResponse, DashboardSummaryItem } from '@/types/api'
+import type { DashboardResponse, DashboardSummaryItem, TotalHoldingsResponse } from '@/types/api'
 import { useAmountVisibility, formatMaskedNumber } from '@/hooks/useAmountVisibility'
 import {
   LineChart,
@@ -81,6 +81,7 @@ export default function PortfolioDashboardPage() {
   const { isAuthenticated } = useAuth()
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null)
   const [loading, setLoading] = useState(true)
+  const [totalHoldings, setTotalHoldings] = useState<TotalHoldingsResponse | null>(null)
   const { visible: amountVisible, toggle: toggleAmount } = useAmountVisibility()
   const isTotal = !id
 
@@ -101,6 +102,20 @@ export default function PortfolioDashboardPage() {
     }
     fetchDashboard()
   }, [isAuthenticated, id, isTotal])
+
+  useEffect(() => {
+    if (!isAuthenticated || !isTotal) return
+
+    const fetchHoldings = async () => {
+      try {
+        const data = await portfolioApi.getTotalHoldings()
+        setTotalHoldings(data)
+      } catch {
+        console.error('Failed to fetch total holdings')
+      }
+    }
+    fetchHoldings()
+  }, [isAuthenticated, isTotal])
 
   if (!isAuthenticated) {
     return (
@@ -247,6 +262,62 @@ export default function PortfolioDashboardPage() {
           </ResponsiveContainer>
         </CardContent>
       </Card>
+
+      {/* Holdings Weight Table (Total Dashboard only) */}
+      {isTotal && totalHoldings && totalHoldings.holdings.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">종목 비중</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-left text-muted-foreground">
+                    <th className="pb-2 font-medium">종목</th>
+                    <th className="pb-2 font-medium text-right">수량</th>
+                    <th className="pb-2 font-medium text-right">현재가</th>
+                    <th className="pb-2 font-medium text-right">평가금액</th>
+                    <th className="pb-2 font-medium text-right w-[140px]">비중</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {totalHoldings.holdings.map((h) => (
+                    <tr key={h.ticker} className="border-b last:border-0">
+                      <td className="py-2">
+                        <div className="font-medium">{h.name}</div>
+                        <div className="text-xs text-muted-foreground">{h.ticker}</div>
+                      </td>
+                      <td className="py-2 text-right font-mono">
+                        {amountVisible ? formatNumber(h.quantity) : '••••'}
+                      </td>
+                      <td className="py-2 text-right font-mono">
+                        {formatNumber(h.current_price)}원
+                      </td>
+                      <td className="py-2 text-right font-mono">
+                        {amountVisible ? `${formatNumber(h.value)}원` : '••••••'}
+                      </td>
+                      <td className="py-2 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <div className="w-16 bg-muted rounded-full h-2">
+                            <div
+                              className="bg-indigo-500 h-2 rounded-full"
+                              style={{ width: `${Math.min(h.weight, 100)}%` }}
+                            />
+                          </div>
+                          <span className="font-mono text-xs w-12 text-right">
+                            {h.weight.toFixed(1)}%
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
     </div>
   )

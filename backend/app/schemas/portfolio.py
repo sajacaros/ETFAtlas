@@ -133,6 +133,21 @@ class DashboardResponse(BaseModel):
     chart_data: list[ChartDataPoint]
 
 
+# --- Total Holdings ---
+class TotalHoldingItem(BaseModel):
+    ticker: str
+    name: str
+    quantity: Decimal
+    current_price: Decimal
+    value: Decimal
+    weight: float
+
+
+class TotalHoldingsResponse(BaseModel):
+    holdings: list[TotalHoldingItem]
+    total_value: Decimal
+
+
 # --- Backfill ---
 class BackfillSnapshotResponse(BaseModel):
     created: int

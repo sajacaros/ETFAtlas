@@ -18,6 +18,7 @@ import type {
   HoldingItem,
   CalculationResult,
   DashboardResponse,
+  TotalHoldingsResponse,
   Tag,
   TagETF,
   TagHolding,
@@ -188,6 +189,10 @@ export const portfolioApi = {
   },
   getTotalDashboard: async () => {
     const { data } = await api.get<DashboardResponse>('/portfolios/dashboard/total')
+    return data
+  },
+  getTotalHoldings: async () => {
+    const { data } = await api.get<TotalHoldingsResponse>('/portfolios/dashboard/total/holdings')
     return data
   },
 }

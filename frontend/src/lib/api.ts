@@ -22,6 +22,7 @@ import type {
   Tag,
   TagETF,
   TagHolding,
+  SimilarETF,
 } from '@/types/api'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
@@ -89,6 +90,10 @@ export const etfsApi = {
   },
   getTags: async (code: string) => {
     const { data } = await api.get<string[]>(`/etfs/${code}/tags`)
+    return data
+  },
+  getSimilar: async (code: string, minOverlap = 5) => {
+    const { data } = await api.get<SimilarETF[]>(`/etfs/${code}/similar`, { params: { min_overlap: minOverlap } })
     return data
   },
 }

@@ -184,6 +184,14 @@ export interface TotalHoldingsResponse {
   total_value: number
 }
 
+// Similar ETF types
+export interface SimilarETF {
+  etf_code: string
+  name: string
+  overlap: number
+  similarity: number
+}
+
 // Dashboard types
 export interface DashboardSummaryItem {
   amount: number

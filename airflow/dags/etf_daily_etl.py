@@ -377,7 +377,7 @@ def check_new_universe_candidates(krx_data_dicts: list, existing_codes: set) -> 
     """
     FOREIGN_NAME_KEYWORDS = [
         '미국', '중국', '차이나', '일본', '인도', '베트남', '대만', '유럽', '독일',
-        '글로벌', 'Global', 'China', 'Japan', 'India', 'US', 'USA',
+        '글로벌', 'Global', 'China', 'Japan', 'India', ' US', 'USA',
         'S&P', 'NASDAQ', '나스닥', '다우존스',
         'MSCI', '선진국', '신흥국', '아시아',
         '테슬라', 'Tesla', '엔비디아', 'NVIDIA', '구글', 'Google',

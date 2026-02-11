@@ -619,7 +619,13 @@ def collect_etf_metadata(**context):
 
 
 def collect_holdings(**context):
-    """Task 3: ETF 구성종목 수집 및 AGE에 저장 (필터링된 ETF만)"""
+    """Task 3: ETF 구성종목 수집 및 AGE에 저장 (필터링된 ETF만)
+
+    2-pass 구조:
+      Pass 1: 모든 ETF holdings 데이터 수집 + 고유 종목 이름 맵 구성
+      노드 사전 생성: Stock, Market, Sector 노드 및 관계 일괄 생성
+      Pass 2: HOLDS 엣지만 배치 생성 + N건 단위 커밋
+    """
     from pykrx import stock
     import pandas as pd
     import time
@@ -659,143 +665,144 @@ def collect_holdings(**context):
 
     log.info(f"Built sector map for {len(stock_sector_map)} stocks")
 
-    conn = get_db_connection()
-    cur = init_age(conn)
-
-    success_count = 0
-    fail_count = 0
-
-    try:
-        for ticker in tickers:
-            try:
-                df = stock.get_etf_portfolio_deposit_file(ticker)
-
-                if df is None or df.empty:
-                    log.warning(f"No holdings data for {ticker}")
-                    continue
-
-                # 비중순으로 정렬하여 상위 20개만 수집
+    # ── Pass 1: 모든 ETF holdings 데이터 수집 ──
+    holdings_data = {}  # ticker -> DataFrame (상위 20개 필터링 완료)
+    for ticker in tickers:
+        try:
+            df = stock.get_etf_portfolio_deposit_file(ticker)
+            if df is not None and not df.empty:
                 if '비중' in df.columns:
                     df = df.sort_values('비중', ascending=False).head(20)
                 else:
                     df = df.head(20)
+                holdings_data[ticker] = df
+            else:
+                log.warning(f"No holdings data for {ticker}")
+            time.sleep(0.5)
+        except Exception as e:
+            log.warning(f"Failed to fetch holdings for {ticker}: {e}")
 
+    log.info(f"Pass 1 complete: fetched holdings for {len(holdings_data)}/{len(tickers)} ETFs")
+
+    # ── 고유 종목 코드 추출 + 이름 맵 구성 ──
+    all_stock_codes = set()
+    for df in holdings_data.values():
+        all_stock_codes.update(str(c) for c in df.index)
+
+    log.info(f"Unique stock codes to resolve: {len(all_stock_codes)}")
+
+    name_map = {}
+    for code in all_stock_codes:
+        try:
+            if code in etf_tickers:
+                result = stock.get_etf_ticker_name(code)
+            else:
+                result = stock.get_market_ticker_name(code)
+            if result and not isinstance(result, pd.DataFrame) and len(str(result)) > 0:
+                name_map[code] = str(result)
+            else:
+                name_map[code] = code
+        except Exception:
+            name_map[code] = code
+
+    log.info(f"Name map built for {len(name_map)} stocks")
+
+    # ── 노드 사전 일괄 생성 (Stock, Market, Sector + 관계) ──
+    conn = get_db_connection()
+    cur = init_age(conn)
+
+    try:
+        # 1) 모든 고유 Stock 노드 일괄 생성
+        for code in all_stock_codes:
+            name = name_map[code]
+            is_etf = code in etf_tickers
+            execute_cypher(cur, """
+                MERGE (s:Stock {code: $code})
+                RETURN s
+            """, {'code': code})
+            execute_cypher(cur, """
+                MATCH (s:Stock {code: $code})
+                SET s.name = $name, s.is_etf = $is_etf
+                RETURN s
+            """, {'code': code, 'name': name, 'is_etf': is_etf})
+
+        # 2) 고유 Market 노드 일괄 생성
+        unique_markets = set()
+        unique_sectors = {}  # sector_name -> market_name
+        codes_with_sector = []
+        for code in all_stock_codes:
+            if code not in etf_tickers and code in stock_sector_map:
+                market, sector = stock_sector_map[code]
+                unique_markets.add(market)
+                unique_sectors[sector] = market
+                codes_with_sector.append(code)
+
+        for market in unique_markets:
+            execute_cypher(cur, """
+                MERGE (m:Market {name: $market})
+                RETURN m
+            """, {'market': market})
+
+        # 3) 고유 Sector 노드 + Sector->Market 관계 일괄 생성
+        for sector, market in unique_sectors.items():
+            execute_cypher(cur, """
+                MERGE (sec:Sector {name: $sector})
+                RETURN sec
+            """, {'sector': sector})
+            execute_cypher(cur, """
+                MATCH (sec:Sector {name: $sector})
+                MATCH (m:Market {name: $market})
+                MERGE (sec)-[:PART_OF]->(m)
+                RETURN 1
+            """, {'sector': sector, 'market': market})
+
+        # 4) Stock->Sector 관계 일괄 생성
+        for code in codes_with_sector:
+            market, sector = stock_sector_map[code]
+            execute_cypher(cur, """
+                MATCH (s:Stock {code: $code})
+                MATCH (sec:Sector {name: $sector})
+                MERGE (s)-[:BELONGS_TO]->(sec)
+                RETURN 1
+            """, {'code': code, 'sector': sector})
+
+        conn.commit()
+        log.info("Pre-created all Stock/Market/Sector nodes and relationships")
+
+        # ── Pass 2: HOLDS 엣지만 배치 생성 ──
+        BATCH_SIZE = 50
+        success_count = 0
+        fail_count = 0
+
+        etf_list = list(holdings_data.keys())
+        for i, ticker in enumerate(etf_list):
+            try:
+                df = holdings_data[ticker]
                 for idx, row in df.iterrows():
-                    # 인덱스가 종목 코드 (티커)
                     stock_code = str(idx)
-
-                    # 보유종목이 ETF인지 확인
-                    is_etf = stock_code in etf_tickers
-
-                    # 종목명 조회 (ETF면 ETF명, 아니면 주식명)
-                    try:
-                        if is_etf:
-                            result = stock.get_etf_ticker_name(stock_code)
-                        else:
-                            result = stock.get_market_ticker_name(stock_code)
-                        # DataFrame이 반환된 경우 None 처리
-                        if isinstance(result, pd.DataFrame):
-                            stock_name = None
-                        else:
-                            stock_name = result
-                    except Exception:
-                        stock_name = None
-
-                    # stock_name이 None이거나 빈 값이면 stock_code로 대체
-                    if stock_name is None or (isinstance(stock_name, str) and len(stock_name) == 0):
-                        stock_name = stock_code
-                    else:
-                        stock_name = str(stock_name)
-
-                    weight = float(row.get('비중', 0))
-                    # '계약수' 또는 '주수' 컬럼 사용
-                    shares_val = row.get('계약수', row.get('주수', 0))
-                    shares = int(shares_val) if shares_val and not pd.isna(shares_val) else 0
-
                     if not stock_code:
                         continue
 
-                    # Create Stock node (MERGE와 SET을 분리 - AGE 버그 우회)
-                    cypher_stock_merge = """
-                        MERGE (s:Stock {code: $code})
-                        RETURN s
-                    """
-                    execute_cypher(cur, cypher_stock_merge, {
-                        'code': stock_code
-                    })
+                    weight = float(row.get('비중', 0))
+                    shares_val = row.get('계약수', row.get('주수', 0))
+                    shares = int(shares_val) if shares_val and not pd.isna(shares_val) else 0
 
-                    cypher_stock_set = """
-                        MATCH (s:Stock {code: $code})
-                        SET s.name = $name, s.is_etf = $is_etf
-                        RETURN s
-                    """
-                    execute_cypher(cur, cypher_stock_set, {
-                        'code': stock_code,
-                        'name': stock_name,
-                        'is_etf': is_etf
-                    })
-
-                    # Stock -> Sector -> Market 관계 생성 (ETF가 아닌 경우만)
-                    if not is_etf and stock_code in stock_sector_map:
-                        market, sector = stock_sector_map[stock_code]
-
-                        # Market 노드 생성
-                        cypher_market = """
-                            MERGE (m:Market {name: $market})
-                            RETURN m
-                        """
-                        execute_cypher(cur, cypher_market, {'market': market})
-
-                        # Sector 노드 생성
-                        cypher_sector = """
-                            MERGE (sec:Sector {name: $sector})
-                            RETURN sec
-                        """
-                        execute_cypher(cur, cypher_sector, {'sector': sector})
-
-                        # Sector -> Market 관계 (PART_OF)
-                        cypher_sector_market = """
-                            MATCH (sec:Sector {name: $sector})
-                            MATCH (m:Market {name: $market})
-                            MERGE (sec)-[:PART_OF]->(m)
-                            RETURN 1
-                        """
-                        execute_cypher(cur, cypher_sector_market, {
-                            'sector': sector,
-                            'market': market
-                        })
-
-                        # Stock -> Sector 관계 (BELONGS_TO)
-                        cypher_stock_sector = """
-                            MATCH (s:Stock {code: $code})
-                            MATCH (sec:Sector {name: $sector})
-                            MERGE (s)-[:BELONGS_TO]->(sec)
-                            RETURN 1
-                        """
-                        execute_cypher(cur, cypher_stock_sector, {
-                            'code': stock_code,
-                            'sector': sector
-                        })
-
-                    # Create HOLDS edge (MERGE와 SET을 분리 - AGE 버그 우회)
-                    cypher_holds_merge = """
+                    # HOLDS MERGE + SET (AGE 버그 우회로 분리)
+                    execute_cypher(cur, """
                         MATCH (e:ETF {code: $etf_code})
                         MATCH (s:Stock {code: $stock_code})
                         MERGE (e)-[h:HOLDS {date: $date}]->(s)
                         RETURN h
-                    """
-                    execute_cypher(cur, cypher_holds_merge, {
+                    """, {
                         'etf_code': ticker,
                         'stock_code': stock_code,
                         'date': date_str
                     })
-
-                    cypher_holds_set = """
+                    execute_cypher(cur, """
                         MATCH (e:ETF {code: $etf_code})-[h:HOLDS {date: $date}]->(s:Stock {code: $stock_code})
                         SET h.weight = $weight, h.shares = $shares
                         RETURN h
-                    """
-                    execute_cypher(cur, cypher_holds_set, {
+                    """, {
                         'etf_code': ticker,
                         'stock_code': stock_code,
                         'date': date_str,
@@ -803,16 +810,19 @@ def collect_holdings(**context):
                         'shares': shares
                     })
 
-                conn.commit()
                 success_count += 1
-                time.sleep(0.5)
-
             except Exception as e:
-                log.warning(f"Failed to collect holdings for {ticker}: {e}")
+                log.warning(f"Failed to create HOLDS for {ticker}: {e}")
                 conn.rollback()
+                cur = init_age(conn)
                 fail_count += 1
                 continue
 
+            if (i + 1) % BATCH_SIZE == 0:
+                conn.commit()
+                log.info(f"Batch committed: {i + 1}/{len(etf_list)} ETFs processed")
+
+        conn.commit()  # 나머지 커밋
         log.info(f"Holdings collection complete. Success: {success_count}, Failed: {fail_count}")
 
     finally:

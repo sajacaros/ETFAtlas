@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import {
   LineChart,
@@ -9,7 +9,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts'
-import { TrendingUp, TrendingDown, Minus, BookmarkPlus, ChevronDown, ChevronRight } from 'lucide-react'
+import { TrendingUp, TrendingDown, Minus, BookmarkPlus, ChevronDown, ChevronRight, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
@@ -30,9 +30,10 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog'
 import { etfsApi, watchlistApi } from '@/lib/api'
+import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/use-toast'
-import type { ETF, Holding, HoldingChange, Price, Watchlist } from '@/types/api'
+import type { ETF, Holding, HoldingChange, Price, Watchlist, SimilarETF } from '@/types/api'
 
 export default function ETFDetailPage() {
   const { code } = useParams<{ code: string }>()
@@ -47,27 +48,84 @@ export default function ETFDetailPage() {
   const [tags, setTags] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [similarEtfs, setSimilarEtfs] = useState<SimilarETF[]>([])
   const [changePeriod, setChangePeriod] = useState<'1d' | '1w' | '1m'>('1d')
   const [priceChartOpen, setPriceChartOpen] = useState(false)
+  const [similarOpen, setSimilarOpen] = useState(false)
+
+  type SortDir = 'asc' | 'desc'
+  const [holdingSort, setHoldingSort] = useState<{ key: keyof Holding; dir: SortDir }>({ key: 'weight', dir: 'desc' })
+  const [changeSort, setChangeSort] = useState<{ key: keyof HoldingChange; dir: SortDir }>({ key: 'current_weight', dir: 'desc' })
+
+  const toggleSort = <T,>(
+    current: { key: T; dir: SortDir },
+    setter: (v: { key: T; dir: SortDir }) => void,
+    key: T,
+  ) => {
+    if (current.key === key) {
+      setter({ key, dir: current.dir === 'asc' ? 'desc' : 'asc' })
+    } else {
+      setter({ key, dir: 'desc' })
+    }
+  }
+
+  const SortIcon = ({ active, dir }: { active: boolean; dir: SortDir }) =>
+    active
+      ? dir === 'asc' ? <ArrowUp className="w-3 h-3 inline ml-1" /> : <ArrowDown className="w-3 h-3 inline ml-1" />
+      : <ArrowUpDown className="w-3 h-3 inline ml-1 opacity-30" />
+
+  const sortedHoldings = useMemo(() => {
+    const sorted = [...holdings]
+    const { key, dir } = holdingSort
+    sorted.sort((a, b) => {
+      const av = a[key] ?? ''
+      const bv = b[key] ?? ''
+      if (typeof av === 'number' && typeof bv === 'number') return dir === 'asc' ? av - bv : bv - av
+      return dir === 'asc' ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av))
+    })
+    return sorted
+  }, [holdings, holdingSort])
+
+  const sortedChanges = useMemo(() => {
+    const sorted = [...changes]
+    const { key, dir } = changeSort
+    sorted.sort((a, b) => {
+      const av = a[key] ?? ''
+      const bv = b[key] ?? ''
+      if (typeof av === 'number' && typeof bv === 'number') return dir === 'asc' ? av - bv : bv - av
+      return dir === 'asc' ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av))
+    })
+    return sorted
+  }, [changes, changeSort])
 
   useEffect(() => {
     if (!code) return
 
     const fetchData = async () => {
       setLoading(true)
+      setEtf(null)
+      setHoldings([])
+      setChanges([])
+      setPrices([])
+      setTags([])
+      setSimilarEtfs([])
+      setPriceChartOpen(false)
+      setSimilarOpen(false)
       try {
-        const [etfResult, holdingsResult, changesResult, pricesResult, tagsResult] = await Promise.allSettled([
+        const [etfResult, holdingsResult, changesResult, pricesResult, tagsResult, similarResult] = await Promise.allSettled([
           etfsApi.get(code),
           etfsApi.getHoldings(code),
           etfsApi.getChanges(code),
           etfsApi.getPrices(code),
           etfsApi.getTags(code),
+          etfsApi.getSimilar(code),
         ])
         if (etfResult.status === 'fulfilled') setEtf(etfResult.value)
         if (holdingsResult.status === 'fulfilled') setHoldings(holdingsResult.value)
         if (changesResult.status === 'fulfilled') setChanges(changesResult.value)
         if (pricesResult.status === 'fulfilled') setPrices(pricesResult.value)
         if (tagsResult.status === 'fulfilled') setTags(tagsResult.value)
+        if (similarResult.status === 'fulfilled') setSimilarEtfs(similarResult.value)
       } catch (error) {
         console.error('Failed to fetch ETF data:', error)
       } finally {
@@ -128,12 +186,14 @@ export default function ETFDetailPage() {
       increased: 'default',
       decreased: 'destructive',
       removed: 'destructive',
+      unchanged: 'secondary',
     }
     const labels: Record<string, string> = {
       added: '신규',
       increased: '증가',
       decreased: '감소',
       removed: '제외',
+      unchanged: '-',
     }
     return (
       <Badge variant={variants[type] || 'secondary'}>
@@ -274,6 +334,48 @@ export default function ETFDetailPage() {
         )}
       </Card>
 
+      {similarEtfs.length > 0 && (
+        <Card>
+          <CardHeader
+            className={`cursor-pointer select-none ${similarOpen ? '' : 'py-3'}`}
+            onClick={() => setSimilarOpen(!similarOpen)}
+          >
+            <CardTitle className={`flex items-center gap-2 ${similarOpen ? '' : 'text-sm'}`}>
+              {similarOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+              유사 ETF
+              <Badge variant="secondary" className="text-xs">{similarEtfs.length}</Badge>
+            </CardTitle>
+          </CardHeader>
+          {similarOpen && (
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>ETF명</TableHead>
+                    <TableHead className="text-right">겹침 종목</TableHead>
+                    <TableHead className="text-right">비중 유사도</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {similarEtfs.map((s) => (
+                    <TableRow key={s.etf_code}>
+                      <TableCell>
+                        <Link to={`/etf/${s.etf_code}`} className="text-blue-600 hover:underline font-medium">
+                          {s.name}
+                        </Link>
+                        <span className="text-xs text-muted-foreground ml-2">{s.etf_code}</span>
+                      </TableCell>
+                      <TableCell className="text-right">{s.overlap}개</TableCell>
+                      <TableCell className="text-right">{s.similarity.toFixed(1)}%</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          )}
+        </Card>
+      )}
+
       <Tabs defaultValue="holdings">
         <TabsList>
           <TabsTrigger value="holdings">구성 종목</TabsTrigger>
@@ -285,14 +387,14 @@ export default function ETFDetailPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>종목명</TableHead>
-                  <TableHead>종목코드</TableHead>
-                  <TableHead>섹터</TableHead>
-                  <TableHead className="text-right">비중</TableHead>
+                  <TableHead className="cursor-pointer select-none" onClick={() => toggleSort(holdingSort, setHoldingSort, 'stock_name')}>종목명<SortIcon active={holdingSort.key === 'stock_name'} dir={holdingSort.dir} /></TableHead>
+                  <TableHead className="cursor-pointer select-none" onClick={() => toggleSort(holdingSort, setHoldingSort, 'stock_code')}>종목코드<SortIcon active={holdingSort.key === 'stock_code'} dir={holdingSort.dir} /></TableHead>
+                  <TableHead className="cursor-pointer select-none" onClick={() => toggleSort(holdingSort, setHoldingSort, 'sector')}>섹터<SortIcon active={holdingSort.key === 'sector'} dir={holdingSort.dir} /></TableHead>
+                  <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort(holdingSort, setHoldingSort, 'weight')}>비중<SortIcon active={holdingSort.key === 'weight'} dir={holdingSort.dir} /></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {holdings.map((holding) => (
+                {sortedHoldings.map((holding) => (
                   <TableRow key={holding.stock_code}>
                     <TableCell className="font-medium">{holding.stock_name}</TableCell>
                     <TableCell>{holding.stock_code}</TableCell>
@@ -324,15 +426,15 @@ export default function ETFDetailPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>종목명</TableHead>
-                  <TableHead>변화</TableHead>
-                  <TableHead className="text-right">이전 비중</TableHead>
-                  <TableHead className="text-right">현재 비중</TableHead>
-                  <TableHead className="text-right">변화량</TableHead>
+                  <TableHead className="cursor-pointer select-none" onClick={() => toggleSort(changeSort, setChangeSort, 'stock_name')}>종목명<SortIcon active={changeSort.key === 'stock_name'} dir={changeSort.dir} /></TableHead>
+                  <TableHead className="cursor-pointer select-none" onClick={() => toggleSort(changeSort, setChangeSort, 'change_type')}>변화<SortIcon active={changeSort.key === 'change_type'} dir={changeSort.dir} /></TableHead>
+                  <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort(changeSort, setChangeSort, 'previous_weight')}>이전 비중<SortIcon active={changeSort.key === 'previous_weight'} dir={changeSort.dir} /></TableHead>
+                  <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort(changeSort, setChangeSort, 'current_weight')}>현재 비중<SortIcon active={changeSort.key === 'current_weight'} dir={changeSort.dir} /></TableHead>
+                  <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort(changeSort, setChangeSort, 'weight_change')}>변화량<SortIcon active={changeSort.key === 'weight_change'} dir={changeSort.dir} /></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {changes.map((change) => (
+                {sortedChanges.map((change) => (
                   <TableRow key={change.stock_code}>
                     <TableCell>
                       <div className="flex items-center gap-2">

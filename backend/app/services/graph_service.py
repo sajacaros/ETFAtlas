@@ -78,16 +78,46 @@ class GraphService:
         return self.execute_cypher(query, {"stock_code": stock_code})
 
     def find_similar_etfs(self, etf_code: str, min_overlap: int = 5) -> List[Dict]:
-        query = """
-        MATCH (e1:ETF {code: $etf_code})-[:HOLDS]->(s:Stock)<-[:HOLDS]-(e2:ETF)
-        WHERE e1 <> e2
-        WITH e2, COUNT(s) as overlap
-        WHERE overlap >= $min_overlap
-        RETURN e2.code as etf_code, overlap
-        ORDER BY overlap DESC
-        LIMIT 10
+        # 1) self_sim: 입력 ETF의 TF-IDF 가중 비중 합 (정규화 기준)
+        self_sim_query = """
+        MATCH (etf_node:ETF)
+        WITH COUNT(etf_node) as total_etfs
+        MATCH (e1:ETF {code: $etf_code})-[h1:HOLDS]->(s:Stock)
+        WITH total_etfs, e1, s, h1 ORDER BY h1.date DESC
+        WITH total_etfs, e1, s, head(collect(h1)) as latest1
+        MATCH (any_etf:ETF)-[:HOLDS]->(s)
+        WITH total_etfs, e1, s, latest1, COUNT(DISTINCT any_etf) as df
+        WITH SUM(latest1.weight * log(toFloat(total_etfs) / df)) as self_sim
+        RETURN {self_sim: self_sim}
         """
-        return self.execute_cypher(query, {"etf_code": etf_code, "min_overlap": min_overlap})
+        self_sim_rows = self.execute_cypher(self_sim_query, {"etf_code": etf_code})
+        self_sim = self.parse_agtype(self_sim_rows[0]["result"])["self_sim"] if self_sim_rows else 1.0
+
+        # 2) raw_sim: 다른 ETF와의 TF-IDF 가중 유사도
+        query = """
+        MATCH (etf_node:ETF)
+        WITH COUNT(etf_node) as total_etfs
+        MATCH (e1:ETF {code: $etf_code})-[h1:HOLDS]->(s:Stock)
+        WITH total_etfs, e1, s, h1 ORDER BY h1.date DESC
+        WITH total_etfs, e1, s, head(collect(h1)) as latest1
+        MATCH (any_etf:ETF)-[:HOLDS]->(s)
+        WITH total_etfs, e1, s, latest1, COUNT(DISTINCT any_etf) as df
+        WITH e1, s, latest1, log(toFloat(total_etfs) / df) as idf
+        MATCH (e2:ETF)-[h2:HOLDS]->(s) WHERE e1 <> e2
+        WITH e2, s, latest1, idf, h2 ORDER BY h2.date DESC
+        WITH e2, s, latest1, idf, head(collect(h2)) as latest2
+        WITH e2, COUNT(s) as overlap,
+             SUM(CASE WHEN latest1.weight < latest2.weight THEN latest1.weight ELSE latest2.weight END * idf) as similarity
+        WHERE overlap >= $min_overlap
+        RETURN {etf_code: e2.code, name: e2.name, overlap: overlap, similarity: similarity}
+        ORDER BY similarity DESC
+        LIMIT 5
+        """
+        rows = self.execute_cypher(query, {"etf_code": etf_code, "min_overlap": min_overlap})
+        results = [self.parse_agtype(row["result"]) for row in rows]
+        for r in results:
+            r["similarity"] = round(r["similarity"] / self_sim * 100, 1)
+        return results
 
     def find_common_stocks(self, etf_code1: str, etf_code2: str) -> List[Dict]:
         query = """
@@ -156,7 +186,7 @@ class GraphService:
         query = """
         MATCH (e:ETF {code: $etf_code})-[h:HOLDS]->(s:Stock)
         WITH s, h ORDER BY h.date DESC
-        WITH s, head(collect(h)) as latest
+        With s, head(collect(h)) as latest
         OPTIONAL MATCH (s)-[:BELONGS_TO]->(sec:Sector)
         RETURN {stock_code: s.code, stock_name: s.name, sector: sec.name,
                 weight: latest.weight, shares: latest.shares, recorded_at: latest.date}
@@ -180,7 +210,7 @@ class GraphService:
             query = """
             MATCH (e:ETF {code: $etf_code})-[h:HOLDS]->(s:Stock)
             WITH s, h ORDER BY h.date DESC
-            WITH s, head(collect(h)) as latest
+            With s, head(collect(h)) as latest
             RETURN {stock_code: s.code, stock_name: s.name, weight: latest.weight}
             """
             rows = self.execute_cypher(query, {"etf_code": etf_code})
@@ -223,16 +253,16 @@ class GraphService:
             prev = previous.get(code)
             cw = float(curr["weight"]) if curr else 0
             pw = float(prev["weight"]) if prev else 0
-            if cw == pw:
-                continue
             if curr and not prev:
                 change_type = "added"
             elif prev and not curr:
                 change_type = "removed"
             elif cw > pw:
                 change_type = "increased"
-            else:
+            elif cw < pw:
                 change_type = "decreased"
+            else:
+                change_type = "unchanged"
             changes.append({
                 "stock_code": code,
                 "stock_name": (curr or prev)["stock_name"],
@@ -241,4 +271,4 @@ class GraphService:
                 "previous_weight": pw,
                 "weight_change": round(cw - pw, 4),
             })
-        return sorted(changes, key=lambda x: abs(x["weight_change"]), reverse=True)
+        return sorted(changes, key=lambda x: x["current_weight"], reverse=True)

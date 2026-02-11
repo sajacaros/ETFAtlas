@@ -53,13 +53,15 @@ class PriceResponse(BaseModel):
 
 class SimilarETFResponse(BaseModel):
     etf_code: str
+    name: str
     overlap: int
+    similarity: float
 
 
 @router.get("/search", response_model=List[ETFResponse])
 async def search_etfs(
     q: str = Query(..., min_length=1, description="Search query"),
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=100),
     db: Session = Depends(get_db)
 ):
     etf_service = ETFService(db)

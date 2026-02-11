@@ -169,6 +169,21 @@ export interface TagHolding {
   weight: number
 }
 
+// Total Holdings types
+export interface TotalHoldingItem {
+  ticker: string
+  name: string
+  quantity: number
+  current_price: number
+  value: number
+  weight: number
+}
+
+export interface TotalHoldingsResponse {
+  holdings: TotalHoldingItem[]
+  total_value: number
+}
+
 // Dashboard types
 export interface DashboardSummaryItem {
   amount: number

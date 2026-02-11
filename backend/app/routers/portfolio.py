@@ -15,6 +15,7 @@ from ..schemas.portfolio import (
     CalculationResponse, CalculationRowResponse,
     PortfolioDetailResponse,
     DashboardResponse, DashboardSummary, DashboardSummaryItem, ChartDataPoint,
+    TotalHoldingsResponse, TotalHoldingItem,
     BackfillSnapshotResponse,
 )
 from ..domain.portfolio_calculation import (
@@ -244,6 +245,67 @@ async def get_total_dashboard(
 
     snapshots = [SnapshotRow(r.date, r.total_value) for r in results]
     return _build_dashboard_response(snapshots)
+
+
+@router.get("/dashboard/total/holdings", response_model=TotalHoldingsResponse)
+async def get_total_holdings(
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    portfolios = db.query(Portfolio).filter(Portfolio.user_id == user_id).all()
+    if not portfolios:
+        return TotalHoldingsResponse(holdings=[], total_value=Decimal('0'))
+
+    # 모든 포트폴리오의 보유종목을 ticker별로 합산
+    all_holdings = db.query(Holding).filter(
+        Holding.portfolio_id.in_([p.id for p in portfolios]),
+    ).all()
+
+    ticker_qty: dict[str, Decimal] = {}
+    for h in all_holdings:
+        ticker_qty[h.ticker] = ticker_qty.get(h.ticker, Decimal('0')) + Decimal(str(h.quantity))
+
+    if not ticker_qty:
+        return TotalHoldingsResponse(holdings=[], total_value=Decimal('0'))
+
+    all_tickers = list(ticker_qty.keys())
+    price_service = PriceService(db)
+    prices = price_service.get_prices(all_tickers)
+    etf_names = price_service.get_etf_names(all_tickers)
+
+    # 평가금액 계산
+    items: list[tuple[str, Decimal]] = []
+    grand_total = Decimal('0')
+    for ticker, qty in ticker_qty.items():
+        if ticker == 'CASH':
+            value = qty
+        else:
+            price = prices.get(ticker, Decimal('0'))
+            value = qty * price
+        items.append((ticker, value))
+        grand_total += value
+
+    # 비중 계산 및 정렬
+    holdings_out = []
+    for ticker, value in items:
+        qty = ticker_qty[ticker]
+        if ticker == 'CASH':
+            price = Decimal('1')
+        else:
+            price = prices.get(ticker, Decimal('0'))
+        weight = float(value / grand_total * 100) if grand_total else 0.0
+        holdings_out.append(TotalHoldingItem(
+            ticker=ticker,
+            name=etf_names.get(ticker, ticker),
+            quantity=qty,
+            current_price=price,
+            value=value,
+            weight=round(weight, 2),
+        ))
+
+    holdings_out.sort(key=lambda x: x.weight, reverse=True)
+
+    return TotalHoldingsResponse(holdings=holdings_out, total_value=grand_total)
 
 
 @router.get("/{portfolio_id}/dashboard", response_model=DashboardResponse)

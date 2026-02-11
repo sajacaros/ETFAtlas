@@ -79,12 +79,16 @@ export const etfsApi = {
     const { data } = await api.get<Holding[]>(`/etfs/${code}/holdings`, { params: { date } })
     return data
   },
-  getChanges: async (code: string, days = 30) => {
-    const { data } = await api.get<HoldingChange[]>(`/etfs/${code}/changes`, { params: { days } })
+  getChanges: async (code: string, period = '1d') => {
+    const { data } = await api.get<HoldingChange[]>(`/etfs/${code}/changes`, { params: { period } })
     return data
   },
   getPrices: async (code: string, days = 365) => {
     const { data } = await api.get<Price[]>(`/etfs/${code}/prices`, { params: { days } })
+    return data
+  },
+  getTags: async (code: string) => {
+    const { data } = await api.get<string[]>(`/etfs/${code}/tags`)
     return data
   },
 }

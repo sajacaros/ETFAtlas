@@ -140,3 +140,105 @@ class GraphService:
         """
         rows = self.execute_cypher(query, {"etf_code": etf_code})
         return [self.parse_agtype(row["result"]) for row in rows]
+
+    def get_tags_by_etf(self, etf_code: str) -> List[str]:
+        """특정 ETF에 연결된 태그 목록 조회"""
+        query = """
+        MATCH (e:ETF {code: $etf_code})-[:TAGGED]->(t:Tag)
+        RETURN {name: t.name}
+        ORDER BY t.name
+        """
+        rows = self.execute_cypher(query, {"etf_code": etf_code})
+        return [self.parse_agtype(row["result"])["name"] for row in rows]
+
+    def get_etf_holdings_full(self, etf_code: str) -> List[Dict]:
+        """ETF 전체 보유종목 (최신 날짜 기준, 섹터 포함)"""
+        query = """
+        MATCH (e:ETF {code: $etf_code})-[h:HOLDS]->(s:Stock)
+        WITH s, h ORDER BY h.date DESC
+        WITH s, head(collect(h)) as latest
+        OPTIONAL MATCH (s)-[:BELONGS_TO]->(sec:Sector)
+        RETURN {stock_code: s.code, stock_name: s.name, sector: sec.name,
+                weight: latest.weight, shares: latest.shares, recorded_at: latest.date}
+        ORDER BY latest.weight DESC
+        """
+        rows = self.execute_cypher(query, {"etf_code": etf_code})
+        return [self.parse_agtype(row["result"]) for row in rows]
+
+    def _get_holdings_at(self, etf_code: str, target_date: str = None) -> Dict[str, Dict]:
+        """특정 날짜 이전의 최신 보유종목 조회. target_date=None이면 최신."""
+        if target_date:
+            query = """
+            MATCH (e:ETF {code: $etf_code})-[h:HOLDS]->(s:Stock)
+            WHERE h.date <= $target_date
+            WITH s, h ORDER BY h.date DESC
+            WITH s, head(collect(h)) as latest
+            RETURN {stock_code: s.code, stock_name: s.name, weight: latest.weight}
+            """
+            rows = self.execute_cypher(query, {"etf_code": etf_code, "target_date": target_date})
+        else:
+            query = """
+            MATCH (e:ETF {code: $etf_code})-[h:HOLDS]->(s:Stock)
+            WITH s, h ORDER BY h.date DESC
+            WITH s, head(collect(h)) as latest
+            RETURN {stock_code: s.code, stock_name: s.name, weight: latest.weight}
+            """
+            rows = self.execute_cypher(query, {"etf_code": etf_code})
+        return {r["stock_code"]: r for r in [self.parse_agtype(row["result"]) for row in rows]}
+
+    def _get_prev_trading_date(self, etf_code: str) -> str | None:
+        """전거래일(두 번째로 최신인 날짜) 조회"""
+        query = """
+        MATCH (e:ETF {code: $etf_code})-[h:HOLDS]->(:Stock)
+        WITH DISTINCT h.date as d
+        RETURN {date: d}
+        ORDER BY d DESC
+        LIMIT 2
+        """
+        rows = self.execute_cypher(query, {"etf_code": etf_code})
+        dates = [self.parse_agtype(row["result"])["date"] for row in rows]
+        return dates[1] if len(dates) >= 2 else None
+
+    def get_etf_holdings_changes(self, etf_code: str, period: str = "1d") -> List[Dict]:
+        """ETF 보유종목 비중 변화. period: 1d(전거래일), 1w, 1m"""
+        from datetime import date, timedelta
+
+        current = self._get_holdings_at(etf_code)
+
+        if period == "1d":
+            prev_date = self._get_prev_trading_date(etf_code)
+        elif period == "1w":
+            prev_date = (date.today() - timedelta(days=7)).isoformat()
+        elif period == "1m":
+            prev_date = (date.today() - timedelta(days=30)).isoformat()
+        else:
+            prev_date = self._get_prev_trading_date(etf_code)
+
+        previous = self._get_holdings_at(etf_code, prev_date) if prev_date else {}
+
+        changes = []
+        all_codes = set(current.keys()) | set(previous.keys())
+        for code in all_codes:
+            curr = current.get(code)
+            prev = previous.get(code)
+            cw = float(curr["weight"]) if curr else 0
+            pw = float(prev["weight"]) if prev else 0
+            if cw == pw:
+                continue
+            if curr and not prev:
+                change_type = "added"
+            elif prev and not curr:
+                change_type = "removed"
+            elif cw > pw:
+                change_type = "increased"
+            else:
+                change_type = "decreased"
+            changes.append({
+                "stock_code": code,
+                "stock_name": (curr or prev)["stock_name"],
+                "change_type": change_type,
+                "current_weight": cw,
+                "previous_weight": pw,
+                "weight_change": round(cw - pw, 4),
+            })
+        return sorted(changes, key=lambda x: abs(x["weight_change"]), reverse=True)

@@ -170,17 +170,114 @@ def collect_etf_list(**context):
 
 
 def fetch_krx_data(**context):
-    """Task 1-1: KRX API에서 일별매매정보 조회 (최근 거래일 자동 탐색)"""
+    """Task 1-1: KRX API에서 일별매매정보 조회 (누락 영업일 자동 백필)
+
+    DB의 마지막 수집일 ~ 오늘 사이 누락된 영업일을 모두 수집.
+    XCom:
+      - trading_date: 최신 거래일 1개 (기존 downstream 호환)
+      - trading_dates: 수집된 모든 거래일 리스트
+      - return: 모든 날짜의 krx_data 통합 리스트
+    """
+    from datetime import datetime, timedelta
+
     date = context['ds_nodash']
-
-    krx_data, actual_date = get_krx_daily_data(date)
-    log.info(f"Fetched {len(krx_data)} ETFs from KRX API (trading date: {actual_date})")
-
-    # 실제 거래일을 XCom에 저장
     ti = context['ti']
-    ti.xcom_push(key='trading_date', value=actual_date)
 
-    # XCom은 직렬화가 필요하므로 dict 리스트로 변환
+    # 1. DB에서 마지막 수집일 조회
+    last_collected = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT MAX(date) FROM etf_prices
+            WHERE close_price > 0
+        """)
+        result = cur.fetchone()
+        if result and result[0]:
+            last_collected = result[0]  # datetime.date 객체
+            log.info(f"Last collected date in DB: {last_collected}")
+        cur.close()
+        conn.close()
+    except Exception as e:
+        log.warning(f"Failed to query last collected date: {e}")
+
+    # 2. 백필 시작일 결정
+    INITIAL_BACKFILL_DAYS = 45  # 초기 적재 시 약 30 영업일 (6주 = 45일)
+    base_date = datetime.strptime(date, '%Y%m%d').date()
+
+    if not last_collected:
+        # DB가 비어있으면 오늘 기준 INITIAL_BACKFILL_DAYS일 전부터 수집
+        start_date = base_date - timedelta(days=INITIAL_BACKFILL_DAYS)
+        log.info(f"No previous data in DB, initial backfill from {start_date} to {base_date}")
+    else:
+        start_date = last_collected + timedelta(days=1)
+
+    if start_date > base_date:
+        log.info("No missing dates to backfill")
+        # 그래도 오늘 데이터는 수집 (이미 수집된 경우 ON CONFLICT로 처리)
+        krx_data, actual_date = get_krx_daily_data(date)
+        ti.xcom_push(key='trading_date', value=actual_date)
+        ti.xcom_push(key='trading_dates', value=[actual_date] if actual_date else [])
+        return [
+            {
+                'date': item.date,
+                'code': item.code,
+                'name': item.name,
+                'close_price': item.close_price,
+                'open_price': item.open_price,
+                'high_price': item.high_price,
+                'low_price': item.low_price,
+                'volume': item.volume,
+                'trade_value': item.trade_value,
+                'nav': item.nav,
+                'market_cap': item.market_cap,
+                'net_assets': item.net_assets,
+            }
+            for item in krx_data
+        ]
+
+    # 평일 날짜 리스트 생성 (월~금 = weekday 0~4)
+    candidate_dates = []
+    current = start_date
+    while current <= base_date:
+        if current.weekday() < 5:  # 월~금
+            candidate_dates.append(current.strftime('%Y%m%d'))
+        current += timedelta(days=1)
+
+    log.info(f"Backfill candidates: {len(candidate_dates)} weekdays from {start_date} to {base_date}")
+
+    # 4. 각 날짜별 KRX 데이터 수집
+    all_krx_data = []
+    collected_dates = []
+
+    for candidate_date in candidate_dates:
+        try:
+            result = _get_krx_data_for_exact_date(candidate_date)
+            if result:
+                all_krx_data.extend(result)
+                collected_dates.append(candidate_date)
+                log.info(f"Collected {len(result)} ETFs for {candidate_date}")
+            else:
+                log.info(f"No data for {candidate_date} (likely holiday), skipping")
+        except Exception as e:
+            log.warning(f"Failed to fetch data for {candidate_date}: {e}")
+
+    log.info(f"Backfill complete: collected {len(collected_dates)} trading days, {len(all_krx_data)} total records")
+
+    # 5. 백필 결과가 없으면 최근 거래일 fallback (장 마감 전/공휴일 대비)
+    if not collected_dates:
+        log.info("No new data from backfill, falling back to latest trading day search")
+        krx_data, actual_date = get_krx_daily_data(date)
+        if krx_data:
+            all_krx_data = krx_data
+            collected_dates = [actual_date]
+            log.info(f"Fallback: found {len(krx_data)} ETFs for {actual_date}")
+
+    # 6. XCom push
+    latest_date = collected_dates[-1] if collected_dates else ''
+    ti.xcom_push(key='trading_date', value=latest_date)
+    ti.xcom_push(key='trading_dates', value=collected_dates)
+
     return [
         {
             'date': item.date,
@@ -196,8 +293,33 @@ def fetch_krx_data(**context):
             'market_cap': item.market_cap,
             'net_assets': item.net_assets,
         }
-        for item in krx_data
+        for item in all_krx_data
     ]
+
+
+def _get_krx_data_for_exact_date(date: str) -> list:
+    """KRX API에서 정확히 해당 날짜의 데이터만 조회 (거래일 탐색 없음)
+
+    Args:
+        date: 조회일자 (YYYYMMDD 형식)
+
+    Returns:
+        ETFDailyData 리스트, 데이터 없으면 빈 리스트
+    """
+    import os
+    from krx_api_client import KRXApiClient
+
+    auth_key = os.environ.get('KRX_AUTH_KEY', '')
+    if not auth_key:
+        return []
+
+    try:
+        client = KRXApiClient(auth_key)
+        result = client.get_etf_daily_trading(date)
+        return result if result else []
+    except Exception as e:
+        log.warning(f"Failed to get KRX data for {date}: {e}")
+        return []
 
 
 def filter_etf_list(**context):
@@ -699,11 +821,12 @@ def collect_holdings(**context):
 
 
 def collect_prices(**context):
-    """Task 4: ETF 가격 데이터 수집 (KRX API 데이터 사용, 모든 ETF)"""
+    """Task 4: ETF 가격 데이터 수집 (KRX API 데이터 사용, 모든 ETF)
+
+    각 krx_data item의 date 필드를 그대로 사용하여 멀티 날짜 INSERT 지원.
+    """
     ti = context['ti']
     krx_data_dicts = ti.xcom_pull(task_ids='fetch_krx_data')
-    trading_date = ti.xcom_pull(task_ids='fetch_krx_data', key='trading_date')
-    date_str = f"{trading_date[:4]}-{trading_date[4:6]}-{trading_date[6:8]}" if trading_date else context['ds']
 
     if not krx_data_dicts:
         log.warning("No KRX data available")
@@ -715,9 +838,11 @@ def collect_prices(**context):
     success_count = 0
 
     try:
-        # 모든 KRX 데이터에 대해 가격 저장
         for krx_item in krx_data_dicts:
             try:
+                # 각 item의 date 필드 사용 (YYYYMMDD → YYYY-MM-DD)
+                item_date = krx_item['date']
+                date_str = f"{item_date[:4]}-{item_date[4:6]}-{item_date[6:8]}"
 
                 cur.execute("""
                     INSERT INTO etf_prices (
@@ -929,12 +1054,18 @@ def detect_changes(etf_code: str, today_holdings: dict, yesterday_holdings: dict
 
 
 def collect_stock_prices(**context):
-    """Task 6: Stock 가격 데이터 수집 (is_etf=false인 Stock만)"""
+    """Task 6: Stock 가격 데이터 수집 (is_etf=false인 Stock만)
+
+    XCom의 trading_dates 리스트를 사용하여 멀티 날짜 수집 지원.
+    """
     from pykrx import stock
 
     ti = context['ti']
-    trading_date = ti.xcom_pull(task_ids='fetch_krx_data', key='trading_date')
-    date_str = f"{trading_date[:4]}-{trading_date[4:6]}-{trading_date[6:8]}" if trading_date else context['ds']
+    trading_dates = ti.xcom_pull(task_ids='fetch_krx_data', key='trading_dates')
+    if not trading_dates:
+        # fallback: 단일 날짜
+        trading_date = ti.xcom_pull(task_ids='fetch_krx_data', key='trading_date')
+        trading_dates = [trading_date] if trading_date else [context['ds_nodash']]
 
     conn = get_db_connection()
     cur = init_age(conn)
@@ -959,54 +1090,64 @@ def collect_stock_prices(**context):
             log.warning("No stocks to collect prices for")
             return
 
-        log.info(f"Collecting prices for {len(stock_codes)} stocks")
+        log.info(f"Collecting prices for {len(stock_codes)} stocks across {len(trading_dates)} dates")
 
-        # 2. pykrx로 해당 날짜 전체 주식 OHLCV 조회 (한 번에)
-        df = stock.get_market_ohlcv_by_ticker(trading_date if trading_date else context['ds_nodash'])
-
-        if df is None or df.empty:
-            log.warning("No market OHLCV data available")
-            return
-
-        # 3. stock_codes에 해당하는 것만 필터링해서 저장
+        # 2. 각 날짜별로 pykrx OHLCV 조회 및 저장
         cur_db = conn.cursor()
-        success_count = 0
+        total_success = 0
 
-        for code in stock_codes:
-            if code in df.index:
-                try:
-                    row = df.loc[code]
-                    cur_db.execute("""
-                        INSERT INTO stock_prices (
-                            stock_code, date, open_price, high_price, low_price, close_price,
-                            volume, change_rate
-                        )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (stock_code, date) DO UPDATE SET
-                            open_price = EXCLUDED.open_price,
-                            high_price = EXCLUDED.high_price,
-                            low_price = EXCLUDED.low_price,
-                            close_price = EXCLUDED.close_price,
-                            volume = EXCLUDED.volume,
-                            change_rate = EXCLUDED.change_rate
-                    """, (
-                        code,
-                        date_str,
-                        float(row.get('시가', 0)),
-                        float(row.get('고가', 0)),
-                        float(row.get('저가', 0)),
-                        float(row.get('종가', 0)),
-                        int(row.get('거래량', 0)),
-                        float(row.get('등락률', 0))
-                    ))
-                    success_count += 1
-                except Exception as e:
-                    log.warning(f"Failed to save stock price for {code}: {e}")
+        for td in trading_dates:
+            try:
+                date_str = f"{td[:4]}-{td[4:6]}-{td[6:8]}"
+                df = stock.get_market_ohlcv_by_ticker(td)
+
+                if df is None or df.empty:
+                    log.warning(f"No market OHLCV data for {td}")
                     continue
 
-        conn.commit()
+                date_success = 0
+                for code in stock_codes:
+                    if code in df.index:
+                        try:
+                            row = df.loc[code]
+                            cur_db.execute("""
+                                INSERT INTO stock_prices (
+                                    stock_code, date, open_price, high_price, low_price, close_price,
+                                    volume, change_rate
+                                )
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                                ON CONFLICT (stock_code, date) DO UPDATE SET
+                                    open_price = EXCLUDED.open_price,
+                                    high_price = EXCLUDED.high_price,
+                                    low_price = EXCLUDED.low_price,
+                                    close_price = EXCLUDED.close_price,
+                                    volume = EXCLUDED.volume,
+                                    change_rate = EXCLUDED.change_rate
+                            """, (
+                                code,
+                                date_str,
+                                float(row.get('시가', 0)),
+                                float(row.get('고가', 0)),
+                                float(row.get('저가', 0)),
+                                float(row.get('종가', 0)),
+                                int(row.get('거래량', 0)),
+                                float(row.get('등락률', 0))
+                            ))
+                            date_success += 1
+                        except Exception as e:
+                            log.warning(f"Failed to save stock price for {code} on {td}: {e}")
+                            continue
+
+                conn.commit()
+                total_success += date_success
+                log.info(f"Stock prices for {td}: {date_success} saved")
+
+            except Exception as e:
+                log.warning(f"Failed to collect stock prices for date {td}: {e}")
+                continue
+
         cur_db.close()
-        log.info(f"Stock price collection complete. Success: {success_count}")
+        log.info(f"Stock price collection complete. Total success: {total_success}")
 
     finally:
         cur.close()

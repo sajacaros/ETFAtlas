@@ -652,7 +652,7 @@ export default function PortfolioPage() {
                     <>
                       <p className="text-lg font-bold font-mono">
                         <span className="text-sm font-normal text-muted-foreground">
-                          종가({p.current_value_date.slice(2).replace(/-/g, '/')}):
+                          {p.current_value_date.slice(2).replace(/-/g, '/')}:
                         </span>{' '}
                         {formatMaskedNumber(p.current_value, amountVisible)}{amountVisible && '원'}
                       </p>

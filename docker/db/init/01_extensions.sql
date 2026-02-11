@@ -144,6 +144,16 @@ CREATE TABLE IF NOT EXISTS etf_embeddings (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- ETF Universe (수집 대상 ETF 유니버스)
+CREATE TABLE IF NOT EXISTS etf_universe (
+    code VARCHAR(20) PRIMARY KEY,
+    name VARCHAR(255),
+    index_name VARCHAR(255) DEFAULT '',
+    initial_net_assets BIGINT,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Stock Prices (주식 시계열 데이터)
 CREATE TABLE IF NOT EXISTS stock_prices (
     stock_code VARCHAR(20) NOT NULL,

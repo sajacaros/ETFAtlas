@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from smolagents import Tool, CodeAgent, LiteLLMModel
 from ..config import get_settings
 from .graph_service import GraphService
+from .etf_service import ETFService
 
 
 class CypherQueryTool(Tool):
@@ -265,6 +266,65 @@ etf_search로 ETF 코드를 먼저 확인한 후 사용하세요."""
         return json.dumps(filtered, ensure_ascii=False, default=str)
 
 
+class GetETFPricesTool(Tool):
+    name = "get_etf_prices"
+    description = """ETF의 과거 종가(가격) 데이터를 조회합니다. 기간별 종가, 거래량, 수익률 등을 확인할 수 있습니다.
+etf_search로 ETF 코드를 먼저 확인한 후 사용하세요.
+결과: 기간 내 일별 종가 목록 + 요약 통계(시작가, 최종가, 최고가, 최저가, 등락률)"""
+    inputs = {
+        "etf_code": {
+            "type": "string",
+            "description": "ETF 종목코드 (예: '069500')"
+        },
+        "period": {
+            "type": "string",
+            "description": "조회 기간: '1w', '1m', '3m', '6m', '1y'. 기본값 '1m'",
+            "nullable": True,
+        }
+    }
+    output_type = "string"
+
+    PERIOD_DAYS = {
+        "1w": 7,
+        "1m": 30,
+        "3m": 90,
+        "6m": 180,
+        "1y": 365,
+    }
+
+    def __init__(self, db: Session):
+        super().__init__()
+        self.db = db
+
+    def forward(self, etf_code: str, period: str = "1m") -> str:
+        days = self.PERIOD_DAYS.get(period, 30)
+        etf_service = ETFService(self.db)
+        prices = etf_service.get_etf_prices(etf_code, days=days)
+        if not prices:
+            return "해당 기간의 가격 데이터가 없습니다"
+
+        closes = [p["close"] for p in prices if p["close"] is not None]
+        volumes = [p["volume"] for p in prices if p["volume"] is not None]
+
+        summary = {
+            "etf_code": etf_code,
+            "period": period,
+            "data_count": len(prices),
+            "start_date": prices[0]["date"],
+            "end_date": prices[-1]["date"],
+            "start_close": closes[0] if closes else None,
+            "end_close": closes[-1] if closes else None,
+            "high": max(closes) if closes else None,
+            "low": min(closes) if closes else None,
+            "change_rate": round((closes[-1] - closes[0]) / closes[0] * 100, 2) if len(closes) >= 2 else None,
+            "avg_volume": round(sum(volumes) / len(volumes)) if volumes else None,
+        }
+
+        daily = [{"date": p["date"], "close": p["close"], "volume": p["volume"]} for p in prices]
+
+        return json.dumps({"summary": summary, "daily": daily}, ensure_ascii=False, default=str)
+
+
 SYSTEM_PROMPT = """당신은 ETF Atlas의 AI 어시스턴트입니다. 한국 ETF 시장에 대한 질문에 답변합니다.
 
 주어진 도구를 활용하여 사용자의 질문에 정확하게 답변하세요:
@@ -275,6 +335,7 @@ SYSTEM_PROMPT = """당신은 ETF Atlas의 AI 어시스턴트입니다. 한국 ET
 - get_etf_info: ETF 메타 정보 종합 조회 (기본정보, 운용사, 태그, 상위 보유종목)
 - find_similar_etfs: 특정 ETF와 유사한 ETF 조회 (TF-IDF 유사도)
 - get_holdings_changes: ETF 보유종목 비중 변화 조회 (전거래일/1주/1개월 비교)
+- get_etf_prices: ETF 종가/가격 추이 조회 (기간별 종가, 수익률, 거래량)
 
 사용 순서:
 1. 종목명이 나오면 stock_search로 코드를 먼저 확인
@@ -311,6 +372,7 @@ class ChatService:
                 GetETFInfoTool(db=self.db),
                 FindSimilarETFsTool(db=self.db),
                 GetHoldingsChangesTool(db=self.db),
+                GetETFPricesTool(db=self.db),
             ],
             model=model,
             additional_authorized_imports=["json"],

@@ -43,11 +43,27 @@ pykrx에서 전체 ETF 티커 목록을 조회한다. 참조용으로만 사용.
 
 ### 2. fetch_krx_data
 
-KRX Open API에서 ETF 일별 거래 정보를 수집한다.
+KRX Open API에서 ETF 일별 거래 정보를 수집한다. 누락된 영업일을 자동으로 백필한다.
 
-- 최근 7일 내 거래일을 자동 탐색 (휴장일 대응)
-- XCom으로 `trading_date`와 시세 데이터를 하위 태스크에 전달
-- 수집 항목: OHLCV, 거래대금, NAV, 시가총액, 순자산총액
+**백필 로직:**
+
+| 상태 | 동작 |
+|------|------|
+| DB 비어있음 (초기 적재) | 실행일 기준 45일 전부터 수집 (~30 영업일) |
+| 누락일 있음 | DB 마지막 수집일 다음날 ~ 오늘까지 평일 순회 |
+| 누락 없음 | 오늘 데이터만 수집 시도 |
+| 수집 결과 없음 (장 마감 전/공휴일) | 최근 7일 내 거래일 탐색 fallback |
+
+- 평일(월~금) 후보만 조회, 공휴일은 KRX 응답이 없으면 자동 skip
+- `_get_krx_data_for_exact_date`: 정확히 해당 날짜만 조회 (거래일 탐색 없음, 백필용)
+- `get_krx_daily_data`: 최대 7일 과거 탐색 (fallback용)
+
+**XCom 출력:**
+- `trading_date`: 최신 거래일 1개 (기존 downstream 호환)
+- `trading_dates`: 수집된 모든 거래일 리스트 (멀티 날짜 downstream용)
+- return value: 모든 날짜의 krx_data 통합 리스트
+
+**수집 항목:** OHLCV, 거래대금, NAV, 시가총액, 순자산총액
 
 ### 3. filter_etf_list
 
@@ -90,14 +106,14 @@ ETF별 보유종목 상위 20개를 수집하여 그래프에 저장한다.
 
 ### 6. collect_prices
 
-KRX 데이터에서 **전체 ETF**(필터 무관)의 시세를 RDB에 저장한다.
+KRX 데이터에서 **전체 ETF**(필터 무관)의 시세를 RDB에 저장한다. 각 item의 `date` 필드를 사용하여 멀티 날짜 INSERT를 지원한다.
 
 **적재 테이블:** `etf_prices` (UPSERT on `etf_code, date`)
 - OHLCV, NAV, 시가총액, 순자산총액, 거래대금
 
 ### 7. collect_stock_prices
 
-그래프에 저장된 종목(`is_etf=false`) 중 개별 주식의 시세를 수집한다.
+그래프에 저장된 종목(`is_etf=false`) 중 개별 주식의 시세를 수집한다. XCom의 `trading_dates` 리스트를 사용하여 멀티 날짜 수집을 지원한다.
 
 **적재 테이블:** `stock_prices` (UPSERT on `stock_code, date`)
 - OHLCV, 등락률

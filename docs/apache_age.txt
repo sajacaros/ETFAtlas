@@ -1,0 +1,1072 @@
+================================================================================
+                    Apache AGE (A Graph Extension) 종합 자료
+================================================================================
+
+목차
+────────────────────────────────────────────────────────────────────────────────
+  1.  개요
+  2.  역사 및 배경
+  3.  핵심 개념 - PostgreSQL 위의 그래프 데이터베이스
+  4.  아키텍처 및 내부 구조
+  5.  agtype 데이터 타입
+  6.  설치 및 설정
+  7.  Cypher 쿼리 언어
+  8.  SQL과 Cypher의 하이브리드 쿼리
+  9.  인덱싱 및 성능
+  10. Neo4j와의 비교
+  11. 활용 사례 및 장점
+  12. 알려진 제한사항 및 주의사항
+  13. ETF Atlas 프로젝트에서의 활용
+      13-1. 환경 구성
+      13-2. 그래프 스키마 설계
+      13-3. GraphService 구현 (SQLAlchemy 연동)
+      13-4. SQLAlchemy + AGE 연동 시 발생하는 문제와 해결책
+      13-5. Airflow 데이터 파이프라인
+      13-6. 비즈니스 로직별 그래프 활용
+      13-7. 최적화 패턴
+  14. 참고 자료
+
+================================================================================
+1. 개요
+================================================================================
+
+Apache AGE(A Graph Extension)는 PostgreSQL에 그래프 데이터베이스 기능을 추가하는
+확장 모듈이다. 사용자는 기존 PostgreSQL 인스턴스 내에서 openCypher 쿼리 언어를
+사용하여 그래프 데이터를 저장하고 조회할 수 있으며, 동시에 표준 SQL도 함께 사용할
+수 있다.
+
+AGE는 Apache Software Foundation의 Top-Level Project(TLP)이며,
+Apache License 2.0으로 배포된다.
+
+핵심 가치:
+  - 별도의 그래프 데이터베이스를 운영할 필요 없이, 기존 PostgreSQL에 그래프
+    모델링을 추가할 수 있다.
+  - 관계형 테이블과 그래프 데이터를 같은 트랜잭션 내에서 조회할 수 있다.
+  - PostgreSQL의 ACID 트랜잭션, MVCC, 인덱싱, 복제 등 모든 기능을 그대로
+    활용할 수 있다.
+
+================================================================================
+2. 역사 및 배경
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 시점              │ 이정표                                                  │
+├───────────────────┼─────────────────────────────────────────────────────────┤
+│ 2016-2017년       │ Bitnine Global Inc.에서 AgensGraph 개발                 │
+│                   │ (PostgreSQL 10 기반 포크)                                │
+│ 2020년 4월        │ Apache Incubator에 Apache AGE 프로젝트 진입              │
+│ 2022년 6월 8일    │ Apache Top-Level Project(TLP)로 졸업                     │
+│ 2025년 9월 22일   │ v1.6.0 릴리스 (PostgreSQL 17 지원)                       │
+│ 2026년 1월 21일   │ v1.7.0 릴리스 (Row Level Security, id 인덱스 자동 생성)  │
+└───────────────────┴─────────────────────────────────────────────────────────┘
+
+Apache AGE는 Bitnine Global Inc.의 Junseok Yang이 이끈 AgensGraph 프로젝트에서
+파생되었다. AgensGraph는 PostgreSQL을 포크하여 만든 멀티모델 데이터베이스였으며,
+이를 PostgreSQL 확장 모듈 형태로 재설계한 것이 Apache AGE이다.
+
+Apache Software Foundation에서 공식적으로 인큐베이팅을 거쳐 졸업한 최초의
+그래프 데이터베이스 프로젝트이다.
+
+지원하는 PostgreSQL 버전: 11, 12, 13, 14, 15, 16, 17, 18
+
+================================================================================
+3. 핵심 개념 - PostgreSQL 위의 그래프 데이터베이스
+================================================================================
+
+AGE의 동작 방식:
+
+  1) PostgreSQL 표준 확장(extension)으로 설치된다 (age.so 공유 라이브러리)
+  2) ag_catalog 스키마를 생성하여 AGE 전용 함수, 타입, 메타데이터를 관리한다
+  3) 그래프 데이터를 일반 PostgreSQL 테이블에 agtype 컬럼으로 저장한다
+  4) cypher() 함수를 제공하여 openCypher 쿼리를 받아 PostgreSQL 행으로 반환한다
+  5) PostgreSQL의 기존 인프라(ACID, MVCC, 인덱싱, 트리거, 모니터링)를 그대로 활용한다
+
+이는 그래프 연산이 PostgreSQL의 ACID 보장에 완전히 참여함을 의미한다.
+
+그래프 데이터 모델 기본 요소:
+
+  - 정점(Vertex/Node): 그래프의 엔티티를 나타낸다. 레이블(Label)로 유형을
+    분류하고, 속성(Properties)을 가진다.
+    예) (:ETF {code: '069500', name: 'KODEX 200'})
+
+  - 간선(Edge/Relationship): 두 정점 간의 관계를 나타낸다. 방향성이 있으며,
+    레이블과 속성을 가진다.
+    예) (e)-[:HOLDS {weight: 25.5, date: '2026-02-12'}]->(s)
+
+  - 경로(Path): 정점과 간선이 교대로 연결된 시퀀스이다.
+
+  - 그래프(Graph): 정점과 간선의 집합이다. create_graph() 함수로 생성한다.
+
+================================================================================
+4. 아키텍처 및 내부 구조
+================================================================================
+
+4.1 확장 모듈 로딩
+────────────────────────────────────────
+
+  CREATE EXTENSION age;
+  LOAD 'age';
+  SET search_path = ag_catalog, "$user", public;
+
+  ※ 중요: 매 데이터베이스 연결(세션)마다 LOAD 'age'와 search_path 설정이
+    필요하다. 이는 세션별 요구사항이다.
+
+4.2 내부 저장 모델
+────────────────────────────────────────
+
+그래프를 생성하면:
+
+  SELECT create_graph('my_graph');
+
+AGE는 해당 그래프 이름으로 PostgreSQL 스키마를 생성하고, 그 안에 다음 테이블을
+만든다:
+
+  - _ag_label_vertex  : 모든 정점 레이블의 부모 테이블
+  - _ag_label_edge    : 모든 간선 레이블의 부모 테이블
+
+각 레이블(예: ETF, HOLDS)은 부모 테이블 아래에 자식 테이블이 된다.
+이 테이블들의 컬럼 구조:
+
+  정점 테이블:
+    - id (graphid)         : 고유 식별자
+    - properties (agtype)  : JSON 형태의 속성 맵
+
+  간선 테이블:
+    - id (graphid)         : 고유 식별자
+    - start_id (graphid)   : 시작 정점 ID
+    - end_id (graphid)     : 끝 정점 ID
+    - properties (agtype)  : JSON 형태의 속성 맵
+
+4.3 그래프 관리 함수
+────────────────────────────────────────
+
+  - create_graph(graph_name)     : 새 그래프 생성
+  - drop_graph(graph_name, cascade) : 그래프 삭제
+  - create_vlabel(graph, label)  : 정점 레이블 생성
+  - create_elabel(graph, label)  : 간선 레이블 생성
+  - alter_graph(graph, operation, new_name) : 그래프 이름 변경
+
+그래프당 최대 정점/간선 수: 약 281조 4,749억 개 (281,474,976,710,655)
+
+================================================================================
+5. agtype 데이터 타입
+================================================================================
+
+agtype은 AGE에서 모든 그래프 데이터를 표현하는 기본 데이터 타입이다.
+JSON의 상위집합(superset)이며, JSONB의 커스텀 구현체이다.
+
+5.1 정점 표현
+────────────────────────────────────────
+
+  {
+    "id": 1125899906842777,
+    "label": "ETF",
+    "properties": {"code": "069500", "name": "KODEX 200"}
+  }::vertex
+
+5.2 간선 표현
+────────────────────────────────────────
+
+  {
+    "id": 2251799813685249,
+    "label": "HOLDS",
+    "start_id": 1125899906842777,
+    "end_id": 1125899906842778,
+    "properties": {"weight": 25.5, "date": "2026-02-12"}
+  }::edge
+
+5.3 타입 접미사
+────────────────────────────────────────
+
+agtype 값에는 타입 접미사가 붙는다:
+
+  - ::vertex   : 정점
+  - ::edge     : 간선
+  - ::path     : 경로
+  - ::numeric  : 숫자
+  - ::integer  : 정수
+  - ::float    : 부동소수점
+
+이 접미사들은 결과를 프로그래밍 언어에서 파싱할 때 제거해야 한다.
+
+================================================================================
+6. 설치 및 설정
+================================================================================
+
+6.1 소스 빌드
+────────────────────────────────────────
+
+  git clone https://github.com/apache/age.git
+  cd age
+  git checkout release/PG17/1.7.0
+  make PG_CONFIG=/path/to/postgres/bin/pg_config install
+
+6.2 Docker
+────────────────────────────────────────
+
+  docker run \
+      --name age \
+      -p 5455:5432 \
+      -e POSTGRES_USER=postgres \
+      -e POSTGRES_PASSWORD=password \
+      -e POSTGRES_DB=mydb \
+      -d apache/age
+
+6.3 설치 후 SQL 설정
+────────────────────────────────────────
+
+  CREATE EXTENSION IF NOT EXISTS age;
+  LOAD 'age';
+  SET search_path = ag_catalog, "$user", public;
+  SELECT create_graph('my_graph');
+
+6.4 postgresql.conf 설정
+────────────────────────────────────────
+
+  shared_preload_libraries = 'age'
+  search_path = 'ag_catalog, "$user", public'
+
+6.5 드라이버/커넥터
+────────────────────────────────────────
+
+공식 드라이버:
+  - Python  : apache-age-python
+  - Go      : apache/age (Go 모듈)
+  - Java    : apache-age-java
+  - Node.js : apache-age-nodejs
+  - Rust    : apache-age-rust
+
+================================================================================
+7. Cypher 쿼리 언어
+================================================================================
+
+7.1 Cypher 호출 방법
+────────────────────────────────────────
+
+모든 Cypher 쿼리는 cypher() 함수를 통해 실행된다:
+
+  SELECT * FROM cypher('graph_name', $$
+      /* Cypher 쿼리 */
+  $$) AS (column_name agtype [, ...]);
+
+  - graph_name  : 대상 그래프 이름
+  - $$...$$     : Dollar Quoting으로 감싼 Cypher 쿼리
+  - AS절        : 반환 컬럼 정의
+
+7.2 지원하는 Cypher 절(Clause)
+────────────────────────────────────────
+
+  ┌─────────────────┬──────────────────────────────────────────────────────┐
+  │ 절              │ 용도                                                 │
+  ├─────────────────┼──────────────────────────────────────────────────────┤
+  │ MATCH           │ 패턴 매칭으로 노드, 관계, 경로를 찾음                │
+  │ CREATE          │ 새 정점과 간선 생성                                  │
+  │ MERGE           │ UPSERT - 없으면 생성, 있으면 매칭                    │
+  │ SET             │ 노드나 간선의 속성 업데이트                          │
+  │ DELETE          │ 노드, 간선, 경로 삭제                                │
+  │ REMOVE          │ 특정 속성 제거                                       │
+  │ RETURN          │ 출력 컬럼 지정                                       │
+  │ WHERE           │ 필터 조건                                            │
+  │ WITH            │ 쿼리 파트 체이닝, 파이프라인 경계                    │
+  │ ORDER BY        │ 결과 정렬                                            │
+  │ LIMIT / SKIP    │ 페이지네이션                                         │
+  │ UNWIND          │ 리스트를 행으로 확장                                 │
+  │ OPTIONAL MATCH  │ LEFT OUTER JOIN 방식의 매칭                          │
+  │ CASE WHEN       │ 조건 표현식                                          │
+  └─────────────────┴──────────────────────────────────────────────────────┘
+
+7.3 Cypher 쿼리 예시
+────────────────────────────────────────
+
+(1) 정점 생성:
+
+  SELECT * FROM cypher('etf_graph', $$
+      CREATE (:ETF {code: '069500', name: 'KODEX 200'})
+  $$) AS (v agtype);
+
+(2) 간선(관계) 생성:
+
+  SELECT * FROM cypher('etf_graph', $$
+      MATCH (e:ETF {code: '069500'}), (s:Stock {code: '005930'})
+      CREATE (e)-[:HOLDS {weight: 25.5, date: '2026-02-12'}]->(s)
+  $$) AS (r agtype);
+
+(3) MERGE (UPSERT):
+
+  SELECT * FROM cypher('etf_graph', $$
+      MERGE (e:ETF {code: '069500'})
+      MERGE (s:Stock {code: '005930'})
+      MERGE (e)-[r:HOLDS]->(s)
+      SET r.weight = 25.5
+      RETURN e, r, s
+  $$) AS (result agtype);
+
+(4) 조건부 조회:
+
+  SELECT * FROM cypher('etf_graph', $$
+      MATCH (e:ETF)-[h:HOLDS]->(s:Stock)
+      WHERE h.weight > 5.0
+      RETURN e.name, s.code, h.weight
+      ORDER BY h.weight DESC
+      LIMIT 10
+  $$) AS (etf_name agtype, stock_code agtype, weight agtype);
+
+(5) 다중 홉 탐색 (유사 ETF 찾기):
+
+  SELECT * FROM cypher('etf_graph', $$
+      MATCH (e1:ETF {code: '069500'})-[:HOLDS]->(s:Stock)<-[:HOLDS]-(e2:ETF)
+      WHERE e1 <> e2
+      WITH e2, COUNT(s) AS overlap
+      RETURN e2.code, e2.name, overlap
+      ORDER BY overlap DESC
+      LIMIT 5
+  $$) AS (code agtype, name agtype, overlap agtype);
+
+(6) OPTIONAL MATCH:
+
+  SELECT * FROM cypher('etf_graph', $$
+      MATCH (e:ETF {code: '069500'})-[h:HOLDS]->(s:Stock)
+      OPTIONAL MATCH (s)-[:BELONGS_TO]->(sec:Sector)
+      RETURN s.name, sec.name, h.weight
+  $$) AS (stock agtype, sector agtype, weight agtype);
+
+================================================================================
+8. SQL과 Cypher의 하이브리드 쿼리
+================================================================================
+
+AGE의 강력한 기능 중 하나는 SQL과 Cypher를 같은 쿼리에서 결합할 수 있다는 것이다.
+
+8.1 CTE(Common Table Expression)에서 Cypher 사용
+────────────────────────────────────────
+
+  WITH graph_query AS (
+      SELECT *
+      FROM cypher('etf_graph', $$
+          MATCH (e:ETF)-[:HOLDS]->(s:Stock)
+          RETURN e.code AS etf_code, s.code AS stock_code
+      $$) AS (etf_code agtype, stock_code agtype)
+  )
+  SELECT g.etf_code, g.stock_code, p.close_price
+  FROM graph_query g
+  JOIN stock_prices p ON p.stock_code = g.stock_code::text
+  WHERE p.date = '2026-02-12';
+
+8.2 JOIN에서 Cypher 사용
+────────────────────────────────────────
+
+  SELECT t.name, graph_query.etf_code
+  FROM sql_table AS t
+  JOIN cypher('etf_graph', $$
+      MATCH (e:ETF)-[:TAGGED]->(t:Tag)
+      RETURN e.code, t.name
+  $$) AS graph_query(etf_code agtype, tag_name agtype)
+  ON t.name = graph_query.tag_name::text;
+
+8.3 변경(Mutation) 쿼리 제약
+────────────────────────────────────────
+
+CREATE, SET, REMOVE 절을 포함하는 Cypher 쿼리는 SQL JOIN에서 직접 사용할 수 없다.
+이 경우 CTE로 감싸서 사용해야 한다:
+
+  WITH created AS (
+      SELECT * FROM cypher('etf_graph', $$
+          CREATE (:ETF {code: '069500', name: 'KODEX 200'})
+          RETURN 1
+      $$) AS (result agtype)
+  )
+  SELECT * FROM created;
+
+================================================================================
+9. 인덱싱 및 성능
+================================================================================
+
+9.1 지원하는 인덱스 유형
+────────────────────────────────────────
+
+  - B-tree 인덱스 : id, start_id, end_id 컬럼에 대한 정확한 매칭 및 범위 쿼리
+  - GIN 인덱스    : properties 컬럼에 대한 JSON 키-값 검색
+  - Hash 인덱스   : 해시 기반 검색
+
+  ※ v1.7.0부터 새로 생성되는 레이블에 대해 id 컬럼 인덱스가 자동 생성된다.
+  ※ 그 외의 인덱스는 수동으로 생성해야 한다.
+
+9.2 인덱스 생성 예시
+────────────────────────────────────────
+
+  -- 정점 레이블의 properties에 GIN 인덱스 생성
+  CREATE INDEX ON etf_graph."ETF" USING gin (properties);
+
+  -- 간선 레이블의 start_id에 B-tree 인덱스 생성
+  CREATE INDEX ON etf_graph."HOLDS" (start_id);
+
+9.3 성능 최적화 팁
+────────────────────────────────────────
+
+  - 쿼리 패턴에 맞는 명시적 인덱스를 생성한다
+  - 전체 테이블 조회 시에는 순차 스캔이 인덱스 스캔보다 빠를 수 있다
+  - EXPLAIN으로 인덱스 사용 여부를 확인한다
+  - 속성 맵을 간결하게 유지한다 (큰 속성 맵은 스캔 속도를 저하시킨다)
+  - 대량 데이터 로딩 시 AGEFreighter 라이브러리를 사용한다 (CSV, Avro, Parquet 지원)
+  - PostgreSQL의 일반적인 튜닝(shared_buffers, work_mem 등)이 그대로 적용된다
+
+================================================================================
+10. Neo4j와의 비교
+================================================================================
+
+  ┌──────────────────┬──────────────────────────┬──────────────────────────────┐
+  │ 측면             │ Apache AGE               │ Neo4j                        │
+  ├──────────────────┼──────────────────────────┼──────────────────────────────┤
+  │ 유형             │ PostgreSQL 확장 모듈      │ 독립형 네이티브 그래프 DB     │
+  │ 저장 방식        │ 관계형 테이블 + agtype    │ 네이티브 그래프 저장 엔진     │
+  │ 쿼리 언어        │ openCypher + SQL          │ Cypher (독자 확장 포함)       │
+  │ 트랜잭션         │ PostgreSQL ACID           │ 네이티브 ACID                 │
+  │ 관계형 데이터    │ 네이티브 SQL 지원          │ 별도 import/ETL 필요          │
+  │ 성숙도           │ TLP 2022년~, 성장 중      │ 2007년~, 대규모 생태계        │
+  │ 성능             │ 중간 규모 그래프에 적합    │ 복잡한 그래프 연산에 최적화    │
+  │                  │ 깊은 탐색 시 오버헤드     │ (인덱스 프리 인접)            │
+  │ 도구             │ PostgreSQL 생태계 +       │ Neo4j Browser, Bloom,         │
+  │                  │ AGE Viewer                │ Desktop, 풍부한 드라이버      │
+  │ 라이선스         │ Apache 2.0 (완전 오픈)    │ Community(GPL) /              │
+  │                  │                           │ Enterprise(상용)              │
+  │ 하이브리드 쿼리  │ 네이티브 SQL+Cypher 통합  │ 외부 데이터 연동 시           │
+  │                  │                           │ APOC 프로시저 필요            │
+  │ 스케일링         │ PostgreSQL 복제/읽기 복제 │ Causal Clustering(Enterprise) │
+  │ 클라우드         │ Azure DB for PostgreSQL   │ Neo4j Aura (전용 클라우드)    │
+  └──────────────────┴──────────────────────────┴──────────────────────────────┘
+
+AGE를 선택해야 할 때:
+  - 이미 PostgreSQL을 사용 중이고, 관계형 데이터와 함께 그래프 쿼리가 필요할 때
+  - 단일 운영 스택을 유지하고 싶을 때
+  - 그래프 워크로드가 중간 규모일 때
+
+Neo4j를 선택해야 할 때:
+  - 고도로 최적화된 깊은 그래프 탐색이 필요할 때
+  - 성숙한 그래프 전용 생태계와 시각화 도구가 필요할 때
+  - 대규모 그래프 전용 인프라가 필요할 때
+
+================================================================================
+11. 활용 사례 및 장점
+================================================================================
+
+11.1 이상적인 활용 사례
+────────────────────────────────────────
+
+  - 소셜 네트워크      : 친구의 친구 쿼리, 커뮤니티 탐지
+  - 추천 시스템         : 공유 관계를 통한 협업 필터링
+  - 사기 탐지           : 의심스러운 연결 패턴 식별
+  - 지식 그래프         : 엔티티-관계 모델링
+  - 네트워크 분석       : 인프라 토폴로지, 의존성 매핑
+  - 금융/ETF 분석       : 보유 종목, 공유 종목, 섹터 노출 모델링
+
+11.2 독립형 그래프 DB 대비 장점
+────────────────────────────────────────
+
+  - 별도 인프라 불필요  : 기존 PostgreSQL 안에서 실행
+  - 통합 데이터 모델    : 관계형 테이블과 그래프 데이터가 같은 DB, 같은 트랜잭션
+  - 하이브리드 쿼리     : SQL + Cypher를 하나의 쿼리로 결합
+  - 기존 생태계 활용    : pg_dump, pg_restore, 모니터링, 복제, 연결 풀러
+  - ACID 트랜잭션       : 관계형+그래프 연산 모두에 걸쳐 완전한 트랜잭션 보장
+  - 비용                : 완전 오픈소스 (Apache 2.0), 엔터프라이즈 라이선스 없음
+  - 확장 결합           : pgvector, PostGIS, pg_trgm 등과 함께 사용 가능
+
+================================================================================
+12. 알려진 제한사항 및 주의사항
+================================================================================
+
+12.1 일반적인 제한사항
+────────────────────────────────────────
+
+  (1) 세션별 로딩 필요
+      매 데이터베이스 연결마다 LOAD 'age'와 SET search_path를 실행해야 한다.
+
+  (2) 자동 인덱스 미생성 (v1.7.0 이전)
+      v1.7.0부터 id 컬럼에 대한 인덱스가 자동 생성되지만, properties 등에
+      대한 인덱스는 여전히 수동으로 생성해야 한다.
+
+  (3) 함수 파라미터 제한
+      PostgreSQL 함수의 인수 제한(100개)으로 인해 agtype_build_map은 한 번에
+      50개 필드까지만 입력 가능하다. 100개 이상의 속성을 가진 정점은 문제가
+      발생한다.
+
+  (4) pg_upgrade 미지원
+      AGE 테이블에 reg* OID 참조 시스템 데이터 타입이 포함되어 있어,
+      pg_upgrade를 통한 PostgreSQL 메이저 버전 업그레이드가 지원되지 않는다.
+      dump & restore 방식을 사용해야 한다.
+
+  (5) openCypher 부분 지원
+      모든 openCypher 기능이 구현된 것은 아니다. Neo4j Cypher의 일부 고급
+      기능이 누락될 수 있다.
+
+  (6) NULL 처리 불일치
+      동등 비교(=)에서는 null = null이 null을 반환하지만,
+      DISTINCT, GROUP BY, IN 등에서는 두 null을 같은 값으로 취급한다.
+
+  (7) 레이블 이름 충돌
+      정점 레이블과 간선 레이블이 같은 이름을 공유할 수 없다.
+
+  (8) 인덱스 프리 인접 미지원
+      Neo4j와 달리 AGE는 테이블 조인을 사용하여 탐색하므로, 깊은 다중 홉
+      쿼리에서 성능이 떨어질 수 있다.
+
+  (9) 정렬 쿼리의 인덱스 활용 문제
+      인덱스가 존재하더라도 정렬 쿼리에서 인덱스를 활용하지 못할 수 있다
+      (알려진 이슈 #1522).
+
+12.2 SQLAlchemy 연동 시 주의사항 (상세 내용은 13-4 참고)
+────────────────────────────────────────
+
+  (1) 콜론(:) 이스케이프 문제  - :ETF 등이 바인드 파라미터로 인식됨
+  (2) 파라미터 치환 충돌       - $param vs :param
+  (3) 다중 반환 컬럼 제약      - 단일 agtype 컬럼만 지원
+  (4) agtype 문자열 파싱 필요  - ::vertex 등 접미사 제거 필요
+
+================================================================================
+13. ETF Atlas 프로젝트에서의 활용
+================================================================================
+
+ETF Atlas는 한국 ETF 시장의 종목, 보유 종목, 운용사, 섹터, 테마 등의 관계를
+그래프로 모델링하여 유사 ETF 분석, 종목 노출 추적, 포트폴리오 변동 감지 등의
+기능을 제공하는 프로젝트이다.
+
+하이브리드 아키텍처를 채택하여:
+  - 그래프 (AGE)       : ETF-종목 보유 관계, 태그, 섹터, 유사도 분석
+  - 관계형 테이블      : 시계열 데이터 (가격, 스냅샷, 사용자 포트폴리오)
+  - pgvector 확장      : 의미 검색 임베딩
+  - pg_trgm 확장       : 퍼지 텍스트 검색
+
+────────────────────────────────────────────────────────────────────────────────
+13-1. 환경 구성
+────────────────────────────────────────────────────────────────────────────────
+
+Docker 기반 구성:
+
+  파일: docker/db/Dockerfile
+
+  - PostgreSQL 17 기반
+  - Apache AGE 1.7.0 for PG17 (소스 빌드)
+  - pgvector 0.7.0 (벡터 임베딩용)
+  - postgresql.conf에 shared_preload_libraries = 'age' 설정
+
+데이터베이스 초기화:
+
+  파일: docker/db/init/01_extensions.sql
+
+  -- 확장 모듈 설치
+  CREATE EXTENSION IF NOT EXISTS age;
+  CREATE EXTENSION IF NOT EXISTS vector;
+  CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+  -- AGE 로드 및 설정
+  LOAD 'age';
+  SET search_path = ag_catalog, "$user", public;
+
+  -- 애플리케이션 전체에서 사용할 단일 그래프 생성
+  SELECT create_graph('etf_graph');
+
+  -- 다른 작업을 위해 public 스키마로 복원
+  SET search_path = public;
+
+핵심 사항:
+  - 단일 그래프 인스턴스 사용: 'etf_graph' (사용자별/ETF별이 아닌 전체 공유)
+  - 매 DB 연결 시 LOAD 'age'와 search_path 설정이 필요함
+
+────────────────────────────────────────────────────────────────────────────────
+13-2. 그래프 스키마 설계
+────────────────────────────────────────────────────────────────────────────────
+
+13-2-1. 정점(Vertex) 노드
+
+  ┌───────────┬───────────────────────────────────────────────────┬──────────────────────┐
+  │ 레이블    │ 속성                                              │ 용도                 │
+  ├───────────┼───────────────────────────────────────────────────┼──────────────────────┤
+  │ ETF       │ code(PK), name, updated_at, expense_ratio        │ ETF 종목 정보        │
+  │ Stock     │ code(PK), name, is_etf(boolean)                  │ 개별 주식 (ETF 여부) │
+  │ Company   │ name(PK)                                         │ 자산운용사           │
+  │ Sector    │ name(PK)                                         │ 업종 분류            │
+  │ Market    │ name(PK)                                         │ 시장 (KOSPI/KOSDAQ)  │
+  │ Tag       │ name(PK)                                         │ 테마 태그            │
+  │ Change    │ id(PK), stock_code, stock_name, change_type,     │ 포트폴리오 변동 이벤트│
+  │           │ before_weight, after_weight, weight_change,       │                      │
+  │           │ detected_at                                       │                      │
+  └───────────┴───────────────────────────────────────────────────┴──────────────────────┘
+
+13-2-2. 간선(Edge) 관계
+
+  ┌──────────────┬──────────────────────┬────────────────┬──────────────────────────┐
+  │ 관계         │ 방향                 │ 속성           │ 용도                     │
+  ├──────────────┼──────────────────────┼────────────────┼──────────────────────────┤
+  │ HOLDS        │ ETF → Stock          │ date, weight,  │ ETF 보유 종목 스냅샷     │
+  │              │                      │ shares         │ (날짜별 이력)            │
+  │ MANAGED_BY   │ ETF → Company        │ (없음)         │ 자산운용사 소속          │
+  │ BELONGS_TO   │ Stock → Sector       │ (없음)         │ 종목 업종 분류           │
+  │ PART_OF      │ Sector → Market      │ (없음)         │ 섹터-시장 매핑           │
+  │ TAGGED       │ ETF → Tag            │ (없음)         │ ETF 테마 분류            │
+  │ HAS_CHANGE   │ ETF → Change         │ (없음)         │ 포트폴리오 변동 이력     │
+  └──────────────┴──────────────────────┴────────────────┴──────────────────────────┘
+
+13-2-3. 그래프 구조 다이어그램
+
+                        ┌──────────┐
+                        │ Company  │
+                        │  {name}  │
+                        └────▲─────┘
+                             │ MANAGED_BY
+                        ┌────┴─────┐           ┌──────────┐
+                        │   ETF    │──HOLDS───▶│  Stock   │
+                        │ {code,   │           │ {code,   │
+                        │  name,   │           │  name,   │
+                        │  updated}│           │  is_etf} │
+                        └──┬───┬───┘           └────┬─────┘
+                  TAGGED │   │ HAS_CHANGE           │ BELONGS_TO
+                    ┌────▼┐  │                 ┌────▼─────┐
+                    │ Tag │  │                 │  Sector  │
+                    │{name}│  │                 │  {name}  │
+                    └─────┘  │                 └────┬─────┘
+                        ┌────▼─────┐                │ PART_OF
+                        │  Change  │           ┌────▼─────┐
+                        │ {id,     │           │  Market  │
+                        │  stock.. │           │  {name}  │
+                        │  type..} │           └──────────┘
+                        └──────────┘
+
+────────────────────────────────────────────────────────────────────────────────
+13-3. GraphService 구현 (SQLAlchemy 연동)
+────────────────────────────────────────────────────────────────────────────────
+
+파일: backend/app/services/graph_service.py
+
+GraphService 클래스는 SQLAlchemy를 통해 AGE와 상호작용하는 핵심 서비스이다.
+
+13-3-1. execute_cypher() - 핵심 실행 메서드
+
+  def execute_cypher(self, query: str, params: Dict[str, Any] = None) -> List[Dict]:
+      """
+      Cypher 쿼리를 SQLAlchemy + AGE를 통해 실행한다.
+
+      단계:
+        1. $param 값을 실제 값으로 수동 치환 (SQL 바인드 파라미터 대신)
+        2. SQL cypher() 함수로 감쌈:
+           SELECT * FROM cypher('etf_graph', $$ ... $$) as (result agtype)
+        3. 콜론을 이스케이프하여 SQLAlchemy가 :ETF, :HOLDS를 바인드 파라미터로
+           인식하지 않도록 함
+        4. text()로 실행하고 agtype 딕셔너리로 결과 반환
+      """
+      # 파라미터 수동 치환
+      if params:
+          for key, value in params.items():
+              if isinstance(value, str):
+                  escaped = value.replace("'", "\\'")
+                  query = query.replace(f"${key}", f"'{escaped}'")
+              elif isinstance(value, (int, float)):
+                  query = query.replace(f"${key}", str(value))
+
+      full_query = f"""
+      SET search_path = ag_catalog, "$user", public;
+      LOAD 'age';
+      SELECT * FROM cypher('etf_graph', $$ {query} $$) as (result agtype);
+      """
+
+      # 콜론 이스케이프
+      escaped_full = full_query.replace(":", "\\:")
+      result = self.db.execute(text(escaped_full))
+      return [dict(row._mapping) for row in result]
+
+13-3-2. parse_agtype() - agtype 파싱 메서드
+
+  @staticmethod
+  def parse_agtype(value: str) -> Any:
+      """agtype 문자열을 Python 객체로 변환 (::type 접미사 제거)"""
+      s = str(value).strip()
+      s = re.sub(r'::(?:numeric|integer|float|vertex|edge|path)\b', '', s)
+      s = re.sub(r'"(\s*)::[\w]+', r'"\1', s)
+      return json.loads(s)
+
+13-3-3. 주요 메서드 (쿼리 패턴)
+
+  (A) ETF-종목 관계 관리
+
+    - create_etf_stock_relationship(etf_code, stock_code, weight)
+        MERGE (e:ETF {code: $etf_code})
+        MERGE (s:Stock {code: $stock_code})
+        MERGE (e)-[r:HOLDS]->(s)
+        SET r.weight = $weight
+
+    - find_etfs_holding_stock(stock_code)
+        MATCH (e:ETF)-[r:HOLDS]->(s:Stock {code: $stock_code})
+        RETURN e.code, r.weight ORDER BY r.weight DESC
+
+    - get_stock_exposure(stock_code)
+        MATCH (e:ETF)-[r:HOLDS]->(s:Stock {code: $stock_code})
+        RETURN COUNT(e) as etf_count, AVG(r.weight) as avg_weight
+
+  (B) 보유 종목 조회
+
+    - get_holdings_by_etf_graph(etf_code)
+        -- 최신 10개 보유종목 (비중순)
+        MATCH (e:ETF {code})-[h:HOLDS]->(s:Stock)
+        WITH s, h ORDER BY h.date DESC
+        WITH s, head(collect(h)) as latest
+        RETURN {stock_code: s.code, stock_name: s.name, weight: latest.weight}
+        ORDER BY latest.weight DESC LIMIT 10
+
+    - get_etf_holdings_changes(etf_code, period="1d")
+        -- 현재 vs 이전 보유종목 비교
+        -- 변동 유형 감지: 편입(added), 편출(removed), 증가(increased), 감소(decreased)
+
+  (C) 유사도 분석
+
+    - find_similar_etfs(etf_code, min_overlap=5)
+        -- 2-패스 분석:
+        -- 1) 자기 비중 합계(self_sum) 계산
+        -- 2) N개 이상 공통 종목을 가진 다른 ETF 검색
+        -- 겹침: COUNT(common_stocks)
+        -- 유사도: SUM(MIN(weight1, weight2)) / self_sum * 100
+
+  (D) 태그/운용사 조회
+
+    - get_all_tags()
+        MATCH (e:ETF)-[:TAGGED]->(t:Tag)
+        WHERE t.name <> '시장지수'
+        RETURN {name: t.name, etf_count: count(e)}
+
+    - get_company_etfs(company_name=None)
+        MATCH (e:ETF)-[:MANAGED_BY]->(c:Company)
+
+────────────────────────────────────────────────────────────────────────────────
+13-4. SQLAlchemy + AGE 연동 시 발생하는 문제와 해결책
+────────────────────────────────────────────────────────────────────────────────
+
+이 프로젝트에서 직접 경험한 주요 이슈들과 그 해결 방법이다.
+
+문제 1: 콜론(:) 이스케이프 문제
+────────────────────────────────────────
+
+  문제:
+    SQLAlchemy의 text() 함수는 :WORD 형태를 SQL 바인드 파라미터로 인식한다.
+    그런데 Cypher의 노드 레이블(:ETF, :Stock)과 관계 레이블([:HOLDS])도
+    콜론을 사용하므로 충돌이 발생한다.
+
+  예시:
+    MATCH (e:ETF {code: '069500'})  ← :ETF가 바인드 파라미터로 인식됨
+    (e)-[:HOLDS]->(s)               ← :HOLDS가 바인드 파라미터로 인식됨
+
+  해결:
+    전체 쿼리 문자열에서 모든 콜론을 \\:로 이스케이프한다.
+
+    escaped_full = full_query.replace(":", "\\:")
+
+    변환 전: MATCH (e:ETF {code: '069500'})
+    변환 후: MATCH (e\\:ETF {code\\: '069500'})
+
+  주의:
+    SET search_path 등 SQL 부분의 콜론도 함께 이스케이프되지만,
+    PostgreSQL이 이를 정상적으로 처리한다.
+
+문제 2: 파라미터 치환 충돌 ($param vs :param)
+────────────────────────────────────────
+
+  문제:
+    Cypher는 파라미터에 $param 문법을 사용하고,
+    SQLAlchemy는 :param 문법을 사용한다.
+    AGE는 SQL 바인드 파라미터를 직접 지원하지 않는다.
+
+  해결:
+    $param 값을 수동으로 쿼리 문자열에 인라인 치환한다.
+
+    cypher = "MATCH (e:ETF {code: $etf_code})"
+    params = {"etf_code": "069500"}
+
+    # 수동 치환
+    for key, value in params.items():
+        if isinstance(value, str):
+            escaped = value.replace("'", "\\'")
+            cypher = cypher.replace(f"${key}", f"'{escaped}'")
+        elif isinstance(value, (int, float)):
+            cypher = cypher.replace(f"${key}", str(value))
+
+    결과: MATCH (e:ETF {code: '069500'})
+
+  보안 참고:
+    이 방식은 SQL 인젝션 위험이 있으나, 내부 사용(파이프라인/서비스 레이어)
+    전용이므로 외부 사용자 입력이 직접 들어오지 않아 위험도가 낮다.
+
+문제 3: 다중 반환 컬럼 제약
+────────────────────────────────────────
+
+  문제:
+    execute_cypher()는 단일 (result agtype) 컬럼을 기대한다.
+    다중 컬럼 반환을 시도하면 파싱 오류가 발생한다.
+
+    잘못된 예:
+      RETURN e.code, e.name, h.weight
+      → AS (code agtype, name agtype, weight agtype) 이 필요하나
+        execute_cypher()는 이를 지원하지 않음
+
+  해결:
+    다중 반환 값을 맵(map)으로 감싼다.
+
+    올바른 예:
+      RETURN {code: e.code, name: e.name, weight: h.weight}
+
+    파싱 결과:
+      {"code": "069500", "name": "KODEX 200", "weight": 30.5}
+
+문제 4: MERGE + SET 분리 (AGE 1.5.0 버그)
+────────────────────────────────────────
+
+  문제:
+    단일 쿼리에서 MERGE와 SET을 함께 사용하면 오류가 발생한다.
+
+    오류 발생:
+      MERGE (e:ETF {code: $code})
+      SET e.name = $name
+      RETURN e
+
+  해결:
+    2단계로 분리하여 실행한다.
+
+    1단계: MERGE (e:ETF {code: $code}) RETURN e
+    2단계: MATCH (e:ETF {code: $code}) SET e.name = $name RETURN e
+
+  상태:
+    AGE 1.7.0에서도 안전을 위해 분리 방식을 유지하고 있다.
+
+문제 5: agtype 문자열 파싱
+────────────────────────────────────────
+
+  문제:
+    AGE는 결과를 ::type 접미사가 붙은 agtype 문자열로 반환한다.
+
+    예: '{"code": "069500"}::vertex'
+        '25.5::numeric'
+
+  해결:
+    정규식으로 타입 접미사를 제거한 후 JSON 파싱한다.
+
+    s = re.sub(r'::(?:numeric|integer|float|vertex|edge|path)\b', '', str(value))
+    s = re.sub(r'"(\s*)::[\w]+', r'"\1', s)
+    return json.loads(s)
+
+문제 6: 날짜 기반 HOLDS 간선 처리
+────────────────────────────────────────
+
+  문제:
+    HOLDS 간선은 날짜별로 생성된다: [h:HOLDS {date: '2026-02-12'}]
+    같은 ETF-Stock 쌍에 여러 간선이 존재하며(날짜별 하나씩),
+    쿼리 시 최신 데이터를 가져오려면 별도 처리가 필요하다.
+
+  해결 패턴:
+    WITH s, h ORDER BY h.date DESC
+    WITH s, head(collect(h)) as latest
+    RETURN {stock_code: s.code, weight: latest.weight}
+
+────────────────────────────────────────────────────────────────────────────────
+13-5. Airflow 데이터 파이프라인
+────────────────────────────────────────────────────────────────────────────────
+
+파일: airflow/dags/etf_daily_etl.py (1400+ 라인)
+
+일일 ETL 스케줄:
+  - Cron     : 0 8 * * 1-5 (평일 08:00 KST)
+  - 재시도   : 3회, 5분 간격
+  - Catchup  : 비활성화
+
+태스크 워크플로우:
+
+  ┌── collect_etf_list (pykrx) ────┐
+  │                                │
+  └──▶ filter_etf_list (유니버스)──┬── collect_etf_metadata ──▶ AGE: ETF + Company
+  │                                │                                   + MANAGED_BY
+  │                                │
+  │                                ├── collect_holdings ──────▶ AGE: Stock + Sector
+  │                                │                                + Market + HOLDS
+  │                                │                                + BELONGS_TO
+  │                                │                                + PART_OF
+  │                                │
+  │                                ├── collect_stock_prices ──▶ RDB: stock_prices
+  │                                │
+  │                                └── detect_portfolio_changes ▶ AGE: Change
+  │                                                                   + HAS_CHANGE
+  │
+  ├── fetch_krx_data ─────────────┐
+  └──▶ collect_prices ────────────▶ RDB: etf_prices
+       sync_etfs_to_rdb ──────────▶ RDB: etfs (메타데이터)
+
+13-5-1. collect_etf_metadata 태스크
+
+  유니버스의 각 ETF에 대해:
+
+  (1) ETF 노드 생성 (2단계 - AGE 버그 워크어라운드)
+      execute_cypher("MERGE (e:ETF {code: $code}) RETURN e", {code: ticker})
+      execute_cypher("MATCH (e:ETF {code: $code})
+                      SET e.name = $name, e.updated_at = $date,
+                          e.expense_ratio = $ratio
+                      RETURN e", {...})
+
+  (2) 운용사 노드 및 MANAGED_BY 관계 생성
+      execute_cypher("MERGE (c:Company {name: $company}) RETURN c", {company})
+      execute_cypher("MATCH (e:ETF {code: $code})
+                      MATCH (c:Company {name: $company})
+                      MERGE (e)-[:MANAGED_BY]->(c)
+                      RETURN 1", {...})
+
+13-5-2. collect_holdings 태스크 (2-패스 접근)
+
+  패스 1: 모든 ETF 보유종목 데이터 수집 (I/O 집약적)
+    - pykrx API로 각 ETF의 상위 20개 보유종목 조회
+    - 메모리에 저장
+
+  패스 2a: 노드 사전 생성 (Stock, Sector, Market)
+    - 모든 종목 코드에 대해 Stock 노드 MERGE
+    - 시장(KOSPI/KOSDAQ)에 대해 Market 노드 MERGE
+    - 업종에 대해 Sector 노드 MERGE + PART_OF 관계 생성
+    - BELONGS_TO 관계 생성
+
+  패스 2b: HOLDS 간선 생성 (배치 단위: 50개 ETF)
+    - 각 ETF-종목 쌍에 대해 날짜 스탬프가 있는 HOLDS 간선 MERGE
+    - 비중(weight)과 보유주식수(shares) 속성 SET
+
+13-5-3. detect_portfolio_changes 태스크
+
+  각 유니버스 ETF에 대해:
+
+  (1) 오늘 보유종목 조회
+      MATCH (e:ETF {code: $code})-[h:HOLDS {date: $today}]->(s:Stock)
+      RETURN {stock_code: s.code, stock_name: s.name, weight: h.weight}
+
+  (2) 어제 보유종목 조회
+      MATCH (e:ETF {code: $code})-[h:HOLDS {date: $yesterday}]->(s:Stock)
+      RETURN {stock_code: s.code, stock_name: s.name, weight: h.weight}
+
+  (3) 변동 감지
+      - 편입(added): 오늘에만 있는 종목
+      - 편출(removed): 어제에만 있는 종목
+      - 비중 변동: |오늘 비중 - 어제 비중| >= 5.0%p
+
+  (4) Change 노드 생성 및 HAS_CHANGE 관계 연결
+      MATCH (e:ETF {code: $code})
+      CREATE (c:Change {id: $id, stock_code: $code, change_type: $type, ...})
+      CREATE (e)-[:HAS_CHANGE]->(c)
+
+13-5-4. tag_etfs 태스크
+
+  ETF 이름과 보유종목 분석을 기반으로 자동 태깅한다.
+
+  태그 예시:
+    - '대형주'  : KODEX 200 등 (시가총액 상위 종목 보유)
+    - '배당'    : ETF 이름에 '배' 포함 + 고배당 종목 보유
+    - '반도체'  : 보유종목 중 반도체 비중 >= 30%
+    - 'AI'      : NVIDIA, TSMC 등 AI 관련 종목 보유
+    - 'ESG'     : ETF 이름에 'ESG' 포함
+
+데이터 소스:
+
+  - KRX API (인증): ETF 일별 거래 데이터 (OHLCV, NAV, 순자산 등)
+  - pykrx 라이브러리 (공개): ETF 목록, 보유종목, 종목명, 업종 인덱스 등
+
+────────────────────────────────────────────────────────────────────────────────
+13-6. 비즈니스 로직별 그래프 활용
+────────────────────────────────────────────────────────────────────────────────
+
+(1) 유사 ETF 분석
+    활용: "이 ETF와 비슷한 ETF 찾기"
+    쿼리: ETF 쌍 간 HOLDS 관계 비교
+    지표: 겹침 수(N개 공통 종목) + 유사도 점수(비중 겹침 %)
+    API: /api/etfs/{code}/similar?min_overlap=5
+
+(2) 종목 노출 추적
+    활용: "이 종목을 보유한 ETF는?"
+    쿼리: HOLDS 간선의 역방향 탐색 (Stock ← ETF)
+    결과: 비중 내림차순으로 ETF 목록
+    가치: 펀드 집중도 및 분산 위험 추적
+
+(3) 포트폴리오 변동 감지
+    활용: 보유종목 일일 변동 모니터링
+    쿼리: 날짜별 HOLDS 간선 비교
+    감지: 편입, 편출, 증가(5%p+), 감소(5%p+)
+    워크플로우: DAG 태스크 detect_portfolio_changes가 매일 08:00 KST 실행
+    API: /api/etfs/{code}/changes?period=1d|1w|1m
+
+(4) 계층적 분류 탐색
+    활용: 섹터별, 시장별 ETF 탐색
+    관계: ETF → Stock → Sector → Market (다중 홉 탐색)
+    쿼리: 특정 섹터의 종목을 보유한 모든 ETF 검색
+
+(5) 운용사 분석
+    활용: 자산운용사별 ETF 상품 현황
+    관계: ETF -[MANAGED_BY]-> Company
+    API: /api/companies/{name}/etfs
+    파생: 운용사 시장 점유율, 평균 보수율 계산
+
+(6) 테마/태그 기반 탐색
+    활용: 테마별 ETF 탐색 (AI, ESG, 배당 등)
+    관계: ETF -[TAGGED]-> Tag
+    태깅: DAG tag_etfs가 ETF 이름 + 보유종목 분석으로 자동 생성
+    API: /api/tags (목록) + /api/tags/{name}/etfs (탐색)
+
+(7) AI 챗봇 (smolagents)
+    활용: 자연어 질의로 보유종목 탐색
+    도구: 10+ 챗봇 도구가 그래프 쿼리 사용
+    예시:
+      - "삼성전자를 가장 많이 보유한 ETF는?"
+        → 종목 검색 → HOLDS 역방향 쿼리
+      - "KODEX 200과 TIGER 200 비교"
+        → ETF 검색 → get_etf_info → compare_etfs
+      - "반도체 관련 ETF 낮은 보수율순"
+        → list_tags → TAGGED 쿼리 → expense_ratio 정렬
+    구현: GraphService.execute_cypher() + parse_agtype()
+
+────────────────────────────────────────────────────────────────────────────────
+13-7. 최적화 패턴
+────────────────────────────────────────────────────────────────────────────────
+
+(1) 배치 처리
+    - 보유종목: 50개 ETF 단위로 커밋
+    - 이유: 수천 개의 간선에 대한 트랜잭션 타임아웃 방지
+
+(2) 노드 사전 생성
+    - HOLDS 간선 생성 전에 모든 Stock/Sector/Market 노드를 먼저 생성
+    - MERGE 오버헤드 감소 + 참조 무결성 보장
+    - 사전 생성 완료 후 단일 커밋
+
+(3) 2-패스 데이터 처리
+    - 패스 1: pykrx에서 모든 데이터 수집 (네트워크 I/O 집약적)
+    - 패스 2: 데이터베이스 연산 (배치 처리)
+    - 이유: 네트워크 지연과 DB 연산을 분리
+
+(4) 최신 값 패턴
+    WITH s, h ORDER BY h.date DESC
+    WITH s, head(collect(h)) as latest
+    - 모든 이력 간선을 가져오지 않고 DB 내에서 그룹핑 + 제한
+
+(5) 문자열 파라미터 직접 치환
+    - $params를 수동으로 인라인 치환
+    - 이유: AGE가 SQL 바인드 파라미터를 지원하지 않음
+
+================================================================================
+14. 참고 자료
+================================================================================
+
+공식 자료:
+  - Apache AGE 공식 웹사이트        : https://age.apache.org/
+  - Apache AGE GitHub 저장소        : https://github.com/apache/age
+  - Cypher 쿼리 형식 문서           : https://age.apache.org/age-manual/master/intro/cypher.html
+  - agtype 데이터 타입 문서         : https://age.apache.org/age-manual/master/intro/types.html
+  - 그래프 문서                     : https://age.apache.org/age-manual/master/intro/graphs.html
+  - CTE에서 Cypher 사용             : https://age.apache.org/age-manual/master/advanced/advanced.html
+  - Cypher 내 SQL 사용              : https://age.apache.org/age-manual/master/advanced/sql_in_cypher.html
+  - 설치 가이드                     : https://age.apache.org/age-manual/master/intro/setup.html
+  - FAQ (제한사항)                  : https://age.apache.org/faq/
+
+외부 자료:
+  - AGE 성능 모범 사례 (Azure)      : https://learn.microsoft.com/en-us/azure/postgresql/flexible-server/generative-ai-age-performance
+  - AGE 확장 개요 (Azure)           : https://learn.microsoft.com/en-us/azure/postgresql/flexible-server/generative-ai-age-overview
+  - Apache AGE vs Neo4j 비교        : https://blog.howtoclicks.com/blog/apache-age-vs-neo4j/
+  - ASF TLP 공지                    : https://news.apache.org/foundation/entry/the-apache-software-foundation-announces83
+  - AGE 내부 구조 가이드            : https://matheusfarias03.github.io/AGE-quick-guide/
+  - Apache AGE DeepWiki             : https://deepwiki.com/apache/age
+  - PGXN: ApacheAGE                 : https://pgxn.org/dist/apacheage/
+
+================================================================================
+문서 작성일: 2026-02-12
+================================================================================

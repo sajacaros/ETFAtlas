@@ -394,13 +394,12 @@ def get_etf_list(cur, limit=100):
     if not etf_codes:
         return pd.DataFrame()
 
-    # etf_prices에서 최신 net_assets 조회 (AUM 순 정렬)
+    # etfs 테이블에서 net_assets 조회 (AUM 순 정렬)
     placeholders = ','.join(['%s'] * len(etf_codes))
     sql_aum = f"""
-        SELECT DISTINCT ON (etf_code) etf_code, net_assets
-        FROM etf_prices
-        WHERE etf_code IN ({placeholders})
-        ORDER BY etf_code, date DESC
+        SELECT code, net_assets
+        FROM etfs
+        WHERE code IN ({placeholders})
     """
     cur.execute(sql_aum, etf_codes)
     aum_results = cur.fetchall()

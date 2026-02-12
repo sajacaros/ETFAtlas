@@ -25,6 +25,8 @@ class PortfolioResponse(BaseModel):
     current_value_date: Optional[str] = None
     daily_change_amount: Optional[Decimal] = None
     daily_change_rate: Optional[float] = None
+    invested_amount: Optional[Decimal] = None
+    investment_return_rate: Optional[float] = None
 
     class Config:
         from_attributes = True
@@ -54,10 +56,12 @@ class TargetAllocationResponse(BaseModel):
 class HoldingCreate(BaseModel):
     ticker: str
     quantity: Decimal = Decimal("0")
+    avg_price: Optional[Decimal] = None
 
 
 class HoldingUpdate(BaseModel):
-    quantity: Decimal
+    quantity: Optional[Decimal] = None
+    avg_price: Optional[Decimal] = None
 
 
 class HoldingResponse(BaseModel):
@@ -65,6 +69,7 @@ class HoldingResponse(BaseModel):
     portfolio_id: int
     ticker: str
     quantity: Decimal
+    avg_price: Optional[Decimal] = None
 
     class Config:
         from_attributes = True
@@ -83,6 +88,9 @@ class CalculationRowResponse(BaseModel):
     required_quantity: Decimal
     adjustment_amount: Decimal
     status: str  # BUY / SELL / HOLD
+    avg_price: Optional[Decimal] = None
+    profit_loss_rate: Optional[Decimal] = None
+    profit_loss_amount: Optional[Decimal] = None
 
 
 class CalculationResponse(BaseModel):
@@ -91,6 +99,7 @@ class CalculationResponse(BaseModel):
     total_weight: Decimal
     total_holding_amount: Decimal
     total_adjustment_amount: Decimal
+    total_profit_loss_amount: Optional[Decimal] = None
     weight_warning: Optional[str] = None
 
 
@@ -120,6 +129,8 @@ class DashboardSummary(BaseModel):
     monthly: Optional[DashboardSummaryItem] = None
     yearly: Optional[DashboardSummaryItem] = None
     ytd: Optional[DashboardSummaryItem] = None
+    invested_amount: Optional[Decimal] = None
+    investment_return: Optional[DashboardSummaryItem] = None
 
 
 class ChartDataPoint(BaseModel):

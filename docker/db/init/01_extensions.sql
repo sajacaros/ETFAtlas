@@ -19,10 +19,13 @@ SET search_path = public;
 -- Nodes:
 --   (ETF {code, name, updated_at})
 --   (Stock {code, name})
+--   (Price {date, open, high, low, close, volume, nav, market_cap, net_assets, trade_value, change_rate})
 --   (Change {id, stock_code, stock_name, change_type, before_weight, after_weight, weight_change, detected_at})
 --
 -- Edges:
 --   (ETF)-[:HOLDS {date, weight, shares}]->(Stock)
+--   (ETF)-[:HAS_PRICE]->(Price)
+--   (Stock)-[:HAS_PRICE]->(Price)
 --   (ETF)-[:HAS_CHANGE]->(Change)
 -- =====================================================
 
@@ -53,24 +56,6 @@ CREATE TABLE IF NOT EXISTS etfs (
     inception_date DATE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- ETF Prices (시계열 데이터 - 관계형 테이블이 효율적)
-CREATE TABLE IF NOT EXISTS etf_prices (
-    id SERIAL PRIMARY KEY,
-    etf_code VARCHAR(20) NOT NULL,
-    date DATE NOT NULL,
-    open_price DECIMAL(12, 2),
-    high_price DECIMAL(12, 2),
-    low_price DECIMAL(12, 2),
-    close_price DECIMAL(12, 2),
-    volume BIGINT,
-    nav DECIMAL(14, 2),           -- 순자산가치 (NAV)
-    market_cap BIGINT,            -- 시가총액
-    net_assets BIGINT,            -- 순자산총액
-    trade_value BIGINT,           -- 거래대금
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (etf_code, date)
 );
 
 -- Watchlists
@@ -119,6 +104,7 @@ CREATE TABLE IF NOT EXISTS holdings (
     portfolio_id INTEGER REFERENCES portfolios(id) ON DELETE CASCADE,
     ticker VARCHAR(20) NOT NULL,
     quantity DECIMAL(15, 4) NOT NULL DEFAULT 0,
+    avg_price NUMERIC(12, 2) DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(portfolio_id, ticker)
@@ -137,40 +123,7 @@ CREATE TABLE IF NOT EXISTS portfolio_snapshots (
     CONSTRAINT uq_portfolio_snapshot_date UNIQUE (portfolio_id, date)
 );
 
--- Vector embeddings for semantic search
-CREATE TABLE IF NOT EXISTS etf_embeddings (
-    etf_code VARCHAR(20) PRIMARY KEY,
-    embedding vector(1536),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- ETF Universe (수집 대상 ETF 유니버스)
-CREATE TABLE IF NOT EXISTS etf_universe (
-    code VARCHAR(20) PRIMARY KEY,
-    name VARCHAR(255),
-    index_name VARCHAR(255) DEFAULT '',
-    initial_net_assets BIGINT,
-    is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Stock Prices (주식 시계열 데이터)
-CREATE TABLE IF NOT EXISTS stock_prices (
-    stock_code VARCHAR(20) NOT NULL,
-    date DATE NOT NULL,
-    open_price DECIMAL(12, 2),
-    high_price DECIMAL(12, 2),
-    low_price DECIMAL(12, 2),
-    close_price DECIMAL(12, 2),
-    volume BIGINT,
-    change_rate DECIMAL(8, 4),  -- 등락률 (%)
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (stock_code, date)
-);
-
 -- Indexes
-CREATE INDEX IF NOT EXISTS idx_etf_prices_date ON etf_prices(date);
-CREATE INDEX IF NOT EXISTS idx_stock_prices_date ON stock_prices(date);
 CREATE INDEX IF NOT EXISTS idx_watchlist_items_watchlist_id ON watchlist_items(watchlist_id);
 CREATE INDEX IF NOT EXISTS idx_watchlist_items_etf_code ON watchlist_items(etf_code);
 CREATE INDEX IF NOT EXISTS idx_portfolios_user_id ON portfolios(user_id);

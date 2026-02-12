@@ -19,11 +19,13 @@ interface PortfolioTableProps {
   totalWeight: number
   totalHoldingAmount: number
   totalAdjustmentAmount: number
+  totalProfitLossAmount: number | null
   targetAllocations: TargetAllocationItem[]
   holdings: HoldingItem[]
   isEditing: boolean
   onUpdateWeight: (targetId: number, weight: number) => void
   onUpdateQuantity: (ticker: string, quantity: number, holdingId?: number) => void
+  onUpdateAvgPrice: (ticker: string, avgPrice: number, holdingId?: number) => void
   onDeleteTicker: (ticker: string, targetId?: number, holdingId?: number) => void
 }
 
@@ -36,10 +38,13 @@ type SortKey =
   | 'target_weight'
   | 'current_weight'
   | 'current_price'
+  | 'avg_price'
+  | 'profit_loss_rate'
   | 'target_amount'
   | 'target_quantity'
   | 'holding_quantity'
   | 'holding_amount'
+  | 'profit_loss_amount'
   | 'required_quantity'
   | 'adjustment_amount'
   | 'status'
@@ -53,15 +58,18 @@ export default function PortfolioTable({
   totalWeight,
   totalHoldingAmount,
   totalAdjustmentAmount,
+  totalProfitLossAmount,
   targetAllocations,
   holdings,
   isEditing,
   onUpdateWeight,
   onUpdateQuantity,
+  onUpdateAvgPrice,
   onDeleteTicker,
 }: PortfolioTableProps) {
   const [editingWeight, setEditingWeight] = useState<Record<string, string>>({})
   const [editingQty, setEditingQty] = useState<Record<string, string>>({})
+  const [editingAvgPrice, setEditingAvgPrice] = useState<Record<string, string>>({})
   const [sortKey, setSortKey] = useState<SortKey | null>(null)
   const [sortDir, setSortDir] = useState<SortDir>('asc')
 
@@ -94,6 +102,10 @@ export default function PortfolioTable({
         cmp = aw - bw
       } else if (sortKey === 'status') {
         cmp = (STATUS_ORDER[a.status] ?? 3) - (STATUS_ORDER[b.status] ?? 3)
+      } else if (sortKey === 'avg_price' || sortKey === 'profit_loss_rate' || sortKey === 'profit_loss_amount') {
+        const av = a[sortKey] ?? -Infinity
+        const bv = b[sortKey] ?? -Infinity
+        cmp = Number(av) - Number(bv)
       } else {
         cmp = Number(a[sortKey]) - Number(b[sortKey])
       }
@@ -155,6 +167,21 @@ export default function PortfolioTable({
     })
   }
 
+  const handleAvgPriceBlur = (ticker: string) => {
+    const val = editingAvgPrice[ticker]
+    if (val === undefined) return
+    const holding = holdingMap.get(ticker)
+    const price = parseInt(val, 10)
+    if (!isNaN(price) && price >= 0) {
+      onUpdateAvgPrice(ticker, price, holding?.id)
+    }
+    setEditingAvgPrice((prev) => {
+      const next = { ...prev }
+      delete next[ticker]
+      return next
+    })
+  }
+
   const handleKeyDown = (e: React.KeyboardEvent, onBlur: () => void) => {
     if (e.key === 'Enter') {
       onBlur()
@@ -173,10 +200,13 @@ export default function PortfolioTable({
           <SortableHead label="목표 비중(%)" sortField="target_weight" className="text-right w-[90px]" />
           <SortableHead label="현재 비중(%)" sortField="current_weight" className="text-right w-[70px]" />
           <SortableHead label="현재가" sortField="current_price" className="text-right" />
+          <SortableHead label="평단가" sortField="avg_price" className="text-right w-[100px]" />
+          <SortableHead label="수익률(%)" sortField="profit_loss_rate" className="text-right w-[80px]" />
           <SortableHead label="목표 금액" sortField="target_amount" className="text-right" />
           <SortableHead label="목표 수량" sortField="target_quantity" className="text-right" />
           <SortableHead label="보유 수량" sortField="holding_quantity" className="text-right w-[100px]" />
           <SortableHead label="평가 금액" sortField="holding_amount" className="text-right" />
+          <SortableHead label="손익 금액" sortField="profit_loss_amount" className="text-right" />
           <SortableHead label="필요 수량" sortField="required_quantity" className="text-right" />
           <SortableHead label="가감 금액" sortField="adjustment_amount" className="text-right" />
           <SortableHead label="상태" sortField="status" className="text-center w-[80px]" />
@@ -186,7 +216,7 @@ export default function PortfolioTable({
       <TableBody>
         {rows.length === 0 ? (
           <TableRow>
-            <TableCell colSpan={isEditing ? 13 : 12} className="text-center text-muted-foreground py-8">
+            <TableCell colSpan={isEditing ? 16 : 15} className="text-center text-muted-foreground py-8">
               종목을 추가해주세요
             </TableCell>
           </TableRow>
@@ -228,6 +258,37 @@ export default function PortfolioTable({
                     : '-'}
                 </TableCell>
                 <TableCell className="text-right font-mono">{formatNumber(row.current_price)}</TableCell>
+                <TableCell className="text-right">
+                  {row.ticker === 'CASH' ? (
+                    <span className="text-muted-foreground">-</span>
+                  ) : isEditing ? (
+                    <Input
+                      type="number"
+                      step="1"
+                      min="0"
+                      className="w-24 text-right h-8 ml-auto"
+                      value={editingAvgPrice[row.ticker] ?? (row.avg_price != null ? String(Math.round(Number(row.avg_price))) : '')}
+                      onChange={(e) =>
+                        setEditingAvgPrice((prev) => ({ ...prev, [row.ticker]: e.target.value }))
+                      }
+                      onBlur={() => handleAvgPriceBlur(row.ticker)}
+                      onKeyDown={(e) => handleKeyDown(e, () => handleAvgPriceBlur(row.ticker))}
+                      placeholder="-"
+                    />
+                  ) : (
+                    <span className="font-mono text-sm">
+                      {row.avg_price != null ? formatNumber(row.avg_price) : '-'}
+                    </span>
+                  )}
+                </TableCell>
+                <TableCell className={`text-right font-mono text-sm ${
+                  row.ticker === 'CASH' || row.profit_loss_rate == null ? '' :
+                  row.profit_loss_rate > 0 ? 'text-red-500' : row.profit_loss_rate < 0 ? 'text-blue-500' : ''
+                }`}>
+                  {row.ticker === 'CASH' || row.profit_loss_rate == null
+                    ? '-'
+                    : `${row.profit_loss_rate > 0 ? '+' : ''}${Number(row.profit_loss_rate).toFixed(2)}%`}
+                </TableCell>
                 <TableCell className="text-right font-mono">{formatNumber(row.target_amount)}</TableCell>
                 <TableCell className="text-right font-mono">{formatNumber(row.target_quantity)}</TableCell>
                 <TableCell className="text-right">
@@ -249,6 +310,14 @@ export default function PortfolioTable({
                   )}
                 </TableCell>
                 <TableCell className="text-right font-mono">{formatNumber(row.holding_amount)}</TableCell>
+                <TableCell className={`text-right font-mono ${
+                  row.ticker === 'CASH' || row.profit_loss_amount == null ? '' :
+                  row.profit_loss_amount > 0 ? 'text-red-500' : row.profit_loss_amount < 0 ? 'text-blue-500' : ''
+                }`}>
+                  {row.ticker === 'CASH' || row.profit_loss_amount == null
+                    ? '-'
+                    : `${row.profit_loss_amount > 0 ? '+' : ''}${formatNumber(row.profit_loss_amount)}`}
+                </TableCell>
                 <TableCell
                   className={`text-right font-mono ${
                     row.required_quantity > 0
@@ -319,8 +388,18 @@ export default function PortfolioTable({
             <TableCell />
             <TableCell />
             <TableCell />
+            <TableCell />
+            <TableCell />
             <TableCell className="text-right font-mono font-semibold">
               {formatNumber(totalHoldingAmount)}
+            </TableCell>
+            <TableCell className={`text-right font-mono font-semibold ${
+              totalProfitLossAmount == null ? '' :
+              totalProfitLossAmount > 0 ? 'text-red-500' : totalProfitLossAmount < 0 ? 'text-blue-500' : ''
+            }`}>
+              {totalProfitLossAmount != null
+                ? `${totalProfitLossAmount > 0 ? '+' : ''}${formatNumber(totalProfitLossAmount)}`
+                : '-'}
             </TableCell>
             <TableCell />
             <TableCell

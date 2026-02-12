@@ -200,6 +200,32 @@ export default function PortfolioDashboardPage() {
               </div>
             )}
           </div>
+          {!isTotal && (
+            <div className="flex flex-wrap items-center gap-6 mt-3 pt-3 border-t">
+              <div>
+                <p className="text-sm text-muted-foreground">투자금액</p>
+                <p className="text-base font-mono">
+                  {summary.invested_amount != null
+                    ? `${formatNumber(summary.invested_amount)}원`
+                    : '-'}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">투자 수익률</p>
+                {summary.investment_return ? (
+                  <p
+                    className={`text-base font-bold ${summary.investment_return.rate >= 0 ? 'text-red-500' : 'text-blue-500'}`}
+                  >
+                    {summary.investment_return.amount >= 0 ? '+' : ''}
+                    {formatNumber(summary.investment_return.amount)}원 (
+                    {formatRate(summary.investment_return.rate)})
+                  </p>
+                ) : (
+                  <p className="text-base font-mono">-</p>
+                )}
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 

@@ -223,12 +223,12 @@ export default function PortfolioPage() {
     }
   }
 
-  const handleAddTicker = async (ticker: string, targetWeight: number, quantity: number) => {
+  const handleAddTicker = async (ticker: string, targetWeight: number, quantity: number, avgPrice?: number) => {
     if (!selectedId) return
     try {
       await portfolioApi.addTarget(selectedId, { ticker, target_weight: targetWeight })
-      if (quantity > 0) {
-        await portfolioApi.addHolding(selectedId, { ticker, quantity })
+      if (quantity > 0 || avgPrice) {
+        await portfolioApi.addHolding(selectedId, { ticker, quantity, ...(avgPrice ? { avg_price: avgPrice } : {}) })
       }
       await loadDetail(selectedId)
       loadCalc(selectedId)
@@ -261,6 +261,21 @@ export default function PortfolioPage() {
       loadCalc(selectedId)
     } catch {
       toast({ title: '수량 업데이트 실패', variant: 'destructive' })
+    }
+  }
+
+  const handleUpdateAvgPrice = async (ticker: string, avgPrice: number, holdingId?: number) => {
+    if (!selectedId) return
+    try {
+      if (holdingId) {
+        await portfolioApi.updateHolding(selectedId, holdingId, { avg_price: avgPrice })
+      } else {
+        await portfolioApi.addHolding(selectedId, { ticker, quantity: 0, avg_price: avgPrice })
+      }
+      await loadDetail(selectedId)
+      loadCalc(selectedId)
+    } catch {
+      toast({ title: '평단가 업데이트 실패', variant: 'destructive' })
     }
   }
 
@@ -481,11 +496,13 @@ export default function PortfolioPage() {
             totalWeight={calcResult.total_weight}
             totalHoldingAmount={calcResult.total_holding_amount}
             totalAdjustmentAmount={calcResult.total_adjustment_amount}
+            totalProfitLossAmount={calcResult.total_profit_loss_amount}
             targetAllocations={detail.target_allocations}
             holdings={detail.holdings}
             isEditing={isEditing}
             onUpdateWeight={handleUpdateWeight}
             onUpdateQuantity={handleUpdateQuantity}
+            onUpdateAvgPrice={handleUpdateAvgPrice}
             onDeleteTicker={handleDeleteTicker}
           />
         )}
@@ -659,6 +676,7 @@ export default function PortfolioPage() {
                       <p className={`text-sm font-mono ${(p.daily_change_rate ?? 0) >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
                         {amountVisible ? (
                           <>
+                            <span className="font-normal text-muted-foreground">전일대비</span>{' '}
                             {(p.daily_change_amount ?? 0) >= 0 ? '+' : ''}{formatNumber(p.daily_change_amount ?? 0)}원
                             ({(p.daily_change_rate ?? 0) >= 0 ? '+' : ''}{(p.daily_change_rate ?? 0).toFixed(2)}%)
                           </>
@@ -666,6 +684,17 @@ export default function PortfolioPage() {
                           '••••••'
                         )}
                       </p>
+                      {p.investment_return_rate != null && (
+                        <p className={`text-xs font-mono mt-1 ${p.investment_return_rate >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
+                          {amountVisible ? (
+                            <>
+                              투자금액 {formatNumber(p.invested_amount ?? 0)}원 / 수익률 {p.investment_return_rate >= 0 ? '+' : ''}{p.investment_return_rate.toFixed(2)}%
+                            </>
+                          ) : (
+                            '투자수익률 ••••••'
+                          )}
+                        </p>
+                      )}
                     </>
                   ) : (
                     <div>

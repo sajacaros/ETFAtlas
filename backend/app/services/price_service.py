@@ -2,6 +2,7 @@ import time
 from decimal import Decimal
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from .graph_service import GraphService
 
 
 # Module-level cache: {ticker: (price, timestamp)}
@@ -10,16 +11,18 @@ _CACHE_TTL = 60  # seconds
 
 
 class PriceService:
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, graph_service: GraphService | None = None):
         self.db = db
+        self.graph_service = graph_service or GraphService(db)
 
     def get_prices(self, tickers: list[str]) -> dict[str, Decimal]:
         """
         Get latest prices for tickers.
         Strategy:
         1. Return cached prices if within 1 minute
-        2. Fetch from yfinance for uncached/expired tickers
-        3. Fallback to DB for any still missing
+        2. AGE에 당일 종가가 있으면 사용 (장 마감 후 수집된 데이터)
+        3. 없으면 yfinance로 조회 (장중 실시간)
+        4. Fallback to AGE (최신 날짜)
         CASH is excluded (handled by domain layer).
         """
         query_tickers = [t for t in tickers if t != "CASH"]
@@ -41,38 +44,31 @@ class PriceService:
         if not missing:
             return prices
 
-        # Step 2: Fetch from yfinance
-        yf_prices = self._get_yfinance_prices(missing)
+        # Step 2: AGE 당일 종가
+        age_today = self.graph_service.get_latest_close_prices(missing)
+        for ticker, price in age_today.items():
+            _price_cache[ticker] = (price, now)
+            prices[ticker] = price
+
+        still_missing = [t for t in missing if t not in prices]
+        if not still_missing:
+            return prices
+
+        # Step 3: yfinance for rest
+        yf_prices = self._get_yfinance_prices(still_missing)
         for ticker, price in yf_prices.items():
             _price_cache[ticker] = (price, now)
             prices[ticker] = price
 
-        # Step 3: DB fallback for still missing
-        still_missing = [t for t in missing if t not in yf_prices]
+        # Step 4: AGE fallback for still missing
+        still_missing = [t for t in still_missing if t not in yf_prices]
         if still_missing:
-            db_prices = self._get_db_prices(still_missing)
-            for ticker, price in db_prices.items():
+            age_fallback = self.graph_service.get_latest_close_prices_fallback(still_missing)
+            for ticker, price in age_fallback.items():
                 _price_cache[ticker] = (price, now)
                 prices[ticker] = price
 
         return prices
-
-    def _get_db_prices(self, tickers: list[str]) -> dict[str, Decimal]:
-        """Query latest close_price from etf_prices using DISTINCT ON."""
-        result = self.db.execute(
-            text("""
-                SELECT DISTINCT ON (etf_code) etf_code, close_price
-                FROM etf_prices
-                WHERE etf_code = ANY(:tickers)
-                  AND close_price IS NOT NULL
-                ORDER BY etf_code, date DESC
-            """),
-            {"tickers": tickers}
-        )
-        return {
-            row.etf_code: Decimal(str(row.close_price))
-            for row in result
-        }
 
     def _get_yfinance_prices(self, tickers: list[str]) -> dict[str, Decimal]:
         """Fetch prices from yfinance with .KS suffix for KRX stocks."""

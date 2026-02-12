@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useEffect, useRef, useState, useCallback } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { Search, ChevronDown, ChevronRight } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent } from '@/components/ui/card'
@@ -90,7 +90,8 @@ function ETFExpandableCard({
 }
 
 export default function HomePage() {
-  const [searchQuery, setSearchQuery] = useState('')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [searchQuery, setSearchQuery] = useState(searchParams.get('q') || '')
   const [loading, setLoading] = useState(false)
 
   // ETF list (shared between search and tag)
@@ -98,7 +99,7 @@ export default function HomePage() {
 
   // Tag state
   const [tags, setTags] = useState<Tag[]>([])
-  const [selectedTag, setSelectedTag] = useState<string | null>(null)
+  const [selectedTag, setSelectedTag] = useState<string | null>(searchParams.get('tag'))
   const [tagLoading, setTagLoading] = useState(false)
   const [tagsExpanded, setTagsExpanded] = useState(false)
   const [tagsOverflow, setTagsOverflow] = useState(false)
@@ -107,6 +108,22 @@ export default function HomePage() {
   // Shared expand/holdings state
   const [expandedETF, setExpandedETF] = useState<string | null>(null)
   const [holdings, setHoldings] = useState<Record<string, Holding[]>>({})
+
+  // Restore state from URL params on mount
+  const restoredRef = useRef(false)
+  useEffect(() => {
+    if (restoredRef.current) return
+    restoredRef.current = true
+    const q = searchParams.get('q')
+    const tag = searchParams.get('tag')
+    if (q) {
+      setLoading(true)
+      etfsApi.search(q).then(setEtfList).catch(() => setEtfList([])).finally(() => setLoading(false))
+    } else if (tag) {
+      setTagLoading(true)
+      tagsApi.getETFs(tag).then(setEtfList).catch(() => setEtfList([])).finally(() => setTagLoading(false))
+    }
+  }, [searchParams])
 
   useEffect(() => {
     tagsApi.getAll().then(setTags).catch(console.error)
@@ -118,11 +135,19 @@ export default function HomePage() {
     }
   }, [tags])
 
+  const updateParams = useCallback((q: string | null, tag: string | null) => {
+    const params = new URLSearchParams()
+    if (q) params.set('q', q)
+    if (tag) params.set('tag', tag)
+    setSearchParams(params, { replace: true })
+  }, [setSearchParams])
+
   const handleSearch = async () => {
     if (!searchQuery.trim()) return
     setLoading(true)
     setSelectedTag(null)
     setExpandedETF(null)
+    updateParams(searchQuery.trim(), null)
     try {
       const results = await etfsApi.search(searchQuery)
       setEtfList(results)
@@ -137,11 +162,13 @@ export default function HomePage() {
     if (selectedTag === tagName) {
       setSelectedTag(null)
       setEtfList([])
+      updateParams(null, null)
       return
     }
     setSelectedTag(tagName)
     setExpandedETF(null)
     setSearchQuery('')
+    updateParams(null, tagName)
     setTagLoading(true)
     try {
       const etfs = await tagsApi.getETFs(tagName)

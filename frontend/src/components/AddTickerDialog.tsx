@@ -13,7 +13,7 @@ import { Plus } from 'lucide-react'
 import { etfsApi } from '@/lib/api'
 
 interface AddTickerDialogProps {
-  onAdd: (ticker: string, targetWeight: number, quantity: number) => void
+  onAdd: (ticker: string, targetWeight: number, quantity: number, avgPrice?: number) => void
 }
 
 export default function AddTickerDialog({ onAdd }: AddTickerDialogProps) {
@@ -21,15 +21,19 @@ export default function AddTickerDialog({ onAdd }: AddTickerDialogProps) {
   const [ticker, setTicker] = useState('')
   const [targetWeight, setTargetWeight] = useState('')
   const [quantity, setQuantity] = useState('')
+  const [avgPrice, setAvgPrice] = useState('')
   const [searchResults, setSearchResults] = useState<{ code: string; name: string }[]>([])
   const [searching, setSearching] = useState(false)
   const [validated, setValidated] = useState(false)
   const [tickerName, setTickerName] = useState('')
 
+  const isCash = ticker.toUpperCase() === 'CASH'
+
   const reset = () => {
     setTicker('')
     setTargetWeight('')
     setQuantity('')
+    setAvgPrice('')
     setSearchResults([])
     setValidated(false)
     setTickerName('')
@@ -72,8 +76,9 @@ export default function AddTickerDialog({ onAdd }: AddTickerDialogProps) {
 
   const handleSubmit = () => {
     if (!validated || !targetWeight) return
-    const tickerValue = ticker.toUpperCase() === 'CASH' ? 'CASH' : ticker
-    onAdd(tickerValue, parseFloat(targetWeight), parseInt(quantity || '0', 10))
+    const tickerValue = isCash ? 'CASH' : ticker
+    const parsedAvgPrice = avgPrice ? parseFloat(avgPrice) : undefined
+    onAdd(tickerValue, parseFloat(targetWeight), parseInt(quantity || '0', 10), parsedAvgPrice)
     reset()
     setOpen(false)
   }
@@ -150,6 +155,19 @@ export default function AddTickerDialog({ onAdd }: AddTickerDialogProps) {
               onChange={(e) => setQuantity(e.target.value)}
             />
           </div>
+          {!isCash && (
+            <div className="space-y-2">
+              <Label>평균 매수 단가 (선택)</Label>
+              <Input
+                type="number"
+                step="1"
+                min="0"
+                placeholder="예: 15000"
+                value={avgPrice}
+                onChange={(e) => setAvgPrice(e.target.value)}
+              />
+            </div>
+          )}
           <Button
             onClick={handleSubmit}
             className="w-full"

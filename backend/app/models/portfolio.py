@@ -43,6 +43,7 @@ class Holding(Base):
     portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=False)
     ticker = Column(String(20), nullable=False)
     quantity = Column(Numeric(15, 4), nullable=False, default=0)
+    avg_price = Column(Numeric(12, 2), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

@@ -6,7 +6,6 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from ..database import get_db
 from ..models.portfolio import Portfolio, TargetAllocation, Holding, PortfolioSnapshot
-from ..models.etf import ETFPrice
 from ..utils.jwt import get_current_user_id
 from ..schemas.portfolio import (
     PortfolioCreate, PortfolioUpdate, PortfolioResponse,
@@ -45,6 +44,24 @@ async def get_portfolios(
 ):
     portfolios = db.query(Portfolio).filter(Portfolio.user_id == user_id).all()
 
+    # 각 포트폴리오의 투자금액 계산 (avg_price 기반)
+    all_holdings = db.query(Holding).filter(
+        Holding.portfolio_id.in_([p.id for p in portfolios]),
+    ).all()
+    invested_map: dict[int, Decimal] = {}
+    cash_map: dict[int, Decimal] = {}
+    has_avg_price_set: set[int] = set()
+    for h in all_holdings:
+        if h.ticker == 'CASH' and h.quantity:
+            cash_map[h.portfolio_id] = Decimal(str(h.quantity))
+        elif h.avg_price is not None and h.quantity:
+            has_avg_price_set.add(h.portfolio_id)
+            invested_map[h.portfolio_id] = invested_map.get(h.portfolio_id, Decimal('0')) + Decimal(str(h.quantity)) * Decimal(str(h.avg_price))
+    # CASH는 ETF avg_price가 하나라도 있는 포트폴리오에만 합산
+    for pid in has_avg_price_set:
+        if pid in cash_map:
+            invested_map[pid] = invested_map.get(pid, Decimal('0')) + cash_map[pid]
+
     # 각 포트폴리오의 최신 스냅샷에서 current_value 가져오기
     latest_sub = db.query(
         PortfolioSnapshot.portfolio_id,
@@ -67,19 +84,26 @@ async def get_portfolios(
 
     value_map = {row.portfolio_id: row for row in latest_values}
 
-    return [
-        PortfolioResponse(
+    result = []
+    for p in portfolios:
+        cur_val = Decimal(str(value_map[p.id].total_value)) if p.id in value_map else None
+        inv_amt = invested_map.get(p.id)
+        inv_rate = None
+        if inv_amt and cur_val and inv_amt > 0:
+            inv_rate = round(float((cur_val - inv_amt) / inv_amt * 100), 2)
+        result.append(PortfolioResponse(
             id=p.id,
             name=p.name,
             calculation_base=p.calculation_base,
             target_total_amount=p.target_total_amount,
-            current_value=value_map[p.id].total_value if p.id in value_map else None,
+            current_value=cur_val,
             current_value_date=value_map[p.id].date.isoformat() if p.id in value_map else None,
             daily_change_amount=value_map[p.id].change_amount if p.id in value_map else None,
             daily_change_rate=value_map[p.id].change_rate if p.id in value_map else None,
-        )
-        for p in portfolios
-    ]
+            invested_amount=inv_amt,
+            investment_return_rate=inv_rate,
+        ))
+    return result
 
 
 @router.post("/", response_model=PortfolioResponse, status_code=status.HTTP_201_CREATED)
@@ -314,25 +338,59 @@ async def get_portfolio_dashboard(
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
-    _get_portfolio_or_404(db, portfolio_id, user_id)
+    portfolio = _get_portfolio_or_404(db, portfolio_id, user_id)
     snapshots = db.query(PortfolioSnapshot).filter(
         PortfolioSnapshot.portfolio_id == portfolio_id,
     ).order_by(PortfolioSnapshot.date.asc()).all()
 
-    return _build_dashboard_response(snapshots)
+    response = _build_dashboard_response(snapshots)
+
+    # 투자금액 대비 수익률 계산
+    holdings = db.query(Holding).filter(Holding.portfolio_id == portfolio.id).all()
+    invested_amount = Decimal('0')
+    cash_amount = Decimal('0')
+    has_avg_price = False
+    for h in holdings:
+        if h.ticker == 'CASH' and h.quantity:
+            cash_amount = Decimal(str(h.quantity))
+        elif h.avg_price is not None and h.quantity:
+            invested_amount += Decimal(str(h.quantity)) * Decimal(str(h.avg_price))
+            has_avg_price = True
+    if has_avg_price:
+        invested_amount += cash_amount
+
+    if has_avg_price and invested_amount > 0:
+        response.summary.invested_amount = invested_amount
+        current_value = response.summary.current_value
+        return_amount = current_value - invested_amount
+        return_rate = float(return_amount / invested_amount * 100)
+        response.summary.investment_return = DashboardSummaryItem(
+            amount=return_amount, rate=round(return_rate, 2),
+        )
+
+    return response
 
 
 # --- Backfill Snapshots ---
 
 def _get_latest_trading_date(db: Session) -> date | None:
-    """etf_prices 테이블에서 최신 거래일을 조회한다 (주말 제외)."""
-    from sqlalchemy import extract
-    row = db.query(func.max(ETFPrice.date)).filter(
-        ETFPrice.close_price.isnot(None),
-        ETFPrice.close_price > 0,
-        extract('dow', ETFPrice.date).notin_([0, 6]),  # 일=0, 토=6
-    ).scalar()
-    return row
+    """AGE Price 노드에서 최신 거래일을 조회한다."""
+    from ..services.graph_service import GraphService
+    graph_service = GraphService(db)
+    query = """
+    MATCH (e:ETF)-[:HAS_PRICE]->(p:Price)
+    RETURN {date: p.date}
+    ORDER BY p.date DESC
+    LIMIT 1
+    """
+    rows = graph_service.execute_cypher(query)
+    if rows:
+        parsed = GraphService.parse_agtype(rows[0]["result"])
+        date_str = parsed.get("date")
+        if date_str:
+            from datetime import date as dt_date
+            return dt_date.fromisoformat(date_str)
+    return None
 
 
 def _fetch_prices_by_yfinance(tickers: list[str], trading_date: date) -> dict[str, Decimal]:
@@ -494,6 +552,8 @@ async def add_holding(
     ).first()
     if existing:
         existing.quantity = request.quantity
+        if request.avg_price is not None:
+            existing.avg_price = request.avg_price
         db.commit()
         db.refresh(existing)
         return existing
@@ -502,6 +562,7 @@ async def add_holding(
         portfolio_id=portfolio.id,
         ticker=request.ticker,
         quantity=request.quantity,
+        avg_price=request.avg_price,
     )
     db.add(holding)
     db.commit()
@@ -525,7 +586,10 @@ async def update_holding(
     if not holding:
         raise HTTPException(status_code=404, detail="Holding not found")
 
-    holding.quantity = request.quantity
+    if request.quantity is not None:
+        holding.quantity = request.quantity
+    if request.avg_price is not None:
+        holding.avg_price = request.avg_price
     db.commit()
     db.refresh(holding)
     return holding
@@ -574,7 +638,11 @@ async def calculate(
         for ta in target_allocations
     ]
     holding_inputs = [
-        HoldingInput(ticker=h.ticker, quantity=Decimal(str(h.quantity)))
+        HoldingInput(
+            ticker=h.ticker,
+            quantity=Decimal(str(h.quantity)),
+            avg_price=Decimal(str(h.avg_price)) if h.avg_price is not None else None,
+        )
         for h in holdings
     ]
 
@@ -614,6 +682,9 @@ async def calculate(
                 required_quantity=row.required_quantity,
                 adjustment_amount=row.adjustment_amount,
                 status=row.status,
+                avg_price=row.avg_price,
+                profit_loss_rate=row.profit_loss_rate,
+                profit_loss_amount=row.profit_loss_amount,
             )
             for row in result.rows
         ],
@@ -621,5 +692,6 @@ async def calculate(
         total_weight=result.total_weight,
         total_holding_amount=result.total_holding_amount,
         total_adjustment_amount=result.total_adjustment_amount,
+        total_profit_loss_amount=result.total_profit_loss_amount,
         weight_warning=result.weight_warning,
     )

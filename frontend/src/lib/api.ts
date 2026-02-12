@@ -2,16 +2,11 @@ import axios from 'axios'
 import type {
   User,
   ETF,
-  Stock,
   Holding,
   HoldingChange,
   Price,
-  ETFByStock,
   Watchlist,
   WatchlistItem,
-  Signal,
-  Insight,
-  RecommendationResponse,
   Portfolio,
   PortfolioDetail,
   TargetAllocationItem,
@@ -52,18 +47,6 @@ export const authApi = {
   },
   getMe: async () => {
     const { data } = await api.get<User>('/auth/me')
-    return data
-  },
-}
-
-// Stocks
-export const stocksApi = {
-  search: async (query: string, limit = 20) => {
-    const { data } = await api.get<Stock[]>('/stocks/search', { params: { q: query, limit } })
-    return data
-  },
-  getETFsByStock: async (code: string) => {
-    const { data } = await api.get<ETFByStock[]>(`/stocks/${code}/etfs`)
     return data
   },
 }
@@ -124,25 +107,6 @@ export const watchlistApi = {
   },
 }
 
-// AI
-export const aiApi = {
-  recommend: async (query: string, watchlistId?: number) => {
-    const { data } = await api.post<RecommendationResponse>('/ai/recommend', {
-      query,
-      watchlist_id: watchlistId,
-    })
-    return data
-  },
-  getSignals: async () => {
-    const { data } = await api.get<Signal[]>('/ai/signals')
-    return data
-  },
-  getInsights: async () => {
-    const { data } = await api.get<Insight[]>('/ai/insights')
-    return data
-  },
-}
-
 // Portfolio
 export const portfolioApi = {
   getAll: async () => {
@@ -175,11 +139,11 @@ export const portfolioApi = {
   deleteTarget: async (portfolioId: number, targetId: number) => {
     await api.delete(`/portfolios/${portfolioId}/targets/${targetId}`)
   },
-  addHolding: async (portfolioId: number, params: { ticker: string; quantity: number }) => {
+  addHolding: async (portfolioId: number, params: { ticker: string; quantity: number; avg_price?: number }) => {
     const { data } = await api.post<HoldingItem>(`/portfolios/${portfolioId}/holdings`, params)
     return data
   },
-  updateHolding: async (portfolioId: number, holdingId: number, params: { quantity: number }) => {
+  updateHolding: async (portfolioId: number, holdingId: number, params: { quantity?: number; avg_price?: number }) => {
     const { data } = await api.put<HoldingItem>(`/portfolios/${portfolioId}/holdings/${holdingId}`, params)
     return data
   },

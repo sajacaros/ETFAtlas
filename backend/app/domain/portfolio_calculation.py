@@ -13,6 +13,7 @@ class TargetInput:
 class HoldingInput:
     ticker: str
     quantity: Decimal
+    avg_price: Optional[Decimal] = None
 
 
 @dataclass
@@ -28,6 +29,9 @@ class CalculationRow:
     required_quantity: Decimal      # = target_qty - holding_qty
     adjustment_amount: Decimal      # = required_qty * price
     status: str                     # BUY / SELL / HOLD
+    avg_price: Optional[Decimal] = None
+    profit_loss_rate: Optional[Decimal] = None   # (현재가 - 평단가) / 평단가 × 100
+    profit_loss_amount: Optional[Decimal] = None # (현재가 - 평단가) × 보유수량
 
 
 @dataclass
@@ -37,6 +41,7 @@ class CalculationResult:
     total_weight: Decimal = Decimal("0")
     total_holding_amount: Decimal = Decimal("0")
     total_adjustment_amount: Decimal = Decimal("0")
+    total_profit_loss_amount: Optional[Decimal] = None
     weight_warning: Optional[str] = None
 
 
@@ -69,6 +74,7 @@ def calculate_portfolio(
     # Build lookup maps
     target_map: dict[str, Decimal] = {t.ticker: t.target_weight for t in targets}
     holding_map: dict[str, Decimal] = {h.ticker: h.quantity for h in holdings}
+    avg_price_map: dict[str, Optional[Decimal]] = {h.ticker: h.avg_price for h in holdings}
 
     # Union of all tickers (target OR holding)
     all_tickers = sorted(set(target_map.keys()) | set(holding_map.keys()))
@@ -93,6 +99,8 @@ def calculate_portfolio(
     total_weight = Decimal("0")
     total_holding_amount = Decimal("0")
     total_adjustment_amount = Decimal("0")
+    total_profit_loss_amount = Decimal("0")
+    has_any_avg_price = False
 
     for ticker in all_tickers:
         weight = target_map.get(ticker, Decimal("0"))
@@ -135,6 +143,20 @@ def calculate_portfolio(
         total_holding_amount += holding_amount
         total_adjustment_amount += adjustment_amount
 
+        # Profit/loss calculation
+        avg_price = avg_price_map.get(ticker)
+        profit_loss_rate = None
+        profit_loss_amount = None
+        if avg_price is not None and avg_price > 0 and ticker != CASH_TICKER:
+            has_any_avg_price = True
+            profit_loss_rate = ((price - avg_price) / avg_price * Decimal("100")).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            profit_loss_amount = ((price - avg_price) * qty).quantize(
+                Decimal("1"), rounding=ROUND_HALF_UP
+            )
+            total_profit_loss_amount += profit_loss_amount
+
         rows.append(CalculationRow(
             ticker=ticker,
             name=name,
@@ -147,6 +169,9 @@ def calculate_portfolio(
             required_quantity=required_quantity,
             adjustment_amount=adjustment_amount,
             status=status,
+            avg_price=avg_price,
+            profit_loss_rate=profit_loss_rate,
+            profit_loss_amount=profit_loss_amount,
         ))
 
     # Weight warning
@@ -160,5 +185,6 @@ def calculate_portfolio(
         total_weight=total_weight,
         total_holding_amount=total_holding_amount,
         total_adjustment_amount=total_adjustment_amount,
+        total_profit_loss_amount=total_profit_loss_amount if has_any_avg_price else None,
         weight_warning=weight_warning,
     )

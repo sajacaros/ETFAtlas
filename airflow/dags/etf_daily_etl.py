@@ -1,11 +1,12 @@
 """
-ETF Atlas Daily ETL DAG
+ETF Atlas Daily ETL DAG (Apache AGE)
 - ETF 목록 수집
 - 구성종목(PDF) 수집
 - 가격 데이터 수집
 - 포트폴리오 변화 감지
 
 데이터 저장: Apache AGE (Graph DB)
+RDB 동기화는 etf_rdb_etl DAG에서 독립 수행.
 """
 
 from datetime import datetime, timedelta
@@ -153,22 +154,6 @@ def execute_cypher(cur, cypher_query, params=None):
     return cur.fetchall()
 
 
-def collect_etf_list(**context):
-    """Task 1: ETF 전체 목록 수집 (메타데이터용)"""
-    from pykrx import stock
-
-    date = context['ds_nodash']
-    log.info(f"Collecting ETF list for date: {date}")
-
-    try:
-        tickers = stock.get_etf_ticker_list(date)
-        log.info(f"Found {len(tickers)} ETFs (all)")
-        return tickers
-    except Exception as e:
-        log.error(f"Failed to collect ETF list: {e}")
-        raise
-
-
 def fetch_krx_data(**context):
     """Task 1-1: KRX API에서 일별매매정보 조회 (누락 영업일 자동 백필)
 
@@ -183,19 +168,26 @@ def fetch_krx_data(**context):
     date = context['ds_nodash']
     ti = context['ti']
 
-    # 1. DB에서 마지막 수집일 조회
+    # 1. AGE에서 마지막 수집일 조회
     last_collected = None
     try:
         conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT MAX(date) FROM etf_prices
-            WHERE close_price > 0
+        cur = init_age(conn)
+        results = execute_cypher(cur, """
+            MATCH (e:ETF)-[:HAS_PRICE]->(p:Price)
+            RETURN p.date
+            ORDER BY p.date DESC
+            LIMIT 1
         """)
-        result = cur.fetchone()
-        if result and result[0]:
-            last_collected = result[0]  # datetime.date 객체
-            log.info(f"Last collected date in DB: {last_collected}")
+        if results and results[0][0]:
+            import json as json_mod
+            import re as re_mod
+            raw = str(results[0][0])
+            raw = re_mod.sub(r'::(?:numeric|integer|float|vertex|edge|path)\b', '', raw)
+            raw = raw.strip('"')
+            if raw and raw != 'null':
+                last_collected = datetime.strptime(raw, '%Y-%m-%d').date()
+                log.info(f"Last collected date in AGE: {last_collected}")
         cur.close()
         conn.close()
     except Exception as e:
@@ -323,39 +315,56 @@ def _get_krx_data_for_exact_date(date: str) -> list:
 
 
 def filter_etf_list(**context):
-    """Task 1-2: DB 유니버스 기반 ETF 필터링 (구성목록 수집용)
+    """Task 1-2: AGE 기반 ETF 유니버스 필터링 (구성목록 수집용)
 
-    - DB의 etf_universe 테이블에서 기존 ETF 목록 읽기
+    - AGE의 ETF 노드에서 기존 유니버스 목록 읽기
     - 새로운 ETF 중 조건(500억 이상 + 필터 통과) 충족하면 유니버스에 추가
     - 한번 등록된 ETF는 계속 유지
     """
+    import json as json_mod
+    import re as re_mod
+
     ti = context['ti']
     krx_data_dicts = ti.xcom_pull(task_ids='fetch_krx_data')
 
     conn = get_db_connection()
-    cur = conn.cursor()
+    cur = init_age(conn)
 
     try:
-        # 1. 기존 유니버스 ETF 목록 읽기
-        cur.execute("SELECT code FROM etf_universe WHERE is_active = TRUE")
-        existing_codes = set(row[0] for row in cur.fetchall())
-        log.info(f"Existing universe: {len(existing_codes)} ETFs")
+        # 1. AGE에서 기존 ETF 노드 코드 목록 읽기 (= 유니버스)
+        results = execute_cypher(cur, """
+            MATCH (e:ETF)
+            RETURN e.code
+        """)
+        existing_codes = set()
+        for row in results:
+            if row[0]:
+                raw = str(row[0])
+                raw = re_mod.sub(r'::(?:numeric|integer|float|vertex|edge|path)\b', '', raw)
+                raw = raw.strip('"')
+                if raw:
+                    existing_codes.add(raw)
+        log.info(f"Existing universe (AGE ETF nodes): {len(existing_codes)} ETFs")
 
-        # 2. 새로운 ETF 확인 및 추가
+        # 2. 새로운 ETF 확인 및 AGE에 노드 추가
         if krx_data_dicts:
             new_candidates = check_new_universe_candidates(krx_data_dicts, existing_codes)
 
             for candidate in new_candidates:
-                cur.execute('''
-                    INSERT INTO etf_universe (code, name, index_name, initial_net_assets)
-                    VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (code) DO NOTHING
-                ''', (candidate['code'], candidate['name'], candidate.get('index_name', ''), candidate['net_assets']))
+                execute_cypher(cur, """
+                    MERGE (e:ETF {code: $code})
+                    RETURN e
+                """, {'code': candidate['code']})
+                execute_cypher(cur, """
+                    MATCH (e:ETF {code: $code})
+                    SET e.name = $name
+                    RETURN e
+                """, {'code': candidate['code'], 'name': candidate['name']})
                 existing_codes.add(candidate['code'])
 
             if new_candidates:
                 conn.commit()
-                log.info(f"Added {len(new_candidates)} new ETFs to universe")
+                log.info(f"Added {len(new_candidates)} new ETFs to universe (AGE)")
 
         universe_tickers = list(existing_codes)
         log.info(f"Total universe: {len(universe_tickers)} ETFs")
@@ -477,70 +486,6 @@ def get_etf_aum_from_krx_data(krx_data: list) -> dict:
         dict: {ticker: aum} 형태
     """
     return {item.code: item.net_assets for item in krx_data}
-
-
-def filter_etf_universe(tickers: list, krx_data: list) -> list:
-    """ETF 유니버스 필터링
-
-    필터링 조건:
-    1. 키워드 제외: 레버리지, 인버스, 합성, 채권, 원자재, 통화, 리츠 등
-    2. 순자산총액(AUM) 1000억원 이상
-
-    Args:
-        tickers: pykrx에서 조회한 전체 ETF 티커 리스트
-        krx_data: KRX API에서 조회한 ETFDailyData 리스트
-    """
-    EXCLUDE_KEYWORDS = [
-        '레버리지', '인버스', '2X', '곱버스', '2배', '3배',
-        '합성', '선물', '파생', 'synthetic', '혼합',
-        '커버드콜', '커버드', 'covered', '프리미엄',
-        '채권', '국채', '회사채', '크레딧', '금리', '국공채', '단기채', '장기채', '은행채',
-        '금현물', '골드', 'gold', '은현물', '실버', 'silver', '원유', 'WTI', '구리', '원자재',
-        '달러', '엔화', '유로', '원화', '통화', 'USD', 'JPY', 'EUR',
-        '머니마켓', 'CD', '단기', 'MMF', 'CMA',
-        '리츠', 'REITs', 'REIT',
-    ]
-
-    MIN_AUM_BILLION = 1000
-    MIN_AUM_WON = MIN_AUM_BILLION * 100_000_000  # 1000억원
-
-    # KRX 데이터를 딕셔너리로 변환 (빠른 조회용)
-    krx_dict = {item.code: item for item in krx_data}
-
-    filtered = []
-    skipped_by_keyword = 0
-    skipped_by_aum = 0
-    skipped_no_krx_data = 0
-
-    for ticker in tickers:
-        try:
-            # KRX 데이터에서 종목명과 AUM 조회
-            krx_item = krx_dict.get(ticker)
-            if not krx_item:
-                skipped_no_krx_data += 1
-                continue
-
-            name = krx_item.name
-            name_lower = name.lower() if name else ''
-
-            # 1. 키워드 필터링
-            if any(kw.lower() in name_lower for kw in EXCLUDE_KEYWORDS):
-                skipped_by_keyword += 1
-                continue
-
-            # 2. AUM 필터링
-            if krx_item.net_assets < MIN_AUM_WON:
-                skipped_by_aum += 1
-                continue
-
-            filtered.append(ticker)
-
-        except Exception as e:
-            log.warning(f"Failed to check ETF {ticker}: {e}")
-            continue
-
-    log.info(f"Filtered: {len(filtered)} ETFs (excluded by keyword: {skipped_by_keyword}, by AUM: {skipped_by_aum}, no KRX data: {skipped_no_krx_data})")
-    return filtered
 
 
 def collect_etf_metadata(**context):
@@ -859,9 +804,10 @@ def collect_holdings(**context):
 
 
 def collect_prices(**context):
-    """Task 4: ETF 가격 데이터 수집 (KRX API 데이터 사용, 모든 ETF)
+    """Task 4: ETF 가격 데이터를 AGE Price 노드로 저장 (KRX API 데이터 사용, 모든 ETF)
 
-    각 krx_data item의 date 필드를 그대로 사용하여 멀티 날짜 INSERT 지원.
+    각 krx_data item의 date 필드를 그대로 사용하여 멀티 날짜 지원.
+    (ETF)-[:HAS_PRICE]->(Price {date, open, high, low, close, volume, nav, market_cap, net_assets, trade_value})
     """
     ti = context['ti']
     krx_data_dicts = ti.xcom_pull(task_ids='fetch_krx_data')
@@ -871,52 +817,65 @@ def collect_prices(**context):
         return
 
     conn = get_db_connection()
-    cur = conn.cursor()
+    cur = init_age(conn)
 
     success_count = 0
+    BATCH_SIZE = 200
 
     try:
-        for krx_item in krx_data_dicts:
+        for i, krx_item in enumerate(krx_data_dicts):
             try:
                 # 각 item의 date 필드 사용 (YYYYMMDD → YYYY-MM-DD)
                 item_date = krx_item['date']
                 date_str = f"{item_date[:4]}-{item_date[4:6]}-{item_date[6:8]}"
 
-                cur.execute("""
-                    INSERT INTO etf_prices (
-                        etf_code, date, open_price, high_price, low_price, close_price,
-                        volume, nav, market_cap, net_assets, trade_value
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (etf_code, date) DO UPDATE SET
-                        open_price = EXCLUDED.open_price,
-                        high_price = EXCLUDED.high_price,
-                        low_price = EXCLUDED.low_price,
-                        close_price = EXCLUDED.close_price,
-                        volume = EXCLUDED.volume,
-                        nav = EXCLUDED.nav,
-                        market_cap = EXCLUDED.market_cap,
-                        net_assets = EXCLUDED.net_assets,
-                        trade_value = EXCLUDED.trade_value
-                """, (
-                    krx_item['code'],
-                    date_str,
-                    krx_item['open_price'],
-                    krx_item['high_price'],
-                    krx_item['low_price'],
-                    krx_item['close_price'],
-                    krx_item['volume'],
-                    krx_item['nav'],
-                    krx_item['market_cap'],
-                    krx_item['net_assets'],
-                    krx_item['trade_value']
-                ))
+                etf_code = krx_item['code']
+
+                # MERGE ETF node (may not exist yet for non-universe ETFs)
+                execute_cypher(cur, """
+                    MERGE (e:ETF {code: $etf_code})
+                    RETURN e
+                """, {'etf_code': etf_code})
+
+                # MERGE Price node via HAS_PRICE relationship (AGE 버그 우회로 MERGE + SET 분리)
+                execute_cypher(cur, """
+                    MATCH (e:ETF {code: $etf_code})
+                    MERGE (e)-[:HAS_PRICE]->(p:Price {date: $date})
+                    RETURN p
+                """, {
+                    'etf_code': etf_code,
+                    'date': date_str,
+                })
+
+                execute_cypher(cur, """
+                    MATCH (e:ETF {code: $etf_code})-[:HAS_PRICE]->(p:Price {date: $date})
+                    SET p.open = $open, p.high = $high, p.low = $low, p.close = $close,
+                        p.volume = $volume, p.nav = $nav, p.market_cap = $market_cap,
+                        p.net_assets = $net_assets, p.trade_value = $trade_value
+                    RETURN p
+                """, {
+                    'etf_code': etf_code,
+                    'date': date_str,
+                    'open': krx_item['open_price'],
+                    'high': krx_item['high_price'],
+                    'low': krx_item['low_price'],
+                    'close': krx_item['close_price'],
+                    'volume': krx_item['volume'],
+                    'nav': krx_item['nav'],
+                    'market_cap': krx_item['market_cap'],
+                    'net_assets': krx_item['net_assets'],
+                    'trade_value': krx_item['trade_value'],
+                })
 
                 success_count += 1
 
             except Exception as e:
                 log.warning(f"Failed to save prices for {krx_item.get('code', 'unknown')}: {e}")
                 continue
+
+            if (i + 1) % BATCH_SIZE == 0:
+                conn.commit()
+                log.info(f"Batch committed: {i + 1}/{len(krx_data_dicts)} price records")
 
         conn.commit()
         log.info(f"Price collection complete. Success: {success_count}")
@@ -1092,9 +1051,10 @@ def detect_changes(etf_code: str, today_holdings: dict, yesterday_holdings: dict
 
 
 def collect_stock_prices(**context):
-    """Task 6: Stock 가격 데이터 수집 (is_etf=false인 Stock만)
+    """Task 6: Stock 가격 데이터를 AGE Price 노드로 저장 (is_etf=false인 Stock만)
 
     XCom의 trading_dates 리스트를 사용하여 멀티 날짜 수집 지원.
+    (Stock)-[:HAS_PRICE]->(Price {date, open, high, low, close, volume, change_rate})
     """
     from pykrx import stock
 
@@ -1130,8 +1090,7 @@ def collect_stock_prices(**context):
 
         log.info(f"Collecting prices for {len(stock_codes)} stocks across {len(trading_dates)} dates")
 
-        # 2. 각 날짜별로 pykrx OHLCV 조회 및 저장
-        cur_db = conn.cursor()
+        # 2. 각 날짜별로 pykrx OHLCV 조회 및 AGE에 Price 노드 저장
         total_success = 0
 
         for td in trading_dates:
@@ -1148,29 +1107,33 @@ def collect_stock_prices(**context):
                     if code in df.index:
                         try:
                             row = df.loc[code]
-                            cur_db.execute("""
-                                INSERT INTO stock_prices (
-                                    stock_code, date, open_price, high_price, low_price, close_price,
-                                    volume, change_rate
-                                )
-                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                                ON CONFLICT (stock_code, date) DO UPDATE SET
-                                    open_price = EXCLUDED.open_price,
-                                    high_price = EXCLUDED.high_price,
-                                    low_price = EXCLUDED.low_price,
-                                    close_price = EXCLUDED.close_price,
-                                    volume = EXCLUDED.volume,
-                                    change_rate = EXCLUDED.change_rate
-                            """, (
-                                code,
-                                date_str,
-                                float(row.get('시가', 0)),
-                                float(row.get('고가', 0)),
-                                float(row.get('저가', 0)),
-                                float(row.get('종가', 0)),
-                                int(row.get('거래량', 0)),
-                                float(row.get('등락률', 0))
-                            ))
+
+                            # MERGE Price node via HAS_PRICE relationship (AGE 버그 우회로 MERGE + SET 분리)
+                            execute_cypher(cur, """
+                                MATCH (s:Stock {code: $stock_code})
+                                MERGE (s)-[:HAS_PRICE]->(p:Price {date: $date})
+                                RETURN p
+                            """, {
+                                'stock_code': code,
+                                'date': date_str,
+                            })
+
+                            execute_cypher(cur, """
+                                MATCH (s:Stock {code: $stock_code})-[:HAS_PRICE]->(p:Price {date: $date})
+                                SET p.open = $open, p.high = $high, p.low = $low, p.close = $close,
+                                    p.volume = $volume, p.change_rate = $change_rate
+                                RETURN p
+                            """, {
+                                'stock_code': code,
+                                'date': date_str,
+                                'open': float(row.get('시가', 0)),
+                                'high': float(row.get('고가', 0)),
+                                'low': float(row.get('저가', 0)),
+                                'close': float(row.get('종가', 0)),
+                                'volume': int(row.get('거래량', 0)),
+                                'change_rate': float(row.get('등락률', 0)),
+                            })
+
                             date_success += 1
                         except Exception as e:
                             log.warning(f"Failed to save stock price for {code} on {td}: {e}")
@@ -1184,50 +1147,12 @@ def collect_stock_prices(**context):
                 log.warning(f"Failed to collect stock prices for date {td}: {e}")
                 continue
 
-        cur_db.close()
         log.info(f"Stock price collection complete. Total success: {total_success}")
 
     finally:
         cur.close()
         conn.close()
 
-
-def sync_etfs_to_rdb(**context):
-    """모든 ETF 메타데이터를 etfs RDB 테이블에 동기화"""
-    ti = context['ti']
-    krx_data_dicts = ti.xcom_pull(task_ids='fetch_krx_data')
-    if not krx_data_dicts:
-        log.warning("No KRX data available for RDB sync")
-        return
-
-    conn = get_db_connection()
-    cur = conn.cursor()
-    success_count = 0
-
-    try:
-        for item in krx_data_dicts:
-            try:
-                issuer = get_company_from_etf_name(item['name'])
-                cur.execute("""
-                    INSERT INTO etfs (code, name, issuer, net_assets, updated_at)
-                    VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
-                    ON CONFLICT (code) DO UPDATE SET
-                        name = EXCLUDED.name,
-                        issuer = EXCLUDED.issuer,
-                        net_assets = EXCLUDED.net_assets,
-                        updated_at = CURRENT_TIMESTAMP
-                """, (item['code'], item['name'], issuer, item['net_assets']))
-                success_count += 1
-            except Exception as e:
-                log.warning(f"Failed to sync ETF {item.get('code', 'unknown')}: {e}")
-                continue
-
-        conn.commit()
-        log.info(f"Synced {success_count} ETFs to RDB etfs table")
-
-    finally:
-        cur.close()
-        conn.close()
 
 
 def tag_new_etfs(**context):
@@ -1419,12 +1344,6 @@ ETF 이름과 주요 보유종목을 보고, 적절한 태그를 1~3개 부여�
 start = EmptyOperator(task_id='start', dag=dag)
 end = EmptyOperator(task_id='end', dag=dag)
 
-task_collect_etf_list = PythonOperator(
-    task_id='collect_etf_list',
-    python_callable=collect_etf_list,
-    dag=dag,
-)
-
 task_fetch_krx_data = PythonOperator(
     task_id='fetch_krx_data',
     python_callable=fetch_krx_data,
@@ -1467,12 +1386,6 @@ task_collect_stock_prices = PythonOperator(
     dag=dag,
 )
 
-task_sync_etfs_to_rdb = PythonOperator(
-    task_id='sync_etfs_to_rdb',
-    python_callable=sync_etfs_to_rdb,
-    dag=dag,
-)
-
 task_tag_new_etfs = PythonOperator(
     task_id='tag_new_etfs',
     python_callable=tag_new_etfs,
@@ -1480,18 +1393,16 @@ task_tag_new_etfs = PythonOperator(
 )
 
 # Define dependencies
-# 1. ETF 목록(pykrx) + KRX 데이터를 병렬로 수집
-# 2. 두 데이터를 기반으로 필터링
+# 1. KRX 데이터 수집
+# 2. 유니버스 필터링
 # 3. 필터링된 ETF만 메타데이터 + 구성종목 수집
 # 4. 가격: 모든 ETF 수집 (KRX 데이터 기반)
-# 5. RDB sync: 모든 ETF 메타를 etfs 테이블에 동기화 (KRX 데이터 기반)
-# 6. Stock 가격: 구성종목 수집 후 is_etf=false인 Stock만 수집
-# 7. ETF 태깅: 메타데이터 + 구성종목 수집 완료 후 LLM 기반 태그 분류
-# NOTE: 포트폴리오 스냅샷은 portfolio_snapshot DAG로 분리됨
-start >> [task_collect_etf_list, task_fetch_krx_data]
-[task_collect_etf_list, task_fetch_krx_data] >> task_filter_etf_list
+# 5. Stock 가격: 구성종목 수집 후 is_etf=false인 Stock만 수집
+# 6. ETF 태깅: 메타데이터 + 구성종목 수집 완료 후 LLM 기반 태그 분류
+# NOTE: RDB 동기화는 etf_rdb_etl DAG, 포트폴리오 스냅샷은 portfolio_snapshot DAG로 분리됨
+start >> task_fetch_krx_data
+task_fetch_krx_data >> [task_filter_etf_list, task_collect_prices]
 task_filter_etf_list >> [task_collect_metadata, task_collect_holdings]
-task_fetch_krx_data >> [task_collect_prices, task_sync_etfs_to_rdb]  # 가격 + RDB sync는 모든 ETF 대상
 task_collect_holdings >> [task_collect_stock_prices, task_detect_changes]
 [task_collect_metadata, task_collect_holdings] >> task_tag_new_etfs  # 메타+구성종목 완료 후 태깅
-[task_sync_etfs_to_rdb, task_collect_stock_prices, task_detect_changes, task_collect_prices, task_tag_new_etfs] >> end
+[task_collect_stock_prices, task_detect_changes, task_collect_prices, task_tag_new_etfs] >> end

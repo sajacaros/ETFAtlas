@@ -16,12 +16,6 @@ export interface ETF {
   inception_date: string | null
 }
 
-export interface Stock {
-  code: string
-  name: string
-  sector: string | null
-}
-
 export interface Holding {
   stock_code: string
   stock_name: string
@@ -49,14 +43,6 @@ export interface Price {
   volume: number | null
 }
 
-export interface ETFByStock {
-  etf_code: string
-  etf_name: string
-  issuer: string | null
-  category: string | null
-  weight: number
-}
-
 export interface Watchlist {
   id: number
   name: string
@@ -68,26 +54,6 @@ export interface WatchlistItem {
   etf_code: string
   etf_name: string
   category: string | null
-}
-
-export interface Signal {
-  etf_code: string
-  etf_name: string
-  signal_type: 'buy' | 'sell' | 'hold'
-  confidence: number
-  reason: string
-}
-
-export interface Insight {
-  title: string
-  content: string
-  etfs: string[]
-}
-
-export interface RecommendationResponse {
-  signals: Signal[]
-  insights: Insight[]
-  summary: string
 }
 
 // Portfolio types
@@ -103,6 +69,8 @@ export interface Portfolio {
   current_value_date: string | null
   daily_change_amount: number | null
   daily_change_rate: number | null
+  invested_amount: number | null
+  investment_return_rate: number | null
 }
 
 export interface TargetAllocationItem {
@@ -117,6 +85,7 @@ export interface HoldingItem {
   portfolio_id: number
   ticker: string
   quantity: number
+  avg_price: number | null
 }
 
 export interface PortfolioDetail {
@@ -140,6 +109,9 @@ export interface CalculationRow {
   required_quantity: number
   adjustment_amount: number
   status: AdjustmentStatus
+  avg_price: number | null
+  profit_loss_rate: number | null
+  profit_loss_amount: number | null
 }
 
 export interface CalculationResult {
@@ -148,6 +120,7 @@ export interface CalculationResult {
   total_weight: number
   total_holding_amount: number
   total_adjustment_amount: number
+  total_profit_loss_amount: number | null
   weight_warning: string | null
 }
 
@@ -229,6 +202,8 @@ export interface DashboardSummary {
   monthly: DashboardSummaryItem | null
   yearly: DashboardSummaryItem | null
   ytd: DashboardSummaryItem | null
+  invested_amount: number | null
+  investment_return: DashboardSummaryItem | null
 }
 
 export interface ChartDataPoint {

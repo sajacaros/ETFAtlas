@@ -49,6 +49,8 @@ class PriceResponse(BaseModel):
     low: float | None
     close: float | None
     volume: int | None
+    market_cap: int | None = None
+    net_assets: int | None = None
 
 
 class SimilarETFResponse(BaseModel):
@@ -109,7 +111,8 @@ async def get_etf_prices(
     etf = etf_service.get_etf_by_code(code)
     if not etf:
         raise HTTPException(status_code=404, detail="ETF not found")
-    prices = etf_service.get_etf_prices(etf.code, days)
+    graph_service = GraphService(db)
+    prices = graph_service.get_etf_prices(etf.code, days)
     return prices
 
 

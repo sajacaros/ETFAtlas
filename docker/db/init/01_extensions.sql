@@ -123,6 +123,15 @@ CREATE TABLE IF NOT EXISTS portfolio_snapshots (
     CONSTRAINT uq_portfolio_snapshot_date UNIQUE (portfolio_id, date)
 );
 
+-- Ticker Prices (실시간 현재가 캐시 - 티커별 하루 1건)
+CREATE TABLE IF NOT EXISTS ticker_prices (
+    ticker     VARCHAR(20)    NOT NULL,
+    date       DATE           NOT NULL,
+    price      NUMERIC(18, 2) NOT NULL,
+    updated_at TIMESTAMP      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (ticker, date)
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_watchlist_items_watchlist_id ON watchlist_items(watchlist_id);
 CREATE INDEX IF NOT EXISTS idx_watchlist_items_etf_code ON watchlist_items(etf_code);
@@ -133,6 +142,7 @@ CREATE INDEX IF NOT EXISTS idx_etfs_name_trgm ON etfs USING GIN (name gin_trgm_o
 CREATE INDEX IF NOT EXISTS idx_etfs_code_trgm ON etfs USING GIN (code gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_portfolio_id ON portfolio_snapshots(portfolio_id);
 CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_date ON portfolio_snapshots(date);
+CREATE INDEX IF NOT EXISTS idx_ticker_prices_date ON ticker_prices(date);
 
 -- Grant permissions
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO postgres;

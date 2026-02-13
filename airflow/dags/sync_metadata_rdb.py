@@ -1,5 +1,5 @@
 """
-ETF RDB Sync DAG
+ETF Metadata RDB Sync DAG
 - KRX API에서 ETF 일별매매정보 수집
 - RDB etfs 테이블에 동기화 (pg_trgm 퍼지 검색용)
 
@@ -56,7 +56,7 @@ default_args = {
 }
 
 dag = DAG(
-    'etf_rdb_etl',
+    'sync_metadata_rdb',
     default_args=default_args,
     description='ETF 메타데이터 RDB 동기화 파이프라인',
     schedule_interval='0 7 * * 1-5',  # 평일 07:00 KST

@@ -128,6 +128,9 @@ export const portfolioApi = {
   delete: async (id: number) => {
     await api.delete(`/portfolios/${id}`)
   },
+  reorder: async (orders: { id: number; display_order: number }[]) => {
+    await api.put('/portfolios/reorder', { orders })
+  },
   addTarget: async (portfolioId: number, params: { ticker: string; target_weight: number }) => {
     const { data } = await api.post<TargetAllocationItem>(`/portfolios/${portfolioId}/targets`, params)
     return data

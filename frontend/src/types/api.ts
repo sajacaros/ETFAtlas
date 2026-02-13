@@ -65,6 +65,7 @@ export interface Portfolio {
   name: string
   calculation_base: CalculationBase
   target_total_amount: number | null
+  display_order: number
   current_value: number | null
   current_value_date: string | null
   daily_change_amount: number | null
@@ -112,6 +113,7 @@ export interface CalculationRow {
   avg_price: number | null
   profit_loss_rate: number | null
   profit_loss_amount: number | null
+  price_change_rate: number | null
 }
 
 export interface CalculationResult {

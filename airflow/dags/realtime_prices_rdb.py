@@ -25,7 +25,7 @@ default_args = {
 }
 
 dag = DAG(
-    'collect_realtime_prices',
+    'realtime_prices_rdb',
     default_args=default_args,
     description='장중 10분 주기 현재가 수집 + 스냅샷 갱신',
     schedule_interval='*/10 9-15 * * 1-5',

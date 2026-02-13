@@ -1399,7 +1399,7 @@ task_tag_new_etfs = PythonOperator(
 # 4. 가격: 모든 ETF 수집 (KRX 데이터 기반)
 # 5. Stock 가격: 구성종목 수집 후 is_etf=false인 Stock만 수집
 # 6. ETF 태깅: 메타데이터 + 구성종목 수집 완료 후 LLM 기반 태그 분류
-# NOTE: RDB 동기화는 etf_rdb_etl DAG, 현재가 수집/스냅샷은 collect_realtime_prices DAG로 분리됨
+# NOTE: RDB 동기화는 sync_metadata_rdb DAG, 현재가 수집/스냅샷은 collect_realtime_prices DAG로 분리됨
 start >> task_fetch_krx_data
 task_fetch_krx_data >> [task_filter_etf_list, task_collect_prices]
 task_filter_etf_list >> [task_collect_metadata, task_collect_holdings]

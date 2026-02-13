@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Trash2, ArrowLeft, AlertTriangle, RefreshCw, Pencil, Check, BarChart3, Eye, EyeOff } from 'lucide-react'
+import { Plus, Trash2, ArrowLeft, AlertTriangle, RefreshCw, Pencil, Check, BarChart3, Eye, EyeOff, GripVertical } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -20,9 +20,158 @@ import type { Portfolio, PortfolioDetail, CalculationResult, CalculationBase, Da
 import PortfolioTable from '@/components/PortfolioTable'
 import AddTickerDialog from '@/components/AddTickerDialog'
 import { useAmountVisibility, formatMaskedNumber } from '@/hooks/useAmountVisibility'
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  rectSortingStrategy,
+  useSortable,
+  arrayMove,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 
 function formatNumber(n: number): string {
   return new Intl.NumberFormat('ko-KR').format(Math.round(n))
+}
+
+function SortablePortfolioCard({
+  portfolio: p,
+  onSelect,
+  onDelete,
+  onBackfill,
+  backfillLoading,
+  onDashboard,
+  amountVisible,
+  formatMaskedNumber: fmn,
+}: {
+  portfolio: Portfolio
+  onSelect: (id: number) => void
+  onDelete: (id: number) => void
+  onBackfill: (id: number) => void
+  backfillLoading: number | null
+  onDashboard: (id: number) => void
+  amountVisible: boolean
+  formatMaskedNumber: (v: number, visible: boolean) => string
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: p.id })
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  }
+
+  return (
+    <Card
+      ref={setNodeRef}
+      style={style}
+      className="cursor-pointer hover:shadow-md transition-shadow"
+      onClick={() => onSelect(p.id)}
+    >
+      <CardHeader className="flex flex-row items-center justify-between pb-2">
+        <div className="flex items-center gap-1">
+          <button
+            className="cursor-grab active:cursor-grabbing touch-none p-1 -ml-1 text-muted-foreground hover:text-foreground"
+            {...attributes}
+            {...listeners}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <GripVertical className="w-4 h-4" />
+          </button>
+          <CardTitle className="text-lg">{p.name}</CardTitle>
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-destructive hover:text-destructive"
+          onClick={(e) => {
+            e.stopPropagation()
+            onDelete(p.id)
+          }}
+        >
+          <Trash2 className="w-4 h-4" />
+        </Button>
+      </CardHeader>
+      <CardContent>
+        <div>
+          {p.current_value != null && p.current_value_date ? (
+            <>
+              <p className="text-lg font-bold font-mono">
+                <span className="text-sm font-normal text-muted-foreground">
+                  {p.current_value_date.slice(2).replace(/-/g, '/')}:
+                </span>{' '}
+                {fmn(p.current_value, amountVisible)}{amountVisible && '원'}
+              </p>
+              <p className={`text-sm font-mono ${(p.daily_change_rate ?? 0) >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
+                {amountVisible ? (
+                  <>
+                    <span className="font-normal text-muted-foreground">전일대비</span>{' '}
+                    {(p.daily_change_amount ?? 0) >= 0 ? '+' : ''}{formatNumber(p.daily_change_amount ?? 0)}원
+                    ({(p.daily_change_rate ?? 0) >= 0 ? '+' : ''}{(p.daily_change_rate ?? 0).toFixed(2)}%)
+                  </>
+                ) : (
+                  '••••••'
+                )}
+              </p>
+              {p.investment_return_rate != null && (
+                <p className={`text-xs font-mono mt-1 ${p.investment_return_rate >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
+                  {amountVisible ? (
+                    <>
+                      투자금액 {formatNumber(p.invested_amount ?? 0)}원 / 수익률 {p.investment_return_rate >= 0 ? '+' : ''}{p.investment_return_rate.toFixed(2)}%
+                    </>
+                  ) : (
+                    '투자수익률 ••••••'
+                  )}
+                </p>
+              )}
+            </>
+          ) : (
+            <div>
+              <p className="text-sm text-muted-foreground">평가금액 없음</p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-2"
+                disabled={backfillLoading === p.id}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onBackfill(p.id)
+                }}
+              >
+                <RefreshCw className={`w-3 h-3 mr-1 ${backfillLoading === p.id ? 'animate-spin' : ''}`} />
+                {backfillLoading === p.id ? '생성 중...' : '스냅샷 생성'}
+              </Button>
+            </div>
+          )}
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="mt-3"
+          onClick={(e) => {
+            e.stopPropagation()
+            onDashboard(p.id)
+          }}
+        >
+          <BarChart3 className="w-4 h-4 mr-1" />
+          대시보드
+        </Button>
+      </CardContent>
+    </Card>
+  )
 }
 
 export default function PortfolioPage() {
@@ -57,6 +206,29 @@ export default function PortfolioPage() {
   const [editName, setEditName] = useState('')
   const [editAmount, setEditAmount] = useState('')
   const [editCash, setEditCash] = useState('')
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+  )
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+
+    const oldIndex = portfolios.findIndex((p) => p.id === active.id)
+    const newIndex = portfolios.findIndex((p) => p.id === over.id)
+    const reordered = arrayMove(portfolios, oldIndex, newIndex)
+    setPortfolios(reordered)
+
+    const orders = reordered.map((p, i) => ({ id: p.id, display_order: i }))
+    try {
+      await portfolioApi.reorder(orders)
+    } catch {
+      const data = await portfolioApi.getAll()
+      setPortfolios(data)
+      toast({ title: '순서 변경 실패', variant: 'destructive' })
+    }
+  }
 
   useEffect(() => {
     if (!isAuthenticated) return
@@ -642,95 +814,25 @@ export default function PortfolioPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {portfolios.map((p) => (
-            <Card
-              key={p.id}
-              className="cursor-pointer hover:shadow-md transition-shadow"
-              onClick={() => selectPortfolio(p.id)}
-            >
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-lg">{p.name}</CardTitle>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-destructive hover:text-destructive"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    handleDelete(p.id)
-                  }}
-                >
-                  <Trash2 className="w-4 h-4" />
-                </Button>
-              </CardHeader>
-              <CardContent>
-                <div>
-                  {p.current_value != null && p.current_value_date ? (
-                    <>
-                      <p className="text-lg font-bold font-mono">
-                        <span className="text-sm font-normal text-muted-foreground">
-                          {p.current_value_date.slice(2).replace(/-/g, '/')}:
-                        </span>{' '}
-                        {formatMaskedNumber(p.current_value, amountVisible)}{amountVisible && '원'}
-                      </p>
-                      <p className={`text-sm font-mono ${(p.daily_change_rate ?? 0) >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
-                        {amountVisible ? (
-                          <>
-                            <span className="font-normal text-muted-foreground">전일대비</span>{' '}
-                            {(p.daily_change_amount ?? 0) >= 0 ? '+' : ''}{formatNumber(p.daily_change_amount ?? 0)}원
-                            ({(p.daily_change_rate ?? 0) >= 0 ? '+' : ''}{(p.daily_change_rate ?? 0).toFixed(2)}%)
-                          </>
-                        ) : (
-                          '••••••'
-                        )}
-                      </p>
-                      {p.investment_return_rate != null && (
-                        <p className={`text-xs font-mono mt-1 ${p.investment_return_rate >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
-                          {amountVisible ? (
-                            <>
-                              투자금액 {formatNumber(p.invested_amount ?? 0)}원 / 수익률 {p.investment_return_rate >= 0 ? '+' : ''}{p.investment_return_rate.toFixed(2)}%
-                            </>
-                          ) : (
-                            '투자수익률 ••••••'
-                          )}
-                        </p>
-                      )}
-                    </>
-                  ) : (
-                    <div>
-                      <p className="text-sm text-muted-foreground">평가금액 없음</p>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="mt-2"
-                        disabled={backfillLoading === p.id}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleBackfill(p.id)
-                        }}
-                      >
-                        <RefreshCw className={`w-3 h-3 mr-1 ${backfillLoading === p.id ? 'animate-spin' : ''}`} />
-                        {backfillLoading === p.id ? '생성 중...' : '스냅샷 생성'}
-                      </Button>
-                    </div>
-                  )}
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="mt-3"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    navigate(`/portfolio/${p.id}/dashboard`)
-                  }}
-                >
-                  <BarChart3 className="w-4 h-4 mr-1" />
-                  대시보드
-                </Button>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext items={portfolios.map((p) => p.id)} strategy={rectSortingStrategy}>
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {portfolios.map((p) => (
+                <SortablePortfolioCard
+                  key={p.id}
+                  portfolio={p}
+                  onSelect={selectPortfolio}
+                  onDelete={handleDelete}
+                  onBackfill={handleBackfill}
+                  backfillLoading={backfillLoading}
+                  onDashboard={(id) => navigate(`/portfolio/${id}/dashboard`)}
+                  amountVisible={amountVisible}
+                  formatMaskedNumber={formatMaskedNumber}
+                />
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
       )}
     </div>
   )

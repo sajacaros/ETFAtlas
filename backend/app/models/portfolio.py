@@ -12,6 +12,7 @@ class Portfolio(Base):
     name = Column(String(255), nullable=False, default="My Portfolio")
     calculation_base = Column(String(20), nullable=False, default="CURRENT_TOTAL")
     target_total_amount = Column(Numeric(15, 2), nullable=True)
+    display_order = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

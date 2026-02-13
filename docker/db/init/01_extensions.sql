@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS portfolios (
     name VARCHAR(255) NOT NULL DEFAULT 'My Portfolio',
     calculation_base VARCHAR(20) NOT NULL DEFAULT 'CURRENT_TOTAL',
     target_total_amount DECIMAL(15, 2),
+    display_order INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

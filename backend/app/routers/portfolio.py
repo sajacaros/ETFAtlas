@@ -9,6 +9,7 @@ from ..models.portfolio import Portfolio, TargetAllocation, Holding, PortfolioSn
 from ..utils.jwt import get_current_user_id
 from ..schemas.portfolio import (
     PortfolioCreate, PortfolioUpdate, PortfolioResponse,
+    PortfolioReorderRequest,
     TargetAllocationCreate, TargetAllocationUpdate, TargetAllocationResponse,
     HoldingCreate, HoldingUpdate, HoldingResponse,
     CalculationResponse, CalculationRowResponse,
@@ -42,7 +43,7 @@ async def get_portfolios(
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db)
 ):
-    portfolios = db.query(Portfolio).filter(Portfolio.user_id == user_id).all()
+    portfolios = db.query(Portfolio).filter(Portfolio.user_id == user_id).order_by(Portfolio.display_order).all()
 
     # 각 포트폴리오의 투자금액 계산 (avg_price 기반)
     all_holdings = db.query(Holding).filter(
@@ -106,17 +107,40 @@ async def get_portfolios(
     return result
 
 
+@router.put("/reorder")
+async def reorder_portfolios(
+    request: PortfolioReorderRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    portfolio_ids = [item.id for item in request.orders]
+    portfolios = db.query(Portfolio).filter(
+        Portfolio.id.in_(portfolio_ids),
+        Portfolio.user_id == user_id,
+    ).all()
+    portfolio_map = {p.id: p for p in portfolios}
+    for item in request.orders:
+        if item.id in portfolio_map:
+            portfolio_map[item.id].display_order = item.display_order
+    db.commit()
+    return {"ok": True}
+
+
 @router.post("/", response_model=PortfolioResponse, status_code=status.HTTP_201_CREATED)
 async def create_portfolio(
     request: PortfolioCreate,
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db)
 ):
+    max_order = db.query(func.max(Portfolio.display_order)).filter(
+        Portfolio.user_id == user_id
+    ).scalar() or 0
     portfolio = Portfolio(
         user_id=user_id,
         name=request.name,
         calculation_base=request.calculation_base,
         target_total_amount=request.target_total_amount,
+        display_order=max_order + 1,
     )
     db.add(portfolio)
     db.commit()
@@ -655,6 +679,7 @@ async def calculate(
     # Get prices and names
     price_service = PriceService(db)
     prices = price_service.get_prices(all_tickers)
+    prev_prices = price_service.get_prev_prices(all_tickers)
     etf_names = price_service.get_etf_names(all_tickers)
 
     # Calculate
@@ -665,6 +690,7 @@ async def calculate(
         etf_names=etf_names,
         calculation_base=portfolio.calculation_base,
         target_total_amount=Decimal(str(portfolio.target_total_amount)) if portfolio.target_total_amount else None,
+        prev_prices=prev_prices,
     )
 
     # Convert to response
@@ -685,6 +711,7 @@ async def calculate(
                 avg_price=row.avg_price,
                 profit_loss_rate=row.profit_loss_rate,
                 profit_loss_amount=row.profit_loss_amount,
+                price_change_rate=row.price_change_rate,
             )
             for row in result.rows
         ],

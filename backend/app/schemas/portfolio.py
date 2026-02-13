@@ -16,6 +16,15 @@ class PortfolioUpdate(BaseModel):
     target_total_amount: Optional[Decimal] = None
 
 
+class PortfolioReorderItem(BaseModel):
+    id: int
+    display_order: int
+
+
+class PortfolioReorderRequest(BaseModel):
+    orders: list[PortfolioReorderItem]
+
+
 class PortfolioResponse(BaseModel):
     id: int
     name: str
@@ -91,6 +100,7 @@ class CalculationRowResponse(BaseModel):
     avg_price: Optional[Decimal] = None
     profit_loss_rate: Optional[Decimal] = None
     profit_loss_amount: Optional[Decimal] = None
+    price_change_rate: Optional[Decimal] = None
 
 
 class CalculationResponse(BaseModel):

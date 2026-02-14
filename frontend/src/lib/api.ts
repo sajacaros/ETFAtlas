@@ -52,12 +52,16 @@ export const authApi = {
 
 // ETFs
 export const etfsApi = {
+  getTop: async (limit = 20, sort = 'market_cap') => {
+    const { data } = await api.get<{ code: string; name: string; net_assets: number | null; return_1d: number | null; return_1w: number | null; return_1m: number | null; market_cap_change_1w: number | null }[]>('/etfs/top', { params: { limit, sort } })
+    return data
+  },
   search: async (query: string, limit = 20) => {
     const { data } = await api.get<ETF[]>('/etfs/search', { params: { q: query, limit } })
     return data
   },
   searchUniverse: async (query: string, limit = 20) => {
-    const { data } = await api.get<{ code: string; name: string; return_1d: number | null; return_1w: number | null; return_1m: number | null }[]>('/etfs/search/universe', { params: { q: query, limit } })
+    const { data } = await api.get<{ code: string; name: string; net_assets: number | null; return_1d: number | null; return_1w: number | null; return_1m: number | null; market_cap_change_1w: number | null }[]>('/etfs/search/universe', { params: { q: query, limit } })
     return data
   },
   get: async (code: string) => {
@@ -94,6 +98,10 @@ export const watchlistApi = {
   },
   getCodes: async () => {
     const { data } = await api.get<string[]>('/watchlist/codes')
+    return data
+  },
+  getETFs: async () => {
+    const { data } = await api.get<{ code: string; name: string; net_assets: number | null; return_1d: number | null; return_1w: number | null; return_1m: number | null; market_cap_change_1w: number | null }[]>('/watchlist/etfs')
     return data
   },
   add: async (etfCode: string) => {

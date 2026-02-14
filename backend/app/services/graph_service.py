@@ -129,6 +129,49 @@ class GraphService:
             return result[0]
         return {"etf_count": 0, "avg_weight": 0}
 
+    def search_etfs_in_universe(self, query: str, limit: int = 20) -> List[Dict]:
+        """AGE Universe 내 ETF 검색 (시가총액순)"""
+        cypher = """
+        MATCH (e:ETF)
+        WHERE e.name CONTAINS $query OR e.code CONTAINS $query
+        RETURN {code: e.code, name: e.name, return_1d: e.return_1d, return_1w: e.return_1w, return_1m: e.return_1m, market_cap_change_1w: e.market_cap_change_1w}
+        ORDER BY e.net_assets DESC
+        LIMIT $limit
+        """
+        rows = self.execute_cypher(cypher, {"query": query, "limit": limit})
+        return [self.parse_agtype(row["result"]) for row in rows]
+
+    def get_etf_detail(self, code: str) -> Dict | None:
+        """AGE에서 ETF 상세 정보 조회 (메타데이터 + 운용사)"""
+        query = """
+        MATCH (e:ETF {code: $code})
+        OPTIONAL MATCH (e)-[:MANAGED_BY]->(c:Company)
+        RETURN {code: e.code, name: e.name, net_assets: e.net_assets,
+                expense_ratio: e.expense_ratio, issuer: c.name}
+        """
+        rows = self.execute_cypher(query, {"code": code})
+        if rows:
+            return self.parse_agtype(rows[0]["result"])
+        return None
+
+    def get_etf_names(self, codes: List[str]) -> Dict[str, str]:
+        """AGE에서 ETF 코드→이름 매핑 조회"""
+        if not codes:
+            return {}
+        # AGE는 IN 연산자 미지원 → 개별 조회 대신 전체 스캔 + 필터
+        query = """
+        MATCH (e:ETF)
+        RETURN {code: e.code, name: e.name}
+        """
+        rows = self.execute_cypher(query)
+        result = {}
+        code_set = set(codes)
+        for row in rows:
+            parsed = self.parse_agtype(row["result"])
+            if parsed["code"] in code_set:
+                result[parsed["code"]] = parsed["name"]
+        return result
+
     def get_all_tags(self) -> List[Dict]:
         """모든 Tag 노드 조회 (시장지수 제외), ETF 수 포함"""
         query = """
@@ -142,11 +185,11 @@ class GraphService:
         return [self.parse_agtype(row["result"]) for row in rows]
 
     def get_etfs_by_tag(self, tag_name: str) -> List[Dict]:
-        """태그에 속한 ETF 목록 (이름, 코드)"""
+        """태그에 속한 ETF 목록 (이름, 코드, 순자산)"""
         query = """
         MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: $tag_name})
-        RETURN {code: e.code, name: e.name}
-        ORDER BY e.name
+        RETURN {code: e.code, name: e.name, net_assets: e.net_assets, return_1d: e.return_1d, return_1w: e.return_1w, return_1m: e.return_1m, market_cap_change_1w: e.market_cap_change_1w}
+        ORDER BY e.net_assets DESC
         """
         rows = self.execute_cypher(query, {"tag_name": tag_name})
         return [self.parse_agtype(row["result"]) for row in rows]
@@ -175,13 +218,12 @@ class GraphService:
         return [self.parse_agtype(row["result"])["name"] for row in rows]
 
     def get_etf_holdings_full(self, etf_code: str) -> List[Dict]:
-        """ETF 전체 보유종목 (최신 날짜 기준, 섹터 포함)"""
+        """ETF 전체 보유종목 (최신 날짜 기준)"""
         query = """
         MATCH (e:ETF {code: $etf_code})-[h:HOLDS]->(s:Stock)
         WITH s, h ORDER BY h.date DESC
         With s, head(collect(h)) as latest
-        OPTIONAL MATCH (s)-[:BELONGS_TO]->(sec:Sector)
-        RETURN {stock_code: s.code, stock_name: s.name, sector: sec.name,
+        RETURN {stock_code: s.code, stock_name: s.name,
                 weight: latest.weight, shares: latest.shares, recorded_at: latest.date}
         ORDER BY latest.weight DESC
         """
@@ -409,6 +451,84 @@ class GraphService:
                 if parsed.get("close") is not None:
                     prices[ticker] = Decimal(str(parsed["close"]))
         return prices
+
+    # ── Watchlist methods (User)-[:WATCHES]->(ETF) direct relationship ──
+
+    def get_user_watches(self, user_id: int) -> List[Dict]:
+        """사용자의 즐겨찾기 ETF 목록 조회 (User)-[:WATCHES]->(ETF)"""
+        query = """
+        MATCH (u:User {user_id: $user_id})-[r:WATCHES]->(e:ETF)
+        RETURN {etf_code: e.code, etf_name: e.name, added_at: r.added_at}
+        ORDER BY r.added_at DESC
+        """
+        rows = self.execute_cypher(query, {"user_id": user_id})
+        return [self.parse_agtype(row["result"]) for row in rows]
+
+    def get_watched_codes(self, user_id: int) -> List[str]:
+        """사용자의 즐겨찾기 ETF 코드 목록"""
+        query = """
+        MATCH (u:User {user_id: $user_id})-[:WATCHES]->(e:ETF)
+        RETURN {code: e.code}
+        """
+        rows = self.execute_cypher(query, {"user_id": user_id})
+        return [self.parse_agtype(row["result"])["code"] for row in rows]
+
+    def is_watching(self, user_id: int, etf_code: str) -> bool:
+        """특정 ETF 즐겨찾기 여부 확인"""
+        query = """
+        MATCH (u:User {user_id: $user_id})-[:WATCHES]->(e:ETF {code: $etf_code})
+        RETURN {exists: true}
+        """
+        rows = self.execute_cypher(query, {"user_id": user_id, "etf_code": etf_code})
+        return len(rows) > 0
+
+    def add_watch(self, user_id: int, etf_code: str) -> Dict:
+        """ETF 즐겨찾기 추가 (User)-[:WATCHES]->(ETF)"""
+        # ETF 존재 확인
+        etf_query = """
+        MATCH (e:ETF {code: $etf_code})
+        RETURN {code: e.code, name: e.name}
+        """
+        etf_rows = self.execute_cypher(etf_query, {"etf_code": etf_code})
+        if not etf_rows:
+            return {"error": "etf_not_found"}
+
+        # 중복 확인
+        if self.is_watching(user_id, etf_code):
+            return {"error": "already_exists"}
+
+        # WATCHES 엣지 생성
+        now = datetime.now(timezone.utc).isoformat()
+        add_query = """
+        MERGE (u:User {user_id: $user_id})
+        WITH u
+        MATCH (e:ETF {code: $etf_code})
+        CREATE (u)-[:WATCHES {added_at: $now}]->(e)
+        RETURN {etf_code: e.code, etf_name: e.name}
+        """
+        rows = self.execute_cypher(add_query, {
+            "user_id": user_id,
+            "etf_code": etf_code,
+            "now": now,
+        })
+        self.db.commit()
+        if rows:
+            return self.parse_agtype(rows[0]["result"])
+        return {}
+
+    def remove_watch(self, user_id: int, etf_code: str) -> bool:
+        """ETF 즐겨찾기 해제"""
+        query = """
+        MATCH (u:User {user_id: $user_id})-[r:WATCHES]->(e:ETF {code: $etf_code})
+        DELETE r
+        RETURN {deleted: true}
+        """
+        rows = self.execute_cypher(query, {
+            "user_id": user_id,
+            "etf_code": etf_code,
+        })
+        self.db.commit()
+        return len(rows) > 0
 
     def get_latest_close_prices_fallback(self, tickers: List[str]) -> Dict[str, Decimal]:
         """최신 종가 폴백 조회 (날짜 무관, 가장 최근 Price) — PriceService에서 호출"""

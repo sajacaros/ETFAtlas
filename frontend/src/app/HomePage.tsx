@@ -1,16 +1,23 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { Search, ChevronDown, ChevronRight } from 'lucide-react'
+import { Search, ChevronDown, ChevronRight, Star } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { etfsApi, tagsApi } from '@/lib/api'
+import { Button } from '@/components/ui/button'
+import { etfsApi, tagsApi, watchlistApi } from '@/lib/api'
+import { useAuth } from '@/hooks/useAuth'
+import { useToast } from '@/hooks/use-toast'
 import type { Tag, Holding } from '@/types/api'
 
 interface ETFCardItem {
   code: string
   name: string
   net_assets?: number | null
+  return_1d?: number | null
+  return_1w?: number | null
+  return_1m?: number | null
+  market_cap_change_1w?: number | null
 }
 
 function formatAmount(value: number): string {
@@ -20,16 +27,36 @@ function formatAmount(value: number): string {
   return `${Math.floor(value / 1_0000).toLocaleString()}만원`
 }
 
+function ReturnBadge({ label, value }: { label: string; value: number | null | undefined }) {
+  const hasValue = value != null
+  const color = hasValue
+    ? value > 0 ? 'text-red-500' : value < 0 ? 'text-blue-500' : 'text-muted-foreground'
+    : 'text-muted-foreground'
+  const formatted = hasValue
+    ? value > 0 ? `+${value.toFixed(1)}%` : `${value.toFixed(1)}%`
+    : '-'
+  return (
+    <div className="text-right">
+      <div className="text-[10px] text-muted-foreground leading-none mb-0.5">{label}</div>
+      <div className={`text-sm font-medium ${color}`}>{formatted}</div>
+    </div>
+  )
+}
+
 function ETFExpandableCard({
   etf,
   expanded,
   onToggle,
   holdings,
+  isWatched,
+  onWatchToggle,
 }: {
   etf: ETFCardItem
   expanded: boolean
   onToggle: () => void
   holdings: Holding[] | undefined
+  isWatched: boolean
+  onWatchToggle: ((code: string) => void) | null
 }) {
   return (
     <Card>
@@ -38,16 +65,16 @@ function ETFExpandableCard({
           className="flex items-center justify-between p-4 cursor-pointer hover:bg-muted/50 transition-colors"
           onClick={onToggle}
         >
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 min-w-0">
             {expanded ? (
-              <ChevronDown className="w-4 h-4 text-muted-foreground" />
+              <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" />
             ) : (
-              <ChevronRight className="w-4 h-4 text-muted-foreground" />
+              <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
             )}
-            <div>
+            <div className="min-w-0">
               <Link
                 to={`/etf/${etf.code}`}
-                className="font-medium hover:underline"
+                className="font-medium hover:underline truncate block"
                 onClick={(e) => e.stopPropagation()}
               >
                 {etf.name}
@@ -55,11 +82,32 @@ function ETFExpandableCard({
               <div className="text-sm text-muted-foreground">{etf.code}</div>
             </div>
           </div>
-          {etf.net_assets != null && (
-            <span className="text-sm text-muted-foreground whitespace-nowrap">
-              {formatAmount(etf.net_assets)}
-            </span>
-          )}
+          <div className="flex items-center gap-3 flex-shrink-0">
+            <ReturnBadge label="1D" value={etf.return_1d} />
+            <ReturnBadge label="1W" value={etf.return_1w} />
+            <ReturnBadge label="1M" value={etf.return_1m} />
+            <ReturnBadge label="시총1W" value={etf.market_cap_change_1w} />
+            {etf.net_assets != null && (
+              <span className="text-sm text-muted-foreground whitespace-nowrap ml-1">
+                {formatAmount(etf.net_assets)}
+              </span>
+            )}
+            {onWatchToggle && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="shrink-0 h-8 w-8"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onWatchToggle(etf.code)
+                }}
+              >
+                <Star
+                  className={`w-4 h-4 ${isWatched ? 'fill-yellow-400 text-yellow-400' : 'text-muted-foreground'}`}
+                />
+              </Button>
+            )}
+          </div>
         </div>
         {expanded && (
           <div className="border-t px-4 py-3 bg-muted/30">
@@ -90,9 +138,12 @@ function ETFExpandableCard({
 }
 
 export default function HomePage() {
+  const { isAuthenticated } = useAuth()
+  const { toast } = useToast()
   const [searchParams, setSearchParams] = useSearchParams()
   const [searchQuery, setSearchQuery] = useState(searchParams.get('q') || '')
   const [loading, setLoading] = useState(false)
+  const [watchedCodes, setWatchedCodes] = useState<Set<string>>(new Set())
 
   // ETF list (shared between search and tag)
   const [etfList, setEtfList] = useState<ETFCardItem[]>([])
@@ -118,12 +169,17 @@ export default function HomePage() {
     const tag = searchParams.get('tag')
     if (q) {
       setLoading(true)
-      etfsApi.search(q).then(setEtfList).catch(() => setEtfList([])).finally(() => setLoading(false))
+      etfsApi.searchUniverse(q).then(setEtfList).catch(() => setEtfList([])).finally(() => setLoading(false))
     } else if (tag) {
       setTagLoading(true)
       tagsApi.getETFs(tag).then(setEtfList).catch(() => setEtfList([])).finally(() => setTagLoading(false))
     }
   }, [searchParams])
+
+  useEffect(() => {
+    if (!isAuthenticated) return
+    watchlistApi.getCodes().then((codes) => setWatchedCodes(new Set(codes))).catch(console.error)
+  }, [isAuthenticated])
 
   useEffect(() => {
     tagsApi.getAll().then(setTags).catch(console.error)
@@ -149,7 +205,7 @@ export default function HomePage() {
     setExpandedETF(null)
     updateParams(searchQuery.trim(), null)
     try {
-      const results = await etfsApi.search(searchQuery)
+      const results = await etfsApi.searchUniverse(searchQuery)
       setEtfList(results)
     } catch {
       setEtfList([])
@@ -193,6 +249,31 @@ export default function HomePage() {
       } catch (error) {
         console.error('Failed to fetch holdings:', error)
       }
+    }
+  }
+
+  const handleWatchToggle = async (etfCode: string) => {
+    if (!isAuthenticated) {
+      toast({ title: '로그인이 필요합니다', variant: 'destructive' })
+      return
+    }
+    const isWatched = watchedCodes.has(etfCode)
+    try {
+      if (isWatched) {
+        await watchlistApi.remove(etfCode)
+        setWatchedCodes((prev) => {
+          const next = new Set(prev)
+          next.delete(etfCode)
+          return next
+        })
+        toast({ title: '즐겨찾기에서 해제되었습니다' })
+      } else {
+        await watchlistApi.add(etfCode)
+        setWatchedCodes((prev) => new Set(prev).add(etfCode))
+        toast({ title: '즐겨찾기에 추가되었습니다' })
+      }
+    } catch {
+      toast({ title: isWatched ? '해제 실패' : '추가 실패', variant: 'destructive' })
     }
   }
 
@@ -262,6 +343,8 @@ export default function HomePage() {
                 expanded={expandedETF === etf.code}
                 onToggle={() => handleETFExpand(etf.code)}
                 holdings={holdings[etf.code]}
+                isWatched={watchedCodes.has(etf.code)}
+                onWatchToggle={isAuthenticated ? handleWatchToggle : null}
               />
             ))}
           </div>

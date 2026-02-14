@@ -24,9 +24,9 @@ function formatAmount(value: number): string {
   const abs = Math.abs(value)
   const sign = value < 0 ? '-' : ''
   if (abs >= 1_0000_0000) {
-    return `${sign}${Math.floor(abs / 1_0000_0000).toLocaleString()}억원`
+    return `${sign}${Math.floor(abs / 1_0000_0000).toLocaleString()}억`
   }
-  return `${sign}${Math.floor(abs / 1_0000).toLocaleString()}만원`
+  return `${sign}${Math.floor(abs / 1_0000).toLocaleString()}만`
 }
 
 function ReturnBadge({ label, value }: { label: string; value: number | null | undefined }) {
@@ -38,9 +38,9 @@ function ReturnBadge({ label, value }: { label: string; value: number | null | u
     ? value > 0 ? `+${value.toFixed(1)}%` : `${value.toFixed(1)}%`
     : '-'
   return (
-    <div className="text-right w-16">
+    <div className="text-right w-20">
       <div className="text-[10px] text-muted-foreground leading-none mb-0.5">{label}</div>
-      <div className={`text-sm font-medium ${color}`}>{formatted}</div>
+      <div className={`text-base font-medium whitespace-nowrap ${color}`}>{formatted}</div>
     </div>
   )
 }
@@ -81,31 +81,28 @@ function ETFExpandableCard({
               >
                 {etf.name}
               </Link>
-              <div className="text-sm text-muted-foreground">{etf.code}</div>
+              <div className="text-sm text-muted-foreground">
+                {etf.code}
+              </div>
             </div>
           </div>
           <div className="flex items-center gap-5 flex-shrink-0">
             <ReturnBadge label="1D" value={etf.return_1d} />
             <ReturnBadge label="1W" value={etf.return_1w} />
             <ReturnBadge label="1M" value={etf.return_1m} />
-            <div className="text-right w-20">
+            <div className="text-right w-32">
+              <div className="text-[10px] text-muted-foreground leading-none mb-0.5">시총변화</div>
               {etf.net_assets != null && etf.market_cap_change_1w != null ? (
-                <>
-                  <div className="text-[10px] text-muted-foreground leading-none mb-0.5">시총1W</div>
-                  <div className={`text-sm font-medium ${etf.market_cap_change_1w > 0 ? 'text-red-500' : etf.market_cap_change_1w < 0 ? 'text-blue-500' : 'text-muted-foreground'}`}>
-                    {etf.market_cap_change_1w > 0 ? '+' : ''}{formatAmount(Math.round(etf.net_assets * etf.market_cap_change_1w / 100))}
-                  </div>
-                </>
+                <div className={`text-base font-medium whitespace-nowrap ${etf.market_cap_change_1w > 0 ? 'text-red-500' : etf.market_cap_change_1w < 0 ? 'text-blue-500' : 'text-muted-foreground'}`}>
+                  {etf.market_cap_change_1w > 0 ? '+' : ''}{formatAmount(Math.round(etf.net_assets * etf.market_cap_change_1w / 100))}({etf.market_cap_change_1w > 0 ? '+' : ''}{etf.market_cap_change_1w.toFixed(1)}%)
+                </div>
               ) : (
-                <>
-                  <div className="text-[10px] text-muted-foreground leading-none mb-0.5">시총1W</div>
-                  <div className="text-sm text-muted-foreground">-</div>
-                </>
+                <div className="text-base text-muted-foreground">-</div>
               )}
             </div>
-            <div className="text-right w-20">
+            <div className="text-right w-24">
               <div className="text-[10px] text-muted-foreground leading-none mb-0.5">시총</div>
-              <div className="text-sm text-muted-foreground">{etf.net_assets != null ? formatAmount(etf.net_assets) : '-'}</div>
+              <div className="text-base text-muted-foreground whitespace-nowrap">{etf.net_assets != null ? formatAmount(etf.net_assets) : '-'}</div>
             </div>
             {onWatchToggle && (
               <Button
@@ -165,7 +162,7 @@ export default function HomePage() {
 
   // Tag state
   const [tags, setTags] = useState<Tag[]>([])
-  const [selectedTag, setSelectedTag] = useState<string | null>(searchParams.get('tag') || '시총 TOP')
+  const [selectedTag, setSelectedTag] = useState<string | null>(searchParams.get('tag') || '시총')
   const [tagLoading, setTagLoading] = useState(false)
   const [tagsExpanded, setTagsExpanded] = useState(false)
   const [tagsOverflow, setTagsOverflow] = useState(false)
@@ -177,9 +174,9 @@ export default function HomePage() {
 
   const FAVORITES_TAG = '즐겨찾기'
   const SORT_TAGS: Record<string, string> = {
-    '시총 TOP': 'market_cap',
-    '시총상승 TOP': 'market_cap_change_1w',
-    '1주 수익률 TOP': 'return_1w',
+    '시총': 'market_cap',
+    '시총상승률': 'market_cap_change_1w',
+    '1주수익률': 'return_1w',
   }
   const isSortTag = (tagName: string) => tagName in SORT_TAGS
 
@@ -207,7 +204,7 @@ export default function HomePage() {
       }
     } else {
       // 기본: 시가총액 TOP 20 (시총 TOP 태그 선택 상태)
-      setSelectedTag('시총 TOP')
+      setSelectedTag('시총')
       setLoading(true)
       etfsApi.getTop(20).then(setEtfList).catch(() => setEtfList([])).finally(() => setLoading(false))
     }
@@ -254,7 +251,7 @@ export default function HomePage() {
   const handleTagClick = async (tagName: string) => {
     if (selectedTag === tagName) {
       // 태그 해제 → 시가총액 TOP으로 복귀
-      setSelectedTag('시총 TOP')
+      setSelectedTag('시총')
       setExpandedETF(null)
       setSearchQuery('')
       updateParams(null, null)
@@ -346,50 +343,52 @@ export default function HomePage() {
   const isLoading = loading || tagLoading
 
   return (
-    <div className="space-y-6">
-      <div className="max-w-2xl mx-auto">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-5 h-5" />
-          <Input
-            placeholder="ETF 이름 또는 코드를 검색하세요..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyDown={handleKeyDown}
-            className="pl-10 h-12 text-lg"
-          />
+    <div className="space-y-4">
+      <div className="mx-auto">
+        {/* 정렬 버튼 그룹 + 검색 */}
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1 rounded-lg border p-1 shrink-0">
+            {Object.keys(SORT_TAGS).map((name) => (
+              <button
+                key={name}
+                className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+                  selectedTag === name
+                    ? 'bg-primary text-primary-foreground font-medium'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+                }`}
+                onClick={() => handleTagClick(name)}
+              >
+                {name}
+              </button>
+            ))}
+            {isAuthenticated && (
+              <button
+                className={`px-3 py-1.5 text-sm rounded-md transition-colors flex items-center gap-1 ${
+                  selectedTag === FAVORITES_TAG
+                    ? 'bg-primary text-primary-foreground font-medium'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+                }`}
+                onClick={() => handleTagClick(FAVORITES_TAG)}
+              >
+                <Star className={`w-3 h-3 ${selectedTag === FAVORITES_TAG ? 'fill-current' : ''}`} />
+                {FAVORITES_TAG}({watchedCodes.size})
+              </button>
+            )}
+          </div>
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
+            <Input
+              placeholder="ETF 검색..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={handleKeyDown}
+              className="pl-9 h-9"
+            />
+          </div>
         </div>
       </div>
 
-      <div className="max-w-4xl mx-auto space-y-4">
-        {/* 정렬 버튼 그룹 */}
-        <div className="flex items-center gap-1 rounded-lg border p-1 w-fit">
-          {Object.keys(SORT_TAGS).map((name) => (
-            <button
-              key={name}
-              className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
-                selectedTag === name
-                  ? 'bg-primary text-primary-foreground font-medium'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-muted'
-              }`}
-              onClick={() => handleTagClick(name)}
-            >
-              {name}
-            </button>
-          ))}
-          {isAuthenticated && (
-            <button
-              className={`px-3 py-1.5 text-sm rounded-md transition-colors flex items-center gap-1 ${
-                selectedTag === FAVORITES_TAG
-                  ? 'bg-primary text-primary-foreground font-medium'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-muted'
-              }`}
-              onClick={() => handleTagClick(FAVORITES_TAG)}
-            >
-              <Star className={`w-3 h-3 ${selectedTag === FAVORITES_TAG ? 'fill-current' : ''}`} />
-              {FAVORITES_TAG} ({watchedCodes.size})
-            </button>
-          )}
-        </div>
+      <div className="mx-auto space-y-4">
 
         {/* 분류 태그 */}
         <div>

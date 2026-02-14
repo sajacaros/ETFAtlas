@@ -344,10 +344,10 @@ def build_stock_structure(**context):
 ALLOWED_TAGS = [
     '반도체', 'AI',
     '2차전지', '자동차', '로봇', '방산', '우주항공',
-    '조선', '전력', '에너지', '산업재', '소재',
-    '금융', '헬스케어', '바이오',
-    '필수소비재', '경기소비재', '커뮤니케이션', '게임', '엔터', '뷰티', '럭셔리',
-    '성장주', '가치주', '고배당',
+    '조선', '전력', '재생에너지', '원전', '소부장',
+    '금융', '바이오',
+    '커뮤니케이션', '게임', '엔터', '뷰티',
+    '고배당', '주주환원', '그룹주',
 ]
 
 
@@ -430,9 +430,34 @@ def tag_new_etfs(**context):
 
         log.info(f"Re-tagging all {len(all_etfs)} ETFs with fixed tags")
 
-        # 1-1. 인덱스 ETF 분리 (코스피200, 코스닥150)
-        index_etfs = {}   # code -> tag_name
-        llm_etfs = {}     # code -> name (LLM 태깅 대상)
+        # 1-1. 인덱스 ETF / 키워드 룰 기반 분리
+        KEYWORD_TAG_RULES = [
+            (['반도체'], '반도체'),
+            (['AI', '인공지능'], 'AI'),
+            (['2차전지', '배터리'], '2차전지'),
+            (['자동차', '모빌리티'], '자동차'),
+            (['로봇'], '로봇'),
+            (['방산'], '방산'),
+            (['우주', '항공'], '우주항공'),
+            (['조선'], '조선'),
+            (['전력'], '전력'),
+            (['재생에너지', '신재생', '태양광', '풍력'], '재생에너지'),
+            (['원전', '원자력'], '원전'),
+            (['소부장', '소재', '부품', '장비'], '소부장'),
+            (['금융', '은행', '보험', '증권'], '금융'),
+            (['바이오', '헬스케어', '의료', '제약'], '바이오'),
+            (['통신', '커뮤니케이션'], '커뮤니케이션'),
+            (['게임'], '게임'),
+            (['엔터', 'KPOP', 'K-POP', '미디어'], '엔터'),
+            (['뷰티', '화장품'], '뷰티'),
+            (['배당'], '고배당'),
+            (['주주환원', '자사주'], '주주환원'),
+            (['그룹'], '그룹주'),
+        ]
+
+        index_etfs = {}    # code -> tag_name
+        keyword_etfs = {}  # code -> [tag_names] (복수 매칭)
+        llm_etfs = {}      # code -> name (LLM 태깅 대상)
         for code, name in all_etfs.items():
             matched_tag = None
             for pattern, tag_name in INDEX_TAG_PATTERNS:
@@ -441,6 +466,14 @@ def tag_new_etfs(**context):
                     break
             if matched_tag:
                 index_etfs[code] = matched_tag
+                continue
+            name_upper = name.upper()
+            matched_tags = []
+            for keywords, tag_name in KEYWORD_TAG_RULES:
+                if any(kw.upper() in name_upper for kw in keywords):
+                    matched_tags.append(tag_name)
+            if matched_tags:
+                keyword_etfs[code] = matched_tags
             else:
                 llm_etfs[code] = name
 
@@ -458,6 +491,20 @@ def tag_new_etfs(**context):
             log.info(f"Index ETFs tagged directly: {len(index_etfs)} "
                      f"(코스피200: {sum(1 for t in index_etfs.values() if t == '코스피200')}, "
                      f"코스닥150: {sum(1 for t in index_etfs.values() if t == '코스닥150')})")
+
+        # 키워드 룰 매칭 ETF 직접 태깅 (복수 태그)
+        if keyword_etfs:
+            kw_pairs = [{'code': c, 'tag_name': t}
+                        for c, tags in keyword_etfs.items()
+                        for t in tags]
+            execute_cypher_batch(cur, """
+                MATCH (e:ETF {code: item.code})
+                MATCH (t:Tag {name: item.tag_name})
+                MERGE (e)-[:TAGGED]->(t)
+                RETURN 1
+            """, kw_pairs)
+            conn.commit()
+            log.info(f"Keyword-rule ETFs tagged directly: {len(keyword_etfs)}")
 
         # 2. LLM 태깅 대상 ETF의 보유종목 TOP 10 조회
         etf_holdings = {}

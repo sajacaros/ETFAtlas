@@ -53,7 +53,7 @@ export const authApi = {
 // ETFs
 export const etfsApi = {
   getTop: async (limit = 20, sort = 'market_cap') => {
-    const { data } = await api.get<{ code: string; name: string; net_assets: number | null; return_1d: number | null; return_1w: number | null; return_1m: number | null; market_cap_change_1w: number | null }[]>('/etfs/top', { params: { limit, sort } })
+    const { data } = await api.get<{ code: string; name: string; net_assets: number | null; close_price: number | null; return_1d: number | null; return_1w: number | null; return_1m: number | null; market_cap_change_1w: number | null }[]>('/etfs/top', { params: { limit, sort } })
     return data
   },
   search: async (query: string, limit = 20) => {
@@ -61,7 +61,7 @@ export const etfsApi = {
     return data
   },
   searchUniverse: async (query: string, limit = 20) => {
-    const { data } = await api.get<{ code: string; name: string; net_assets: number | null; return_1d: number | null; return_1w: number | null; return_1m: number | null; market_cap_change_1w: number | null }[]>('/etfs/search/universe', { params: { q: query, limit } })
+    const { data } = await api.get<{ code: string; name: string; net_assets: number | null; close_price: number | null; return_1d: number | null; return_1w: number | null; return_1m: number | null; market_cap_change_1w: number | null }[]>('/etfs/search/universe', { params: { q: query, limit } })
     return data
   },
   get: async (code: string) => {
@@ -101,7 +101,7 @@ export const watchlistApi = {
     return data
   },
   getETFs: async () => {
-    const { data } = await api.get<{ code: string; name: string; net_assets: number | null; return_1d: number | null; return_1w: number | null; return_1m: number | null; market_cap_change_1w: number | null }[]>('/watchlist/etfs')
+    const { data } = await api.get<{ code: string; name: string; net_assets: number | null; close_price: number | null; return_1d: number | null; return_1w: number | null; return_1m: number | null; market_cap_change_1w: number | null }[]>('/watchlist/etfs')
     return data
   },
   add: async (etfCode: string) => {

@@ -69,25 +69,62 @@ def get_db_connection():
 
 
 def check_market_open(**context):
-    """거래일 + 장중 여부 확인. False 반환 시 후속 태스크 스킵."""
+    """오늘 가격 수집이 필요한지 확인.
+    1) 휴장일이면 → 스킵 (pykrx)
+    2) 오늘 가격이 없으면 → 수집
+    3) 장 마감(15:30) 후 이미 수집했으면 → 스킵
+    4) 장중이면 → 수집 (10분마다 업데이트)
+    """
     from pykrx import stock as pykrx_stock
 
     now_kst = datetime.now(KST)
     today_str = now_kst.strftime('%Y%m%d')
+    today_iso = now_kst.date().isoformat()
 
-    # 15:30 이후면 스킵
-    market_close = now_kst.replace(hour=15, minute=30, second=0, microsecond=0)
-    if now_kst >= market_close:
-        log.info(f"Market closed (now={now_kst.strftime('%H:%M')}). Skipping.")
-        return False
-
-    # pykrx로 거래일 확인
+    # 1) 거래일 확인
     trading_days = pykrx_stock.get_market_ohlcv(today_str, today_str, "005930")
     if trading_days.empty:
         log.info(f"{today_str} is not a trading day. Skipping.")
         return False
 
-    log.info(f"Market open. Proceeding with price collection.")
+    # 2) 오늘 최종 업데이트 시간 확인
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT MAX(updated_at) FROM ticker_prices WHERE date = %s",
+            (today_iso,)
+        )
+        row = cur.fetchone()
+        last_updated = row[0] if row else None
+    finally:
+        cur.close()
+        conn.close()
+
+    if last_updated is None:
+        log.info("No prices for today yet. Proceeding.")
+        return True
+
+    # 3) 장 마감 후 이미 수집했으면 스킵
+    market_close = now_kst.replace(hour=15, minute=30, second=0, microsecond=0)
+
+    if last_updated.tzinfo:
+        last_updated_kst = last_updated.astimezone(KST)
+    else:
+        last_updated_kst = last_updated.replace(tzinfo=KST)
+
+    if last_updated_kst >= market_close:
+        log.info(
+            f"Already collected after market close "
+            f"(last_update={last_updated_kst.strftime('%H:%M')}). Skipping."
+        )
+        return False
+
+    # 4) 장중 — 수집 진행
+    log.info(
+        f"Last update at {last_updated_kst.strftime('%H:%M')}, "
+        f"before market close. Proceeding."
+    )
     return True
 
 

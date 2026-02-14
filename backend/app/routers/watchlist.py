@@ -3,155 +3,82 @@ from pydantic import BaseModel
 from typing import List
 from sqlalchemy.orm import Session
 from ..database import get_db
-from ..models.watchlist import Watchlist, WatchlistItem
-from ..models.etf import ETF
+from ..services.graph_service import GraphService
 from ..utils.jwt import get_current_user_id
 
 router = APIRouter()
 
 
-class WatchlistCreate(BaseModel):
-    name: str = "My Watchlist"
-
-
-class WatchlistResponse(BaseModel):
-    id: int
-    name: str
-    items: List["WatchlistItemResponse"] = []
-
-    class Config:
-        from_attributes = True
-
-
 class WatchlistItemResponse(BaseModel):
-    id: int
     etf_code: str
     etf_name: str
-    category: str | None
-
-    class Config:
-        from_attributes = True
+    category: str | None = None
 
 
-class AddETFRequest(BaseModel):
-    etf_code: str
-
-
-@router.get("/", response_model=List[WatchlistResponse])
-async def get_watchlists(
+@router.get("/", response_model=List[WatchlistItemResponse])
+async def get_watches(
     user_id: int = Depends(get_current_user_id),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    watchlists = db.query(Watchlist).filter(Watchlist.user_id == user_id).all()
+    graph = GraphService(db)
+    items = graph.get_user_watches(user_id)
 
-    result = []
-    for wl in watchlists:
-        items = []
-        for item in wl.items:
-            etf = db.query(ETF).filter(ETF.id == item.etf_id).first()
-            if etf:
-                items.append(WatchlistItemResponse(
-                    id=item.id,
-                    etf_code=etf.code,
-                    etf_name=etf.name,
-                    category=etf.category
-                ))
-        result.append(WatchlistResponse(
-            id=wl.id,
-            name=wl.name,
-            items=items
-        ))
-    return result
+    # AGE에서 태그 조회하여 category로 사용
+    codes = [item["etf_code"] for item in items]
+    tag_map = {}
+    for code in codes:
+        tags = graph.get_tags_by_etf(code)
+        if tags:
+            tag_map[code] = tags[0]  # 첫 번째 태그를 category로
+
+    return [
+        WatchlistItemResponse(
+            etf_code=item["etf_code"],
+            etf_name=item["etf_name"],
+            category=tag_map.get(item["etf_code"]),
+        )
+        for item in items
+    ]
 
 
-@router.post("/", response_model=WatchlistResponse, status_code=status.HTTP_201_CREATED)
-async def create_watchlist(
-    request: WatchlistCreate,
+@router.get("/codes", response_model=List[str])
+async def get_watched_codes(
     user_id: int = Depends(get_current_user_id),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    watchlist = Watchlist(user_id=user_id, name=request.name)
-    db.add(watchlist)
-    db.commit()
-    db.refresh(watchlist)
-    return WatchlistResponse(id=watchlist.id, name=watchlist.name, items=[])
+    graph = GraphService(db)
+    return graph.get_watched_codes(user_id)
 
 
-@router.post("/{watchlist_id}/items", response_model=WatchlistItemResponse)
-async def add_etf_to_watchlist(
-    watchlist_id: int,
-    request: AddETFRequest,
+@router.post("/{etf_code}", response_model=WatchlistItemResponse, status_code=status.HTTP_201_CREATED)
+async def add_watch(
+    etf_code: str,
     user_id: int = Depends(get_current_user_id),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    watchlist = db.query(Watchlist).filter(
-        Watchlist.id == watchlist_id,
-        Watchlist.user_id == user_id
-    ).first()
-    if not watchlist:
-        raise HTTPException(status_code=404, detail="Watchlist not found")
+    graph = GraphService(db)
+    result = graph.add_watch(user_id, etf_code)
 
-    etf = db.query(ETF).filter(ETF.code == request.etf_code).first()
-    if not etf:
+    if result.get("error") == "etf_not_found":
         raise HTTPException(status_code=404, detail="ETF not found")
+    if result.get("error") == "already_exists":
+        raise HTTPException(status_code=400, detail="Already watching this ETF")
 
-    existing = db.query(WatchlistItem).filter(
-        WatchlistItem.watchlist_id == watchlist_id,
-        WatchlistItem.etf_id == etf.id
-    ).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="ETF already in watchlist")
-
-    item = WatchlistItem(watchlist_id=watchlist_id, etf_id=etf.id)
-    db.add(item)
-    db.commit()
-    db.refresh(item)
-
+    tags = graph.get_tags_by_etf(etf_code)
     return WatchlistItemResponse(
-        id=item.id,
-        etf_code=etf.code,
-        etf_name=etf.name,
-        category=etf.category
+        etf_code=result["etf_code"],
+        etf_name=result["etf_name"],
+        category=tags[0] if tags else None,
     )
 
 
-@router.delete("/{watchlist_id}/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def remove_etf_from_watchlist(
-    watchlist_id: int,
-    item_id: int,
+@router.delete("/{etf_code}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_watch(
+    etf_code: str,
     user_id: int = Depends(get_current_user_id),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    watchlist = db.query(Watchlist).filter(
-        Watchlist.id == watchlist_id,
-        Watchlist.user_id == user_id
-    ).first()
-    if not watchlist:
-        raise HTTPException(status_code=404, detail="Watchlist not found")
-
-    item = db.query(WatchlistItem).filter(
-        WatchlistItem.id == item_id,
-        WatchlistItem.watchlist_id == watchlist_id
-    ).first()
-    if not item:
-        raise HTTPException(status_code=404, detail="Item not found")
-
-    db.delete(item)
-    db.commit()
-
-
-@router.delete("/{watchlist_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_watchlist(
-    watchlist_id: int,
-    user_id: int = Depends(get_current_user_id),
-    db: Session = Depends(get_db)
-):
-    watchlist = db.query(Watchlist).filter(
-        Watchlist.id == watchlist_id,
-        Watchlist.user_id == user_id
-    ).first()
-    if not watchlist:
-        raise HTTPException(status_code=404, detail="Watchlist not found")
-
-    db.delete(watchlist)
-    db.commit()
+    graph = GraphService(db)
+    deleted = graph.remove_watch(user_id, etf_code)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Not watching this ETF")

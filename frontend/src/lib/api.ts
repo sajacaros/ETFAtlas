@@ -5,7 +5,6 @@ import type {
   Holding,
   HoldingChange,
   Price,
-  Watchlist,
   WatchlistItem,
   Portfolio,
   PortfolioDetail,
@@ -57,6 +56,10 @@ export const etfsApi = {
     const { data } = await api.get<ETF[]>('/etfs/search', { params: { q: query, limit } })
     return data
   },
+  searchUniverse: async (query: string, limit = 20) => {
+    const { data } = await api.get<{ code: string; name: string; return_1d: number | null; return_1w: number | null; return_1m: number | null }[]>('/etfs/search/universe', { params: { q: query, limit } })
+    return data
+  },
   get: async (code: string) => {
     const { data } = await api.get<ETF>(`/etfs/${code}`)
     return data
@@ -83,27 +86,22 @@ export const etfsApi = {
   },
 }
 
-// Watchlist
+// Watchlist (즐겨찾기)
 export const watchlistApi = {
   getAll: async () => {
-    const { data } = await api.get<Watchlist[]>('/watchlist/')
+    const { data } = await api.get<WatchlistItem[]>('/watchlist/')
     return data
   },
-  create: async (name: string) => {
-    const { data } = await api.post<Watchlist>('/watchlist/', { name })
+  getCodes: async () => {
+    const { data } = await api.get<string[]>('/watchlist/codes')
     return data
   },
-  addETF: async (watchlistId: number, etfCode: string) => {
-    const { data } = await api.post<WatchlistItem>(`/watchlist/${watchlistId}/items`, {
-      etf_code: etfCode,
-    })
+  add: async (etfCode: string) => {
+    const { data } = await api.post<WatchlistItem>(`/watchlist/${etfCode}`)
     return data
   },
-  removeETF: async (watchlistId: number, itemId: number) => {
-    await api.delete(`/watchlist/${watchlistId}/items/${itemId}`)
-  },
-  delete: async (watchlistId: number) => {
-    await api.delete(`/watchlist/${watchlistId}`)
+  remove: async (etfCode: string) => {
+    await api.delete(`/watchlist/${etfCode}`)
   },
 }
 

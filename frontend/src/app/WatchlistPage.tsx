@@ -1,85 +1,104 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import { Plus, Trash2, X } from 'lucide-react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Star, Search } from 'lucide-react'
+import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
-import { watchlistApi } from '@/lib/api'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import { etfsApi, watchlistApi } from '@/lib/api'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/use-toast'
-import type { Watchlist } from '@/types/api'
+import type { WatchlistItem } from '@/types/api'
 
 export default function WatchlistPage() {
   const { isAuthenticated } = useAuth()
   const { toast } = useToast()
 
-  const [watchlists, setWatchlists] = useState<Watchlist[]>([])
+  const [items, setItems] = useState<WatchlistItem[]>([])
+  const [watchedCodes, setWatchedCodes] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
-  const [newListName, setNewListName] = useState('')
-  const [dialogOpen, setDialogOpen] = useState(false)
+
+  // Search state
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<{ code: string; name: string }[]>([])
+  const [searching, setSearching] = useState(false)
+  const searchTimeout = useRef<ReturnType<typeof setTimeout>>()
 
   useEffect(() => {
     if (!isAuthenticated) return
 
-    const fetchWatchlists = async () => {
+    const fetchData = async () => {
       try {
-        const data = await watchlistApi.getAll()
-        setWatchlists(data)
+        const [itemsData, codesData] = await Promise.all([
+          watchlistApi.getAll(),
+          watchlistApi.getCodes(),
+        ])
+        setItems(itemsData)
+        setWatchedCodes(new Set(codesData))
       } catch (error) {
-        console.error('Failed to fetch watchlists:', error)
+        console.error('Failed to fetch watchlist:', error)
       } finally {
         setLoading(false)
       }
     }
 
-    fetchWatchlists()
+    fetchData()
   }, [isAuthenticated])
 
-  const handleCreateList = async () => {
-    if (!newListName.trim()) return
+  // Debounced search
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setSearchResults([])
+      return
+    }
 
+    clearTimeout(searchTimeout.current)
+    searchTimeout.current = setTimeout(async () => {
+      setSearching(true)
+      try {
+        const results = await etfsApi.searchUniverse(searchQuery, 10)
+        setSearchResults(results)
+      } catch {
+        setSearchResults([])
+      } finally {
+        setSearching(false)
+      }
+    }, 300)
+
+    return () => clearTimeout(searchTimeout.current)
+  }, [searchQuery])
+
+  const handleAdd = async (etfCode: string) => {
     try {
-      const newList = await watchlistApi.create(newListName)
-      setWatchlists([...watchlists, newList])
-      setNewListName('')
-      setDialogOpen(false)
-      toast({ title: '워치리스트가 생성되었습니다' })
-    } catch (error) {
-      toast({ title: '생성 실패', variant: 'destructive' })
+      const added = await watchlistApi.add(etfCode)
+      setItems((prev) => [added, ...prev])
+      setWatchedCodes((prev) => new Set(prev).add(etfCode))
+      toast({ title: '즐겨찾기에 추가되었습니다' })
+    } catch {
+      toast({ title: '추가 실패', variant: 'destructive' })
     }
   }
 
-  const handleDeleteList = async (id: number) => {
+  const handleRemove = async (etfCode: string) => {
     try {
-      await watchlistApi.delete(id)
-      setWatchlists(watchlists.filter((list) => list.id !== id))
-      toast({ title: '워치리스트가 삭제되었습니다' })
-    } catch (error) {
-      toast({ title: '삭제 실패', variant: 'destructive' })
-    }
-  }
-
-  const handleRemoveItem = async (watchlistId: number, itemId: number) => {
-    try {
-      await watchlistApi.removeETF(watchlistId, itemId)
-      setWatchlists(
-        watchlists.map((list) =>
-          list.id === watchlistId
-            ? { ...list, items: list.items.filter((item) => item.id !== itemId) }
-            : list
-        )
-      )
-      toast({ title: 'ETF가 제거되었습니다' })
-    } catch (error) {
-      toast({ title: '제거 실패', variant: 'destructive' })
+      await watchlistApi.remove(etfCode)
+      setItems((prev) => prev.filter((item) => item.etf_code !== etfCode))
+      setWatchedCodes((prev) => {
+        const next = new Set(prev)
+        next.delete(etfCode)
+        return next
+      })
+      toast({ title: '즐겨찾기에서 해제되었습니다' })
+    } catch {
+      toast({ title: '해제 실패', variant: 'destructive' })
     }
   }
 
@@ -88,7 +107,7 @@ export default function WatchlistPage() {
       <div className="text-center py-12">
         <h2 className="text-2xl font-bold mb-4">로그인이 필요합니다</h2>
         <p className="text-muted-foreground mb-6">
-          워치리스트 기능을 사용하려면 로그인해주세요
+          즐겨찾기 기능을 사용하려면 로그인해주세요
         </p>
         <Link to="/login">
           <Button>로그인하기</Button>
@@ -103,94 +122,109 @@ export default function WatchlistPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">워치리스트</h1>
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="w-4 h-4 mr-2" />
-              새 워치리스트
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>새 워치리스트 생성</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
-              <Input
-                placeholder="워치리스트 이름"
-                value={newListName}
-                onChange={(e) => setNewListName(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleCreateList()}
-              />
-              <Button onClick={handleCreateList} className="w-full">
-                생성
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
+      <h1 className="text-3xl font-bold">즐겨찾기</h1>
+
+      {/* Search */}
+      <div className="relative">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder="ETF 이름 또는 코드로 검색하여 추가..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10"
+          />
+        </div>
+        {searchQuery.trim() && (
+          <Card className="absolute z-10 w-full mt-1 max-h-64 overflow-auto">
+            <CardContent className="p-2">
+              {searching ? (
+                <p className="text-sm text-muted-foreground text-center py-2">검색 중...</p>
+              ) : searchResults.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-2">검색 결과 없음</p>
+              ) : (
+                searchResults.map((result) => {
+                  const isWatched = watchedCodes.has(result.code)
+                  return (
+                    <div
+                      key={result.code}
+                      className="flex items-center justify-between px-3 py-2 rounded hover:bg-muted"
+                    >
+                      <Link to={`/etf/${result.code}`} className="flex-1 min-w-0">
+                        <span className="font-medium text-sm">{result.name}</span>
+                        <span className="text-xs text-muted-foreground ml-2">{result.code}</span>
+                      </Link>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="shrink-0 h-8 w-8"
+                        onClick={() => isWatched ? handleRemove(result.code) : handleAdd(result.code)}
+                      >
+                        <Star
+                          className={`w-4 h-4 ${isWatched ? 'fill-yellow-400 text-yellow-400' : 'text-muted-foreground'}`}
+                        />
+                      </Button>
+                    </div>
+                  )
+                })
+              )}
+            </CardContent>
+          </Card>
+        )}
       </div>
 
-      {watchlists.length === 0 ? (
+      {/* Watchlist Table */}
+      {items.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
-            <p className="text-muted-foreground mb-4">
-              아직 워치리스트가 없습니다
+            <p className="text-muted-foreground">
+              즐겨찾기한 ETF가 없습니다. 위 검색란에서 ETF를 찾아 추가해보세요.
             </p>
-            <Button onClick={() => setDialogOpen(true)}>
-              <Plus className="w-4 h-4 mr-2" />
-              첫 워치리스트 만들기
-            </Button>
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-6">
-          {watchlists.map((list) => (
-            <Card key={list.id}>
-              <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle>{list.name}</CardTitle>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-destructive hover:text-destructive"
-                  onClick={() => handleDeleteList(list.id)}
-                >
-                  <Trash2 className="w-4 h-4" />
-                </Button>
-              </CardHeader>
-              <CardContent>
-                {list.items.length === 0 ? (
-                  <p className="text-muted-foreground text-center py-4">
-                    ETF를 추가해주세요
-                  </p>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {list.items.map((item) => (
-                      <Link key={item.id} to={`/etf/${item.etf_code}`}>
-                        <Badge
-                          variant="secondary"
-                          className="pl-3 pr-1 py-2 flex items-center gap-2 hover:bg-secondary/80"
-                        >
-                          <span>{item.etf_name}</span>
-                          <button
-                            className="hover:bg-secondary rounded p-0.5"
-                            onClick={(e) => {
-                              e.preventDefault()
-                              e.stopPropagation()
-                              handleRemoveItem(list.id, item.id)
-                            }}
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        </Badge>
-                      </Link>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+        <Card>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>ETF명</TableHead>
+                <TableHead>코드</TableHead>
+                <TableHead>카테고리</TableHead>
+                <TableHead className="w-12"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {items.map((item) => (
+                <TableRow key={item.etf_code}>
+                  <TableCell>
+                    <Link to={`/etf/${item.etf_code}`} className="text-blue-600 hover:underline font-medium">
+                      {item.etf_name}
+                    </Link>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">{item.etf_code}</TableCell>
+                  <TableCell>
+                    {item.category ? (
+                      <Badge variant="secondary" className="text-xs">{item.category}</Badge>
+                    ) : (
+                      '-'
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => handleRemove(item.etf_code)}
+                      title="즐겨찾기 해제"
+                    >
+                      <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Card>
       )}
     </div>
   )

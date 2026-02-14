@@ -251,17 +251,6 @@ def get_company_count(cur):
     return int(result[0][0]) if result else 0
 
 
-def get_sector_count(cur):
-    """Sector 노드 수 조회"""
-    result = execute_cypher(cur, "MATCH (s:Sector) RETURN count(s)")
-    return int(result[0][0]) if result else 0
-
-
-def get_market_count(cur):
-    """Market 노드 수 조회"""
-    result = execute_cypher(cur, "MATCH (m:Market) RETURN count(m)")
-    return int(result[0][0]) if result else 0
-
 
 def get_company_list(cur):
     """운용사 목록 조회 (ETF 수 포함)"""
@@ -310,70 +299,6 @@ def get_etfs_by_company(cur, company_name):
         })
     return pd.DataFrame(data)
 
-
-def get_market_list(cur):
-    """시장 목록 조회"""
-    query = """
-        MATCH (m:Market)
-        RETURN m.name
-        ORDER BY m.name
-    """
-    sql = f"""
-        SELECT * FROM cypher('etf_graph', $$
-            {query}
-        $$) as (name agtype);
-    """
-    cur.execute(sql)
-    results = cur.fetchall()
-    return [str(row[0]).strip('"') for row in results if row[0]]
-
-
-def get_sectors_by_market(cur, market_name):
-    """특정 시장의 섹터 목록 (종목 수 포함)"""
-    query = f"""
-        MATCH (m:Market {{name: '{market_name}'}})<-[:PART_OF]-(sec:Sector)<-[:BELONGS_TO]-(s:Stock)
-        RETURN sec.name, count(s) as stock_count
-        ORDER BY count(s) DESC
-    """
-    sql = f"""
-        SELECT * FROM cypher('etf_graph', $$
-            {query}
-        $$) as (name agtype, stock_count agtype);
-    """
-    cur.execute(sql)
-    results = cur.fetchall()
-
-    data = []
-    for row in results:
-        data.append({
-            "섹터": str(row[0]).strip('"') if row[0] else "",
-            "종목 수": int(row[1]) if row[1] else 0
-        })
-    return pd.DataFrame(data)
-
-
-def get_stocks_by_sector(cur, sector_name):
-    """특정 섹터의 종목 목록"""
-    query = f"""
-        MATCH (sec:Sector {{name: '{sector_name}'}})<-[:BELONGS_TO]-(s:Stock)
-        RETURN s.code, s.name
-        ORDER BY s.name
-    """
-    sql = f"""
-        SELECT * FROM cypher('etf_graph', $$
-            {query}
-        $$) as (code agtype, name agtype);
-    """
-    cur.execute(sql)
-    results = cur.fetchall()
-
-    data = []
-    for row in results:
-        data.append({
-            "종목코드": str(row[0]).strip('"') if row[0] else "",
-            "종목명": str(row[1]).strip('"') if row[1] else ""
-        })
-    return pd.DataFrame(data)
 
 
 def get_etf_list(cur, limit=100):
@@ -842,8 +767,6 @@ def main():
             stock_count = get_stock_count(cur)
             holds_count = get_holds_count(cur)
             company_count = get_company_count(cur)
-            sector_count = get_sector_count(cur)
-            market_count = get_market_count(cur)
 
         col1, col2 = st.columns(2)
         with col1:
@@ -855,7 +778,7 @@ def main():
         with col3:
             st.metric("운용사", f"{company_count:,}")
         with col4:
-            st.metric("섹터", f"{sector_count:,}")
+            st.metric("보유관계", f"{holds_count:,}")
 
         st.metric("보유관계", f"{holds_count:,}")
 
@@ -952,12 +875,9 @@ def main():
                         render_graph(G, height="700px")
 
     with tab2:
-        st.markdown("### 운용사/섹터 조회")
+        st.markdown("### 운용사 조회")
 
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.markdown("#### 🏢 운용사별 ETF")
+        st.markdown("#### 🏢 운용사별 ETF")
 
             # 운용사 목록 조회
             with st.spinner("운용사 목록 조회 중..."):
@@ -992,56 +912,6 @@ def main():
                         key="company_download"
                     )
 
-        with col2:
-            st.markdown("#### 📊 섹터별 종목")
-
-            # 시장 목록 조회
-            with st.spinner("시장 목록 조회 중..."):
-                market_list = get_market_list(cur)
-
-            if not market_list:
-                st.info("시장/섹터 데이터가 없습니다.")
-            else:
-                # 시장 선택
-                selected_market = st.selectbox(
-                    "시장 선택",
-                    market_list,
-                    key="market_select"
-                )
-
-                if selected_market:
-                    # 해당 시장의 섹터 목록
-                    with st.spinner("섹터 목록 조회 중..."):
-                        sector_df = get_sectors_by_market(cur, selected_market)
-
-                    if sector_df.empty:
-                        st.info("섹터 데이터가 없습니다.")
-                    else:
-                        # 섹터 선택
-                        sector_options = [f"{row['섹터']} ({row['종목 수']}개)" for _, row in sector_df.iterrows()]
-                        selected_sector = st.selectbox(
-                            "섹터 선택",
-                            sector_options,
-                            key="sector_select"
-                        )
-
-                        if selected_sector:
-                            sector_name = selected_sector.rsplit(" (", 1)[0]
-
-                            # 해당 섹터의 종목 목록
-                            with st.spinner("종목 목록 조회 중..."):
-                                stocks_by_sector = get_stocks_by_sector(cur, sector_name)
-
-                            st.markdown(f"**{selected_market} > {sector_name}** - {len(stocks_by_sector)}개 종목")
-                            st.dataframe(stocks_by_sector, use_container_width=True, height=400)
-
-                            st.download_button(
-                                "📥 CSV 다운로드",
-                                stocks_by_sector.to_csv(index=False, encoding='utf-8-sig'),
-                                f"{sector_name}_stock_list.csv",
-                                "text/csv",
-                                key="sector_download"
-                            )
 
     with tab3:
         st.markdown("### 데이터 조회")

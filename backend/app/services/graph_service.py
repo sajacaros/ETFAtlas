@@ -132,6 +132,7 @@ class GraphService:
     SORT_FIELDS = {
         "market_cap": "e.net_assets",
         "market_cap_change_1w": "e.market_cap_change_1w",
+        "return_1d": "e.return_1d",
         "return_1w": "e.return_1w",
     }
 

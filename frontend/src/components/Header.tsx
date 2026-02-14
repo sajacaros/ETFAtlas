@@ -25,7 +25,7 @@ export default function Header() {
               className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
             >
               <Search className="w-4 h-4" />
-              종목 검색
+              ETF 검색
             </Link>
             <Link
               to="/portfolio"

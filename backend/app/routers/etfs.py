@@ -65,7 +65,7 @@ class UniverseETFResponse(BaseModel):
 @router.get("/top", response_model=List[UniverseETFResponse])
 async def get_top_etfs(
     limit: int = Query(20, ge=1, le=100),
-    sort: str = Query("market_cap", regex="^(market_cap|market_cap_change_1w|return_1w)$"),
+    sort: str = Query("market_cap", regex="^(market_cap|market_cap_change_1w|return_1d|return_1w)$"),
     db: Session = Depends(get_db),
 ):
     """ETF 목록 (정렬: market_cap, market_cap_change_1w, return_1w)"""

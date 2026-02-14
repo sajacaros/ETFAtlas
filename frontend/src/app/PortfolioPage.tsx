@@ -9,6 +9,8 @@ import { Label } from '@/components/ui/label'
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -196,6 +198,9 @@ export default function PortfolioPage() {
   const [newBase, setNewBase] = useState<CalculationBase>('CURRENT_TOTAL')
   const [newAmount, setNewAmount] = useState('')
 
+  // Delete confirmation
+  const [deleteTargetId, setDeleteTargetId] = useState<number | null>(null)
+
   // Total summary
   const [totalSummary, setTotalSummary] = useState<DashboardSummary | null>(null)
 
@@ -321,8 +326,14 @@ export default function PortfolioPage() {
     }
   }
 
-  const handleDelete = async (id: number) => {
-    if (!window.confirm('정말 이 포트폴리오를 삭제하시겠습니까?')) return
+  const handleDelete = (id: number) => {
+    setDeleteTargetId(id)
+  }
+
+  const confirmDelete = async () => {
+    if (deleteTargetId === null) return
+    const id = deleteTargetId
+    setDeleteTargetId(null)
     try {
       await portfolioApi.delete(id)
       setPortfolios(portfolios.filter((p) => p.id !== id))
@@ -834,6 +845,26 @@ export default function PortfolioPage() {
           </SortableContext>
         </DndContext>
       )}
+
+      {/* Delete confirmation dialog */}
+      <Dialog open={deleteTargetId !== null} onOpenChange={(open) => { if (!open) setDeleteTargetId(null) }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>포트폴리오 삭제</DialogTitle>
+            <DialogDescription>
+              '{portfolios.find((p) => p.id === deleteTargetId)?.name}' 포트폴리오를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setDeleteTargetId(null)}>
+              취소
+            </Button>
+            <Button variant="destructive" onClick={confirmDelete}>
+              삭제
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

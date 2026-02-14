@@ -10,27 +10,11 @@ const AmountVisibilityContext = createContext<AmountVisibilityContextType>({
   toggle: () => {},
 })
 
-const STORAGE_KEY = 'etf-atlas-amount-visible'
-
 export function AmountVisibilityProvider({ children }: { children: ReactNode }) {
-  const [visible, setVisible] = useState(() => {
-    try {
-      return localStorage.getItem(STORAGE_KEY) === 'true'
-    } catch {
-      return false
-    }
-  })
+  const [visible, setVisible] = useState(false)
 
   const toggle = useCallback(() => {
-    setVisible((prev) => {
-      const next = !prev
-      try {
-        localStorage.setItem(STORAGE_KEY, String(next))
-      } catch {
-        // ignore
-      }
-      return next
-    })
+    setVisible((prev) => !prev)
   }, [])
 
   return (

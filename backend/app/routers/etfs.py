@@ -1,27 +1,19 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
-from datetime import date
 from sqlalchemy.orm import Session
 from ..database import get_db
-from ..services.etf_service import ETFService
 from ..services.graph_service import GraphService
 
 router = APIRouter()
 
 
 class ETFResponse(BaseModel):
-    id: int
     code: str
     name: str
-    issuer: str | None
-    category: str | None
-    net_assets: int | None
-    expense_ratio: float | None
-    inception_date: date | None
-
-    class Config:
-        from_attributes = True
+    issuer: str | None = None
+    net_assets: int | None = None
+    expense_ratio: float | None = None
 
 
 class HoldingResponse(BaseModel):
@@ -60,21 +52,41 @@ class SimilarETFResponse(BaseModel):
     similarity: float
 
 
-@router.get("/search", response_model=List[ETFResponse])
+class UniverseETFResponse(BaseModel):
+    code: str
+    name: str
+    return_1d: float | None = None
+    return_1w: float | None = None
+    return_1m: float | None = None
+    market_cap_change_1w: float | None = None
+
+
+@router.get("/search/universe", response_model=List[UniverseETFResponse])
+async def search_etfs_universe(
+    q: str = Query(..., min_length=1, description="Search query"),
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    """AGE Universe 내 ETF 검색 (시가총액순)"""
+    graph = GraphService(db)
+    return graph.search_etfs_in_universe(q, limit)
+
+
+@router.get("/search", response_model=List[UniverseETFResponse])
 async def search_etfs(
     q: str = Query(..., min_length=1, description="Search query"),
     limit: int = Query(50, ge=1, le=100),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    etf_service = ETFService(db)
-    etfs = etf_service.search_etfs(q, limit)
-    return etfs
+    """ETF 검색 (AGE 기반, 시가총액순)"""
+    graph = GraphService(db)
+    return graph.search_etfs_in_universe(q, limit)
 
 
 @router.get("/{code}", response_model=ETFResponse)
 async def get_etf(code: str, db: Session = Depends(get_db)):
-    etf_service = ETFService(db)
-    etf = etf_service.get_etf_by_code(code)
+    graph = GraphService(db)
+    etf = graph.get_etf_detail(code)
     if not etf:
         raise HTTPException(status_code=404, detail="ETF not found")
     return etf
@@ -107,12 +119,10 @@ async def get_etf_prices(
     days: int = Query(365, ge=1, le=1825),
     db: Session = Depends(get_db)
 ):
-    etf_service = ETFService(db)
-    etf = etf_service.get_etf_by_code(code)
-    if not etf:
-        raise HTTPException(status_code=404, detail="ETF not found")
     graph_service = GraphService(db)
-    prices = graph_service.get_etf_prices(etf.code, days)
+    prices = graph_service.get_etf_prices(code, days)
+    if not prices:
+        raise HTTPException(status_code=404, detail="ETF not found")
     return prices
 
 

@@ -9,7 +9,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts'
-import { TrendingUp, TrendingDown, Minus, BookmarkPlus, ChevronDown, ChevronRight, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react'
+import { TrendingUp, TrendingDown, Minus, Star, ChevronDown, ChevronRight, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
@@ -22,18 +22,11 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog'
 import { etfsApi, watchlistApi } from '@/lib/api'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/use-toast'
-import type { ETF, Holding, HoldingChange, Price, Watchlist, SimilarETF } from '@/types/api'
+import type { ETF, Holding, HoldingChange, Price, SimilarETF } from '@/types/api'
 
 export default function ETFDetailPage() {
   const { code } = useParams<{ code: string }>()
@@ -44,10 +37,10 @@ export default function ETFDetailPage() {
   const [holdings, setHoldings] = useState<Holding[]>([])
   const [changes, setChanges] = useState<HoldingChange[]>([])
   const [prices, setPrices] = useState<Price[]>([])
-  const [watchlists, setWatchlists] = useState<Watchlist[]>([])
   const [tags, setTags] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
-  const [dialogOpen, setDialogOpen] = useState(false)
+  const [isWatching, setIsWatching] = useState(false)
+  const [watchToggling, setWatchToggling] = useState(false)
   const [similarEtfs, setSimilarEtfs] = useState<SimilarETF[]>([])
   const [changePeriod, setChangePeriod] = useState<'1d' | '1w' | '1m'>('1d')
   const [priceChartOpen, setPriceChartOpen] = useState(false)
@@ -111,6 +104,7 @@ export default function ETFDetailPage() {
       setSimilarEtfs([])
       setPriceChartOpen(false)
       setSimilarOpen(false)
+      setIsWatching(false)
       try {
         const [etfResult, holdingsResult, changesResult, pricesResult, tagsResult, similarResult] = await Promise.allSettled([
           etfsApi.get(code),
@@ -136,34 +130,41 @@ export default function ETFDetailPage() {
     fetchData()
   }, [code])
 
+  // Check if current ETF is in user's watchlist
+  useEffect(() => {
+    if (!code || !isAuthenticated) return
+    watchlistApi.getCodes().then((codes) => {
+      setIsWatching(codes.includes(code))
+    }).catch(() => {})
+  }, [code, isAuthenticated])
+
   useEffect(() => {
     if (!code) return
     etfsApi.getChanges(code, changePeriod).then(setChanges).catch(() => {})
   }, [code, changePeriod])
 
-  const handleAddToWatchlist = async () => {
+  const handleToggleWatch = async () => {
     if (!isAuthenticated) {
       toast({ title: '로그인이 필요합니다', variant: 'destructive' })
       return
     }
+    if (!code || watchToggling) return
 
+    setWatchToggling(true)
     try {
-      const lists = await watchlistApi.getAll()
-      setWatchlists(lists)
-      setDialogOpen(true)
-    } catch (error) {
-      console.error('Failed to fetch watchlists:', error)
-    }
-  }
-
-  const handleSelectWatchlist = async (watchlistId: number) => {
-    if (!code) return
-    try {
-      await watchlistApi.addETF(watchlistId, code)
-      toast({ title: '워치리스트에 추가되었습니다' })
-      setDialogOpen(false)
-    } catch (error) {
-      toast({ title: '추가 실패', variant: 'destructive' })
+      if (isWatching) {
+        await watchlistApi.remove(code)
+        setIsWatching(false)
+        toast({ title: '즐겨찾기에서 해제되었습니다' })
+      } else {
+        await watchlistApi.add(code)
+        setIsWatching(true)
+        toast({ title: '즐겨찾기에 추가되었습니다' })
+      }
+    } catch {
+      toast({ title: '처리 실패', variant: 'destructive' })
+    } finally {
+      setWatchToggling(false)
     }
   }
 
@@ -224,37 +225,17 @@ export default function ETFDetailPage() {
           <h1 className="text-3xl font-bold">{etf.name}</h1>
           <p className="text-muted-foreground">{etf.code}</p>
         </div>
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogTrigger asChild>
-            <Button onClick={handleAddToWatchlist}>
-              <BookmarkPlus className="w-4 h-4 mr-2" />
-              워치리스트에 추가
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>워치리스트 선택</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-2">
-              {watchlists.length > 0 ? (
-                watchlists.map((list) => (
-                  <Button
-                    key={list.id}
-                    variant="outline"
-                    className="w-full justify-start"
-                    onClick={() => handleSelectWatchlist(list.id)}
-                  >
-                    {list.name}
-                  </Button>
-                ))
-              ) : (
-                <p className="text-muted-foreground text-center py-4">
-                  워치리스트가 없습니다. 먼저 워치리스트를 생성해주세요.
-                </p>
-              )}
-            </div>
-          </DialogContent>
-        </Dialog>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={handleToggleWatch}
+          disabled={watchToggling}
+          title={isWatching ? '즐겨찾기 해제' : '즐겨찾기 추가'}
+        >
+          <Star
+            className={`w-6 h-6 ${isWatching ? 'fill-yellow-400 text-yellow-400' : 'text-muted-foreground'}`}
+          />
+        </Button>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -296,6 +277,48 @@ export default function ETFDetailPage() {
           </CardContent>
         </Card>
       </div>
+
+      {(() => {
+        const validPrices = prices.filter((p) => p.market_cap != null)
+        if (validPrices.length === 0) return null
+        const latest = validPrices[validPrices.length - 1]
+        const latestDate = new Date(latest.date)
+        const weekAgoTarget = new Date(latestDate)
+        weekAgoTarget.setDate(weekAgoTarget.getDate() - 7)
+        const weekAgoPrice = validPrices.reduce((closest, p) => {
+          const d = new Date(p.date)
+          if (d > latestDate) return closest
+          if (!closest) return p
+          return Math.abs(d.getTime() - weekAgoTarget.getTime()) < Math.abs(new Date(closest.date).getTime() - weekAgoTarget.getTime()) ? p : closest
+        }, null as typeof latest | null)
+        const latestCap = latest.market_cap!
+        const weekAgoCap = weekAgoPrice && weekAgoPrice.market_cap && weekAgoPrice.date !== latest.date
+          ? weekAgoPrice.market_cap : null
+        const changeRate = weekAgoCap
+          ? ((latestCap - weekAgoCap) / weekAgoCap) * 100
+          : null
+        const fmtCap = (v: number) => v >= 1_0000_0000
+          ? `${Math.floor(v / 1_0000_0000).toLocaleString()}억원`
+          : `${Math.floor(v / 1_0000).toLocaleString()}만원`
+        return (
+          <Card className="py-3">
+            <CardContent className="pb-0 pt-0">
+              <p className="text-xs text-muted-foreground">시가총액</p>
+              <p className="text-sm font-semibold mt-1">
+                {fmtCap(latestCap)}
+                {changeRate != null && (
+                  <span className={`text-xs font-normal ml-1 ${changeRate > 0 ? 'text-red-500' : changeRate < 0 ? 'text-blue-500' : 'text-muted-foreground'}`}>
+                    {changeRate > 0 ? '+' : ''}{changeRate.toFixed(1)}%
+                  </span>
+                )}
+              </p>
+              {weekAgoCap != null && (
+                <p className="text-[11px] text-muted-foreground mt-0.5">1W전 {fmtCap(weekAgoCap)}</p>
+              )}
+            </CardContent>
+          </Card>
+        )
+      })()}
 
       <Card>
         <CardHeader
@@ -389,7 +412,6 @@ export default function ETFDetailPage() {
                 <TableRow>
                   <TableHead className="cursor-pointer select-none" onClick={() => toggleSort(holdingSort, setHoldingSort, 'stock_name')}>종목명<SortIcon active={holdingSort.key === 'stock_name'} dir={holdingSort.dir} /></TableHead>
                   <TableHead className="cursor-pointer select-none" onClick={() => toggleSort(holdingSort, setHoldingSort, 'stock_code')}>종목코드<SortIcon active={holdingSort.key === 'stock_code'} dir={holdingSort.dir} /></TableHead>
-                  <TableHead className="cursor-pointer select-none" onClick={() => toggleSort(holdingSort, setHoldingSort, 'sector')}>섹터<SortIcon active={holdingSort.key === 'sector'} dir={holdingSort.dir} /></TableHead>
                   <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort(holdingSort, setHoldingSort, 'weight')}>비중<SortIcon active={holdingSort.key === 'weight'} dir={holdingSort.dir} /></TableHead>
                 </TableRow>
               </TableHeader>
@@ -398,7 +420,6 @@ export default function ETFDetailPage() {
                   <TableRow key={holding.stock_code}>
                     <TableCell className="font-medium">{holding.stock_name}</TableCell>
                     <TableCell>{holding.stock_code}</TableCell>
-                    <TableCell>{holding.sector || '-'}</TableCell>
                     <TableCell className="text-right">
                       {holding.weight.toFixed(2)}%
                     </TableCell>

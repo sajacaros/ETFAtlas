@@ -6,20 +6,16 @@ export interface User {
 }
 
 export interface ETF {
-  id: number
   code: string
   name: string
   issuer: string | null
-  category: string | null
   net_assets: number | null
   expense_ratio: number | null
-  inception_date: string | null
 }
 
 export interface Holding {
   stock_code: string
   stock_name: string
-  sector: string | null
   weight: number
   shares: number | null
   recorded_at: string
@@ -41,16 +37,10 @@ export interface Price {
   low: number | null
   close: number | null
   volume: number | null
-}
-
-export interface Watchlist {
-  id: number
-  name: string
-  items: WatchlistItem[]
+  market_cap: number | null
 }
 
 export interface WatchlistItem {
-  id: number
   etf_code: string
   etf_name: string
   category: string | null
@@ -136,6 +126,10 @@ export interface TagETF {
   code: string
   name: string
   net_assets: number | null
+  return_1d: number | null
+  return_1w: number | null
+  return_1m: number | null
+  market_cap_change_1w: number | null
 }
 
 export interface TagHolding {

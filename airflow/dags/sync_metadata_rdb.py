@@ -1,9 +1,9 @@
 """
-ETF Metadata RDB Sync DAG
-- KRX API에서 ETF 일별매매정보 수집
-- RDB etfs 테이블에 동기화 (pg_trgm 퍼지 검색용)
+ETF Metadata RDB Sync DAG (경량)
+- KRX API에서 전체 ETF 목록 수집
+- RDB etfs 테이블에 code + name만 동기화 (포트폴리오 비유니버스 ETF 이름 조회용)
 
-AGE DAG(etf_daily_etl)과 독립적으로 동작.
+ETF 상세 메타데이터(net_assets, expense_ratio, issuer 등)는 AGE에서 관리.
 """
 
 from datetime import datetime, timedelta
@@ -13,38 +13,6 @@ from airflow.operators.empty import EmptyOperator
 import logging
 
 log = logging.getLogger(__name__)
-
-# ETF 이름 prefix → 운용사 매핑
-ETF_COMPANY_MAP = {
-    'KODEX': '삼성자산운용',
-    'KoAct': '삼성액티브자산운용',
-    'TIGER': '미래에셋자산운용',
-    'RISE': 'KB자산운용',
-    'ACE': '한국투자신탁운용',
-    'HANARO': 'NH아문디자산운용',
-    'SOL': '신한자산운용',
-    'PLUS': '한화자산운용',
-    'KIWOOM': '키움자산운용',
-    '1Q': '하나자산운용',
-    'TIMEFOLIO': '타임폴리오자산운용',
-    'TIME': '타임폴리오자산운용',
-    'WON': '우리자산운용',
-    '마이다스': '마이다스자산운용',
-    '파워': '교보악사자산운용',
-    'BNK': 'BNK자산운용',
-    'DAISHIN343': '대신자산운용',
-    'HK': '흥국자산운용',
-    'UNICORN': '현대자산운용',
-}
-
-
-def get_company_from_etf_name(name: str) -> str:
-    """ETF 이름에서 운용사 추출"""
-    for prefix, company in ETF_COMPANY_MAP.items():
-        if name.startswith(prefix):
-            return company
-    return '기타'
-
 
 default_args = {
     'owner': 'etf-atlas',
@@ -58,7 +26,7 @@ default_args = {
 dag = DAG(
     'sync_metadata_rdb',
     default_args=default_args,
-    description='ETF 메타데이터 RDB 동기화 파이프라인',
+    description='ETF 코드/이름 RDB 동기화 (포트폴리오용)',
     schedule_interval='0 7 * * 1-5',  # 평일 07:00 KST
     catchup=False,
     tags=['etf', 'daily', 'rdb'],
@@ -105,10 +73,7 @@ def get_db_connection():
 
 
 def fetch_krx_data(**context):
-    """KRX API에서 ETF 일별매매정보 조회 (최근 거래일 자동 탐색)
-
-    AGE 의존 없이 단순히 최근 거래일 데이터를 수집한다.
-    """
+    """KRX API에서 전체 ETF 목록 조회 (code + name만)"""
     import os
     from krx_api_client import KRXApiClient
 
@@ -122,7 +87,6 @@ def fetch_krx_data(**context):
     try:
         client = KRXApiClient(auth_key)
 
-        # 주어진 날짜부터 최대 7일 전까지 거래일 탐색
         base_date = datetime.strptime(date, '%Y%m%d')
         for i in range(7):
             check_date = (base_date - timedelta(days=i)).strftime('%Y%m%d')
@@ -131,11 +95,7 @@ def fetch_krx_data(**context):
                 if i > 0:
                     log.info(f"No data for {date}, using latest trading day: {check_date}")
                 return [
-                    {
-                        'code': item.code,
-                        'name': item.name,
-                        'net_assets': item.net_assets,
-                    }
+                    {'code': item.code, 'name': item.name}
                     for item in result
                 ]
 
@@ -147,7 +107,7 @@ def fetch_krx_data(**context):
 
 
 def sync_etfs_to_rdb(**context):
-    """모든 ETF 메타데이터를 etfs RDB 테이블에 동기화"""
+    """전체 ETF의 code + name을 etfs RDB 테이블에 동기화"""
     ti = context['ti']
     krx_data_dicts = ti.xcom_pull(task_ids='fetch_krx_data')
     if not krx_data_dicts:
@@ -161,23 +121,20 @@ def sync_etfs_to_rdb(**context):
     try:
         for item in krx_data_dicts:
             try:
-                issuer = get_company_from_etf_name(item['name'])
                 cur.execute("""
-                    INSERT INTO etfs (code, name, issuer, net_assets, updated_at)
-                    VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
+                    INSERT INTO etfs (code, name, updated_at)
+                    VALUES (%s, %s, CURRENT_TIMESTAMP)
                     ON CONFLICT (code) DO UPDATE SET
                         name = EXCLUDED.name,
-                        issuer = EXCLUDED.issuer,
-                        net_assets = EXCLUDED.net_assets,
                         updated_at = CURRENT_TIMESTAMP
-                """, (item['code'], item['name'], issuer, item['net_assets']))
+                """, (item['code'], item['name']))
                 success_count += 1
             except Exception as e:
                 log.warning(f"Failed to sync ETF {item.get('code', 'unknown')}: {e}")
                 continue
 
         conn.commit()
-        log.info(f"Synced {success_count} ETFs to RDB etfs table")
+        log.info(f"Synced {success_count} ETFs to RDB etfs table (code + name only)")
 
     finally:
         cur.close()

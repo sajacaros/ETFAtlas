@@ -32,6 +32,7 @@ class CalculationRow:
     avg_price: Optional[Decimal] = None
     profit_loss_rate: Optional[Decimal] = None   # (현재가 - 평단가) / 평단가 × 100
     profit_loss_amount: Optional[Decimal] = None # (현재가 - 평단가) × 보유수량
+    price_change_rate: Optional[Decimal] = None  # 전일 대비 등락률 %
 
 
 @dataclass
@@ -56,6 +57,7 @@ def calculate_portfolio(
     etf_names: dict[str, str],
     calculation_base: str,
     target_total_amount: Optional[Decimal],
+    prev_prices: Optional[dict[str, Decimal]] = None,
 ) -> CalculationResult:
     """
     Pure calculation function for portfolio rebalancing.
@@ -157,6 +159,15 @@ def calculate_portfolio(
             )
             total_profit_loss_amount += profit_loss_amount
 
+        # Price change rate (전일 대비)
+        price_change_rate = None
+        if prev_prices and ticker != CASH_TICKER:
+            prev_price = prev_prices.get(ticker)
+            if prev_price and prev_price > 0:
+                price_change_rate = ((price - prev_price) / prev_price * Decimal("100")).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                )
+
         rows.append(CalculationRow(
             ticker=ticker,
             name=name,
@@ -172,6 +183,7 @@ def calculate_portfolio(
             avg_price=avg_price,
             profit_loss_rate=profit_loss_rate,
             profit_loss_amount=profit_loss_amount,
+            price_change_rate=price_change_rate,
         ))
 
     # Weight warning

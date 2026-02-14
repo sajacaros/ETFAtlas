@@ -485,8 +485,8 @@ class GraphQueryTool(Tool):
 예: '삼성전자를 가장 많이 보유한 ETF', '반도체 태그 ETF 중 보수율 낮은 순', '삼성자산운용의 ETF 목록' 등
 
 ## 그래프 스키마
-노드: ETF(code, name, expense_ratio, updated_at), Stock(code, name, is_etf), Company(name), Sector(name), Market(name), Tag(name), Price(date, open, high, low, close, volume, nav, market_cap, net_assets, trade_value, change_rate)
-관계: (ETF)-[:HOLDS {date, weight, shares}]->(Stock), (ETF)-[:MANAGED_BY]->(Company), (Stock)-[:BELONGS_TO]->(Sector), (Stock)-[:PART_OF]->(Market), (ETF)-[:TAGGED]->(Tag), (ETF)-[:HAS_PRICE]->(Price), (Stock)-[:HAS_PRICE]->(Price), (ETF)-[:HAS_CHANGE {date, change_type}]->(Stock)
+노드: ETF(code, name, expense_ratio, updated_at), Stock(code, name, is_etf), Company(name), Tag(name), Price(date, open, high, low, close, volume, nav, market_cap, net_assets, trade_value, change_rate)
+관계: (ETF)-[:HOLDS {date, weight, shares}]->(Stock), (ETF)-[:MANAGED_BY]->(Company), (ETF)-[:TAGGED]->(Tag), (ETF)-[:HAS_PRICE]->(Price), (Stock)-[:HAS_PRICE]->(Price), (ETF)-[:HAS_CHANGE {date, change_type}]->(Stock)
 
 ## Cypher 작성 규칙
 1. MATCH로 시작하는 읽기 전용 쿼리만 가능 (CREATE/MERGE/DELETE/SET 불가)

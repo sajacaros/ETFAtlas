@@ -17,16 +17,18 @@ SET search_path = public;
 -- Apache AGE Graph Structure:
 --
 -- Nodes:
---   (ETF {code, name, updated_at})
+--   (ETF {code, name, updated_at, net_assets, expense_ratio})
 --   (Stock {code, name})
 --   (Price {date, open, high, low, close, volume, nav, market_cap, net_assets, trade_value, change_rate})
 --   (Change {id, stock_code, stock_name, change_type, before_weight, after_weight, weight_change, detected_at})
+--   (User {user_id})
 --
 -- Edges:
 --   (ETF)-[:HOLDS {date, weight, shares}]->(Stock)
 --   (ETF)-[:HAS_PRICE]->(Price)
 --   (Stock)-[:HAS_PRICE]->(Price)
 --   (ETF)-[:HAS_CHANGE]->(Change)
+--   (User)-[:WATCHES {added_at}]->(ETF)
 -- =====================================================
 
 -- =====================================================
@@ -44,36 +46,14 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- ETFs (전체 ETF 메타데이터 - 검색용)
+-- ETFs (전체 ETF 코드/이름 - 포트폴리오 비유니버스 ETF 이름 조회용)
+-- 상세 메타데이터(net_assets, expense_ratio, issuer 등)는 AGE ETF 노드에서 관리
 CREATE TABLE IF NOT EXISTS etfs (
     id SERIAL PRIMARY KEY,
     code VARCHAR(20) UNIQUE NOT NULL,
     name VARCHAR(255) NOT NULL,
-    issuer VARCHAR(255),
-    category VARCHAR(100),
-    net_assets BIGINT,
-    expense_ratio NUMERIC(5, 4),
-    inception_date DATE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Watchlists
-CREATE TABLE IF NOT EXISTS watchlists (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-    name VARCHAR(255) NOT NULL DEFAULT 'My Watchlist',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Watchlist items (ETF code 직접 참조)
-CREATE TABLE IF NOT EXISTS watchlist_items (
-    id SERIAL PRIMARY KEY,
-    watchlist_id INTEGER REFERENCES watchlists(id) ON DELETE CASCADE,
-    etf_code VARCHAR(20) NOT NULL,
-    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(watchlist_id, etf_code)
 );
 
 -- Portfolios (사용자 포트폴리오)
@@ -134,13 +114,9 @@ CREATE TABLE IF NOT EXISTS ticker_prices (
 );
 
 -- Indexes
-CREATE INDEX IF NOT EXISTS idx_watchlist_items_watchlist_id ON watchlist_items(watchlist_id);
-CREATE INDEX IF NOT EXISTS idx_watchlist_items_etf_code ON watchlist_items(etf_code);
 CREATE INDEX IF NOT EXISTS idx_portfolios_user_id ON portfolios(user_id);
 CREATE INDEX IF NOT EXISTS idx_target_allocations_portfolio_id ON target_allocations(portfolio_id);
 CREATE INDEX IF NOT EXISTS idx_holdings_portfolio_id ON holdings(portfolio_id);
-CREATE INDEX IF NOT EXISTS idx_etfs_name_trgm ON etfs USING GIN (name gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS idx_etfs_code_trgm ON etfs USING GIN (code gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_portfolio_id ON portfolio_snapshots(portfolio_id);
 CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_date ON portfolio_snapshots(date);
 CREATE INDEX IF NOT EXISTS idx_ticker_prices_date ON ticker_prices(date);

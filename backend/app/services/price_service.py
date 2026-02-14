@@ -94,8 +94,28 @@ class PriceService:
             pass
         return prices
 
+    def get_prev_prices(self, tickers: list[str]) -> dict[str, Decimal]:
+        """ticker_prices 테이블에서 각 티커의 전일(두 번째 최신) 가격 조회."""
+        query_tickers = [t for t in tickers if t != "CASH"]
+        if not query_tickers:
+            return {}
+
+        result = self.db.execute(
+            text("""
+                SELECT ticker, price FROM (
+                    SELECT ticker, price, date,
+                           ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) AS rn
+                    FROM ticker_prices
+                    WHERE ticker = ANY(:tickers)
+                ) sub
+                WHERE rn = 2
+            """),
+            {"tickers": query_tickers},
+        )
+        return {row.ticker: Decimal(str(row.price)) for row in result}
+
     def get_etf_names(self, tickers: list[str]) -> dict[str, str]:
-        """Get ETF names from the etfs table."""
+        """Get ETF names. AGE first, RDB etfs fallback for non-universe ETFs."""
         if not tickers:
             return {}
 
@@ -108,12 +128,21 @@ class PriceService:
         if not query_tickers:
             return names
 
-        result = self.db.execute(
-            text("SELECT code, name FROM etfs WHERE code = ANY(:tickers)"),
-            {"tickers": query_tickers}
-        )
-        for row in result:
-            names[row.code] = row.name
+        # AGE에서 조회
+        from .graph_service import GraphService
+        graph = GraphService(self.db)
+        age_names = graph.get_etf_names(query_tickers)
+        names.update(age_names)
+
+        # AGE에 없는 것은 RDB 폴백 (비유니버스 ETF)
+        missing = [t for t in query_tickers if t not in names]
+        if missing:
+            result = self.db.execute(
+                text("SELECT code, name FROM etfs WHERE code = ANY(:tickers)"),
+                {"tickers": missing}
+            )
+            for row in result:
+                names[row.code] = row.name
 
         for t in query_tickers:
             if t not in names:

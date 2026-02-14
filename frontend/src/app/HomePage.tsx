@@ -91,7 +91,7 @@ function ETFExpandableCard({
             <ReturnBadge label="1W" value={etf.return_1w} />
             <ReturnBadge label="1M" value={etf.return_1m} />
             <div className="text-right w-32">
-              <div className="text-[10px] text-muted-foreground leading-none mb-0.5">시총변화</div>
+              <div className="text-[10px] text-muted-foreground leading-none mb-0.5">시총변화(1W)</div>
               {etf.net_assets != null && etf.market_cap_change_1w != null ? (
                 <div className={`text-base font-medium whitespace-nowrap ${etf.market_cap_change_1w > 0 ? 'text-red-500' : etf.market_cap_change_1w < 0 ? 'text-blue-500' : 'text-muted-foreground'}`}>
                   {etf.market_cap_change_1w > 0 ? '+' : ''}{formatAmount(Math.round(etf.net_assets * etf.market_cap_change_1w / 100))}({etf.market_cap_change_1w > 0 ? '+' : ''}{etf.market_cap_change_1w.toFixed(1)}%)
@@ -176,6 +176,7 @@ export default function HomePage() {
   const SORT_TAGS: Record<string, string> = {
     '시총': 'market_cap',
     '시총상승률': 'market_cap_change_1w',
+    '1D수익률': 'return_1d',
     '1주수익률': 'return_1w',
   }
   const isSortTag = (tagName: string) => tagName in SORT_TAGS

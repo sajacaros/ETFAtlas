@@ -21,10 +21,12 @@ interface ETFCardItem {
 }
 
 function formatAmount(value: number): string {
-  if (value >= 1_0000_0000) {
-    return `${Math.floor(value / 1_0000_0000).toLocaleString()}억원`
+  const abs = Math.abs(value)
+  const sign = value < 0 ? '-' : ''
+  if (abs >= 1_0000_0000) {
+    return `${sign}${Math.floor(abs / 1_0000_0000).toLocaleString()}억원`
   }
-  return `${Math.floor(value / 1_0000).toLocaleString()}만원`
+  return `${sign}${Math.floor(abs / 1_0000).toLocaleString()}만원`
 }
 
 function ReturnBadge({ label, value }: { label: string; value: number | null | undefined }) {
@@ -36,7 +38,7 @@ function ReturnBadge({ label, value }: { label: string; value: number | null | u
     ? value > 0 ? `+${value.toFixed(1)}%` : `${value.toFixed(1)}%`
     : '-'
   return (
-    <div className="text-right">
+    <div className="text-right w-16">
       <div className="text-[10px] text-muted-foreground leading-none mb-0.5">{label}</div>
       <div className={`text-sm font-medium ${color}`}>{formatted}</div>
     </div>
@@ -82,16 +84,29 @@ function ETFExpandableCard({
               <div className="text-sm text-muted-foreground">{etf.code}</div>
             </div>
           </div>
-          <div className="flex items-center gap-3 flex-shrink-0">
+          <div className="flex items-center gap-5 flex-shrink-0">
             <ReturnBadge label="1D" value={etf.return_1d} />
             <ReturnBadge label="1W" value={etf.return_1w} />
             <ReturnBadge label="1M" value={etf.return_1m} />
-            <ReturnBadge label="시총1W" value={etf.market_cap_change_1w} />
-            {etf.net_assets != null && (
-              <span className="text-sm text-muted-foreground whitespace-nowrap ml-1">
-                {formatAmount(etf.net_assets)}
-              </span>
-            )}
+            <div className="text-right w-20">
+              {etf.net_assets != null && etf.market_cap_change_1w != null ? (
+                <>
+                  <div className="text-[10px] text-muted-foreground leading-none mb-0.5">시총1W</div>
+                  <div className={`text-sm font-medium ${etf.market_cap_change_1w > 0 ? 'text-red-500' : etf.market_cap_change_1w < 0 ? 'text-blue-500' : 'text-muted-foreground'}`}>
+                    {etf.market_cap_change_1w > 0 ? '+' : ''}{formatAmount(Math.round(etf.net_assets * etf.market_cap_change_1w / 100))}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="text-[10px] text-muted-foreground leading-none mb-0.5">시총1W</div>
+                  <div className="text-sm text-muted-foreground">-</div>
+                </>
+              )}
+            </div>
+            <div className="text-right w-20">
+              <div className="text-[10px] text-muted-foreground leading-none mb-0.5">시총</div>
+              <div className="text-sm text-muted-foreground">{etf.net_assets != null ? formatAmount(etf.net_assets) : '-'}</div>
+            </div>
             {onWatchToggle && (
               <Button
                 variant="ghost"
@@ -150,7 +165,7 @@ export default function HomePage() {
 
   // Tag state
   const [tags, setTags] = useState<Tag[]>([])
-  const [selectedTag, setSelectedTag] = useState<string | null>(searchParams.get('tag'))
+  const [selectedTag, setSelectedTag] = useState<string | null>(searchParams.get('tag') || '시총 TOP')
   const [tagLoading, setTagLoading] = useState(false)
   const [tagsExpanded, setTagsExpanded] = useState(false)
   const [tagsOverflow, setTagsOverflow] = useState(false)
@@ -160,7 +175,15 @@ export default function HomePage() {
   const [expandedETF, setExpandedETF] = useState<string | null>(null)
   const [holdings, setHoldings] = useState<Record<string, Holding[]>>({})
 
-  // Restore state from URL params on mount
+  const FAVORITES_TAG = '즐겨찾기'
+  const SORT_TAGS: Record<string, string> = {
+    '시총 TOP': 'market_cap',
+    '시총상승 TOP': 'market_cap_change_1w',
+    '1주 수익률 TOP': 'return_1w',
+  }
+  const isSortTag = (tagName: string) => tagName in SORT_TAGS
+
+  // Restore state from URL params on mount, or load top ETFs by default
   const restoredRef = useRef(false)
   useEffect(() => {
     if (restoredRef.current) return
@@ -172,7 +195,21 @@ export default function HomePage() {
       etfsApi.searchUniverse(q).then(setEtfList).catch(() => setEtfList([])).finally(() => setLoading(false))
     } else if (tag) {
       setTagLoading(true)
-      tagsApi.getETFs(tag).then(setEtfList).catch(() => setEtfList([])).finally(() => setTagLoading(false))
+      if (tag === FAVORITES_TAG) {
+        watchlistApi.getETFs()
+          .then(setEtfList)
+          .catch(() => setEtfList([]))
+          .finally(() => setTagLoading(false))
+      } else if (isSortTag(tag)) {
+        etfsApi.getTop(20, SORT_TAGS[tag]).then(setEtfList).catch(() => setEtfList([])).finally(() => setTagLoading(false))
+      } else {
+        tagsApi.getETFs(tag).then(setEtfList).catch(() => setEtfList([])).finally(() => setTagLoading(false))
+      }
+    } else {
+      // 기본: 시가총액 TOP 20 (시총 TOP 태그 선택 상태)
+      setSelectedTag('시총 TOP')
+      setLoading(true)
+      etfsApi.getTop(20).then(setEtfList).catch(() => setEtfList([])).finally(() => setLoading(false))
     }
   }, [searchParams])
 
@@ -216,9 +253,20 @@ export default function HomePage() {
 
   const handleTagClick = async (tagName: string) => {
     if (selectedTag === tagName) {
-      setSelectedTag(null)
-      setEtfList([])
+      // 태그 해제 → 시가총액 TOP으로 복귀
+      setSelectedTag('시총 TOP')
+      setExpandedETF(null)
+      setSearchQuery('')
       updateParams(null, null)
+      setLoading(true)
+      try {
+        const etfs = await etfsApi.getTop(20)
+        setEtfList(etfs)
+      } catch {
+        setEtfList([])
+      } finally {
+        setLoading(false)
+      }
       return
     }
     setSelectedTag(tagName)
@@ -227,8 +275,16 @@ export default function HomePage() {
     updateParams(null, tagName)
     setTagLoading(true)
     try {
-      const etfs = await tagsApi.getETFs(tagName)
-      setEtfList(etfs)
+      if (tagName === FAVORITES_TAG) {
+        const etfs = await watchlistApi.getETFs()
+        setEtfList(etfs)
+      } else if (isSortTag(tagName)) {
+        const etfs = await etfsApi.getTop(20, SORT_TAGS[tagName])
+        setEtfList(etfs)
+      } else {
+        const etfs = await tagsApi.getETFs(tagName)
+        setEtfList(etfs)
+      }
     } catch {
       setEtfList([])
     } finally {
@@ -266,6 +322,10 @@ export default function HomePage() {
           next.delete(etfCode)
           return next
         })
+        // 즐겨찾기 태그 보는 중이면 목록에서 제거
+        if (selectedTag === FAVORITES_TAG) {
+          setEtfList((prev) => prev.filter((e) => e.code !== etfCode))
+        }
         toast({ title: '즐겨찾기에서 해제되었습니다' })
       } else {
         await watchlistApi.add(etfCode)
@@ -300,8 +360,38 @@ export default function HomePage() {
         </div>
       </div>
 
-      <div className="max-w-4xl mx-auto space-y-6">
-        {/* 태그 분류 */}
+      <div className="max-w-4xl mx-auto space-y-4">
+        {/* 정렬 버튼 그룹 */}
+        <div className="flex items-center gap-1 rounded-lg border p-1 w-fit">
+          {Object.keys(SORT_TAGS).map((name) => (
+            <button
+              key={name}
+              className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+                selectedTag === name
+                  ? 'bg-primary text-primary-foreground font-medium'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+              }`}
+              onClick={() => handleTagClick(name)}
+            >
+              {name}
+            </button>
+          ))}
+          {isAuthenticated && (
+            <button
+              className={`px-3 py-1.5 text-sm rounded-md transition-colors flex items-center gap-1 ${
+                selectedTag === FAVORITES_TAG
+                  ? 'bg-primary text-primary-foreground font-medium'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+              }`}
+              onClick={() => handleTagClick(FAVORITES_TAG)}
+            >
+              <Star className={`w-3 h-3 ${selectedTag === FAVORITES_TAG ? 'fill-current' : ''}`} />
+              {FAVORITES_TAG} ({watchedCodes.size})
+            </button>
+          )}
+        </div>
+
+        {/* 분류 태그 */}
         <div>
           <div className="relative">
             <div

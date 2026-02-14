@@ -50,6 +50,16 @@ async def get_watched_codes(
     return graph.get_watched_codes(user_id)
 
 
+@router.get("/etfs")
+async def get_watched_etfs(
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """즐겨찾기 ETF 목록 (시총/수익률 포함, UniverseETFResponse 형식)"""
+    graph = GraphService(db)
+    return graph.get_watched_etfs(user_id)
+
+
 @router.post("/{etf_code}", response_model=WatchlistItemResponse, status_code=status.HTTP_201_CREATED)
 async def add_watch(
     etf_code: str,

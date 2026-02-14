@@ -4,7 +4,6 @@ import { AmountVisibilityProvider } from './hooks/useAmountVisibility'
 import Header from './components/Header'
 import HomePage from './app/HomePage'
 import ETFDetailPage from './app/ETFDetailPage'
-import WatchlistPage from './app/WatchlistPage'
 import ChatPage from './app/ChatPage'
 import PortfolioPage from './app/PortfolioPage'
 import PortfolioDashboardPage from './app/PortfolioDashboardPage'
@@ -22,7 +21,6 @@ function App() {
           <Routes>
             <Route path="/" element={<HomePage />} />
             <Route path="/etf/:code" element={<ETFDetailPage />} />
-            <Route path="/watchlist" element={<WatchlistPage />} />
             <Route path="/portfolio" element={<PortfolioPage />} />
             <Route path="/portfolio/dashboard" element={<PortfolioDashboardPage />} />
             <Route path="/portfolio/:id/dashboard" element={<PortfolioDashboardPage />} />

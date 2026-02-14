@@ -55,10 +55,22 @@ class SimilarETFResponse(BaseModel):
 class UniverseETFResponse(BaseModel):
     code: str
     name: str
+    net_assets: int | None = None
     return_1d: float | None = None
     return_1w: float | None = None
     return_1m: float | None = None
     market_cap_change_1w: float | None = None
+
+
+@router.get("/top", response_model=List[UniverseETFResponse])
+async def get_top_etfs(
+    limit: int = Query(20, ge=1, le=100),
+    sort: str = Query("market_cap", regex="^(market_cap|market_cap_change_1w|return_1w)$"),
+    db: Session = Depends(get_db),
+):
+    """ETF 목록 (정렬: market_cap, market_cap_change_1w, return_1w)"""
+    graph = GraphService(db)
+    return graph.get_top_etfs(limit, sort)
 
 
 @router.get("/search/universe", response_model=List[UniverseETFResponse])

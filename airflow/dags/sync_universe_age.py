@@ -85,11 +85,11 @@ def fetch_krx_data(**context):
         log.warning(f"Failed to query last collected date: {e}")
 
     # 2. 백필 시작일 결정
-    INITIAL_BACKFILL_DAYS = 45
+    INITIAL_BACKFILL_START = datetime(2026, 1, 2).date()
     base_date = datetime.strptime(date, '%Y%m%d').date()
 
     if not last_collected:
-        start_date = base_date - timedelta(days=INITIAL_BACKFILL_DAYS)
+        start_date = INITIAL_BACKFILL_START
         log.info(f"No previous data in DB, initial backfill from {start_date} to {base_date}")
     else:
         start_date = last_collected + timedelta(days=1)
@@ -798,7 +798,7 @@ def update_etf_returns(**context):
                 target_1w = (latest_date - timedelta(days=7)).strftime('%Y-%m-%d')
                 target_1m = (latest_date - timedelta(days=30)).strftime('%Y-%m-%d')
 
-                item = {'code': code, 'return_1d': None, 'return_1w': None, 'return_1m': None, 'market_cap_change_1w': None}
+                item = {'code': code, 'close_price': latest_close, 'return_1d': None, 'return_1w': None, 'return_1m': None, 'market_cap_change_1w': None}
 
                 # 1D: index 1 (전거래일)
                 if len(prices) > 1:
@@ -837,7 +837,8 @@ def update_etf_returns(**context):
         if update_items:
             execute_cypher_batch(cur, """
                 MATCH (e:ETF {code: item.code})
-                SET e.return_1d = item.return_1d,
+                SET e.close_price = item.close_price,
+                    e.return_1d = item.return_1d,
                     e.return_1w = item.return_1w,
                     e.return_1m = item.return_1m,
                     e.market_cap_change_1w = item.market_cap_change_1w

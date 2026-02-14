@@ -191,8 +191,10 @@ class GraphService:
                 result[parsed["code"]] = parsed["name"]
         return result
 
+    PINNED_TAGS = ['코스피200', '코스닥150']
+
     def get_all_tags(self) -> List[Dict]:
-        """모든 Tag 노드 조회 (시장지수 제외), ETF 수 포함"""
+        """모든 Tag 노드 조회 (시장지수 제외, 고정 태그 선두 배치), ETF 수 포함"""
         query = """
         MATCH (e:ETF)-[:TAGGED]->(t:Tag)
         WHERE t.name <> '시장지수'
@@ -201,7 +203,10 @@ class GraphService:
         ORDER BY cnt DESC
         """
         rows = self.execute_cypher(query)
-        return [self.parse_agtype(row["result"]) for row in rows]
+        tags = [self.parse_agtype(row["result"]) for row in rows]
+        pinned = [t for t in tags if t["name"] in self.PINNED_TAGS]
+        rest = [t for t in tags if t["name"] not in self.PINNED_TAGS]
+        return pinned + rest
 
     def get_etfs_by_tag(self, tag_name: str) -> List[Dict]:
         """태그에 속한 ETF 목록 (이름, 코드, 순자산)"""

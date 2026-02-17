@@ -14,5 +14,6 @@ class User(Base):
     google_id = Column(String(255), unique=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_notification_checked_at = Column(DateTime, nullable=True)
 
     portfolios = relationship("Portfolio", back_populates="user", cascade="all, delete-orphan")

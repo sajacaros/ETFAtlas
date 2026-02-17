@@ -1,10 +1,14 @@
 import asyncio
 import json
+import select
+import psycopg2
+import psycopg2.extensions
 from fastapi import APIRouter, Depends, Query as QueryParam
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 from ..database import get_db
+from ..config import get_settings
 from ..models.user import User
 from ..models.collection_run import CollectionRun
 from ..utils.jwt import get_current_user_id, decode_access_token
@@ -49,30 +53,37 @@ async def check_notifications(
 @router.get("/stream")
 async def notification_stream(
     token: str = QueryParam(...),
-    db: Session = Depends(get_db),
 ):
-    """SSE 스트림 — 30초마다 새 수집 확인 (query param 토큰 인증)"""
+    """SSE 스트림 — pg_notify LISTEN으로 새 수집 즉시 감지 (query param 토큰 인증)"""
     payload = decode_access_token(token)
     user_id = int(payload.get("sub"))
-    user = db.query(User).filter(User.id == user_id).first()
 
     async def event_generator():
-        last_checked = user.last_notification_checked_at
-        while True:
-            db.expire_all()
-            latest = db.query(CollectionRun).order_by(
-                CollectionRun.created_at.desc()
-            ).first()
+        settings = get_settings()
+        conn = psycopg2.connect(settings.database_url)
+        conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
+        cur = conn.cursor()
+        cur.execute("LISTEN new_collection;")
 
-            if latest and (last_checked is None or latest.created_at > last_checked):
-                data = json.dumps({
-                    "type": "new_changes",
-                    "collected_at": latest.collected_at.isoformat(),
-                })
-                yield f"data: {data}\n\n"
-                last_checked = latest.created_at
-
-            await asyncio.sleep(30)
+        try:
+            loop = asyncio.get_event_loop()
+            while True:
+                # select를 executor에서 실행하여 async 블로킹 방지 (5초 타임아웃)
+                ready = await loop.run_in_executor(
+                    None, lambda: select.select([conn], [], [], 5.0)
+                )
+                if ready[0]:
+                    conn.poll()
+                    while conn.notifies:
+                        notify = conn.notifies.pop(0)
+                        data = json.dumps({
+                            "type": "new_changes",
+                            "collected_at": notify.payload,
+                        })
+                        yield f"data: {data}\n\n"
+        finally:
+            cur.close()
+            conn.close()
 
     return StreamingResponse(
         event_generator(),

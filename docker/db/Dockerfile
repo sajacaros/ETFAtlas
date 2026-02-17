@@ -19,7 +19,7 @@ RUN git clone --branch release/PG17/1.7.0 --depth 1 https://github.com/apache/ag
     && rm -rf /tmp/age
 
 # Install pgvector
-RUN git clone --branch v0.7.0 --depth 1 https://github.com/pgvector/pgvector.git /tmp/pgvector \
+RUN git clone --branch v0.8.0 --depth 1 https://github.com/pgvector/pgvector.git /tmp/pgvector \
     && cd /tmp/pgvector \
     && make \
     && make install \

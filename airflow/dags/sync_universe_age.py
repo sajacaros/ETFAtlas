@@ -18,7 +18,8 @@ from age_utils import (
     get_business_days, get_last_collected_date, get_etf_codes_from_age,
     get_previous_holds_date,
     collect_universe_and_prices, collect_holdings_for_dates,
-    collect_stock_prices_for_dates, detect_changes_for_dates,
+    collect_stock_prices_for_dates,
+    record_collection_run, send_discord_notification,
     update_etf_returns,
     INDEX_TAG_PATTERNS, RULE_ONLY_TAGS,
 )
@@ -101,30 +102,15 @@ def sync_stock_prices(**context):
     collect_stock_prices_for_dates(dates)
 
 
-def detect_portfolio_changes(**context):
-    """포트폴리오 변화 감지 — 직전 영업일 HOLDS와 비교.
-
-    age_utils.detect_changes_for_dates 공통 함수 사용.
-    수집 대상 날짜 앞에 이전 HOLDS 날짜를 붙여 연속 비교.
-    """
+def record_and_notify(**context):
+    """수집 완료 기록 + 디스코드 알림."""
     dates = context['ti'].xcom_pull(task_ids='fetch_trading_dates')
     if not dates:
         return
-
-    etf_codes = list(get_etf_codes_from_age())
-    if not etf_codes:
-        return
-
-    # 첫 수집일 이전의 HOLDS 날짜를 찾아 비교 기준점으로 사용
-    first_date_str = f"{dates[0][:4]}-{dates[0][4:6]}-{dates[0][6:8]}"
-    prev_date = get_previous_holds_date(first_date_str)
-
-    if prev_date:
-        all_dates = [prev_date] + dates
-    else:
-        all_dates = dates
-
-    detect_changes_for_dates(etf_codes, all_dates)
+    last_date = dates[-1]
+    date_str = f"{last_date[:4]}-{last_date[4:6]}-{last_date[6:8]}"
+    record_collection_run(date_str)
+    send_discord_notification(date_str)
 
 
 def sync_returns(**context):
@@ -189,8 +175,8 @@ t_holdings = PythonOperator(task_id='sync_holdings',
                              python_callable=sync_holdings, dag=dag)
 t_stock_prices = PythonOperator(task_id='sync_stock_prices',
                                  python_callable=sync_stock_prices, dag=dag)
-t_changes = PythonOperator(task_id='detect_portfolio_changes',
-                            python_callable=detect_portfolio_changes, dag=dag)
+t_notify = PythonOperator(task_id='record_and_notify',
+                           python_callable=record_and_notify, dag=dag)
 t_returns = PythonOperator(task_id='sync_returns',
                             python_callable=sync_returns, dag=dag)
 t_tags = PythonOperator(task_id='tag_new_etfs',
@@ -198,11 +184,11 @@ t_tags = PythonOperator(task_id='tag_new_etfs',
 
 # 의존 관계:
 # start → fetch_trading_dates → sync_universe_and_prices
-#   → sync_holdings → [sync_stock_prices, detect_portfolio_changes]
+#   → sync_holdings → [sync_stock_prices, record_and_notify]
 #   → sync_returns (가격 수집 후)
 #   → tag_new_etfs (유니버스 수집 후)
 # → end
 start >> t_dates >> t_universe
 t_universe >> [t_holdings, t_returns, t_tags]
-t_holdings >> [t_stock_prices, t_changes]
-[t_stock_prices, t_changes, t_returns, t_tags] >> end
+t_holdings >> [t_stock_prices, t_notify]
+[t_stock_prices, t_notify, t_returns, t_tags] >> end

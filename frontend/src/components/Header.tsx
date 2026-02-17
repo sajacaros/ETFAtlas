@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
+import { useNotification } from '@/hooks/useNotification'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -11,6 +12,7 @@ import { Search, PieChart, User, LogOut, MessageCircle, Bell } from 'lucide-reac
 
 export default function Header() {
   const { user, isAuthenticated, logout } = useAuth()
+  const { hasNew } = useNotification()
 
   return (
     <header className="border-b bg-white">
@@ -36,10 +38,13 @@ export default function Header() {
             </Link>
             <Link
               to="/watchlist/changes"
-              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground relative"
             >
               <Bell className="w-4 h-4" />
               비중 변화
+              {hasNew && (
+                <span className="absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full" />
+              )}
             </Link>
             <Link
               to="/chat"

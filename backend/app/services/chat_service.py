@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from smolagents import Tool, CodeAgent, LiteLLMModel
 from ..config import get_settings
 from .graph_service import GraphService
+from .embedding_service import EmbeddingService
 
 logger = logging.getLogger(__name__)
 
@@ -485,8 +486,8 @@ class GraphQueryTool(Tool):
 예: '삼성전자를 가장 많이 보유한 ETF', '반도체 태그 ETF 중 보수율 낮은 순', '삼성자산운용의 ETF 목록' 등
 
 ## 그래프 스키마
-노드: ETF(code, name, expense_ratio, updated_at), Stock(code, name, is_etf), Company(name), Tag(name), Price(date, open, high, low, close, volume, nav, market_cap, net_assets, trade_value, change_rate)
-관계: (ETF)-[:HOLDS {date, weight, shares}]->(Stock), (ETF)-[:MANAGED_BY]->(Company), (ETF)-[:TAGGED]->(Tag), (ETF)-[:HAS_PRICE]->(Price), (Stock)-[:HAS_PRICE]->(Price), (ETF)-[:HAS_CHANGE {date, change_type}]->(Stock)
+노드: ETF(code, name, expense_ratio, net_assets, close_price, return_1d, return_1w, return_1m, market_cap_change_1w, updated_at), Stock(code, name, is_etf), Company(name), Tag(name), Price(date, open, high, low, close, volume, nav, market_cap, net_assets, trade_value, change_rate), Change(id, stock_code, stock_name, change_type, before_weight, after_weight, weight_change, detected_at), User(user_id, role)
+관계: (ETF)-[:HOLDS {date, weight, shares}]->(Stock), (ETF)-[:MANAGED_BY]->(Company), (ETF)-[:TAGGED]->(Tag), (ETF)-[:HAS_PRICE]->(Price), (Stock)-[:HAS_PRICE]->(Price), (ETF)-[:HAS_CHANGE]->(Change), (User)-[:WATCHES {added_at}]->(ETF)
 
 ## Cypher 작성 규칙
 1. MATCH로 시작하는 읽기 전용 쿼리만 가능 (CREATE/MERGE/DELETE/SET 불가)
@@ -551,7 +552,7 @@ SYSTEM_PROMPT = """당신은 ETF Atlas의 AI 어시스턴트입니다. 한국 ET
 주어진 도구를 활용하여 사용자의 질문에 정확하게 답변하세요:
 - etf_search: ETF 이름/코드 검색 (예: 'KODEX' → KODEX ETF 목록). 사용자가 "다 찾아줘/전부/모두" 요청 시 limit=50으로 호출
 - stock_search: 종목 이름으로 종목코드를 검색 (예: '삼성전자' → '005930'). 사용자가 전체 조회 요청 시 limit=50으로 호출
-- list_tags: 사용 가능한 태그/테마 목록 조회 (정확한 태그명 확인용)
+- list_tags: 사용 가능한 태그/테마/섹터 목록 조회 (정확한 태그명 확인용)
 - get_etf_info: ETF 메타 정보 종합 조회 (기본정보, 운용사, 태그, 상위 보유종목, 최근 수익률)
 - find_similar_etfs: 특정 ETF와 유사한 ETF 조회 (보유종목 비중 겹침 유사도)
 - get_holdings_changes: ETF 보유종목 비중 변화 조회 (전거래일/1주/1개월 비교)
@@ -562,7 +563,7 @@ SYSTEM_PROMPT = """당신은 ETF Atlas의 AI 어시스턴트입니다. 한국 ET
 
 사용 순서:
 1. 종목명이 나오면 stock_search로 코드를 먼저 확인
-2. 태그/테마가 나오면 list_tags로 정확한 태그명을 먼저 확인
+2. 태그/테마/섹터가 나오면 아래 '사용 가능한 태그 목록'에서 정확한 태그명을 확인 (list_tags 호출 불필요)
 3. ETF명이 나오면 etf_search로 코드를 먼저 확인
 4. 확인된 코드/태그명으로 적절한 전용 도구 실행
 5. ETF 비교 질문은 compare_etfs 사용
@@ -584,7 +585,19 @@ SYSTEM_PROMPT = """당신은 ETF Atlas의 AI 어시스턴트입니다. 한국 ET
 class ChatService:
     def __init__(self, db: Session):
         self.db = db
+        self._tag_names = self._load_tag_names()
+        self._embedding_service = EmbeddingService(db)
+        self._embedding_service.seed_if_empty()
         self._init_agent()
+
+    def _load_tag_names(self) -> List[str]:
+        """그래프 DB에서 태그 목록을 미리 로드한다."""
+        try:
+            graph_service = GraphService(self.db)
+            tags = graph_service.get_all_tags()
+            return [t["name"] for t in tags] if tags else []
+        except Exception:
+            return []
 
     def _init_agent(self):
         settings = get_settings()
@@ -612,6 +625,15 @@ class ChatService:
 
     def _build_prompt(self, message: str, history: List[Dict[str, str]]) -> str:
         parts = [SYSTEM_PROMPT, ""]
+        if self._tag_names:
+            parts.append(f"## 사용 가능한 태그 목록\n{', '.join(self._tag_names)}\n")
+        # few-shot 예제 주입
+        examples = self._embedding_service.find_similar_examples(message, top_k=3)
+        if examples:
+            parts.append("## 참고 Cypher 쿼리 예시")
+            for ex in examples:
+                parts.append(f"Q: {ex['question']}\n```cypher\n{ex['cypher']}\n```")
+            parts.append("")
         if history:
             parts.append("## 이전 대화:")
             for msg in history[-10:]:

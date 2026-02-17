@@ -259,4 +259,18 @@ export const chatApi = {
   },
 }
 
+// Notification
+export const notificationApi = {
+  getStatus: async () => {
+    const { data } = await api.get<{ has_new: boolean; latest_collected_at: string | null }>(
+      '/notifications/status'
+    )
+    return data
+  },
+  check: async () => {
+    const { data } = await api.post<{ checked_at: string }>('/notifications/check')
+    return data
+  },
+}
+
 export default api

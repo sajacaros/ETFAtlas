@@ -933,6 +933,134 @@ def _compare_holdings(today_h: dict, yesterday_h: dict) -> list:
     return changes
 
 
+def record_collection_run(date_str: str):
+    """collection_runs 테이블에 수집 완료 기록."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "INSERT INTO collection_runs (collected_at) VALUES (%s) "
+            "ON CONFLICT (collected_at) DO NOTHING",
+            (date_str,)
+        )
+        conn.commit()
+        log.info(f"Collection run recorded: {date_str}")
+    finally:
+        cur.close()
+        conn.close()
+
+
+def send_discord_notification(date_str: str):
+    """admin 유저의 즐겨찾기 기반 비중변화를 디스코드로 발송."""
+    import httpx
+    import json
+
+    webhook_url = os.environ.get('DISCORD_WEBHOOK_URL')
+    if not webhook_url:
+        log.info("DISCORD_WEBHOOK_URL not set — skipping Discord notification")
+        return
+
+    conn = get_db_connection()
+    cur = init_age(conn)
+
+    try:
+        # admin 유저 조회
+        results = execute_cypher(cur, """
+            MATCH (u:User {role: 'admin'})-[:WATCHES]->(e:ETF)
+            RETURN {user_id: u.user_id, etf_code: e.code, etf_name: e.name}
+        """, {})
+
+        if not results:
+            log.info("No admin watches found — skipping Discord notification")
+            return
+
+        watches = []
+        for row in results:
+            raw = _parse_age_value(row[0])
+            data = json.loads(raw)
+            watches.append(data)
+
+        # 전일 HOLDS 날짜 조회
+        if watches:
+            first_etf = watches[0]['etf_code']
+            prev_results = execute_cypher(cur, """
+                MATCH (e:ETF {code: $code})-[h:HOLDS]->(:Stock)
+                WITH DISTINCT h.date as d
+                WHERE d < $date
+                RETURN {date: d}
+                ORDER BY d DESC
+                LIMIT 1
+            """, {'code': first_etf, 'date': date_str})
+            prev_date = None
+            if prev_results:
+                raw = _parse_age_value(prev_results[0][0])
+                prev_data = json.loads(raw)
+                prev_date = prev_data.get('date')
+
+        if not prev_date:
+            log.info("No previous date found — skipping Discord notification")
+            return
+
+        # ETF별 비중변화 수집
+        changes_summary = []
+        for w in watches:
+            etf_code = w['etf_code']
+            etf_name = w['etf_name']
+
+            # 현재 날짜 holdings
+            today_h = _query_holdings(cur, etf_code, date_str)
+            prev_h = _query_holdings(cur, etf_code, prev_date)
+
+            if not today_h or not prev_h:
+                continue
+
+            etf_changes = []
+            all_codes = set(today_h.keys()) | set(prev_h.keys())
+            for code in all_codes:
+                curr = today_h.get(code)
+                prev = prev_h.get(code)
+                cw = curr['weight'] if curr else 0
+                pw = prev['weight'] if prev else 0
+                diff = cw - pw
+
+                if abs(diff) <= 3:
+                    continue
+
+                if curr and not prev:
+                    ct = "신규편입"
+                elif prev and not curr:
+                    ct = "편출"
+                elif diff > 0:
+                    ct = "증가"
+                else:
+                    ct = "감소"
+
+                name = (curr or prev)['name']
+                etf_changes.append(f"  {ct} {name}: {pw:.1f}% → {cw:.1f}% ({diff:+.1f}%p)")
+
+            if etf_changes:
+                changes_summary.append(f"**{etf_name}** ({etf_code})\n" + "\n".join(etf_changes))
+
+        if not changes_summary:
+            log.info("No significant changes — skipping Discord notification")
+            return
+
+        # 디스코드 메시지 발송
+        message = f"📊 **ETF 비중 변화 알림** ({date_str})\n\n" + "\n\n".join(changes_summary)
+
+        with httpx.Client() as client:
+            resp = client.post(webhook_url, json={"content": message})
+            resp.raise_for_status()
+
+        log.info(f"Discord notification sent: {len(changes_summary)} ETFs with changes")
+
+    except Exception as e:
+        log.warning(f"Discord notification failed: {e}")
+    finally:
+        cur.close()
+        conn.close()
+
+
 def update_etf_returns():
     """ETF 1D/1W/1M 수익률 계산 및 저장."""
     import json

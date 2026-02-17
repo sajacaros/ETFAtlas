@@ -104,6 +104,15 @@ CREATE TABLE IF NOT EXISTS portfolio_snapshots (
     CONSTRAINT uq_portfolio_snapshot_date UNIQUE (portfolio_id, date)
 );
 
+-- Collection Runs (수집 완료 기록)
+CREATE TABLE IF NOT EXISTS collection_runs (
+    id SERIAL PRIMARY KEY,
+    collected_at DATE NOT NULL UNIQUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_notification_checked_at TIMESTAMP;
+
 -- Ticker Prices (실시간 현재가 캐시 - 티커별 하루 1건)
 CREATE TABLE IF NOT EXISTS ticker_prices (
     ticker     VARCHAR(20)    NOT NULL,

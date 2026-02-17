@@ -112,8 +112,10 @@ export const watchlistApi = {
   remove: async (etfCode: string) => {
     await api.delete(`/watchlist/${etfCode}`)
   },
-  getChanges: async (period = '1d') => {
-    const { data } = await api.get<WatchlistChange[]>('/watchlist/changes', { params: { period } })
+  getChanges: async (period = '1d', baseDate?: string) => {
+    const params: Record<string, string> = { period }
+    if (baseDate) params.base_date = baseDate
+    const { data } = await api.get<WatchlistChange[]>('/watchlist/changes', { params })
     return data
   },
 }

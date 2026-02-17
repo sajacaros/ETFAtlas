@@ -7,7 +7,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Search, PieChart, User, LogOut, MessageCircle } from 'lucide-react'
+import { Search, PieChart, User, LogOut, MessageCircle, Bell } from 'lucide-react'
 
 export default function Header() {
   const { user, isAuthenticated, logout } = useAuth()
@@ -33,6 +33,13 @@ export default function Header() {
             >
               <PieChart className="w-4 h-4" />
               포트폴리오
+            </Link>
+            <Link
+              to="/watchlist/changes"
+              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+            >
+              <Bell className="w-4 h-4" />
+              비중 변화
             </Link>
             <Link
               to="/chat"

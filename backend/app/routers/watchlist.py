@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from typing import List
 from sqlalchemy.orm import Session
@@ -39,6 +39,50 @@ async def get_watches(
         )
         for item in items
     ]
+
+
+class WatchlistChangeResponse(BaseModel):
+    etf_code: str
+    etf_name: str
+    stock_code: str
+    stock_name: str
+    change_type: str
+    current_weight: float
+    previous_weight: float
+    weight_change: float
+
+
+@router.get("/changes", response_model=List[WatchlistChangeResponse])
+async def get_watchlist_changes(
+    period: str = Query("1d", pattern="^(1d|1w|1m)$"),
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """즐겨찾기 ETF들의 보유종목 비중 변화 조회 (unchanged 제외)"""
+    graph = GraphService(db)
+    watched = graph.get_user_watches(user_id)
+
+    results = []
+    for item in watched:
+        etf_code = item["etf_code"]
+        etf_name = item["etf_name"]
+        changes = graph.get_etf_holdings_changes(etf_code, period)
+        for c in changes:
+            if c["change_type"] == "unchanged":
+                continue
+            results.append(WatchlistChangeResponse(
+                etf_code=etf_code,
+                etf_name=etf_name,
+                stock_code=c["stock_code"],
+                stock_name=c["stock_name"],
+                change_type=c["change_type"],
+                current_weight=c["current_weight"],
+                previous_weight=c["previous_weight"],
+                weight_change=c["weight_change"],
+            ))
+
+    results.sort(key=lambda x: abs(x.weight_change), reverse=True)
+    return results
 
 
 @router.get("/codes", response_model=List[str])

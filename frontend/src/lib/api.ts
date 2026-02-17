@@ -6,6 +6,7 @@ import type {
   HoldingChange,
   Price,
   WatchlistItem,
+  WatchlistChange,
   Portfolio,
   PortfolioDetail,
   TargetAllocationItem,
@@ -110,6 +111,10 @@ export const watchlistApi = {
   },
   remove: async (etfCode: string) => {
     await api.delete(`/watchlist/${etfCode}`)
+  },
+  getChanges: async (period = '1d') => {
+    const { data } = await api.get<WatchlistChange[]>('/watchlist/changes', { params: { period } })
+    return data
   },
 }
 

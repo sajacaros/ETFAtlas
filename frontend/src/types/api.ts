@@ -177,6 +177,18 @@ export interface ChatResponse {
   steps: ChatStep[]
 }
 
+// Watchlist change types
+export interface WatchlistChange {
+  etf_code: string
+  etf_name: string
+  stock_code: string
+  stock_name: string
+  change_type: 'added' | 'removed' | 'increased' | 'decreased'
+  current_weight: number
+  previous_weight: number
+  weight_change: number
+}
+
 // Similar ETF types
 export interface SimilarETF {
   etf_code: string

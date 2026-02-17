@@ -7,6 +7,7 @@ import ETFDetailPage from './app/ETFDetailPage'
 import ChatPage from './app/ChatPage'
 import PortfolioPage from './app/PortfolioPage'
 import PortfolioDashboardPage from './app/PortfolioDashboardPage'
+import WatchlistChangesPage from './app/WatchlistChangesPage'
 import LoginPage from './app/LoginPage'
 import AuthCallbackPage from './app/AuthCallbackPage'
 import { Toaster } from './components/ui/toaster'
@@ -24,6 +25,7 @@ function App() {
             <Route path="/portfolio" element={<PortfolioPage />} />
             <Route path="/portfolio/dashboard" element={<PortfolioDashboardPage />} />
             <Route path="/portfolio/:id/dashboard" element={<PortfolioDashboardPage />} />
+            <Route path="/watchlist/changes" element={<WatchlistChangesPage />} />
             <Route path="/chat" element={<ChatPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/auth/callback" element={<AuthCallbackPage />} />

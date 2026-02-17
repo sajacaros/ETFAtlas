@@ -102,14 +102,17 @@ def sync_stock_prices(**context):
 
 
 def record_and_notify(**context):
-    """수집 완료 기록 + 디스코드 알림."""
+    """수집 완료 기록 + 디스코드 알림. 이미 기록된 날짜면 스킵."""
     dates = context['ti'].xcom_pull(task_ids='fetch_trading_dates')
     if not dates:
         return
     last_date = dates[-1]
     date_str = f"{last_date[:4]}-{last_date[4:6]}-{last_date[6:8]}"
-    record_collection_run(date_str)
-    send_discord_notification(date_str)
+    is_new = record_collection_run(date_str)
+    if is_new:
+        send_discord_notification(date_str)
+    else:
+        log.info(f"Already recorded {date_str} — skipping Discord notification")
 
 
 def sync_returns(**context):

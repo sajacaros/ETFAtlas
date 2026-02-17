@@ -789,8 +789,11 @@ def collect_stock_prices_for_dates(dates: list[str]):
     log.info(f"Stock prices complete: {total_success} records")
 
 
-def record_collection_run(date_str: str):
-    """collection_runs 테이블에 수집 완료 기록 + pg_notify 발행."""
+def record_collection_run(date_str: str) -> bool:
+    """collection_runs 테이블에 수집 완료 기록 + pg_notify 발행.
+
+    Returns: True if new record inserted, False if already existed.
+    """
     conn = get_db_connection()
     cur = conn.cursor()
     try:
@@ -799,9 +802,14 @@ def record_collection_run(date_str: str):
             "ON CONFLICT (collected_at) DO NOTHING",
             (date_str,)
         )
-        cur.execute("NOTIFY new_collection, %s", (date_str,))
+        inserted = cur.rowcount > 0
+        if inserted:
+            cur.execute("NOTIFY new_collection, %s", (date_str,))
+            log.info(f"Collection run recorded + notified: {date_str}")
+        else:
+            log.info(f"Collection run already exists: {date_str} — skipping notify")
         conn.commit()
-        log.info(f"Collection run recorded + notified: {date_str}")
+        return inserted
     finally:
         cur.close()
         conn.close()

@@ -16,7 +16,6 @@ import logging
 from age_utils import (
     get_db_connection, init_age, execute_cypher_batch,
     get_business_days, get_last_collected_date, get_etf_codes_from_age,
-    get_previous_holds_date,
     collect_universe_and_prices, collect_holdings_for_dates,
     collect_stock_prices_for_dates,
     record_collection_run, send_discord_notification,

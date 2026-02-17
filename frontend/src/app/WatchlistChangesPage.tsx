@@ -15,15 +15,24 @@ import {
 } from '@/components/ui/table'
 import { watchlistApi } from '@/lib/api'
 import { useAuth } from '@/hooks/useAuth'
+import { useNotification } from '@/hooks/useNotification'
 import type { WatchlistChange } from '@/types/api'
 
 export default function WatchlistChangesPage() {
   const { isAuthenticated } = useAuth()
+  const { markChecked } = useNotification()
   const [changes, setChanges] = useState<WatchlistChange[]>([])
   const [period, setPeriod] = useState<'1d' | '1w' | '1m'>('1d')
   const [baseDate, setBaseDate] = useState('')
   const [filter, setFilter] = useState<'all' | 'increased' | 'decreased'>('all')
   const [loading, setLoading] = useState(true)
+
+  // 페이지 진입 시 알림 확인 처리
+  useEffect(() => {
+    if (isAuthenticated) {
+      markChecked()
+    }
+  }, [isAuthenticated, markChecked])
 
   useEffect(() => {
     if (!isAuthenticated) {

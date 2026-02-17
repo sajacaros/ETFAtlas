@@ -1,5 +1,6 @@
 import { Routes, Route } from 'react-router-dom'
 import { AuthProvider } from './hooks/useAuth'
+import { NotificationProvider } from './hooks/useNotification'
 import { AmountVisibilityProvider } from './hooks/useAmountVisibility'
 import Header from './components/Header'
 import HomePage from './app/HomePage'
@@ -15,6 +16,7 @@ import { Toaster } from './components/ui/toaster'
 function App() {
   return (
     <AuthProvider>
+      <NotificationProvider>
       <AmountVisibilityProvider>
       <div className="min-h-screen bg-background">
         <Header />
@@ -34,6 +36,7 @@ function App() {
         <Toaster />
       </div>
       </AmountVisibilityProvider>
+      </NotificationProvider>
     </AuthProvider>
   )
 }

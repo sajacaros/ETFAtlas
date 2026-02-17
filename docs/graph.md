@@ -27,34 +27,44 @@ RDB JOIN으로도 가능하지만, 그래프는 관계 탐색이 직관적이고
                     │  {name}  │
                     └────▲─────┘
                          │ MANAGED_BY
-                    ┌────┴─────┐          ┌──────────┐
-                    │   ETF    │──HOLDS──▶│  Stock   │
-                    │{code,    │          │{code,    │
-                    │ name,    │          │ name,    │
-                    │ updated} │          │ is_etf}  │
-                    └────┬─────┘          └────┬─────┘
-                         │ HAS_CHANGE          │ BELONGS_TO
-                    ┌────▼─────┐          ┌────▼─────┐
-                    │  Change  │          │  Sector  │
-                    │{id,      │          │  {name}  │
-                    │ stock_code,│         └────┬─────┘
-                    │ change_type,│             │ PART_OF
-                    │ weight..} │          ┌────▼─────┐
-                    └──────────┘          │  Market  │
-                                          │  {name}  │
-                                          └──────────┘
+┌──────────┐        ┌────┴─────┐          ┌──────────┐
+│   User   │─WATCHES│   ETF    │──HOLDS──▶│  Stock   │
+│{user_id, │  ─────▶│{code,    │          │{code,    │
+│ role}    │        │ name,    │          │ name,    │
+└──────────┘        │ expense_ratio,│     │ is_etf}  │
+                    │ net_assets,│         └────┬─────┘
+                    │ close_price,│             │ HAS_PRICE
+                    │ return_1d/1w/1m,│    ┌────▼─────┐
+                    │ market_cap_│     │  Price   │
+                    │  change_1w}│     │{date,    │
+                    └─┬───┬─────┘     │ open/high│
+                      │   │ TAGGED    │ /low/close,│
+                      │   │           │ volume,  │
+                 HAS_ │   ▼           │ nav, ...}│
+                CHANGE│ ┌──────┐      └──────────┘
+                      │ │ Tag  │            ▲
+                      │ │{name}│            │ HAS_PRICE
+                      │ └──────┘            │
+                 ┌────▼─────┐          (Stock에서도
+                 │  Change  │           HAS_PRICE
+                 │{id,      │           연결)
+                 │ stock_code,│
+                 │ change_type,│
+                 │ weight..} │
+                 └──────────┘
 ```
 
 ### 노드
 
 | 라벨 | 속성 | 생성 주체 | 설명 |
 |------|------|-----------|------|
-| ETF | code, name, updated_at | DAG: collect_etf_metadata | ETF 종목 |
-| Stock | code, name, is_etf | DAG: collect_holdings | 보유 종목 (ETF인 경우 is_etf=true) |
-| Company | name | DAG: collect_etf_metadata | 운용사 (삼성자산운용 등) |
-| Sector | name | DAG: collect_holdings | 업종 (반도체, 자동차 등) |
-| Market | name | DAG: collect_holdings | 시장 (KOSPI, KOSDAQ) |
-| Change | id, stock_code, stock_name, change_type, before_weight, after_weight, weight_change, detected_at | DAG: detect_portfolio_changes | 보유종목 변동 이벤트 |
+| ETF | code, name, expense_ratio, net_assets, close_price, return_1d, return_1w, return_1m, market_cap_change_1w, updated_at | DAG: collect_universe_and_prices, update_etf_returns | ETF 종목 |
+| Stock | code, name, is_etf | DAG: collect_holdings_for_dates | 보유 종목 (ETF인 경우 is_etf=true) |
+| Company | name | DAG: collect_universe_and_prices | 운용사 (삼성자산운용 등) |
+| Tag | name | DAG: age_tagging | 테마/분류 태그 (반도체, AI 등) |
+| Price | date, open, high, low, close, volume, nav, market_cap, net_assets, trade_value, change_rate | DAG: collect_universe_and_prices, collect_stock_prices_for_dates | 일별 가격 데이터 |
+| Change | id, stock_code, stock_name, change_type, before_weight, after_weight, weight_change, detected_at | Backend: weight change detection | 보유종목 변동 이벤트 |
+| User | user_id, role | Backend: graph_service | 사용자 (role: member/admin) |
 
 ### 관계(엣지)
 
@@ -62,9 +72,10 @@ RDB JOIN으로도 가능하지만, 그래프는 관계 탐색이 직관적이고
 |------|------|------|------|
 | MANAGED_BY | ETF → Company | - | 운용사 관계 |
 | HOLDS | ETF → Stock | date, weight, shares | 보유종목 (날짜별 스냅샷) |
-| BELONGS_TO | Stock → Sector | - | 업종 분류 |
-| PART_OF | Sector → Market | - | 시장 구분 |
+| TAGGED | ETF → Tag | - | 테마/분류 태그 |
+| HAS_PRICE | ETF/Stock → Price | - | 일별 가격 연결 |
 | HAS_CHANGE | ETF → Change | - | 변동 이력 |
+| WATCHES | User → ETF | added_at | 즐겨찾기 |
 
 ## Cypher 쿼리 실행 방식
 
@@ -79,28 +90,27 @@ SET search_path = ag_catalog, "$user", public;
 
 -- Cypher 실행
 SELECT * FROM cypher('etf_graph', $$
-    MATCH (e:ETF {code: '069500'})-[:HOLDS]->(s:Stock)
-    RETURN s.code, s.name, s.weight
-$$) AS (code agtype, name agtype, weight agtype);
+    MATCH (e:ETF {code: '069500'})-[h:HOLDS]->(s:Stock)
+    WITH s, h ORDER BY h.date DESC
+    WITH s, head(collect(h)) as latest
+    RETURN {stock_code: s.code, stock_name: s.name, weight: latest.weight}
+    ORDER BY latest.weight DESC LIMIT 10
+$$) AS (result agtype);
 ```
 
 ### 백엔드 실행 (graph_service.py)
 
-SQLAlchemy를 통해 실행한다:
+SQLAlchemy를 통해 실행한다. 콜론 이스케이프 + 파라미터 수동 치환:
 
 ```python
 class GraphService:
     def execute_cypher(self, query: str, params: Dict = None) -> List[Dict]:
-        full_query = (
-            "SET search_path = ag_catalog, \"$user\", public; "
-            "LOAD 'age'; "
-            f"SELECT * FROM cypher('etf_graph', $$ {query} $$) as (result agtype);"
-        )
-        result = self.db.execute(text(full_query), params or {})
-        return [dict(row._mapping) for row in result]
+        # 1) $param → 실제 값으로 치환
+        # 2) 콜론 이스케이프 (:ETF → \:ETF) — SQLAlchemy 바인드 파라미터 충돌 방지
+        # 3) RETURN은 반드시 단일 맵으로 감싸기: RETURN {key1: val1, key2: val2}
 ```
 
-### DAG 실행 (etf_daily_etl.py)
+### DAG 실행 (age_utils.py)
 
 psycopg2 커서로 직접 실행한다. AGE 버그로 인해 `MERGE`와 `SET`을 분리하여 2단계로 수행:
 
@@ -120,92 +130,98 @@ execute_cypher(cur, """
 
 ## 주요 쿼리 패턴
 
-### 1. 유사 ETF 탐색
-
-보유종목 겹침 수(overlap)로 유사도를 측정한다.
+### 1. ETF 최신 보유종목 (날짜별 HOLDS 엣지에서 최신만)
 
 ```cypher
-MATCH (e1:ETF {code: $etf_code})-[:HOLDS]->(s:Stock)<-[:HOLDS]-(e2:ETF)
-WHERE e1 <> e2
-WITH e2, COUNT(s) as overlap
+MATCH (e:ETF {code: $etf_code})-[h:HOLDS]->(s:Stock)
+WITH s, h ORDER BY h.date DESC
+WITH s, head(collect(h)) as latest
+RETURN {stock_code: s.code, stock_name: s.name, weight: latest.weight}
+ORDER BY latest.weight DESC LIMIT 10
+```
+
+### 2. 유사 ETF 탐색
+
+보유종목 비중 겹침(min overlap)으로 유사도를 측정한다.
+
+```cypher
+MATCH (e1:ETF {code: $etf_code})-[h1:HOLDS]->(s:Stock)
+WITH e1, s, h1 ORDER BY h1.date DESC
+WITH e1, s, head(collect(h1)) as latest1
+MATCH (e2:ETF)-[h2:HOLDS]->(s) WHERE e1 <> e2
+WITH e2, s, latest1, h2 ORDER BY h2.date DESC
+WITH e2, s, latest1, head(collect(h2)) as latest2
+WITH e2, COUNT(s) as overlap,
+     SUM(CASE WHEN latest1.weight < latest2.weight THEN latest1.weight ELSE latest2.weight END) as similarity
 WHERE overlap >= $min_overlap
-RETURN e2.code as etf_code, overlap
-ORDER BY overlap DESC
-LIMIT 10
+RETURN {etf_code: e2.code, name: e2.name, overlap: overlap, similarity: similarity}
+ORDER BY similarity DESC LIMIT 5
 ```
 
-**API:** `GET /etfs/{code}/similar?min_overlap=5`
-
-### 2. 종목 보유 ETF 조회 (역추적)
-
-특정 종목을 보유한 모든 ETF를 비중 순으로 반환한다.
+### 3. 종목 보유 ETF 조회 (역추적)
 
 ```cypher
-MATCH (e:ETF)-[r:HOLDS]->(s:Stock {code: $stock_code})
-RETURN e.code as etf_code, r.weight as weight
-ORDER BY r.weight DESC
+MATCH (e:ETF)-[h:HOLDS]->(s:Stock {code: $stock_code})
+WITH e, h ORDER BY h.date DESC
+WITH e, head(collect(h)) as latest
+RETURN {etf_code: e.code, etf_name: e.name, weight: latest.weight}
+ORDER BY latest.weight DESC
 ```
 
-### 3. 두 ETF 공통 보유종목
+### 4. 태그별 ETF 조회
 
 ```cypher
-MATCH (e1:ETF {code: $etf_code1})-[:HOLDS]->(s:Stock)<-[:HOLDS]-(e2:ETF {code: $etf_code2})
-RETURN s.code as stock_code
+MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '반도체'})
+RETURN {code: e.code, name: e.name, expense_ratio: e.expense_ratio}
 ```
 
-### 4. 종목 노출도 (ETF 편입 현황)
-
-해당 종목이 몇 개의 ETF에 포함되어 있는지, 평균 비중은 얼마인지 조회한다.
+### 5. 운용사별 ETF
 
 ```cypher
-MATCH (e:ETF)-[r:HOLDS]->(s:Stock {code: $stock_code})
-RETURN COUNT(e) as etf_count, AVG(r.weight) as avg_weight
+MATCH (e:ETF)-[:MANAGED_BY]->(c:Company)
+WHERE c.name CONTAINS '삼성'
+RETURN {code: e.code, name: e.name, company: c.name}
 ```
 
-### 5. 포트폴리오 변동 감지 (DAG)
-
-전일 대비 보유종목을 비교하여 Change 노드를 생성한다.
+### 6. ETF 가격 조회 (Price 노드)
 
 ```cypher
--- 오늘 보유종목
-MATCH (e:ETF {code: $etf_code})-[h:HOLDS {date: $date}]->(s:Stock)
-RETURN s.code as stock_code, s.name as stock_name, h.weight as weight
-
--- 변동 기록
-MATCH (e:ETF {code: $etf_code})
-CREATE (c:Change {
-    id: $change_id,
-    stock_code: $stock_code,
-    stock_name: $stock_name,
-    change_type: $change_type,
-    before_weight: $before_weight,
-    after_weight: $after_weight,
-    weight_change: $weight_change,
-    detected_at: $detected_at
-})
-CREATE (e)-[:HAS_CHANGE]->(c)
-RETURN c
+MATCH (e:ETF {code: $etf_code})-[:HAS_PRICE]->(p:Price)
+WHERE p.date >= $start_date AND p.date <= $end_date
+RETURN {date: p.date, close: p.close, volume: p.volume,
+        market_cap: p.market_cap, net_assets: p.net_assets}
+ORDER BY p.date
 ```
 
-### 6. ETF-종목 관계 생성/갱신
+### 7. Stock 가격 조회
 
 ```cypher
-MERGE (e:ETF {code: $etf_code})
-MERGE (s:Stock {code: $stock_code})
-MERGE (e)-[r:HOLDS]->(s)
-SET r.weight = $weight
-RETURN e, r, s
+MATCH (s:Stock {code: $stock_code})-[:HAS_PRICE]->(p:Price)
+WHERE p.date >= $start_date AND p.date <= $end_date
+RETURN {date: p.date, open: p.open, high: p.high, low: p.low,
+        close: p.close, volume: p.volume, change_rate: p.change_rate}
+ORDER BY p.date
+```
+
+### 8. 사용자 즐겨찾기
+
+```cypher
+MATCH (u:User {user_id: $user_id})-[r:WATCHES]->(e:ETF)
+RETURN {etf_code: e.code, etf_name: e.name, added_at: r.added_at}
+ORDER BY r.added_at DESC
 ```
 
 ## 그래프 vs RDB 역할 분담
 
 | 데이터 | 저장소 | 이유 |
 |--------|--------|------|
-| ETF-종목 관계, 운용사, 섹터 | AGE (그래프) | 관계 탐색, 패턴 매칭 |
-| ETF 메타데이터 (검색용) | RDB (`etfs`) | pg_trgm 텍스트 검색 |
-| 시계열 가격 데이터 | RDB (`etf_prices`, `stock_prices`) | 시간순 정렬, 집계 쿼리 |
-| 사용자 데이터 | RDB (`users`, `portfolios` 등) | CRUD, 트랜잭션 |
-| 벡터 임베딩 | RDB (`etf_embeddings`) | pgvector 유사도 검색 |
+| ETF-종목 관계, 운용사, 태그 | AGE (그래프) | 관계 탐색, 패턴 매칭 |
+| ETF/Stock 가격 시계열 | AGE (Price 노드) | HAS_PRICE 관계로 ETF/Stock에 연결 |
+| 사용자 즐겨찾기 | AGE (WATCHES 관계) | 그래프 관계로 직접 조회 |
+| 사용자 인증 데이터 | RDB (`users`) | CRUD, 트랜잭션 |
+| 포트폴리오 | RDB (`portfolios`, `holdings`) | CRUD, 트랜잭션 |
+| 포트폴리오 스냅샷 | RDB (`portfolio_snapshots`) | 시계열 집계 |
+| 수집 이력 | RDB (`collection_runs`) | pg_notify 트리거 |
 
 ## 초기화 및 설정
 
@@ -243,7 +259,8 @@ SET search_path = ag_catalog, "$user", public;
 ## 알려진 제약 및 주의사항
 
 1. **MERGE + SET 분리**: AGE 1.5.0에서 `MERGE ... SET`을 한 쿼리로 실행하면 오류 발생. 반드시 2단계로 분리.
-2. **파라미터 바인딩**: AGE의 Cypher는 SQL 바인드 변수를 직접 지원하지 않아 문자열 치환으로 처리 (SQL 인젝션 주의, 내부 사용만 가정).
-3. **반환 타입**: 모든 Cypher 결과는 `agtype`으로 반환되어 파싱 필요.
-4. **날짜별 HOLDS 엣지**: 같은 ETF-Stock 쌍이라도 날짜마다 별도 엣지가 생성되어 시간에 따른 이력이 쌓인다.
-5. **변동 감지**: 전일 = 단순 -1일 계산으로, 휴장일은 미고려 (향후 개선 필요).
+2. **콜론 이스케이프**: SQLAlchemy `text()` 사용 시 Cypher의 `:ETF`, `[:HOLDS]` 등을 `\:` 로 이스케이프해야 한다.
+3. **파라미터 치환**: Cypher `$param`과 SQLAlchemy `:param`이 충돌. 수동으로 `$param` 값을 쿼리 문자열에 삽입하여 처리.
+4. **단일 맵 반환**: `execute_cypher`는 `(result agtype)` 컬럼 하나만 반환. 다중 RETURN 값은 `RETURN {key1: val1, key2: val2}` 맵으로 감싸야 한다.
+5. **반환 타입**: 모든 Cypher 결과는 `agtype`으로 반환되어 `parse_agtype()` 파싱 필요.
+6. **날짜별 HOLDS 엣지**: 같은 ETF-Stock 쌍이라도 날짜마다 별도 엣지가 생성되어 시간에 따른 이력이 쌓인다. 최신 데이터 조회 시 `ORDER BY h.date DESC` + `head(collect(h))` 패턴 사용.

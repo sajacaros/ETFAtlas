@@ -15,7 +15,7 @@ from age_utils import (
     get_db_connection, init_age, execute_cypher,
     get_business_days, get_etf_codes_from_age,
     collect_universe_and_prices, collect_holdings_for_dates,
-    collect_stock_prices_for_dates, detect_changes_for_dates,
+    collect_stock_prices_for_dates,
     update_etf_returns,
 )
 
@@ -49,7 +49,7 @@ def get_dates(**context):
 
 
 def cleanup_graph(**context):
-    """기존 HOLDS 엣지 및 Change 노드 삭제 (백필 전 초기화).
+    """기존 HOLDS 엣지 삭제 (백필 전 초기화).
 
     이어서 수집 시(HOLDS 데이터가 이미 존재) cleanup을 건너뜀.
     """
@@ -73,14 +73,6 @@ def cleanup_graph(**context):
         """)
         conn.commit()
         log.info("Deleted all existing HOLDS edges")
-
-        execute_cypher(cur, """
-            MATCH (c:Change)
-            DETACH DELETE c
-            RETURN count(*)
-        """)
-        conn.commit()
-        log.info("Deleted all existing Change nodes")
     finally:
         cur.close()
         conn.close()
@@ -139,16 +131,6 @@ def backfill_stock_prices(**context):
     collect_stock_prices_for_dates(dates)
 
 
-def backfill_changes(**context):
-    dates = context['ti'].xcom_pull(task_ids='get_dates')
-    if not dates:
-        return
-    # change detection은 전체 날짜 필요 (연속 비교), 이미 감지된 날짜는
-    # detect_changes_for_dates 내부에서 중복 생성하지 않으므로 전체 전달
-    etf_codes = list(get_etf_codes_from_age())
-    detect_changes_for_dates(etf_codes, dates)
-
-
 def backfill_returns(**context):
     update_etf_returns()
     log.info("Backfill complete. Run 'age_tagging' DAG to apply ETF tags.")
@@ -167,10 +149,7 @@ t4 = PythonOperator(task_id='backfill_holds',
 t5 = PythonOperator(task_id='backfill_stock_prices',
                      python_callable=backfill_stock_prices,
                      execution_timeout=timedelta(hours=3), dag=dag)
-t6 = PythonOperator(task_id='backfill_changes',
-                     python_callable=backfill_changes,
-                     execution_timeout=timedelta(hours=3), dag=dag)
-t7 = PythonOperator(task_id='backfill_returns',
+t6 = PythonOperator(task_id='backfill_returns',
                      python_callable=backfill_returns, dag=dag)
 
-t1 >> t2 >> t3 >> t4 >> [t5, t6] >> t7
+t1 >> t2 >> t3 >> t4 >> t5 >> t6

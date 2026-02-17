@@ -790,7 +790,7 @@ def collect_stock_prices_for_dates(dates: list[str]):
 
 
 def record_collection_run(date_str: str):
-    """collection_runs 테이블에 수집 완료 기록."""
+    """collection_runs 테이블에 수집 완료 기록 + pg_notify 발행."""
     conn = get_db_connection()
     cur = conn.cursor()
     try:
@@ -799,8 +799,9 @@ def record_collection_run(date_str: str):
             "ON CONFLICT (collected_at) DO NOTHING",
             (date_str,)
         )
+        cur.execute("NOTIFY new_collection, %s", (date_str,))
         conn.commit()
-        log.info(f"Collection run recorded: {date_str}")
+        log.info(f"Collection run recorded + notified: {date_str}")
     finally:
         cur.close()
         conn.close()

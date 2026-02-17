@@ -255,8 +255,11 @@ class GraphService:
         rows = self.execute_cypher(query, {"etf_code": etf_code})
         return [self.parse_agtype(row["result"]) for row in rows]
 
-    def _get_holdings_at(self, etf_code: str, target_date: str = None) -> Dict[str, Dict]:
-        """특정 날짜의 보유종목 조회. target_date 이전 가장 가까운 거래일 데이터를 사용."""
+    def _get_holdings_at(self, etf_code: str, target_date: str = None) -> tuple[Dict[str, Dict], str | None]:
+        """특정 날짜의 보유종목 조회. target_date 이전 가장 가까운 거래일 데이터를 사용.
+
+        Returns: (holdings_dict, actual_date) 튜플
+        """
         if target_date:
             # target_date 이전 가장 최근 거래일 찾기
             date_query = """
@@ -280,7 +283,7 @@ class GraphService:
             date_rows = self.execute_cypher(date_query, {"etf_code": etf_code})
 
         if not date_rows:
-            return {}
+            return {}, None
 
         exact_date = self.parse_agtype(date_rows[0]["result"])["date"]
         query = """
@@ -289,7 +292,8 @@ class GraphService:
         RETURN {stock_code: s.code, stock_name: s.name, weight: h.weight}
         """
         rows = self.execute_cypher(query, {"etf_code": etf_code, "exact_date": exact_date})
-        return {r["stock_code"]: r for r in [self.parse_agtype(row["result"]) for row in rows]}
+        holdings = {r["stock_code"]: r for r in [self.parse_agtype(row["result"]) for row in rows]}
+        return holdings, exact_date
 
     def _get_prev_trading_date(self, etf_code: str, base_date: str = None) -> str | None:
         """base_date 이전의 가장 최근 거래일 조회. base_date=None이면 전체에서 두 번째로 최신."""
@@ -318,22 +322,25 @@ class GraphService:
             return dates[1] if len(dates) >= 2 else None
 
     def get_etf_holdings_changes(self, etf_code: str, period: str = "1d", base_date: str = None) -> List[Dict]:
-        """ETF 보유종목 비중 변화. period: 1d/1w/1m, base_date: 기준일(None이면 최신)"""
+        """ETF 보유종목 비중 변화. period: 1d/1w/1m, base_date: 기준일(None이면 마지막 거래일)"""
         from datetime import date, timedelta
 
-        current = self._get_holdings_at(etf_code, base_date)
+        current, actual_date = self._get_holdings_at(etf_code, base_date)
 
-        ref = date.fromisoformat(base_date) if base_date else date.today()
+        if not actual_date:
+            return []
+
+        ref = date.fromisoformat(actual_date)
         if period == "1d":
-            prev_date = self._get_prev_trading_date(etf_code, base_date)
+            prev_date = self._get_prev_trading_date(etf_code, actual_date)
         elif period == "1w":
             prev_date = (ref - timedelta(days=7)).isoformat()
         elif period == "1m":
             prev_date = (ref - timedelta(days=30)).isoformat()
         else:
-            prev_date = self._get_prev_trading_date(etf_code, base_date)
+            prev_date = self._get_prev_trading_date(etf_code, actual_date)
 
-        previous = self._get_holdings_at(etf_code, prev_date) if prev_date else {}
+        previous, _ = self._get_holdings_at(etf_code, prev_date) if prev_date else ({}, None)
 
         changes = []
         all_codes = set(current.keys()) | set(previous.keys())

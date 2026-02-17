@@ -1,0 +1,502 @@
+[
+  {
+    "question": "KODEX 200의 보유종목을 알려줘",
+    "cypher": "MATCH (e:ETF {code: '069500'})-[h:HOLDS]->(s:Stock)\nWITH s, h ORDER BY h.date DESC\nWITH s, head(collect(h)) as latest\nRETURN {stock_code: s.code, stock_name: s.name, weight: latest.weight}\nORDER BY latest.weight DESC\nLIMIT 10",
+    "description": "KODEX 200 ETF의 최신 보유종목 상위 10개를 비중 순으로 조회"
+  },
+  {
+    "question": "TIGER 반도체의 전체 보유종목 목록",
+    "cypher": "MATCH (e:ETF {code: '091160'})-[h:HOLDS]->(s:Stock)\nWITH s, h ORDER BY h.date DESC\nWITH s, head(collect(h)) as latest\nRETURN {stock_code: s.code, stock_name: s.name, weight: latest.weight}\nORDER BY latest.weight DESC",
+    "description": "TIGER 반도체 ETF의 최신 전체 보유종목을 비중 순으로 조회"
+  },
+  {
+    "question": "069500 ETF에서 삼성전자 비중이 몇 %야?",
+    "cypher": "MATCH (e:ETF {code: '069500'})-[h:HOLDS]->(s:Stock {code: '005930'})\nWITH s, h ORDER BY h.date DESC\nWITH s, head(collect(h)) as latest\nRETURN {stock_name: s.name, weight: latest.weight}",
+    "description": "KODEX 200 ETF에서 삼성전자의 최신 보유 비중 조회"
+  },
+  {
+    "question": "보유종목이 가장 많은 ETF 상위 5개는?",
+    "cypher": "MATCH (e:ETF)-[h:HOLDS]->(s:Stock)\nWITH e, h, s ORDER BY h.date DESC\nWITH e, s, head(collect(h)) as latest\nWITH e, count(s) as holding_count\nRETURN {etf_code: e.code, etf_name: e.name, holding_count: holding_count}\nORDER BY holding_count DESC\nLIMIT 5",
+    "description": "보유종목 수가 가장 많은 ETF 상위 5개 조회"
+  },
+  {
+    "question": "비중이 10% 이상인 종목을 가진 ETF는?",
+    "cypher": "MATCH (e:ETF)-[h:HOLDS]->(s:Stock)\nWITH e, s, h ORDER BY h.date DESC\nWITH e, s, head(collect(h)) as latest\nWHERE latest.weight >= 10.0\nRETURN {etf_code: e.code, etf_name: e.name, stock_name: s.name, weight: latest.weight}\nORDER BY latest.weight DESC",
+    "description": "최신 보유 비중이 10% 이상인 종목과 해당 ETF 조회"
+  },
+  {
+    "question": "KODEX 200의 상위 5개 보유종목",
+    "cypher": "MATCH (e:ETF {code: '069500'})-[h:HOLDS]->(s:Stock)\nWITH s, h ORDER BY h.date DESC\nWITH s, head(collect(h)) as latest\nRETURN {stock_code: s.code, stock_name: s.name, weight: latest.weight}\nORDER BY latest.weight DESC\nLIMIT 5",
+    "description": "KODEX 200 ETF의 비중 상위 5개 보유종목 조회"
+  },
+  {
+    "question": "TIGER 200의 보유종목 중 비중이 가장 낮은 종목은?",
+    "cypher": "MATCH (e:ETF {code: '102110'})-[h:HOLDS]->(s:Stock)\nWITH s, h ORDER BY h.date DESC\nWITH s, head(collect(h)) as latest\nRETURN {stock_code: s.code, stock_name: s.name, weight: latest.weight}\nORDER BY latest.weight ASC\nLIMIT 1",
+    "description": "TIGER 200 ETF에서 비중이 가장 낮은 보유종목 조회"
+  },
+  {
+    "question": "KODEX 반도체는 몇 개의 종목을 보유하고 있어?",
+    "cypher": "MATCH (e:ETF {code: '091170'})-[h:HOLDS]->(s:Stock)\nWITH s, h ORDER BY h.date DESC\nWITH s, head(collect(h)) as latest\nWITH count(s) as total\nRETURN {holding_count: total}",
+    "description": "KODEX 반도체 ETF의 보유종목 수 조회"
+  },
+  {
+    "question": "ARIRANG 고배당주 ETF의 보유종목 비중 합계는?",
+    "cypher": "MATCH (e:ETF {code: '161510'})-[h:HOLDS]->(s:Stock)\nWITH s, h ORDER BY h.date DESC\nWITH s, head(collect(h)) as latest\nWITH sum(latest.weight) as total_weight\nRETURN {total_weight: total_weight}",
+    "description": "ARIRANG 고배당주 ETF의 전체 보유종목 비중 합계 조회"
+  },
+  {
+    "question": "KBSTAR 200 ETF에서 SK하이닉스의 비중은 얼마야?",
+    "cypher": "MATCH (e:ETF {code: '148020'})-[h:HOLDS]->(s:Stock {code: '000660'})\nWITH s, h ORDER BY h.date DESC\nWITH s, head(collect(h)) as latest\nRETURN {stock_name: s.name, weight: latest.weight}",
+    "description": "KBSTAR 200 ETF에서 SK하이닉스의 최신 보유 비중 조회"
+  },
+  {
+    "question": "HANARO 200 ETF 보유종목 전체를 비중순으로 보여줘",
+    "cypher": "MATCH (e:ETF {code: '293180'})-[h:HOLDS]->(s:Stock)\nWITH s, h ORDER BY h.date DESC\nWITH s, head(collect(h)) as latest\nRETURN {stock_code: s.code, stock_name: s.name, weight: latest.weight}\nORDER BY latest.weight DESC",
+    "description": "HANARO 200 ETF의 전체 보유종목을 비중 내림차순으로 조회"
+  },
+  {
+    "question": "비중이 5% 이상인 종목만 보유한 ETF는 뭐가 있어?",
+    "cypher": "MATCH (e:ETF)-[h:HOLDS]->(s:Stock)\nWITH e, s, h ORDER BY h.date DESC\nWITH e, s, head(collect(h)) as latest\nWITH e, min(latest.weight) as min_weight\nWHERE min_weight >= 5.0\nRETURN {etf_code: e.code, etf_name: e.name, min_weight: min_weight}\nORDER BY min_weight DESC",
+    "description": "모든 보유종목의 비중이 5% 이상인 ETF 조회"
+  },
+  {
+    "question": "TIGER 미국S&P500 ETF의 보유종목 상위 10개",
+    "cypher": "MATCH (e:ETF {code: '360750'})-[h:HOLDS]->(s:Stock)\nWITH s, h ORDER BY h.date DESC\nWITH s, head(collect(h)) as latest\nRETURN {stock_code: s.code, stock_name: s.name, weight: latest.weight}\nORDER BY latest.weight DESC\nLIMIT 10",
+    "description": "TIGER 미국S&P500 ETF의 비중 상위 10개 보유종목 조회"
+  },
+  {
+    "question": "KODEX 2차전지산업의 주요 보유종목은?",
+    "cypher": "MATCH (e:ETF {code: '305720'})-[h:HOLDS]->(s:Stock)\nWITH s, h ORDER BY h.date DESC\nWITH s, head(collect(h)) as latest\nRETURN {stock_code: s.code, stock_name: s.name, weight: latest.weight}\nORDER BY latest.weight DESC\nLIMIT 10",
+    "description": "KODEX 2차전지산업 ETF의 비중 상위 10개 보유종목 조회"
+  },
+  {
+    "question": "TIGER KRX2차전지K-뉴딜 ETF에서 LG에너지솔루션 비중은?",
+    "cypher": "MATCH (e:ETF {code: '364980'})-[h:HOLDS]->(s:Stock {code: '373220'})\nWITH s, h ORDER BY h.date DESC\nWITH s, head(collect(h)) as latest\nRETURN {stock_name: s.name, weight: latest.weight}",
+    "description": "TIGER KRX2차전지K-뉴딜 ETF에서 LG에너지솔루션의 최신 보유 비중 조회"
+  },
+  {
+    "question": "삼성전자를 보유한 ETF 목록을 알려줘",
+    "cypher": "MATCH (e:ETF)-[h:HOLDS]->(s:Stock {code: '005930'})\nWITH e, h ORDER BY h.date DESC\nWITH e, head(collect(h)) as latest\nRETURN {etf_code: e.code, etf_name: e.name, weight: latest.weight}\nORDER BY latest.weight DESC",
+    "description": "삼성전자를 보유한 모든 ETF와 비중을 조회"
+  },
+  {
+    "question": "SK하이닉스를 가장 많이 보유한 ETF는?",
+    "cypher": "MATCH (e:ETF)-[h:HOLDS]->(s:Stock {code: '000660'})\nWITH e, h ORDER BY h.date DESC\nWITH e, head(collect(h)) as latest\nRETURN {etf_code: e.code, etf_name: e.name, weight: latest.weight}\nORDER BY latest.weight DESC\nLIMIT 1",
+    "description": "SK하이닉스를 가장 높은 비중으로 보유한 ETF 조회"
+  },
+  {
+    "question": "삼성전자를 보유한 ETF 수는 몇 개야?",
+    "cypher": "MATCH (e:ETF)-[h:HOLDS]->(s:Stock {code: '005930'})\nWITH e, h ORDER BY h.date DESC\nWITH e, head(collect(h)) as latest\nWITH count(e) as etf_count\nRETURN {etf_count: etf_count}",
+    "description": "삼성전자를 보유한 ETF의 총 수 조회"
+  },
+  {
+    "question": "NAVER를 담고 있는 ETF 중 비중이 5% 이상인 것은?",
+    "cypher": "MATCH (e:ETF)-[h:HOLDS]->(s:Stock {code: '035420'})\nWITH e, h ORDER BY h.date DESC\nWITH e, head(collect(h)) as latest\nWHERE latest.weight >= 5.0\nRETURN {etf_code: e.code, etf_name: e.name, weight: latest.weight}\nORDER BY latest.weight DESC",
+    "description": "NAVER를 5% 이상 비중으로 보유한 ETF 조회"
+  },
+  {
+    "question": "LG화학을 보유한 ETF 목록과 비중",
+    "cypher": "MATCH (e:ETF)-[h:HOLDS]->(s:Stock {code: '051910'})\nWITH e, h ORDER BY h.date DESC\nWITH e, head(collect(h)) as latest\nRETURN {etf_code: e.code, etf_name: e.name, weight: latest.weight}\nORDER BY latest.weight DESC",
+    "description": "LG화학을 보유한 모든 ETF와 보유 비중 조회"
+  },
+  {
+    "question": "카카오가 포함된 ETF는 몇 개야?",
+    "cypher": "MATCH (e:ETF)-[h:HOLDS]->(s:Stock {code: '035720'})\nWITH e, h ORDER BY h.date DESC\nWITH e, head(collect(h)) as latest\nWITH count(e) as etf_count\nRETURN {etf_count: etf_count}",
+    "description": "카카오를 보유한 ETF의 총 수 조회"
+  },
+  {
+    "question": "삼성SDI를 가장 높은 비중으로 보유한 ETF 3개",
+    "cypher": "MATCH (e:ETF)-[h:HOLDS]->(s:Stock {code: '006400'})\nWITH e, h ORDER BY h.date DESC\nWITH e, head(collect(h)) as latest\nRETURN {etf_code: e.code, etf_name: e.name, weight: latest.weight}\nORDER BY latest.weight DESC\nLIMIT 3",
+    "description": "삼성SDI를 비중 기준 상위 3개 ETF 조회"
+  },
+  {
+    "question": "현대차를 보유한 ETF에서 비중 내림차순으로 정렬해줘",
+    "cypher": "MATCH (e:ETF)-[h:HOLDS]->(s:Stock {code: '005380'})\nWITH e, h ORDER BY h.date DESC\nWITH e, head(collect(h)) as latest\nRETURN {etf_code: e.code, etf_name: e.name, weight: latest.weight}\nORDER BY latest.weight DESC",
+    "description": "현대차를 보유한 ETF를 비중 내림차순으로 조회"
+  },
+  {
+    "question": "셀트리온이 들어있는 ETF 중 비중이 가장 큰 것은?",
+    "cypher": "MATCH (e:ETF)-[h:HOLDS]->(s:Stock {code: '068270'})\nWITH e, h ORDER BY h.date DESC\nWITH e, head(collect(h)) as latest\nRETURN {etf_code: e.code, etf_name: e.name, weight: latest.weight}\nORDER BY latest.weight DESC\nLIMIT 1",
+    "description": "셀트리온을 가장 높은 비중으로 보유한 ETF 조회"
+  },
+  {
+    "question": "기아를 담고 있는 ETF 목록 보여줘",
+    "cypher": "MATCH (e:ETF)-[h:HOLDS]->(s:Stock {code: '000270'})\nWITH e, h ORDER BY h.date DESC\nWITH e, head(collect(h)) as latest\nRETURN {etf_code: e.code, etf_name: e.name, weight: latest.weight}\nORDER BY latest.weight DESC",
+    "description": "기아를 보유한 모든 ETF와 비중 조회"
+  },
+  {
+    "question": "KODEX 200과 보유종목이 비슷한 ETF를 찾아줘",
+    "cypher": "MATCH (e1:ETF {code: '069500'})-[h1:HOLDS]->(s:Stock)<-[h2:HOLDS]-(e2:ETF)\nWHERE e1 <> e2\nWITH e2, count(DISTINCT s) as overlap\nRETURN {etf_code: e2.code, etf_name: e2.name, common_stock_count: overlap}\nORDER BY overlap DESC\nLIMIT 10",
+    "description": "KODEX 200과 공통 보유종목이 가장 많은 ETF 상위 10개 조회"
+  },
+  {
+    "question": "KODEX 200과 TIGER 200의 공통 보유종목은?",
+    "cypher": "MATCH (e1:ETF {code: '069500'})-[h1:HOLDS]->(s:Stock)<-[h2:HOLDS]-(e2:ETF {code: '102110'})\nWITH s, h1, h2 ORDER BY h1.date DESC, h2.date DESC\nWITH s, head(collect(DISTINCT h1)) as lh1, head(collect(DISTINCT h2)) as lh2\nRETURN {stock_code: s.code, stock_name: s.name, weight_etf1: lh1.weight, weight_etf2: lh2.weight}",
+    "description": "KODEX 200과 TIGER 200의 공통 보유종목과 각 ETF에서의 비중 조회"
+  },
+  {
+    "question": "TIGER 반도체와 보유종목이 겹치는 ETF 상위 5개",
+    "cypher": "MATCH (e1:ETF {code: '091160'})-[h1:HOLDS]->(s:Stock)<-[h2:HOLDS]-(e2:ETF)\nWHERE e1 <> e2\nWITH e2, count(DISTINCT s) as overlap\nRETURN {etf_code: e2.code, etf_name: e2.name, common_stock_count: overlap}\nORDER BY overlap DESC\nLIMIT 5",
+    "description": "TIGER 반도체와 공통 보유종목이 가장 많은 ETF 상위 5개 조회"
+  },
+  {
+    "question": "KODEX 200과 KBSTAR 200의 공통 보유종목 수는?",
+    "cypher": "MATCH (e1:ETF {code: '069500'})-[:HOLDS]->(s:Stock)<-[:HOLDS]-(e2:ETF {code: '148020'})\nWITH count(DISTINCT s) as common_count\nRETURN {common_stock_count: common_count}",
+    "description": "KODEX 200과 KBSTAR 200의 공통 보유종목 수 조회"
+  },
+  {
+    "question": "KODEX 반도체와 유사한 ETF를 겹치는 종목 수로 보여줘",
+    "cypher": "MATCH (e1:ETF {code: '091170'})-[h1:HOLDS]->(s:Stock)<-[h2:HOLDS]-(e2:ETF)\nWHERE e1 <> e2\nWITH e2, count(DISTINCT s) as overlap\nRETURN {etf_code: e2.code, etf_name: e2.name, common_stock_count: overlap}\nORDER BY overlap DESC\nLIMIT 10",
+    "description": "KODEX 반도체와 공통 보유종목 수 기준 유사 ETF 상위 10개 조회"
+  },
+  {
+    "question": "반도체 관련 ETF 목록 알려줘",
+    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '반도체'})\nRETURN {etf_code: e.code, etf_name: e.name, expense_ratio: e.expense_ratio}",
+    "description": "반도체 태그가 붙은 모든 ETF 조회"
+  },
+  {
+    "question": "AI 태그가 붙은 ETF 중 보수율이 낮은 순으로 보여줘",
+    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: 'AI'})\nRETURN {etf_code: e.code, etf_name: e.name, expense_ratio: e.expense_ratio}\nORDER BY e.expense_ratio ASC",
+    "description": "AI 태그 ETF를 보수율 오름차순으로 조회"
+  },
+  {
+    "question": "2차전지 ETF 중 순자산이 가장 큰 것은?",
+    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '2차전지'})\nRETURN {etf_code: e.code, etf_name: e.name, net_assets: e.net_assets}\nORDER BY e.net_assets DESC\nLIMIT 1",
+    "description": "2차전지 태그 ETF 중 순자산이 가장 큰 ETF 조회"
+  },
+  {
+    "question": "태그별 ETF 수를 알려줘",
+    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag)\nWITH t.name as tag_name, count(e) as etf_count\nRETURN {tag_name: tag_name, etf_count: etf_count}\nORDER BY etf_count DESC",
+    "description": "각 태그별 ETF 수를 내림차순으로 조회"
+  },
+  {
+    "question": "바이오 관련 ETF 중 보수율이 0.5% 이하인 것은?",
+    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '바이오'})\nWHERE e.expense_ratio <= 0.5\nRETURN {etf_code: e.code, etf_name: e.name, expense_ratio: e.expense_ratio}\nORDER BY e.expense_ratio ASC",
+    "description": "바이오 태그 ETF 중 보수율 0.5% 이하인 ETF 조회"
+  },
+  {
+    "question": "금융 테마 ETF는 어떤 것들이 있어?",
+    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '금융'})\nRETURN {etf_code: e.code, etf_name: e.name, net_assets: e.net_assets}\nORDER BY e.net_assets DESC",
+    "description": "금융 태그가 붙은 ETF를 순자산 내림차순으로 조회"
+  },
+  {
+    "question": "배당 관련 ETF 목록을 순자산 순으로 보여줘",
+    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '배당'})\nRETURN {etf_code: e.code, etf_name: e.name, net_assets: e.net_assets}\nORDER BY e.net_assets DESC",
+    "description": "배당 태그 ETF를 순자산 내림차순으로 조회"
+  },
+  {
+    "question": "에너지 관련 ETF가 있어?",
+    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '에너지'})\nRETURN {etf_code: e.code, etf_name: e.name, expense_ratio: e.expense_ratio}",
+    "description": "에너지 태그가 붙은 ETF 조회"
+  },
+  {
+    "question": "헬스케어 ETF 중 수익률이 좋은 순서대로 보여줘",
+    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '헬스케어'})\nRETURN {etf_code: e.code, etf_name: e.name, return_1m: e.return_1m}\nORDER BY e.return_1m DESC",
+    "description": "헬스케어 태그 ETF를 1개월 수익률 내림차순으로 조회"
+  },
+  {
+    "question": "방산 ETF는 몇 개야?",
+    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '방산'})\nWITH count(e) as etf_count\nRETURN {etf_count: etf_count}",
+    "description": "방산 태그가 붙은 ETF 수 조회"
+  },
+  {
+    "question": "게임 태그 ETF 목록",
+    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '게임'})\nRETURN {etf_code: e.code, etf_name: e.name, expense_ratio: e.expense_ratio}",
+    "description": "게임 태그가 붙은 모든 ETF 조회"
+  },
+  {
+    "question": "코스피200 ETF 중 순자산 상위 5개",
+    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '코스피200'})\nRETURN {etf_code: e.code, etf_name: e.name, net_assets: e.net_assets}\nORDER BY e.net_assets DESC\nLIMIT 5",
+    "description": "코스피200 태그 ETF 중 순자산 상위 5개 조회"
+  },
+  {
+    "question": "IT 섹터 ETF를 보수율 낮은 순으로 보여줘",
+    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: 'IT'})\nRETURN {etf_code: e.code, etf_name: e.name, expense_ratio: e.expense_ratio}\nORDER BY e.expense_ratio ASC",
+    "description": "IT 태그 ETF를 보수율 오름차순으로 조회"
+  },
+  {
+    "question": "자동차 관련 ETF가 몇 개나 있어?",
+    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '자동차'})\nWITH count(e) as etf_count\nRETURN {etf_count: etf_count}",
+    "description": "자동차 태그가 붙은 ETF 수 조회"
+  },
+  {
+    "question": "삼성자산운용의 ETF 목록을 보여줘",
+    "cypher": "MATCH (e:ETF)-[:MANAGED_BY]->(c:Company {name: '삼성자산운용'})\nRETURN {etf_code: e.code, etf_name: e.name, net_assets: e.net_assets}\nORDER BY e.net_assets DESC",
+    "description": "삼성자산운용이 운용하는 ETF를 순자산 내림차순으로 조회"
+  },
+  {
+    "question": "미래에셋자산운용의 ETF는 몇 개야?",
+    "cypher": "MATCH (e:ETF)-[:MANAGED_BY]->(c:Company {name: '미래에셋자산운용'})\nWITH count(e) as etf_count\nRETURN {etf_count: etf_count}",
+    "description": "미래에셋자산운용이 운용하는 ETF 수 조회"
+  },
+  {
+    "question": "운용사별 ETF 수 순위를 알려줘",
+    "cypher": "MATCH (e:ETF)-[:MANAGED_BY]->(c:Company)\nWITH c.name as company_name, count(e) as etf_count\nRETURN {company_name: company_name, etf_count: etf_count}\nORDER BY etf_count DESC",
+    "description": "운용사별 ETF 수를 내림차순으로 조회"
+  },
+  {
+    "question": "KB자산운용의 ETF 중 보수율이 가장 낮은 것은?",
+    "cypher": "MATCH (e:ETF)-[:MANAGED_BY]->(c:Company {name: 'KB자산운용'})\nRETURN {etf_code: e.code, etf_name: e.name, expense_ratio: e.expense_ratio}\nORDER BY e.expense_ratio ASC\nLIMIT 1",
+    "description": "KB자산운용 ETF 중 보수율이 가장 낮은 ETF 조회"
+  },
+  {
+    "question": "한화자산운용이 운용하는 ETF 목록",
+    "cypher": "MATCH (e:ETF)-[:MANAGED_BY]->(c:Company {name: '한화자산운용'})\nRETURN {etf_code: e.code, etf_name: e.name, expense_ratio: e.expense_ratio}\nORDER BY e.net_assets DESC",
+    "description": "한화자산운용이 운용하는 ETF를 순자산 내림차순으로 조회"
+  },
+  {
+    "question": "신한자산운용의 ETF 중 순자산이 가장 큰 ETF는?",
+    "cypher": "MATCH (e:ETF)-[:MANAGED_BY]->(c:Company {name: '신한자산운용'})\nRETURN {etf_code: e.code, etf_name: e.name, net_assets: e.net_assets}\nORDER BY e.net_assets DESC\nLIMIT 1",
+    "description": "신한자산운용 ETF 중 순자산이 가장 큰 ETF 조회"
+  },
+  {
+    "question": "NH아문디자산운용의 ETF는 어떤 게 있어?",
+    "cypher": "MATCH (e:ETF)-[:MANAGED_BY]->(c:Company {name: 'NH아문디자산운용'})\nRETURN {etf_code: e.code, etf_name: e.name, net_assets: e.net_assets}",
+    "description": "NH아문디자산운용이 운용하는 ETF 목록 조회"
+  },
+  {
+    "question": "운용사별 평균 보수율은?",
+    "cypher": "MATCH (e:ETF)-[:MANAGED_BY]->(c:Company)\nWITH c.name as company_name, avg(e.expense_ratio) as avg_expense\nRETURN {company_name: company_name, avg_expense_ratio: avg_expense}\nORDER BY avg_expense ASC",
+    "description": "운용사별 평균 보수율을 오름차순으로 조회"
+  },
+  {
+    "question": "미래에셋자산운용의 ETF를 순자산 큰 순서로 상위 10개",
+    "cypher": "MATCH (e:ETF)-[:MANAGED_BY]->(c:Company {name: '미래에셋자산운용'})\nRETURN {etf_code: e.code, etf_name: e.name, net_assets: e.net_assets}\nORDER BY e.net_assets DESC\nLIMIT 10",
+    "description": "미래에셋자산운용 ETF 중 순자산 상위 10개 조회"
+  },
+  {
+    "question": "삼성자산운용 ETF 중 1개월 수익률이 가장 높은 것은?",
+    "cypher": "MATCH (e:ETF)-[:MANAGED_BY]->(c:Company {name: '삼성자산운용'})\nRETURN {etf_code: e.code, etf_name: e.name, return_1m: e.return_1m}\nORDER BY e.return_1m DESC\nLIMIT 1",
+    "description": "삼성자산운용 ETF 중 1개월 수익률 최고인 ETF 조회"
+  },
+  {
+    "question": "KODEX 200의 최근 1개월 종가 추이를 보여줘",
+    "cypher": "MATCH (e:ETF {code: '069500'})-[:HAS_PRICE]->(p:Price)\nWHERE p.date >= '2026-01-18'\nRETURN {date: p.date, close: p.close, volume: p.volume}\nORDER BY p.date ASC",
+    "description": "KODEX 200 ETF의 최근 1개월 종가와 거래량 추이 조회"
+  },
+  {
+    "question": "삼성전자 최근 주가는 얼마야?",
+    "cypher": "MATCH (s:Stock {code: '005930'})-[:HAS_PRICE]->(p:Price)\nRETURN {date: p.date, close: p.close, volume: p.volume}\nORDER BY p.date DESC\nLIMIT 1",
+    "description": "삼성전자의 가장 최근 종가 조회"
+  },
+  {
+    "question": "순자산 1조원 이상인 ETF를 알려줘",
+    "cypher": "MATCH (e:ETF)\nWHERE e.net_assets >= 1000000000000\nRETURN {etf_code: e.code, etf_name: e.name, net_assets: e.net_assets}\nORDER BY e.net_assets DESC",
+    "description": "순자산이 1조원 이상인 ETF를 순자산 내림차순으로 조회"
+  },
+  {
+    "question": "1주 수익률이 가장 높은 ETF 10개",
+    "cypher": "MATCH (e:ETF)\nRETURN {etf_code: e.code, etf_name: e.name, return_1w: e.return_1w}\nORDER BY e.return_1w DESC\nLIMIT 10",
+    "description": "1주 수익률 상위 10개 ETF 조회"
+  },
+  {
+    "question": "시가총액 변화율이 큰 ETF 상위 10개는?",
+    "cypher": "MATCH (e:ETF)\nRETURN {etf_code: e.code, etf_name: e.name, market_cap_change_1w: e.market_cap_change_1w}\nORDER BY e.market_cap_change_1w DESC\nLIMIT 10",
+    "description": "주간 시가총액 변화율 상위 10개 ETF 조회"
+  },
+  {
+    "question": "오늘 등락률이 높은 ETF 상위 10개",
+    "cypher": "MATCH (e:ETF)\nRETURN {etf_code: e.code, etf_name: e.name, return_1d: e.return_1d}\nORDER BY e.return_1d DESC\nLIMIT 10",
+    "description": "일간 수익률 상위 10개 ETF 조회"
+  },
+  {
+    "question": "SK하이닉스의 최근 5일 주가 추이",
+    "cypher": "MATCH (s:Stock {code: '000660'})-[:HAS_PRICE]->(p:Price)\nRETURN {date: p.date, close: p.close, volume: p.volume}\nORDER BY p.date DESC\nLIMIT 5",
+    "description": "SK하이닉스의 최근 5일 종가와 거래량 조회"
+  },
+  {
+    "question": "1개월 수익률이 마이너스인 ETF는?",
+    "cypher": "MATCH (e:ETF)\nWHERE e.return_1m < 0\nRETURN {etf_code: e.code, etf_name: e.name, return_1m: e.return_1m}\nORDER BY e.return_1m ASC",
+    "description": "1개월 수익률이 음수인 ETF를 수익률 오름차순으로 조회"
+  },
+  {
+    "question": "보수율이 가장 낮은 ETF 10개를 알려줘",
+    "cypher": "MATCH (e:ETF)\nRETURN {etf_code: e.code, etf_name: e.name, expense_ratio: e.expense_ratio}\nORDER BY e.expense_ratio ASC\nLIMIT 10",
+    "description": "보수율이 가장 낮은 ETF 상위 10개 조회"
+  },
+  {
+    "question": "TIGER 200의 최근 1주 종가 변화",
+    "cypher": "MATCH (e:ETF {code: '102110'})-[:HAS_PRICE]->(p:Price)\nRETURN {date: p.date, close: p.close, change_rate: p.change_rate}\nORDER BY p.date DESC\nLIMIT 5",
+    "description": "TIGER 200 ETF의 최근 5거래일 종가와 등락률 조회"
+  },
+  {
+    "question": "1일 수익률이 가장 낮은 ETF 5개는?",
+    "cypher": "MATCH (e:ETF)\nRETURN {etf_code: e.code, etf_name: e.name, return_1d: e.return_1d}\nORDER BY e.return_1d ASC\nLIMIT 5",
+    "description": "일간 수익률이 가장 낮은 ETF 하위 5개 조회"
+  },
+  {
+    "question": "순자산이 500억 이상 1000억 이하인 ETF는?",
+    "cypher": "MATCH (e:ETF)\nWHERE e.net_assets >= 50000000000 AND e.net_assets <= 100000000000\nRETURN {etf_code: e.code, etf_name: e.name, net_assets: e.net_assets}\nORDER BY e.net_assets DESC",
+    "description": "순자산이 500억~1000억 범위인 ETF 조회"
+  },
+  {
+    "question": "KODEX 200의 최근 종가와 거래량은?",
+    "cypher": "MATCH (e:ETF {code: '069500'})-[:HAS_PRICE]->(p:Price)\nRETURN {date: p.date, close: p.close, volume: p.volume}\nORDER BY p.date DESC\nLIMIT 1",
+    "description": "KODEX 200 ETF의 가장 최근 종가와 거래량 조회"
+  },
+  {
+    "question": "전체 ETF 중 보수율 평균은 얼마야?",
+    "cypher": "MATCH (e:ETF)\nWITH avg(e.expense_ratio) as avg_expense\nRETURN {avg_expense_ratio: avg_expense}",
+    "description": "전체 ETF의 평균 보수율 조회"
+  },
+  {
+    "question": "KODEX 200과 TIGER 200의 보수율 비교",
+    "cypher": "MATCH (e:ETF)\nWHERE e.code IN ['069500', '102110']\nRETURN {etf_code: e.code, etf_name: e.name, expense_ratio: e.expense_ratio}\nORDER BY e.expense_ratio ASC",
+    "description": "KODEX 200과 TIGER 200의 보수율 비교 조회"
+  },
+  {
+    "question": "반도체 ETF들의 보수율을 비교해줘",
+    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '반도체'})\nRETURN {etf_code: e.code, etf_name: e.name, expense_ratio: e.expense_ratio}\nORDER BY e.expense_ratio ASC",
+    "description": "반도체 태그 ETF의 보수율을 오름차순으로 비교 조회"
+  },
+  {
+    "question": "같은 태그의 ETF를 순자산으로 비교해줘",
+    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag)\nWITH t.name as tag_name, e\nORDER BY e.net_assets DESC\nRETURN {tag_name: tag_name, etf_code: e.code, etf_name: e.name, net_assets: e.net_assets}",
+    "description": "태그별 ETF의 순자산을 내림차순으로 비교 조회"
+  },
+  {
+    "question": "KODEX 200과 KBSTAR 200의 1개월 수익률 비교",
+    "cypher": "MATCH (e:ETF)\nWHERE e.code IN ['069500', '148020']\nRETURN {etf_code: e.code, etf_name: e.name, return_1m: e.return_1m}",
+    "description": "KODEX 200과 KBSTAR 200의 1개월 수익률 비교"
+  },
+  {
+    "question": "2차전지 ETF들의 수익률 비교",
+    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '2차전지'})\nRETURN {etf_code: e.code, etf_name: e.name, return_1w: e.return_1w, return_1m: e.return_1m}\nORDER BY e.return_1m DESC",
+    "description": "2차전지 태그 ETF의 1주 및 1개월 수익률을 비교 조회"
+  },
+  {
+    "question": "TIGER 200과 HANARO 200의 순자산 비교",
+    "cypher": "MATCH (e:ETF)\nWHERE e.code IN ['102110', '293180']\nRETURN {etf_code: e.code, etf_name: e.name, net_assets: e.net_assets}",
+    "description": "TIGER 200과 HANARO 200의 순자산 비교"
+  },
+  {
+    "question": "AI ETF들의 순자산 비교",
+    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: 'AI'})\nRETURN {etf_code: e.code, etf_name: e.name, net_assets: e.net_assets}\nORDER BY e.net_assets DESC",
+    "description": "AI 태그 ETF의 순자산을 내림차순으로 비교 조회"
+  },
+  {
+    "question": "KODEX 반도체와 TIGER 반도체의 보유종목 비교",
+    "cypher": "MATCH (e1:ETF {code: '091170'})-[h1:HOLDS]->(s:Stock)<-[h2:HOLDS]-(e2:ETF {code: '091160'})\nWITH s, h1, h2 ORDER BY h1.date DESC, h2.date DESC\nWITH s, head(collect(DISTINCT h1)) as lh1, head(collect(DISTINCT h2)) as lh2\nRETURN {stock_code: s.code, stock_name: s.name, kodex_weight: lh1.weight, tiger_weight: lh2.weight}\nORDER BY lh1.weight DESC",
+    "description": "KODEX 반도체와 TIGER 반도체의 공통 보유종목과 각 비중 비교"
+  },
+  {
+    "question": "배당 ETF들의 보수율과 수익률 비교",
+    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '배당'})\nRETURN {etf_code: e.code, etf_name: e.name, expense_ratio: e.expense_ratio, return_1m: e.return_1m}\nORDER BY e.return_1m DESC",
+    "description": "배당 태그 ETF의 보수율과 1개월 수익률 비교 조회"
+  },
+  {
+    "question": "바이오 ETF 중 보수율이 가장 낮은 것과 높은 것 비교",
+    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '바이오'})\nWITH e ORDER BY e.expense_ratio ASC\nWITH collect(e) as etfs\nWITH head(etfs) as cheapest, last(etfs) as most_expensive\nRETURN {cheapest_name: cheapest.name, cheapest_expense: cheapest.expense_ratio, expensive_name: most_expensive.name, expensive_expense: most_expensive.expense_ratio}",
+    "description": "바이오 태그 ETF 중 보수율 최저와 최고 ETF 비교"
+  },
+  {
+    "question": "반도체 태그 ETF 중 보수율 0.3% 이하이고 순자산 1000억 이상인 것",
+    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '반도체'})\nWHERE e.expense_ratio <= 0.3 AND e.net_assets >= 100000000000\nRETURN {etf_code: e.code, etf_name: e.name, expense_ratio: e.expense_ratio, net_assets: e.net_assets}\nORDER BY e.net_assets DESC",
+    "description": "반도체 태그 ETF 중 보수율 0.3% 이하이고 순자산 1000억 이상인 ETF 조회"
+  },
+  {
+    "question": "삼성자산운용의 AI 관련 ETF는?",
+    "cypher": "MATCH (e:ETF)-[:MANAGED_BY]->(c:Company {name: '삼성자산운용'})\nMATCH (e)-[:TAGGED]->(t:Tag {name: 'AI'})\nRETURN {etf_code: e.code, etf_name: e.name, expense_ratio: e.expense_ratio}",
+    "description": "삼성자산운용이 운용하는 AI 태그 ETF 조회"
+  },
+  {
+    "question": "보수율 낮은 순으로 코스피200 ETF를 보여줘",
+    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '코스피200'})\nRETURN {etf_code: e.code, etf_name: e.name, expense_ratio: e.expense_ratio}\nORDER BY e.expense_ratio ASC",
+    "description": "코스피200 태그 ETF를 보수율 오름차순으로 조회"
+  },
+  {
+    "question": "미래에셋자산운용의 2차전지 ETF 중 순자산이 큰 순서대로",
+    "cypher": "MATCH (e:ETF)-[:MANAGED_BY]->(c:Company {name: '미래에셋자산운용'})\nMATCH (e)-[:TAGGED]->(t:Tag {name: '2차전지'})\nRETURN {etf_code: e.code, etf_name: e.name, net_assets: e.net_assets}\nORDER BY e.net_assets DESC",
+    "description": "미래에셋자산운용의 2차전지 태그 ETF를 순자산 내림차순으로 조회"
+  },
+  {
+    "question": "삼성전자를 보유한 반도체 태그 ETF는?",
+    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '반도체'})\nMATCH (e)-[h:HOLDS]->(s:Stock {code: '005930'})\nWITH e, s, h ORDER BY h.date DESC\nWITH e, s, head(collect(h)) as latest\nRETURN {etf_code: e.code, etf_name: e.name, samsung_weight: latest.weight}\nORDER BY latest.weight DESC",
+    "description": "반도체 태그이면서 삼성전자를 보유한 ETF와 비중 조회"
+  },
+  {
+    "question": "KB자산운용의 배당 ETF 목록",
+    "cypher": "MATCH (e:ETF)-[:MANAGED_BY]->(c:Company {name: 'KB자산운용'})\nMATCH (e)-[:TAGGED]->(t:Tag {name: '배당'})\nRETURN {etf_code: e.code, etf_name: e.name, expense_ratio: e.expense_ratio, net_assets: e.net_assets}",
+    "description": "KB자산운용이 운용하는 배당 태그 ETF 조회"
+  },
+  {
+    "question": "순자산 5000억 이상이고 보수율 0.2% 이하인 ETF",
+    "cypher": "MATCH (e:ETF)\nWHERE e.net_assets >= 500000000000 AND e.expense_ratio <= 0.2\nRETURN {etf_code: e.code, etf_name: e.name, net_assets: e.net_assets, expense_ratio: e.expense_ratio}\nORDER BY e.net_assets DESC",
+    "description": "순자산 5000억 이상이고 보수율 0.2% 이하인 ETF 조회"
+  },
+  {
+    "question": "1주 수익률 양수인 반도체 ETF",
+    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '반도체'})\nWHERE e.return_1w > 0\nRETURN {etf_code: e.code, etf_name: e.name, return_1w: e.return_1w}\nORDER BY e.return_1w DESC",
+    "description": "1주 수익률이 양수인 반도체 태그 ETF를 수익률 내림차순으로 조회"
+  },
+  {
+    "question": "한화자산운용의 ETF 중 보수율이 가장 낮으면서 순자산 100억 이상인 것",
+    "cypher": "MATCH (e:ETF)-[:MANAGED_BY]->(c:Company {name: '한화자산운용'})\nWHERE e.net_assets >= 10000000000\nRETURN {etf_code: e.code, etf_name: e.name, expense_ratio: e.expense_ratio, net_assets: e.net_assets}\nORDER BY e.expense_ratio ASC\nLIMIT 1",
+    "description": "한화자산운용 ETF 중 순자산 100억 이상이면서 보수율이 가장 낮은 ETF 조회"
+  },
+  {
+    "question": "내가 즐겨찾기한 ETF 목록을 보여줘",
+    "cypher": "MATCH (u:User {user_id: $user_id})-[w:WATCHES]->(e:ETF)\nRETURN {etf_code: e.code, etf_name: e.name, added_at: w.added_at}\nORDER BY w.added_at DESC",
+    "description": "현재 사용자가 즐겨찾기한 ETF 목록을 추가 시간 역순으로 조회"
+  },
+  {
+    "question": "즐겨찾기한 ETF의 수익률을 알려줘",
+    "cypher": "MATCH (u:User {user_id: $user_id})-[:WATCHES]->(e:ETF)\nRETURN {etf_code: e.code, etf_name: e.name, return_1d: e.return_1d, return_1w: e.return_1w, return_1m: e.return_1m}\nORDER BY e.return_1m DESC",
+    "description": "현재 사용자가 즐겨찾기한 ETF의 일간/주간/월간 수익률 조회"
+  },
+  {
+    "question": "내 즐겨찾기 ETF는 몇 개야?",
+    "cypher": "MATCH (u:User {user_id: $user_id})-[:WATCHES]->(e:ETF)\nWITH count(e) as watch_count\nRETURN {watch_count: watch_count}",
+    "description": "현재 사용자가 즐겨찾기한 ETF 수 조회"
+  },
+  {
+    "question": "즐겨찾기한 ETF 중 보수율이 가장 낮은 것은?",
+    "cypher": "MATCH (u:User {user_id: $user_id})-[:WATCHES]->(e:ETF)\nRETURN {etf_code: e.code, etf_name: e.name, expense_ratio: e.expense_ratio}\nORDER BY e.expense_ratio ASC\nLIMIT 1",
+    "description": "현재 사용자가 즐겨찾기한 ETF 중 보수율이 가장 낮은 ETF 조회"
+  },
+  {
+    "question": "즐겨찾기한 ETF의 순자산 합계는?",
+    "cypher": "MATCH (u:User {user_id: $user_id})-[:WATCHES]->(e:ETF)\nWITH sum(e.net_assets) as total_assets\nRETURN {total_net_assets: total_assets}",
+    "description": "현재 사용자가 즐겨찾기한 ETF의 순자산 합계 조회"
+  },
+  {
+    "question": "최근 변동이 있는 ETF를 알려줘",
+    "cypher": "MATCH (e:ETF)-[:HAS_CHANGE]->(c:Change)\nWITH e, c ORDER BY c.detected_at DESC\nWITH e, head(collect(c)) as latest_change\nRETURN {etf_code: e.code, etf_name: e.name, change_type: latest_change.change_type, stock_name: latest_change.stock_name, detected_at: latest_change.detected_at}\nORDER BY latest_change.detected_at DESC\nLIMIT 10",
+    "description": "최근 보유종목 변동이 감지된 ETF 상위 10개 조회"
+  },
+  {
+    "question": "신규 편입된 종목이 있는 ETF는?",
+    "cypher": "MATCH (e:ETF)-[:HAS_CHANGE]->(c:Change {change_type: 'new'})\nRETURN {etf_code: e.code, etf_name: e.name, stock_name: c.stock_name, weight: c.after_weight, detected_at: c.detected_at}\nORDER BY c.detected_at DESC",
+    "description": "신규 편입(change_type: new) 변동이 있는 ETF와 해당 종목 조회"
+  },
+  {
+    "question": "제외된 종목이 있는 ETF 목록",
+    "cypher": "MATCH (e:ETF)-[:HAS_CHANGE]->(c:Change {change_type: 'removed'})\nRETURN {etf_code: e.code, etf_name: e.name, stock_name: c.stock_name, before_weight: c.before_weight, detected_at: c.detected_at}\nORDER BY c.detected_at DESC",
+    "description": "보유종목이 제외(change_type: removed)된 ETF와 해당 종목 조회"
+  },
+  {
+    "question": "비중 변화가 가장 큰 종목 변동은?",
+    "cypher": "MATCH (e:ETF)-[:HAS_CHANGE]->(c:Change)\nWHERE c.weight_change IS NOT NULL\nRETURN {etf_code: e.code, etf_name: e.name, stock_name: c.stock_name, weight_change: c.weight_change, detected_at: c.detected_at}\nORDER BY abs(c.weight_change) DESC\nLIMIT 10",
+    "description": "비중 변화 절대값이 가장 큰 변동 상위 10개 조회"
+  },
+  {
+    "question": "KODEX 200에서 최근 발생한 변동 내역은?",
+    "cypher": "MATCH (e:ETF {code: '069500'})-[:HAS_CHANGE]->(c:Change)\nRETURN {stock_name: c.stock_name, change_type: c.change_type, before_weight: c.before_weight, after_weight: c.after_weight, weight_change: c.weight_change, detected_at: c.detected_at}\nORDER BY c.detected_at DESC\nLIMIT 10",
+    "description": "KODEX 200 ETF의 최근 보유종목 변동 내역 상위 10개 조회"
+  },
+  {
+    "question": "철강 관련 ETF를 보수율 순으로 보여줘",
+    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '철강'})\nRETURN {etf_code: e.code, etf_name: e.name, expense_ratio: e.expense_ratio}\nORDER BY e.expense_ratio ASC",
+    "description": "철강 태그가 붙은 ETF를 보수율 오름차순으로 조회"
+  },
+  {
+    "question": "NAVER의 최근 10일 주가 추이를 보여줘",
+    "cypher": "MATCH (s:Stock {code: '035420'})-[:HAS_PRICE]->(p:Price)\nRETURN {date: p.date, open: p.open, high: p.high, low: p.low, close: p.close, volume: p.volume}\nORDER BY p.date DESC\nLIMIT 10",
+    "description": "NAVER의 최근 10거래일 OHLCV 가격 데이터 조회"
+  },
+  {
+    "question": "미래에셋자산운용의 반도체 ETF 중 1주 수익률이 가장 높은 것은?",
+    "cypher": "MATCH (e:ETF)-[:MANAGED_BY]->(c:Company {name: '미래에셋자산운용'})\nMATCH (e)-[:TAGGED]->(t:Tag {name: '반도체'})\nRETURN {etf_code: e.code, etf_name: e.name, return_1w: e.return_1w}\nORDER BY e.return_1w DESC\nLIMIT 1",
+    "description": "미래에셋자산운용의 반도체 태그 ETF 중 1주 수익률이 가장 높은 ETF 조회"
+  }
+]

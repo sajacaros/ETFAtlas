@@ -24,7 +24,7 @@ default_args = {
 }
 
 dag = DAG(
-    'sync_metadata_rdb',
+    'rdb_sync_metadata',
     default_args=default_args,
     description='ETF 코드/이름 RDB 동기화 (포트폴리오용)',
     schedule_interval='0 7 * * 1-5',  # 평일 07:00 KST

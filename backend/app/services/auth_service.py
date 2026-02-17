@@ -38,6 +38,9 @@ class AuthService:
             self.db.refresh(user)
             return user
 
+        # 첫 번째 유저인지 확인
+        is_first = self.db.query(User).count() == 0
+
         user = User(
             email=google_data["email"],
             name=google_data["name"],
@@ -47,6 +50,12 @@ class AuthService:
         self.db.add(user)
         self.db.commit()
         self.db.refresh(user)
+
+        # AGE User 노드에 role 설정
+        from .graph_service import GraphService
+        graph = GraphService(self.db)
+        graph.set_user_role(user.id, "admin" if is_first else "member")
+
         return user
 
     def get_user_by_id(self, user_id: int) -> Optional[User]:

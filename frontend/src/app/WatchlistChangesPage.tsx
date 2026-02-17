@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { TrendingUp, TrendingDown, ArrowLeft, AlertCircle } from 'lucide-react'
+import { TrendingUp, TrendingDown, ArrowLeft, AlertCircle, Calendar } from 'lucide-react'
+import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -20,6 +21,8 @@ export default function WatchlistChangesPage() {
   const { isAuthenticated } = useAuth()
   const [changes, setChanges] = useState<WatchlistChange[]>([])
   const [period, setPeriod] = useState<'1d' | '1w' | '1m'>('1d')
+  const [baseDate, setBaseDate] = useState('')
+  const [filter, setFilter] = useState<'all' | 'increased' | 'decreased'>('all')
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -29,11 +32,17 @@ export default function WatchlistChangesPage() {
     }
     setLoading(true)
     watchlistApi
-      .getChanges(period)
+      .getChanges(period, baseDate || undefined)
       .then(setChanges)
       .catch(() => setChanges([]))
       .finally(() => setLoading(false))
-  }, [isAuthenticated, period])
+  }, [isAuthenticated, period, baseDate])
+
+  const filteredChanges = changes.filter((c) => {
+    if (filter === 'increased') return c.change_type === 'increased' || c.change_type === 'added'
+    if (filter === 'decreased') return c.change_type === 'decreased' || c.change_type === 'removed'
+    return true
+  })
 
   const getChangeIcon = (type: string) => {
     switch (type) {
@@ -87,22 +96,54 @@ export default function WatchlistChangesPage() {
         <h1 className="text-2xl font-bold">즐겨찾기 비중 변화</h1>
       </div>
 
-      <div className="flex gap-1">
-        {(['1d', '1w', '1m'] as const).map((p) => (
-          <Button
-            key={p}
-            size="sm"
-            variant={period === p ? 'default' : 'outline'}
-            onClick={() => setPeriod(p)}
-          >
-            {p === '1d' ? '전일' : p === '1w' ? '1주' : '1개월'}
-          </Button>
-        ))}
+      <div className="flex items-center gap-4 flex-wrap">
+        <div className="flex gap-1">
+          {(['1d', '1w', '1m'] as const).map((p) => (
+            <Button
+              key={p}
+              size="sm"
+              variant={period === p ? 'default' : 'outline'}
+              onClick={() => setPeriod(p)}
+            >
+              {p === '1d' ? '전일' : p === '1w' ? '1주' : '1개월'}
+            </Button>
+          ))}
+        </div>
+        <div className="flex gap-1">
+          {([
+            { key: 'all', label: '모두보기' },
+            { key: 'increased', label: '비중 증가' },
+            { key: 'decreased', label: '비중 감소' },
+          ] as const).map(({ key, label }) => (
+            <Button
+              key={key}
+              size="sm"
+              variant={filter === key ? 'default' : 'outline'}
+              onClick={() => setFilter(key)}
+            >
+              {label}
+            </Button>
+          ))}
+        </div>
+        <div className="flex items-center gap-1">
+          <Calendar className="w-4 h-4 text-muted-foreground" />
+          <Input
+            type="date"
+            value={baseDate}
+            onChange={(e) => setBaseDate(e.target.value)}
+            className="w-36 h-8 text-sm"
+          />
+          {baseDate && (
+            <Button size="sm" variant="ghost" onClick={() => setBaseDate('')}>
+              오늘
+            </Button>
+          )}
+        </div>
       </div>
 
       {loading ? (
         <div className="text-center py-12 text-muted-foreground">로딩 중...</div>
-      ) : changes.length === 0 ? (
+      ) : filteredChanges.length === 0 ? (
         <Card className="p-8">
           <div className="flex flex-col items-center gap-3 text-muted-foreground">
             <AlertCircle className="w-10 h-10" />
@@ -126,7 +167,7 @@ export default function WatchlistChangesPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {changes.map((c, i) => (
+              {filteredChanges.map((c, i) => (
                 <TableRow key={`${c.etf_code}-${c.stock_code}-${i}`}>
                   <TableCell>
                     <Link

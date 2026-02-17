@@ -55,10 +55,11 @@ class WatchlistChangeResponse(BaseModel):
 @router.get("/changes", response_model=List[WatchlistChangeResponse])
 async def get_watchlist_changes(
     period: str = Query("1d", pattern="^(1d|1w|1m)$"),
+    base_date: str = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
-    """즐겨찾기 ETF들의 보유종목 비중 변화 조회 (unchanged 제외)"""
+    """즐겨찾기 ETF들의 보유종목 비중 변화 조회 (unchanged 및 |변화량| <= 3%p 제외)"""
     graph = GraphService(db)
     watched = graph.get_user_watches(user_id)
 
@@ -66,9 +67,11 @@ async def get_watchlist_changes(
     for item in watched:
         etf_code = item["etf_code"]
         etf_name = item["etf_name"]
-        changes = graph.get_etf_holdings_changes(etf_code, period)
+        changes = graph.get_etf_holdings_changes(etf_code, period, base_date)
         for c in changes:
             if c["change_type"] == "unchanged":
+                continue
+            if abs(c["weight_change"]) <= 3:
                 continue
             results.append(WatchlistChangeResponse(
                 etf_code=etf_code,

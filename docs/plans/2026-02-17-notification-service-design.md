@@ -86,9 +86,19 @@ ALTER TABLE users ADD COLUMN last_notification_checked_at TIMESTAMP;
 - 페이지 최초 로드 시 `GET /notifications/status`로 초기 상태 확인
 - SSE 이벤트 수신 시 토스트 알림 표시
 
-## 유저 역할 관리
+## 유저 역할 및 권한 모델
 
 - 회원가입 시: AGE User 노드 생성할 때 `role` 프로퍼티 설정
 - 첫 번째 유저(기존 유저 없을 때): `role: 'admin'`
 - 이후 유저: `role: 'member'`
 - RDB `users` 테이블에는 role 미저장 (AGE에서만 관리)
+
+### 알림 채널별 권한 구분
+
+| 채널 | 대상 | ETF 소스 | 트리거 |
+|------|------|----------|--------|
+| **인앱 SSE** | 로그인한 유저 본인 | 본인의 즐겨찾기 | 유저 접속 시 SSE 연결 |
+| **디스코드** | admin 유저만 | admin의 즐겨찾기 | DAG 수집 완료 시 웹훅 |
+
+- member 유저의 즐겨찾기는 디스코드에 포함되지 않음
+- 인앱 SSE는 유저별 독립 — 자신의 워치리스트 비중변화만 감지

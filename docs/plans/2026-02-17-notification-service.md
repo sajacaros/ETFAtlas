@@ -8,6 +8,11 @@
 
 **Tech Stack:** FastAPI StreamingResponse (SSE), Discord Webhook (httpx), AGE User.role, PostgreSQL collection_runs 테이블
 
+**권한 모델:**
+- **유저 역할**: AGE User 노드에 `role` 프로퍼티 — 첫 가입자 `admin`, 이후 `member`
+- **인앱 SSE 알림**: 로그인한 유저 본인의 즐겨찾기 기반. 각 유저가 자신의 워치리스트 비중변화만 수신
+- **디스코드 알림**: `role='admin'` 유저의 즐겨찾기 기반. DAG에서 admin 워치리스트를 조회하여 비중변화 요약 발송. 일반 member의 즐겨찾기는 디스코드에 포함되지 않음
+
 ---
 
 ### Task 1: DB 스키마 변경 — collection_runs 테이블 + users.last_notification_checked_at

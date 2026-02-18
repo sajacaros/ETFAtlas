@@ -193,7 +193,7 @@ class GraphService:
                 result[parsed["code"]] = parsed["name"]
         return result
 
-    PINNED_TAGS = ['코스피200', '코스닥150']
+    PINNED_TAGS = ['코스피', '코스닥']
 
     def get_all_tags(self) -> List[Dict]:
         """모든 Tag 노드 조회 (시장지수 제외, 고정 태그 선두 배치), ETF 수 포함"""

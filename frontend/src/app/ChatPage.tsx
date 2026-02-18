@@ -5,6 +5,8 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { chatApi } from '@/lib/api'
 import type { ChatMessage, ChatStep } from '@/types/api'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 
 const EXAMPLE_QUESTIONS = [
   '삼성전자를 가장 많이 보유한 ETF는?',
@@ -136,8 +138,16 @@ export default function ChatPage() {
                   msg.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted'
                 }
               >
-                <CardContent className="p-3 whitespace-pre-wrap text-sm">
-                  {msg.content}
+                <CardContent className="p-3 text-sm">
+                  {msg.role === 'user' ? (
+                    <span className="whitespace-pre-wrap">{msg.content}</span>
+                  ) : (
+                    <div className="prose prose-sm dark:prose-invert max-w-none prose-table:text-sm prose-td:px-2 prose-td:py-1 prose-th:px-2 prose-th:py-1 prose-th:text-left">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {msg.content}
+                      </ReactMarkdown>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
               {msg.steps && msg.steps.length > 0 && <StepsView steps={msg.steps} />}

@@ -533,11 +533,15 @@ def collect_universe_and_prices(dates: list[str]) -> tuple[set[str], list[dict]]
                 })
 
             if price_items:
+                # Step 1: 없으면 생성
                 execute_cypher_batch(cur, """
                     MATCH (e:ETF {code: item.code})
-                    MERGE (e)-[:HAS_PRICE]->(p:Price {date: item.date})
-                    RETURN p
+                    OPTIONAL MATCH (e)-[:HAS_PRICE]->(existing:Price {date: item.date})
+                    WITH e, existing WHERE existing IS NULL
+                    CREATE (e)-[:HAS_PRICE]->(:Price {date: item.date})
+                    RETURN e
                 """, price_items)
+                # Step 2: 있으면 업데이트
                 execute_cypher_batch(cur, """
                     MATCH (e:ETF {code: item.code})-[:HAS_PRICE]->(p:Price {date: item.date})
                     SET p.open = item.open, p.high = item.high, p.low = item.low,
@@ -764,11 +768,15 @@ def collect_stock_prices_for_dates(dates: list[str]):
             if not items:
                 continue
 
+            # Step 1: 없으면 생성
             execute_cypher_batch(cur, """
                 MATCH (s:Stock {code: item.code})
-                MERGE (s)-[:HAS_PRICE]->(p:Price {date: item.date})
-                RETURN p
+                OPTIONAL MATCH (s)-[:HAS_PRICE]->(existing:Price {date: item.date})
+                WITH s, existing WHERE existing IS NULL
+                CREATE (s)-[:HAS_PRICE]->(:Price {date: item.date})
+                RETURN s
             """, items)
+            # Step 2: 있으면 업데이트
             execute_cypher_batch(cur, """
                 MATCH (s:Stock {code: item.code})-[:HAS_PRICE]->(p:Price {date: item.date})
                 SET p.open = item.open, p.high = item.high, p.low = item.low,

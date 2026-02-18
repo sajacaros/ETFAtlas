@@ -116,7 +116,10 @@ def record_and_notify(**context):
 
 
 def sync_returns(**context):
-    """수익률 계산."""
+    """수익률 계산. 새 거래일 데이터가 없으면 스킵하여 기존 값 유지."""
+    dates = context['ti'].xcom_pull(task_ids='fetch_trading_dates')
+    if not dates:
+        return
     update_etf_returns()
 
 

@@ -124,7 +124,7 @@ def sync_returns(**context):
 
 
 def tag_new_etfs(**context):
-    """신규 ETF 룰 기반 태그 부여 (코스피200/코스닥150)."""
+    """신규 ETF 룰 기반 태그 부여 (코스피/코스닥)."""
     import re
 
     ti = context['ti']

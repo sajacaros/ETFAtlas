@@ -171,7 +171,7 @@
   },
   {
     "question": "특정 태그 ETF 중 순자산 상위 N개 조회",
-    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '코스피200'})\nRETURN {etf_code: e.code, etf_name: e.name, net_assets: e.net_assets}\nORDER BY e.net_assets DESC\nLIMIT 5",
+    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '코스피'})\nRETURN {etf_code: e.code, etf_name: e.name, net_assets: e.net_assets}\nORDER BY e.net_assets DESC\nLIMIT 5",
     "description": "특정 태그 ETF를 순자산 기준 상위 N개 조회"
   },
   {
@@ -361,7 +361,7 @@
   },
   {
     "question": "특정 태그 ETF를 보수율 조건으로 정렬 조회",
-    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '코스피200'})\nRETURN {etf_code: e.code, etf_name: e.name, expense_ratio: e.expense_ratio}\nORDER BY e.expense_ratio ASC",
+    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '코스피'})\nRETURN {etf_code: e.code, etf_name: e.name, expense_ratio: e.expense_ratio}\nORDER BY e.expense_ratio ASC",
     "description": "특정 태그 ETF를 보수율 오름차순으로 조회"
   },
   {

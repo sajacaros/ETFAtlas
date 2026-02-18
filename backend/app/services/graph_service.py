@@ -42,6 +42,7 @@ class GraphService:
             return [dict(row._mapping) for row in result]
         except Exception as e:
             print(f"Cypher query error: {e}")
+            self.db.rollback()
             return []
 
     @staticmethod

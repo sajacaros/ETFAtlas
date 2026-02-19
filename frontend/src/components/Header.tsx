@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import { useNotification } from '@/hooks/useNotification'
@@ -8,11 +9,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Search, PieChart, User, LogOut, MessageCircle, Bell } from 'lucide-react'
+import { Search, PieChart, User, LogOut, MessageCircle, Bell, BookOpen } from 'lucide-react'
+import StoryDialog from '@/components/StoryDialog'
 
 export default function Header() {
   const { user, isAuthenticated, logout } = useAuth()
   const { hasNew } = useNotification()
+  const [storyOpen, setStoryOpen] = useState(false)
 
   return (
     <header className="border-b bg-white">
@@ -57,6 +60,13 @@ export default function Header() {
         </div>
 
         <div className="flex items-center gap-4">
+          <button
+            onClick={() => setStoryOpen(true)}
+            className="hidden md:flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+          >
+            <BookOpen className="w-4 h-4" />
+            Story
+          </button>
           {isAuthenticated ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -87,6 +97,7 @@ export default function Header() {
           )}
         </div>
       </div>
+      <StoryDialog open={storyOpen} onOpenChange={setStoryOpen} />
     </header>
   )
 }

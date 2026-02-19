@@ -20,14 +20,12 @@ SET search_path = public;
 --   (ETF {code, name, updated_at, net_assets, expense_ratio})
 --   (Stock {code, name})
 --   (Price {date, open, high, low, close, volume, nav, market_cap, net_assets, trade_value, change_rate})
---   (Change {id, stock_code, stock_name, change_type, before_weight, after_weight, weight_change, detected_at})
 --   (User {user_id})
 --
 -- Edges:
 --   (ETF)-[:HOLDS {date, weight, shares}]->(Stock)
 --   (ETF)-[:HAS_PRICE]->(Price)
 --   (Stock)-[:HAS_PRICE]->(Price)
---   (ETF)-[:HAS_CHANGE]->(Change)
 --   (User)-[:WATCHES {added_at}]->(ETF)
 -- =====================================================
 

@@ -62,6 +62,14 @@ class UniverseETFResponse(BaseModel):
     market_cap_change_1w: float | None = None
 
 
+@router.get("/latest-date")
+async def get_latest_date(db: Session = Depends(get_db)):
+    """최신 가격 데이터 기준일 조회"""
+    graph = GraphService(db)
+    date = graph.get_latest_price_date()
+    return {"date": date}
+
+
 @router.get("/top", response_model=List[UniverseETFResponse])
 async def get_top_etfs(
     limit: int = Query(20, ge=1, le=100),

@@ -81,33 +81,18 @@
   },
   {
     "question": "두 종목을 동시에 보유한 ETF 목록 조회",
-    "cypher": "MATCH (e:ETF)-[h1:HOLDS]->(s1:Stock {code: '005930'}), (e)-[h2:HOLDS]->(s2:Stock {code: '000660'})\nWITH e, h1, h2 ORDER BY h1.date DESC, h2.date DESC\nWITH e, head(collect(DISTINCT h1)) as lh1, head(collect(DISTINCT h2)) as lh2\nRETURN {etf_code: e.code, etf_name: e.name, weight1: lh1.weight, weight2: lh2.weight}\nORDER BY lh1.weight + lh2.weight DESC",
+    "cypher": "MATCH (e:ETF)-[h1:HOLDS]->(s1:Stock {code: '005930'})\nWITH e, h1 ORDER BY h1.date DESC\nWITH e, head(collect(h1)) as lh1\nMATCH (e)-[h2:HOLDS]->(s2:Stock {code: '000660'})\nWITH e, lh1, h2 ORDER BY h2.date DESC\nWITH e, lh1, head(collect(h2)) as lh2\nWITH e, lh1, lh2, lh1.weight + lh2.weight AS total_weight\nORDER BY total_weight DESC\nRETURN {etf_code: e.code, etf_name: e.name, weight1: lh1.weight, weight2: lh2.weight, total_weight: total_weight}",
     "description": "두 종목을 동시에 보유한 ETF와 각 비중 조회"
   },
   {
-    "question": "복수 종목의 합산 비중이 높은 ETF 순위 조회",
-    "cypher": "MATCH (e:ETF)-[h1:HOLDS]->(s1:Stock {code: '005930'}), (e)-[h2:HOLDS]->(s2:Stock {code: '000660'})\nWITH e, h1, h2 ORDER BY h1.date DESC, h2.date DESC\nWITH e, head(collect(DISTINCT h1)) as lh1, head(collect(DISTINCT h2)) as lh2\nWITH e, lh1, lh2, lh1.weight + lh2.weight as combined_weight\nRETURN {etf_code: e.code, etf_name: e.name, weight1: lh1.weight, weight2: lh2.weight, combined_weight: combined_weight}\nORDER BY combined_weight DESC\nLIMIT 10",
-    "description": "두 종목의 합산 비중이 높은 ETF 상위 N개 조회"
-  },
-  {
-    "question": "복수 종목을 동시에 보유한 ETF와 수수료 조회",
-    "cypher": "MATCH (e:ETF)-[h1:HOLDS]->(s1:Stock {code: '005930'}), (e)-[h2:HOLDS]->(s2:Stock {code: '000660'})\nWITH e, h1, h2 ORDER BY h1.date DESC, h2.date DESC\nWITH e, head(collect(DISTINCT h1)) as lh1, head(collect(DISTINCT h2)) as lh2\nRETURN {etf_code: e.code, etf_name: e.name, weight1: lh1.weight, weight2: lh2.weight, expense_ratio: e.expense_ratio}\nORDER BY lh1.weight + lh2.weight DESC",
-    "description": "복수 종목을 동시에 보유한 ETF의 비중과 보수율 조회"
-  },
-  {
     "question": "두 종목을 동시에 보유한 ETF 수 조회",
-    "cypher": "MATCH (e:ETF)-[h1:HOLDS]->(s1:Stock {code: '005930'}), (e)-[h2:HOLDS]->(s2:Stock {code: '000660'})\nWITH e, h1, h2 ORDER BY h1.date DESC, h2.date DESC\nWITH e, head(collect(DISTINCT h1)) as lh1, head(collect(DISTINCT h2)) as lh2\nWITH count(e) as etf_count\nRETURN {etf_count: etf_count}",
+    "cypher": "MATCH (e:ETF)-[h1:HOLDS]->(s1:Stock {code: '005930'})\nWITH e, h1 ORDER BY h1.date DESC\nWITH e, head(collect(h1)) as lh1\nMATCH (e)-[h2:HOLDS]->(s2:Stock {code: '000660'})\nWITH e, lh1, h2 ORDER BY h2.date DESC\nWITH e, lh1, head(collect(h2)) as lh2\nWITH count(e) as etf_count\nRETURN {etf_count: etf_count}",
     "description": "두 종목을 동시에 보유한 ETF 수 조회"
   },
   {
     "question": "세 종목을 모두 보유한 ETF 조회",
-    "cypher": "MATCH (e:ETF)-[h1:HOLDS]->(s1:Stock {code: '005930'}), (e)-[h2:HOLDS]->(s2:Stock {code: '000660'}), (e)-[h3:HOLDS]->(s3:Stock {code: '035420'})\nWITH e, h1, h2, h3 ORDER BY h1.date DESC, h2.date DESC, h3.date DESC\nWITH e, head(collect(DISTINCT h1)) as lh1, head(collect(DISTINCT h2)) as lh2, head(collect(DISTINCT h3)) as lh3\nRETURN {etf_code: e.code, etf_name: e.name, weight1: lh1.weight, weight2: lh2.weight, weight3: lh3.weight}\nORDER BY lh1.weight + lh2.weight + lh3.weight DESC",
+    "cypher": "MATCH (e:ETF)-[h1:HOLDS]->(s1:Stock {code: '005930'})\nWITH e, h1 ORDER BY h1.date DESC\nWITH e, head(collect(h1)) as lh1\nMATCH (e)-[h2:HOLDS]->(s2:Stock {code: '000660'})\nWITH e, lh1, h2 ORDER BY h2.date DESC\nWITH e, lh1, head(collect(h2)) as lh2\nMATCH (e)-[h3:HOLDS]->(s3:Stock {code: '035420'})\nWITH e, lh1, lh2, h3 ORDER BY h3.date DESC\nWITH e, lh1, lh2, head(collect(h3)) as lh3\nWITH e, lh1, lh2, lh3, lh1.weight + lh2.weight + lh3.weight AS total_weight\nORDER BY total_weight DESC\nRETURN {etf_code: e.code, etf_name: e.name, weight1: lh1.weight, weight2: lh2.weight, weight3: lh3.weight, total_weight: total_weight}",
     "description": "세 종목을 모두 보유한 ETF와 각 비중 조회"
-  },
-  {
-    "question": "복수 종목 보유 ETF를 비중 합산과 보수율, 순자산으로 조회",
-    "cypher": "MATCH (e:ETF)-[h1:HOLDS]->(s1:Stock {code: '005930'}), (e)-[h2:HOLDS]->(s2:Stock {code: '000660'})\nWITH e, h1, h2 ORDER BY h1.date DESC, h2.date DESC\nWITH e, head(collect(DISTINCT h1)) as lh1, head(collect(DISTINCT h2)) as lh2\nRETURN {etf_code: e.code, etf_name: e.name, weight1: lh1.weight, weight2: lh2.weight, expense_ratio: e.expense_ratio, net_assets: e.net_assets}\nORDER BY lh1.weight + lh2.weight DESC\nLIMIT 10",
-    "description": "복수 종목 보유 ETF의 비중, 보수율, 순자산 종합 조회"
   },
   {
     "question": "특정 ETF와 보유종목이 유사한 ETF 조회",
@@ -116,7 +101,7 @@
   },
   {
     "question": "두 ETF의 공통 보유종목과 각 비중 비교",
-    "cypher": "MATCH (e1:ETF {code: '069500'})-[h1:HOLDS]->(s:Stock)<-[h2:HOLDS]-(e2:ETF {code: '102110'})\nWITH s, h1, h2 ORDER BY h1.date DESC, h2.date DESC\nWITH s, head(collect(DISTINCT h1)) as lh1, head(collect(DISTINCT h2)) as lh2\nRETURN {stock_code: s.code, stock_name: s.name, weight_etf1: lh1.weight, weight_etf2: lh2.weight}",
+    "cypher": "MATCH (e1:ETF {code: '069500'})-[h1:HOLDS]->(s:Stock)\nWITH s, h1 ORDER BY h1.date DESC\nWITH s, head(collect(h1)) as lh1\nMATCH (s)<-[h2:HOLDS]-(e2:ETF {code: '102110'})\nWITH s, lh1, h2 ORDER BY h2.date DESC\nWITH s, lh1, head(collect(h2)) as lh2\nRETURN {stock_code: s.code, stock_name: s.name, weight_etf1: lh1.weight, weight_etf2: lh2.weight}",
     "description": "두 ETF의 공통 보유종목과 각 ETF에서의 비중 비교"
   },
   {
@@ -131,7 +116,7 @@
   },
   {
     "question": "두 ETF의 보유종목 비중 차이 비교",
-    "cypher": "MATCH (e1:ETF {code: '091170'})-[h1:HOLDS]->(s:Stock)<-[h2:HOLDS]-(e2:ETF {code: '091160'})\nWITH s, h1, h2 ORDER BY h1.date DESC, h2.date DESC\nWITH s, head(collect(DISTINCT h1)) as lh1, head(collect(DISTINCT h2)) as lh2\nRETURN {stock_code: s.code, stock_name: s.name, weight_etf1: lh1.weight, weight_etf2: lh2.weight}\nORDER BY lh1.weight DESC",
+    "cypher": "MATCH (e1:ETF {code: '091170'})-[h1:HOLDS]->(s:Stock)\nWITH s, h1 ORDER BY h1.date DESC\nWITH s, head(collect(h1)) as lh1\nMATCH (s)<-[h2:HOLDS]-(e2:ETF {code: '091160'})\nWITH s, lh1, h2 ORDER BY h2.date DESC\nWITH s, lh1, head(collect(h2)) as lh2\nRETURN {stock_code: s.code, stock_name: s.name, weight_etf1: lh1.weight, weight_etf2: lh2.weight}\nORDER BY lh1.weight DESC",
     "description": "두 ETF의 공통 보유종목에서 각 비중 차이 비교"
   },
   {
@@ -208,11 +193,6 @@
     "question": "운용사별 평균 보수율 조회",
     "cypher": "MATCH (e:ETF)-[:MANAGED_BY]->(c:Company)\nWITH c.name as company_name, avg(e.expense_ratio) as avg_expense\nRETURN {company_name: company_name, avg_expense_ratio: avg_expense}\nORDER BY avg_expense ASC",
     "description": "운용사별 평균 보수율을 오름차순으로 조회"
-  },
-  {
-    "question": "특정 운용사 ETF를 순자산 상위 N개 조회",
-    "cypher": "MATCH (e:ETF)-[:MANAGED_BY]->(c:Company {name: '미래에셋자산운용'})\nRETURN {etf_code: e.code, etf_name: e.name, net_assets: e.net_assets}\nORDER BY e.net_assets DESC\nLIMIT 10",
-    "description": "특정 운용사 ETF 중 순자산 상위 N개 조회"
   },
   {
     "question": "특정 운용사 ETF 중 수익률이 가장 높은 ETF 조회",
@@ -305,11 +285,6 @@
     "description": "두 ETF의 보수율을 비교 조회"
   },
   {
-    "question": "특정 태그 ETF들의 보수율 비교 조회",
-    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '반도체'})\nRETURN {etf_code: e.code, etf_name: e.name, expense_ratio: e.expense_ratio}\nORDER BY e.expense_ratio ASC",
-    "description": "특정 태그 ETF들의 보수율을 오름차순으로 비교"
-  },
-  {
     "question": "두 ETF의 수익률 비교 조회",
     "cypher": "MATCH (e:ETF)\nWHERE e.code IN ['069500', '148020']\nRETURN {etf_code: e.code, etf_name: e.name, return_1m: e.return_1m}",
     "description": "두 ETF의 1개월 수익률 비교"
@@ -323,11 +298,6 @@
     "question": "두 ETF의 순자산 비교 조회",
     "cypher": "MATCH (e:ETF)\nWHERE e.code IN ['102110', '293180']\nRETURN {etf_code: e.code, etf_name: e.name, net_assets: e.net_assets}",
     "description": "두 ETF의 순자산 비교"
-  },
-  {
-    "question": "특정 태그 ETF들의 순자산 비교 조회",
-    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: 'AI'})\nRETURN {etf_code: e.code, etf_name: e.name, net_assets: e.net_assets}\nORDER BY e.net_assets DESC",
-    "description": "특정 태그 ETF들의 순자산을 내림차순으로 비교"
   },
   {
     "question": "특정 태그 ETF의 보수율과 수익률 함께 비교 조회",
@@ -358,11 +328,6 @@
     "question": "특정 운용사의 특정 태그 ETF 조회",
     "cypher": "MATCH (e:ETF)-[:MANAGED_BY]->(c:Company {name: '삼성자산운용'})\nMATCH (e)-[:TAGGED]->(t:Tag {name: 'AI'})\nRETURN {etf_code: e.code, etf_name: e.name, expense_ratio: e.expense_ratio}",
     "description": "특정 운용사가 운용하는 특정 태그 ETF 조회"
-  },
-  {
-    "question": "특정 태그 ETF를 보수율 조건으로 정렬 조회",
-    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '코스피'})\nRETURN {etf_code: e.code, etf_name: e.name, expense_ratio: e.expense_ratio}\nORDER BY e.expense_ratio ASC",
-    "description": "특정 태그 ETF를 보수율 오름차순으로 조회"
   },
   {
     "question": "특정 운용사의 특정 태그 ETF를 순자산순으로 조회",
@@ -411,7 +376,7 @@
   },
   {
     "question": "복수 종목 보유 ETF 중 특정 태그 필터 조회",
-    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '반도체'})\nMATCH (e)-[h1:HOLDS]->(s1:Stock {code: '005930'}), (e)-[h2:HOLDS]->(s2:Stock {code: '000660'})\nWITH e, h1, h2 ORDER BY h1.date DESC, h2.date DESC\nWITH e, head(collect(DISTINCT h1)) as lh1, head(collect(DISTINCT h2)) as lh2\nRETURN {etf_code: e.code, etf_name: e.name, weight1: lh1.weight, weight2: lh2.weight, expense_ratio: e.expense_ratio}\nORDER BY lh1.weight + lh2.weight DESC",
+    "cypher": "MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '반도체'})\nMATCH (e)-[h1:HOLDS]->(s1:Stock {code: '005930'})\nWITH e, h1 ORDER BY h1.date DESC\nWITH e, head(collect(h1)) as lh1\nMATCH (e)-[h2:HOLDS]->(s2:Stock {code: '000660'})\nWITH e, lh1, h2 ORDER BY h2.date DESC\nWITH e, lh1, head(collect(h2)) as lh2\nWITH e, lh1, lh2, lh1.weight + lh2.weight AS total_weight\nORDER BY total_weight DESC\nRETURN {etf_code: e.code, etf_name: e.name, weight1: lh1.weight, weight2: lh2.weight, total_weight: total_weight, expense_ratio: e.expense_ratio}",
     "description": "복수 종목을 동시에 보유한 특정 태그 ETF 조회"
   },
   {
@@ -530,11 +495,6 @@
     "description": "특정 태그 ETF 중 보유종목 수 상위 N개 조회"
   },
   {
-    "question": "복수 종목 보유 ETF 중 보수율 낮은 순 조회",
-    "cypher": "MATCH (e:ETF)-[h1:HOLDS]->(s1:Stock {code: '005930'}), (e)-[h2:HOLDS]->(s2:Stock {code: '000660'})\nWITH e, h1, h2 ORDER BY h1.date DESC, h2.date DESC\nWITH e, head(collect(DISTINCT h1)) as lh1, head(collect(DISTINCT h2)) as lh2\nRETURN {etf_code: e.code, etf_name: e.name, weight1: lh1.weight, weight2: lh2.weight, expense_ratio: e.expense_ratio}\nORDER BY e.expense_ratio ASC",
-    "description": "복수 종목 동시 보유 ETF를 보수율 오름차순으로 조회"
-  },
-  {
     "question": "보수율 상위 N개 ETF 조회",
     "cypher": "MATCH (e:ETF)\nRETURN {etf_code: e.code, etf_name: e.name, expense_ratio: e.expense_ratio}\nORDER BY e.expense_ratio DESC\nLIMIT 10",
     "description": "보수율이 가장 높은 ETF 상위 N개 조회"
@@ -581,7 +541,7 @@
   },
   {
     "question": "복수 종목을 보유하면서 특정 운용사인 ETF 조회",
-    "cypher": "MATCH (e:ETF)-[:MANAGED_BY]->(c:Company {name: '미래에셋자산운용'})\nMATCH (e)-[h1:HOLDS]->(s1:Stock {code: '005930'}), (e)-[h2:HOLDS]->(s2:Stock {code: '000660'})\nWITH e, h1, h2 ORDER BY h1.date DESC, h2.date DESC\nWITH e, head(collect(DISTINCT h1)) as lh1, head(collect(DISTINCT h2)) as lh2\nRETURN {etf_code: e.code, etf_name: e.name, weight1: lh1.weight, weight2: lh2.weight, expense_ratio: e.expense_ratio}",
+    "cypher": "MATCH (e:ETF)-[:MANAGED_BY]->(c:Company {name: '미래에셋자산운용'})\nMATCH (e)-[h1:HOLDS]->(s1:Stock {code: '005930'})\nWITH e, h1 ORDER BY h1.date DESC\nWITH e, head(collect(h1)) as lh1\nMATCH (e)-[h2:HOLDS]->(s2:Stock {code: '000660'})\nWITH e, lh1, h2 ORDER BY h2.date DESC\nWITH e, lh1, head(collect(h2)) as lh2\nRETURN {etf_code: e.code, etf_name: e.name, weight1: lh1.weight, weight2: lh2.weight, expense_ratio: e.expense_ratio}",
     "description": "특정 운용사의 ETF 중 복수 종목을 동시에 보유한 ETF 조회"
   },
   {

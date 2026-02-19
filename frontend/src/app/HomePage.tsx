@@ -156,6 +156,7 @@ export default function HomePage() {
   const [searchQuery, setSearchQuery] = useState(searchParams.get('q') || '')
   const [loading, setLoading] = useState(false)
   const [watchedCodes, setWatchedCodes] = useState<Set<string>>(new Set())
+  const [latestDate, setLatestDate] = useState<string | null>(null)
 
   // ETF list (shared between search and tag)
   const [etfList, setEtfList] = useState<ETFCardItem[]>([])
@@ -218,6 +219,7 @@ export default function HomePage() {
 
   useEffect(() => {
     tagsApi.getAll().then(setTags).catch(console.error)
+    etfsApi.getLatestDate().then(setLatestDate).catch(console.error)
   }, [])
 
   useEffect(() => {
@@ -422,6 +424,11 @@ export default function HomePage() {
         </div>
 
         {/* ETF 목록 (검색/태그 공용) */}
+        {latestDate && (
+          <div className="text-sm text-muted-foreground text-right">
+            기준일: {latestDate}
+          </div>
+        )}
         {isLoading ? (
           <div className="text-center py-8 text-muted-foreground">불러오는 중...</div>
         ) : etfList.length > 0 ? (

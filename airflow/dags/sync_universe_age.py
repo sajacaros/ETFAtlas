@@ -38,7 +38,7 @@ dag = DAG(
     'age_sync_universe',
     default_args=default_args,
     description='ETF 데이터 일일 증분 수집 (Apache AGE)',
-    schedule_interval='0 8 * * 1-5',
+    schedule_interval='0 4 * * 2-6',  # 거래일 다음날 새벽 04:00 KST (화~토)
     catchup=False,
     tags=['etf', 'daily', 'age'],
 )

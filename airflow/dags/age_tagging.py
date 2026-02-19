@@ -39,7 +39,7 @@ dag = DAG(
     'age_tagging',
     default_args=default_args,
     description='ETF 태그 전체 재구축 (룰 + LLM)',
-    schedule_interval='0 2 * * 0',  # 일요일 02:00
+    schedule_interval='0 3 * * 6',  # 토요일 03:00 KST
     catchup=False,
     tags=['etf', 'weekly', 'age', 'tagging'],
 )

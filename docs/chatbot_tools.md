@@ -315,6 +315,18 @@ RETURN {code: e.code, name: e.name, expense_ratio: e.expense_ratio}
 MATCH (e:ETF)-[:MANAGED_BY]->(c:Company)
 WHERE c.name CONTAINS '삼성'
 RETURN {code: e.code, name: e.name, company: c.name}
+
+-- 두 종목을 동시에 보유한 ETF
+MATCH (e:ETF)-[h1:HOLDS]->(s1:Stock {code: '005930'})
+WITH e, h1 ORDER BY h1.date DESC
+WITH e, head(collect(h1)) as lh1
+MATCH (e)-[h2:HOLDS]->(s2:Stock {code: '095610'})
+WITH e, lh1, h2 ORDER BY h2.date DESC
+WITH e, lh1, head(collect(h2)) as lh2
+WITH e, lh1, lh2, lh1.weight + lh2.weight AS total_weight
+ORDER BY total_weight DESC
+LIMIT 5
+RETURN {etf_code: e.code, etf_name: e.name, weight_samsung: lh1.weight, weight_tes: lh2.weight, total_weight: total_weight}
 ```
 
 ---

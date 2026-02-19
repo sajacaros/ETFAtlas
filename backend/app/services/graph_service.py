@@ -137,6 +137,20 @@ class GraphService:
         "return_1w": "e.return_1w",
     }
 
+    def get_latest_price_date(self) -> str | None:
+        """AGE에서 가장 최근 ETF 가격 날짜 조회"""
+        rows = self.execute_cypher("""
+            MATCH (e:ETF)-[:HAS_PRICE]->(p:Price)
+            RETURN p.date
+            ORDER BY p.date DESC
+            LIMIT 1
+        """)
+        if rows:
+            raw = self.parse_agtype(rows[0]["result"])
+            if raw:
+                return str(raw)
+        return None
+
     def get_top_etfs(self, limit: int = 20, sort: str = "market_cap") -> List[Dict]:
         """AGE Universe 내 ETF 목록 (정렬 기준 선택 가능)"""
         order_field = self.SORT_FIELDS.get(sort, "e.net_assets")

@@ -258,7 +258,7 @@ etf_search로 ETF 코드를 먼저 확인한 후 사용하세요."""
 
     def forward(self, etf_code: str, period: str = "1d") -> str:
         graph_service = GraphService(self.db)
-        changes = graph_service.get_etf_holdings_changes(etf_code, period)
+        changes, _, _ = graph_service.get_etf_holdings_changes(etf_code, period)
         filtered = [c for c in changes if c["change_type"] != "unchanged"]
         if not filtered:
             return "변동 없음"

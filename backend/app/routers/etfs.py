@@ -129,7 +129,7 @@ async def get_holdings_changes(
     db: Session = Depends(get_db)
 ):
     graph_service = GraphService(db)
-    changes = graph_service.get_etf_holdings_changes(code, period)
+    changes, _, _ = graph_service.get_etf_holdings_changes(code, period)
     return changes
 
 

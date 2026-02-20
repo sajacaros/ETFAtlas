@@ -21,7 +21,7 @@ async def get_notification_status(
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
-    """새 알림 유무 확인"""
+    """새 알림 유무 확인 — 즐겨찾기가 있고 새 수집 데이터가 있을 때만 true"""
     user = db.query(User).filter(User.id == user_id).first()
     latest = db.query(CollectionRun).order_by(CollectionRun.created_at.desc()).first()
 
@@ -32,6 +32,23 @@ async def get_notification_status(
         user.last_notification_checked_at is None
         or latest.created_at > user.last_notification_checked_at
     )
+
+    # 즐겨찾기에 실제 3%p 초과 비중 변화가 있을 때만 빨간 점 표시
+    if has_new:
+        from ..services.graph_service import GraphService
+        graph = GraphService(db)
+        watched = graph.get_user_watches(user_id)
+        if not watched:
+            has_new = False
+        else:
+            has_new = False
+            for item in watched:
+                changes, _, _ = graph.get_etf_holdings_changes(item["etf_code"], "1d")
+                if any(c["change_type"] != "unchanged" and abs(c["weight_change"]) > 3
+                       for c in changes):
+                    has_new = True
+                    break
+
     return {
         "has_new": has_new,
         "latest_collected_at": latest.collected_at.isoformat(),

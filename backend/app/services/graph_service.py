@@ -336,14 +336,18 @@ class GraphService:
             dates = [self.parse_agtype(row["result"])["date"] for row in rows]
             return dates[1] if len(dates) >= 2 else None
 
-    def get_etf_holdings_changes(self, etf_code: str, period: str = "1d", base_date: str = None) -> List[Dict]:
-        """ETF 보유종목 비중 변화. period: 1d/1w/1m, base_date: 기준일(None이면 마지막 거래일)"""
+    def get_etf_holdings_changes(self, etf_code: str, period: str = "1d", base_date: str = None) -> tuple[List[Dict], str | None, str | None]:
+        """ETF 보유종목 비중 변화. period: 1d/1w/1m, base_date: 기준일(None이면 마지막 거래일)
+
+        Returns:
+            (changes_list, current_date, previous_date)
+        """
         from datetime import date, timedelta
 
         current, actual_date = self._get_holdings_at(etf_code, base_date)
 
         if not actual_date:
-            return []
+            return [], None, None
 
         ref = date.fromisoformat(actual_date)
         if period == "1d":
@@ -355,7 +359,7 @@ class GraphService:
         else:
             prev_date = self._get_prev_trading_date(etf_code, actual_date)
 
-        previous, _ = self._get_holdings_at(etf_code, prev_date) if prev_date else ({}, None)
+        previous, prev_actual = self._get_holdings_at(etf_code, prev_date) if prev_date else ({}, None)
 
         changes = []
         all_codes = set(current.keys()) | set(previous.keys())
@@ -382,7 +386,7 @@ class GraphService:
                 "previous_weight": pw,
                 "weight_change": round(cw - pw, 4),
             })
-        return sorted(changes, key=lambda x: x["current_weight"], reverse=True)
+        return sorted(changes, key=lambda x: x["current_weight"], reverse=True), actual_date, prev_actual
 
     def get_company_etfs(self, company_name: str = None) -> List[Dict]:
         """운용사별 ETF 목록 조회. company_name 없으면 전체 운용사 목록 + ETF 수 반환"""

@@ -6,7 +6,7 @@ import type {
   HoldingChange,
   Price,
   WatchlistItem,
-  WatchlistChange,
+  WatchlistChangesResponse,
   Portfolio,
   PortfolioDetail,
   TargetAllocationItem,
@@ -119,7 +119,7 @@ export const watchlistApi = {
   getChanges: async (period = '1d', baseDate?: string) => {
     const params: Record<string, string> = { period }
     if (baseDate) params.base_date = baseDate
-    const { data } = await api.get<WatchlistChange[]>('/watchlist/changes', { params })
+    const { data } = await api.get<WatchlistChangesResponse>('/watchlist/changes', { params })
     return data
   },
 }

@@ -38,7 +38,7 @@ dag = DAG(
     'age_sync_universe',
     default_args=default_args,
     description='ETF 데이터 일일 증분 수집 (Apache AGE)',
-    schedule_interval='0 6,7 * * 2-6',  # 거래일 다음날 06:00, 07:00 KST (화~토)
+    schedule_interval='30 8 * * 2-6',  # 거래일 다음날 08:30 KST (화~토)
     catchup=False,
     tags=['etf', 'daily', 'age'],
 )
@@ -79,14 +79,17 @@ def sync_universe_and_prices(**context):
     if not dates:
         return
 
-    _, new_etfs = collect_universe_and_prices(dates)
+    _, new_etfs, actual_dates = collect_universe_and_prices(dates)
     if new_etfs:
         ti.xcom_push(key='new_etfs', value=new_etfs)
+    if actual_dates:
+        ti.xcom_push(key='actual_dates', value=actual_dates)
 
 
 def sync_holdings(**context):
     """HOLDS 엣지 증분 수집."""
-    dates = context['ti'].xcom_pull(task_ids='fetch_trading_dates')
+    ti = context['ti']
+    dates = ti.xcom_pull(task_ids='sync_universe_and_prices', key='actual_dates')
     if not dates:
         return
     etf_codes = list(get_etf_codes_from_age())
@@ -95,7 +98,8 @@ def sync_holdings(**context):
 
 def sync_stock_prices(**context):
     """Stock 가격 증분 수집."""
-    dates = context['ti'].xcom_pull(task_ids='fetch_trading_dates')
+    ti = context['ti']
+    dates = ti.xcom_pull(task_ids='sync_universe_and_prices', key='actual_dates')
     if not dates:
         return
     collect_stock_prices_for_dates(dates)
@@ -103,7 +107,8 @@ def sync_stock_prices(**context):
 
 def record_and_notify(**context):
     """수집 완료 기록 + 디스코드 알림. 이미 기록된 날짜면 스킵."""
-    dates = context['ti'].xcom_pull(task_ids='fetch_trading_dates')
+    ti = context['ti']
+    dates = ti.xcom_pull(task_ids='sync_universe_and_prices', key='actual_dates')
     if not dates:
         return
     last_date = dates[-1]
@@ -117,7 +122,8 @@ def record_and_notify(**context):
 
 def sync_returns(**context):
     """수익률 계산. 새 거래일 데이터가 없으면 스킵하여 기존 값 유지."""
-    dates = context['ti'].xcom_pull(task_ids='fetch_trading_dates')
+    ti = context['ti']
+    dates = ti.xcom_pull(task_ids='sync_universe_and_prices', key='actual_dates')
     if not dates:
         return
     update_etf_returns()

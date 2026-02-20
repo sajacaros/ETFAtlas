@@ -418,20 +418,21 @@ def get_etf_codes_from_age() -> set[str]:
 # 공용 수집 함수
 # ──────────────────────────────────────────────
 
-def collect_universe_and_prices(dates: list[str]) -> tuple[set[str], list[dict]]:
+def collect_universe_and_prices(dates: list[str]) -> tuple[set[str], list[dict], list[str]]:
     """날짜별 KRX 데이터 → ETF 노드 + 메타데이터(보수율/운용사) + Price 노드 생성.
 
     Returns:
-        (universe_codes, new_etfs_list)
+        (universe_codes, new_etfs_list, actual_dates)
     """
     from pykrx.website.krx.etx.core import ETF_전종목기본종목
     from math import ceil
 
     if not dates:
-        return get_etf_codes_from_age(), []
+        return get_etf_codes_from_age(), [], []
 
     existing_codes = get_etf_codes_from_age()
     all_new_etfs = []
+    actual_dates = []  # KRX API가 반환한 실제 거래일
 
     # 보수율 일괄 조회
     fee_map = {}
@@ -453,10 +454,19 @@ def collect_universe_and_prices(dates: list[str]) -> tuple[set[str], list[dict]]
     total_prices = 0
 
     try:
+        seen_dates = set()  # 중복 수집 방지
         for bd in dates:
-            krx_items = _get_krx_data_for_exact_date(bd)
-            if not krx_items:
+            krx_items, actual_date = get_krx_daily_data(bd)
+            if not krx_items or not actual_date:
                 continue
+            if actual_date in seen_dates:
+                log.info(f"[{bd}] Resolved to {actual_date} (already collected, skipping)")
+                continue
+            seen_dates.add(actual_date)
+            if bd != actual_date:
+                log.info(f"[{bd}] Resolved to actual trading date: {actual_date}")
+            bd = actual_date  # 이후 모든 처리에 실제 거래일 사용
+            actual_dates.append(actual_date)
 
             # ── 신규 ETF 노드 + 메타데이터 ──
             krx_dicts = [{'code': item.code, 'name': item.name,
@@ -539,7 +549,7 @@ def collect_universe_and_prices(dates: list[str]) -> tuple[set[str], list[dict]]
                 execute_cypher_batch(cur, """
                     MATCH (e:ETF {code: item.code})
                     OPTIONAL MATCH (e)-[:HAS_PRICE]->(existing:Price {date: item.date})
-                    WITH e, existing WHERE existing IS NULL
+                    WITH e, existing, item WHERE existing IS NULL
                     CREATE (e)-[:HAS_PRICE]->(:Price {date: item.date})
                     RETURN e
                 """, price_items)
@@ -568,7 +578,7 @@ def collect_universe_and_prices(dates: list[str]) -> tuple[set[str], list[dict]]
 
         log.info(f"Universe & prices: {len(existing_codes)} ETFs, "
                  f"{total_prices} price records")
-        return existing_codes, all_new_etfs
+        return existing_codes, all_new_etfs, actual_dates
 
     finally:
         cur.close()
@@ -774,7 +784,7 @@ def collect_stock_prices_for_dates(dates: list[str]):
             execute_cypher_batch(cur, """
                 MATCH (s:Stock {code: item.code})
                 OPTIONAL MATCH (s)-[:HAS_PRICE]->(existing:Price {date: item.date})
-                WITH s, existing WHERE existing IS NULL
+                WITH s, existing, item WHERE existing IS NULL
                 CREATE (s)-[:HAS_PRICE]->(:Price {date: item.date})
                 RETURN s
             """, items)

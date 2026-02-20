@@ -22,6 +22,8 @@ export default function WatchlistChangesPage() {
   const { isAuthenticated } = useAuth()
   const { markChecked } = useNotification()
   const [changes, setChanges] = useState<WatchlistChange[]>([])
+  const [currentDate, setCurrentDate] = useState<string | null>(null)
+  const [previousDate, setPreviousDate] = useState<string | null>(null)
   const [period, setPeriod] = useState<'1d' | '1w' | '1m'>('1d')
   const [baseDate, setBaseDate] = useState('')
   const [filter, setFilter] = useState<'all' | 'increased' | 'decreased'>('all')
@@ -42,8 +44,16 @@ export default function WatchlistChangesPage() {
     setLoading(true)
     watchlistApi
       .getChanges(period, baseDate || undefined)
-      .then(setChanges)
-      .catch(() => setChanges([]))
+      .then((res) => {
+        setChanges(res.changes)
+        setCurrentDate(res.current_date)
+        setPreviousDate(res.previous_date)
+      })
+      .catch(() => {
+        setChanges([])
+        setCurrentDate(null)
+        setPreviousDate(null)
+      })
       .finally(() => setLoading(false))
   }, [isAuthenticated, period, baseDate])
 
@@ -149,6 +159,12 @@ export default function WatchlistChangesPage() {
           )}
         </div>
       </div>
+
+      {currentDate && previousDate && (
+        <p className="text-sm text-muted-foreground">
+          기준일: {previousDate} → {currentDate}
+        </p>
+      )}
 
       {loading ? (
         <div className="text-center py-12 text-muted-foreground">로딩 중...</div>

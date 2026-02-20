@@ -1,4 +1,5 @@
 import time
+from datetime import date
 from decimal import Decimal
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -93,6 +94,14 @@ class PriceService:
         except ImportError:
             pass
         return prices
+
+    def get_latest_price_date(self) -> date | None:
+        """ticker_prices 테이블에서 MAX(date)를 조회한다."""
+        result = self.db.execute(text("SELECT MAX(date) AS max_date FROM ticker_prices"))
+        row = result.fetchone()
+        if row and row.max_date:
+            return row.max_date
+        return None
 
     def get_prev_prices(self, tickers: list[str]) -> dict[str, Decimal]:
         """ticker_prices 테이블에서 각 티커의 전일(두 번째 최신) 가격 조회."""

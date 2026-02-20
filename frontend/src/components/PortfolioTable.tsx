@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Table,
   TableBody,
@@ -23,7 +23,7 @@ interface PortfolioTableProps {
   targetAllocations: TargetAllocationItem[]
   holdings: HoldingItem[]
   isEditing: boolean
-  onUpdateWeight: (targetId: number, weight: number) => void
+  onUpdateWeight: (ticker: string, targetId: number, weight: number) => void
   onUpdateQuantity: (ticker: string, quantity: number, holdingId?: number) => void
   onUpdateAvgPrice: (ticker: string, avgPrice: number, holdingId?: number) => void
   onDeleteTicker: (ticker: string, targetId?: number, holdingId?: number) => void
@@ -141,18 +141,22 @@ export default function PortfolioTable({
     </TableHead>
   )
 
+  // Clear editing state when exiting edit mode
+  useEffect(() => {
+    if (!isEditing) {
+      setEditingWeight({})
+      setEditingQty({})
+      setEditingAvgPrice({})
+    }
+  }, [isEditing])
+
   const handleWeightBlur = (ticker: string) => {
     const val = editingWeight[ticker]
     if (val === undefined) return
     const target = targetMap.get(ticker)
     if (target) {
-      onUpdateWeight(target.id, parseFloat(val))
+      onUpdateWeight(ticker, target.id, parseFloat(val))
     }
-    setEditingWeight((prev) => {
-      const next = { ...prev }
-      delete next[ticker]
-      return next
-    })
   }
 
   const handleQtyBlur = (ticker: string) => {
@@ -163,11 +167,6 @@ export default function PortfolioTable({
     if (!isNaN(qty)) {
       onUpdateQuantity(ticker, qty, holding?.id)
     }
-    setEditingQty((prev) => {
-      const next = { ...prev }
-      delete next[ticker]
-      return next
-    })
   }
 
   const handleAvgPriceBlur = (ticker: string) => {
@@ -178,11 +177,6 @@ export default function PortfolioTable({
     if (!isNaN(price) && price >= 0) {
       onUpdateAvgPrice(ticker, price, holding?.id)
     }
-    setEditingAvgPrice((prev) => {
-      const next = { ...prev }
-      delete next[ticker]
-      return next
-    })
   }
 
   const handleKeyDown = (e: React.KeyboardEvent, onBlur: () => void) => {

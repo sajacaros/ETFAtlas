@@ -58,6 +58,7 @@ export interface Portfolio {
   display_order: number
   current_value: number | null
   current_value_date: string | null
+  current_value_updated_at: string | null
   daily_change_amount: number | null
   daily_change_rate: number | null
   invested_amount: number | null
@@ -218,6 +219,8 @@ export interface DashboardSummary {
   ytd: DashboardSummaryItem | null
   invested_amount: number | null
   investment_return: DashboardSummaryItem | null
+  snapshot_date: string | null
+  updated_at: string | null
 }
 
 export interface ChartDataPoint {

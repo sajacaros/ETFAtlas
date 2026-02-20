@@ -1,7 +1,7 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Trash2, ArrowLeft, AlertTriangle, RefreshCw, Pencil, Check, BarChart3, Eye, EyeOff, GripVertical } from 'lucide-react'
+import { Plus, Trash2, ArrowLeft, AlertTriangle, RefreshCw, Pencil, Check, BarChart3, Eye, EyeOff, GripVertical, Camera } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -18,7 +18,7 @@ import {
 import { portfolioApi } from '@/lib/api'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/use-toast'
-import type { Portfolio, PortfolioDetail, CalculationResult, CalculationBase, DashboardSummary } from '@/types/api'
+import type { Portfolio, PortfolioDetail, CalculationResult, CalculationRow, CalculationBase, DashboardSummary } from '@/types/api'
 import PortfolioTable from '@/components/PortfolioTable'
 import AddTickerDialog from '@/components/AddTickerDialog'
 import { useAmountVisibility, formatMaskedNumber } from '@/hooks/useAmountVisibility'
@@ -112,9 +112,18 @@ function SortablePortfolioCard({
           {p.current_value != null && p.current_value_date ? (
             <>
               <p className="text-lg font-bold font-mono">
-                <span className="text-sm font-normal text-muted-foreground">
-                  {p.current_value_date.slice(2).replace(/-/g, '/')}:
-                </span>{' '}
+                {p.current_value_updated_at && (
+                  <span className="text-sm font-normal text-muted-foreground">
+                    {(() => {
+                      const d = new Date(p.current_value_updated_at + 'Z')
+                      const mm = String(d.getMonth() + 1).padStart(2, '0')
+                      const dd = String(d.getDate()).padStart(2, '0')
+                      const hh = String(d.getHours()).padStart(2, '0')
+                      const mi = String(d.getMinutes()).padStart(2, '0')
+                      return `${mm}/${dd} ${hh}:${mi}`
+                    })()}:
+                  </span>
+                )}{' '}
                 {fmn(p.current_value, amountVisible)}{amountVisible && '원'}
               </p>
               <p className={`text-sm font-mono ${(p.daily_change_rate ?? 0) >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
@@ -192,6 +201,10 @@ export default function PortfolioPage() {
   // Backfill
   const [backfillLoading, setBackfillLoading] = useState<number | null>(null)
 
+  // Snapshot refresh
+  const [snapshotLoading, setSnapshotLoading] = useState(false)
+  const [allSnapshotLoading, setAllSnapshotLoading] = useState(false)
+
   // Create dialog
   const [createOpen, setCreateOpen] = useState(false)
   const [newName, setNewName] = useState('')
@@ -211,6 +224,19 @@ export default function PortfolioPage() {
   const [editName, setEditName] = useState('')
   const [editAmount, setEditAmount] = useState('')
   const [editCash, setEditCash] = useState('')
+
+  // Batch editing state
+  const [draftCalcBase, setDraftCalcBase] = useState<CalculationBase>('CURRENT_TOTAL')
+  const [addedTickers, setAddedTickers] = useState<{
+    ticker: string; name: string; targetWeight: number; quantity: number; avgPrice?: number
+  }[]>([])
+  const [deletedTickers, setDeletedTickers] = useState<string[]>([])
+  const [batchSaving, setBatchSaving] = useState(false)
+  const pendingChangesRef = useRef<{
+    weights: Record<string, number>
+    quantities: Record<string, number>
+    avgPrices: Record<string, number>
+  }>({ weights: {}, quantities: {}, avgPrices: {} })
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
@@ -348,6 +374,39 @@ export default function PortfolioPage() {
     }
   }
 
+  const handleRefreshSnapshot = async () => {
+    if (!selectedId) return
+    setSnapshotLoading(true)
+    try {
+      const result = await portfolioApi.refreshSnapshot(selectedId)
+      const data = await portfolioApi.getAll()
+      setPortfolios(data)
+      toast({ title: `스냅샷 적용 완료 (${result.date})` })
+    } catch (err: unknown) {
+      const message = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '스냅샷 적용 실패'
+      toast({ title: message, variant: 'destructive' })
+    } finally {
+      setSnapshotLoading(false)
+    }
+  }
+
+  const handleRefreshAllSnapshots = async () => {
+    setAllSnapshotLoading(true)
+    try {
+      const result = await portfolioApi.refreshAllSnapshots()
+      const data = await portfolioApi.getAll()
+      setPortfolios(data)
+      const { summary } = await portfolioApi.getTotalDashboard()
+      setTotalSummary(summary)
+      toast({ title: `스냅샷 적용 완료 (${result.refreshed}개 갱신, ${result.skipped}개 건너뜀)` })
+    } catch (err: unknown) {
+      const message = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '전체 스냅샷 적용 실패'
+      toast({ title: message, variant: 'destructive' })
+    } finally {
+      setAllSnapshotLoading(false)
+    }
+  }
+
   const handleBackfill = async (id: number) => {
     setBackfillLoading(id)
     try {
@@ -365,6 +424,7 @@ export default function PortfolioPage() {
 
   const handleUpdateSettings = async (field: string, value: string) => {
     if (!selectedId || !detail) return
+    if (isEditing) return // Batch mode: saved on batch save
     try {
       const params: Record<string, string | number | null> = {}
       if (field === 'name') params.name = value
@@ -374,9 +434,7 @@ export default function PortfolioPage() {
       setDetail({ ...detail, ...updated })
       setPortfolios(portfolios.map((p) => (p.id === selectedId ? { ...p, ...updated } : p)))
 
-      if (field === 'target_total_amount' && !isEditing) {
-        loadCalc(selectedId)
-      }
+      loadCalc(selectedId)
     } catch {
       toast({ title: '업데이트 실패', variant: 'destructive' })
     }
@@ -384,6 +442,10 @@ export default function PortfolioPage() {
 
   const handleChangeBase = async (base: CalculationBase) => {
     if (!selectedId || !detail) return
+    if (isEditing) {
+      setDraftCalcBase(base)
+      return
+    }
     try {
       const updated = await portfolioApi.update(selectedId, { calculation_base: base })
       setDetail({ ...detail, ...updated })
@@ -396,6 +458,7 @@ export default function PortfolioPage() {
 
   const handleUpdateCash = async (value: string) => {
     if (!selectedId) return
+    if (isEditing) return // Batch mode: saved on batch save
     const amount = parseInt(value.replace(/,/g, '') || '0', 10)
     try {
       await portfolioApi.addHolding(selectedId, { ticker: 'CASH', quantity: amount })
@@ -406,8 +469,15 @@ export default function PortfolioPage() {
     }
   }
 
-  const handleAddTicker = async (ticker: string, targetWeight: number, quantity: number, avgPrice?: number) => {
+  const handleAddTicker = async (ticker: string, targetWeight: number, quantity: number, avgPrice?: number, name?: string) => {
     if (!selectedId) return
+    if (isEditing) {
+      setAddedTickers(prev => [...prev, {
+        ticker, name: name || ticker, targetWeight, quantity, avgPrice,
+      }])
+      toast({ title: `${name || ticker} 추가 예정` })
+      return
+    }
     try {
       await portfolioApi.addTarget(selectedId, { ticker, target_weight: targetWeight })
       if (quantity > 0 || avgPrice) {
@@ -421,10 +491,14 @@ export default function PortfolioPage() {
     }
   }
 
-  const handleUpdateWeight = async (targetId: number, weight: number) => {
+  const handleUpdateWeight = async (ticker: string, _targetId: number, weight: number) => {
     if (!selectedId) return
+    if (isEditing) {
+      pendingChangesRef.current.weights[ticker] = weight
+      return
+    }
     try {
-      await portfolioApi.updateTarget(selectedId, targetId, { target_weight: weight })
+      await portfolioApi.updateTarget(selectedId, _targetId, { target_weight: weight })
       await loadDetail(selectedId)
       loadCalc(selectedId)
     } catch {
@@ -434,6 +508,10 @@ export default function PortfolioPage() {
 
   const handleUpdateQuantity = async (ticker: string, quantity: number, holdingId?: number) => {
     if (!selectedId) return
+    if (isEditing) {
+      pendingChangesRef.current.quantities[ticker] = quantity
+      return
+    }
     try {
       if (holdingId) {
         await portfolioApi.updateHolding(selectedId, holdingId, { quantity })
@@ -449,6 +527,10 @@ export default function PortfolioPage() {
 
   const handleUpdateAvgPrice = async (ticker: string, avgPrice: number, holdingId?: number) => {
     if (!selectedId) return
+    if (isEditing) {
+      pendingChangesRef.current.avgPrices[ticker] = avgPrice
+      return
+    }
     try {
       if (holdingId) {
         await portfolioApi.updateHolding(selectedId, holdingId, { avg_price: avgPrice })
@@ -462,8 +544,21 @@ export default function PortfolioPage() {
     }
   }
 
-  const handleDeleteTicker = async (_ticker: string, targetId?: number, holdingId?: number) => {
+  const handleDeleteTicker = async (ticker: string, targetId?: number, holdingId?: number) => {
     if (!selectedId) return
+    if (isEditing) {
+      // Check if newly added ticker
+      const addedIdx = addedTickers.findIndex(a => a.ticker === ticker)
+      if (addedIdx >= 0) {
+        setAddedTickers(prev => prev.filter((_, i) => i !== addedIdx))
+      } else {
+        setDeletedTickers(prev => [...prev, ticker])
+      }
+      delete pendingChangesRef.current.weights[ticker]
+      delete pendingChangesRef.current.quantities[ticker]
+      delete pendingChangesRef.current.avgPrices[ticker]
+      return
+    }
     try {
       if (targetId) await portfolioApi.deleteTarget(selectedId, targetId)
       if (holdingId) await portfolioApi.deleteHolding(selectedId, holdingId)
@@ -474,6 +569,136 @@ export default function PortfolioPage() {
       toast({ title: '삭제 실패', variant: 'destructive' })
     }
   }
+
+  // Batch edit helpers
+  const enterEditMode = () => {
+    if (!detail) return
+    setDraftCalcBase(detail.calculation_base)
+    setAddedTickers([])
+    setDeletedTickers([])
+    pendingChangesRef.current = { weights: {}, quantities: {}, avgPrices: {} }
+    setIsEditing(true)
+  }
+
+  const handleBatchSave = async () => {
+    if (!selectedId || !detail) return
+    setBatchSaving(true)
+    try {
+      const changes = pendingChangesRef.current
+      const deletedSet = new Set(deletedTickers)
+
+      const targets = [
+        ...detail.target_allocations
+          .filter(t => !deletedSet.has(t.ticker))
+          .map(t => ({
+            ticker: t.ticker,
+            target_weight: changes.weights[t.ticker] ?? t.target_weight,
+          })),
+        ...addedTickers.map(a => ({
+          ticker: a.ticker,
+          target_weight: changes.weights[a.ticker] ?? a.targetWeight,
+        })),
+      ]
+
+      const cashAmount = parseInt(editCash.replace(/,/g, '') || '0', 10)
+      const holdings = [
+        ...detail.holdings
+          .filter(h => !deletedSet.has(h.ticker) && h.ticker !== 'CASH')
+          .map(h => ({
+            ticker: h.ticker,
+            quantity: changes.quantities[h.ticker] ?? h.quantity,
+            avg_price: changes.avgPrices[h.ticker] ?? h.avg_price,
+          })),
+        ...addedTickers
+          .filter(a => a.ticker !== 'CASH')
+          .map(a => ({
+            ticker: a.ticker,
+            quantity: changes.quantities[a.ticker] ?? a.quantity,
+            avg_price: changes.avgPrices[a.ticker] ?? a.avgPrice ?? null,
+          })),
+        ...(cashAmount > 0 ? [{ ticker: 'CASH', quantity: cashAmount, avg_price: null as number | null }] : []),
+      ]
+
+      await portfolioApi.batchUpdate(selectedId, {
+        name: editName,
+        calculation_base: draftCalcBase,
+        target_total_amount: editAmount ? parseFloat(editAmount) : null,
+        targets,
+        holdings,
+      })
+
+      await loadDetail(selectedId)
+      loadCalc(selectedId)
+      const data = await portfolioApi.getAll()
+      setPortfolios(data)
+
+      setIsEditing(false)
+      setAddedTickers([])
+      setDeletedTickers([])
+      pendingChangesRef.current = { weights: {}, quantities: {}, avgPrices: {} }
+      toast({ title: '변경사항이 저장되었습니다' })
+    } catch {
+      toast({ title: '저장 실패', variant: 'destructive' })
+    } finally {
+      setBatchSaving(false)
+    }
+  }
+
+  // Computed display data for editing mode
+  const deletedTickersSet = useMemo(() => new Set(deletedTickers), [deletedTickers])
+
+  const displayedRows = useMemo(() => {
+    if (!calcResult) return []
+    if (!isEditing) return calcResult.rows
+    const rows = calcResult.rows.filter(r => !deletedTickersSet.has(r.ticker))
+    const addedRows: CalculationRow[] = addedTickers.map(a => ({
+      ticker: a.ticker,
+      name: a.name,
+      target_weight: a.targetWeight,
+      current_price: 0,
+      target_amount: 0,
+      target_quantity: 0,
+      holding_quantity: a.quantity,
+      holding_amount: 0,
+      required_quantity: 0,
+      adjustment_amount: 0,
+      status: 'HOLD' as const,
+      avg_price: a.avgPrice ?? null,
+      profit_loss_rate: null,
+      profit_loss_amount: null,
+      price_change_rate: null,
+    }))
+    return [...rows, ...addedRows]
+  }, [isEditing, calcResult, deletedTickersSet, addedTickers])
+
+  const displayedTargetAllocations = useMemo(() => {
+    if (!detail) return []
+    if (!isEditing) return detail.target_allocations
+    const existing = detail.target_allocations.filter(t => !deletedTickersSet.has(t.ticker))
+    const added = addedTickers.map((a, i) => ({
+      id: -(i + 1),
+      portfolio_id: detail.id,
+      ticker: a.ticker,
+      target_weight: a.targetWeight,
+    }))
+    return [...existing, ...added]
+  }, [isEditing, detail, deletedTickersSet, addedTickers])
+
+  const displayedHoldings = useMemo(() => {
+    if (!detail) return []
+    if (!isEditing) return detail.holdings
+    const existing = detail.holdings.filter(h => !deletedTickersSet.has(h.ticker))
+    const added = addedTickers
+      .filter(a => a.quantity > 0 || a.avgPrice)
+      .map((a, i) => ({
+        id: -(i + 1),
+        portfolio_id: detail.id,
+        ticker: a.ticker,
+        quantity: a.quantity,
+        avg_price: a.avgPrice ?? null,
+      }))
+    return [...existing, ...added]
+  }, [isEditing, detail, deletedTickersSet, addedTickers])
 
   if (!isAuthenticated) {
     return (
@@ -525,6 +750,17 @@ export default function PortfolioPage() {
           <div className="flex items-center gap-2 ml-auto">
             {calcLoading && <span className="text-sm text-muted-foreground">계산 중...</span>}
             {isEditing && <AddTickerDialog onAdd={handleAddTicker} />}
+            {!isEditing && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={snapshotLoading}
+                onClick={handleRefreshSnapshot}
+              >
+                <Camera className={`w-4 h-4 mr-1 ${snapshotLoading ? 'animate-pulse' : ''}`} />
+                {snapshotLoading ? '적용 중...' : '스냅샷 적용'}
+              </Button>
+            )}
             <Button
               variant="outline"
               size="sm"
@@ -536,17 +772,19 @@ export default function PortfolioPage() {
             <Button
               variant={isEditing ? 'default' : 'outline'}
               size="sm"
-              onClick={() => {
-                if (isEditing && selectedId) {
-                  Promise.all([loadDetail(selectedId), loadCalc(selectedId)])
+              disabled={batchSaving}
+              onClick={async () => {
+                if (isEditing) {
+                  await handleBatchSave()
+                } else {
+                  enterEditMode()
                 }
-                setIsEditing(!isEditing)
               }}
             >
               {isEditing ? (
                 <>
                   <Check className="w-4 h-4 mr-1" />
-                  편집 완료
+                  {batchSaving ? '저장 중...' : '편집 완료'}
                 </>
               ) : (
                 <>
@@ -568,14 +806,14 @@ export default function PortfolioPage() {
                   <div className="flex gap-1">
                     <Button
                       size="sm"
-                      variant={detail.calculation_base === 'CURRENT_TOTAL' ? 'default' : 'outline'}
+                      variant={draftCalcBase === 'CURRENT_TOTAL' ? 'default' : 'outline'}
                       onClick={() => handleChangeBase('CURRENT_TOTAL')}
                     >
                       보유 총액
                     </Button>
                     <Button
                       size="sm"
-                      variant={detail.calculation_base === 'TARGET_AMOUNT' ? 'default' : 'outline'}
+                      variant={draftCalcBase === 'TARGET_AMOUNT' ? 'default' : 'outline'}
                       onClick={() => handleChangeBase('TARGET_AMOUNT')}
                     >
                       목표 금액
@@ -588,7 +826,7 @@ export default function PortfolioPage() {
                 )}
               </div>
 
-              {detail.calculation_base === 'CURRENT_TOTAL' && (
+              {(isEditing ? draftCalcBase : detail.calculation_base) === 'CURRENT_TOTAL' && (
                 <div className="flex items-center gap-2">
                   <Label className="text-sm whitespace-nowrap">예수금:</Label>
                   {isEditing ? (
@@ -618,7 +856,7 @@ export default function PortfolioPage() {
                 </div>
               )}
 
-              {detail.calculation_base === 'TARGET_AMOUNT' && (
+              {(isEditing ? draftCalcBase : detail.calculation_base) === 'TARGET_AMOUNT' && (
                 <div className="flex items-center gap-2">
                   <Label className="text-sm whitespace-nowrap">목표 금액:</Label>
                   {isEditing ? (
@@ -675,13 +913,13 @@ export default function PortfolioPage() {
         )}
         {calcResult && (
           <PortfolioTable
-            rows={calcResult.rows}
+            rows={displayedRows}
             totalWeight={calcResult.total_weight}
             totalHoldingAmount={calcResult.total_holding_amount}
             totalAdjustmentAmount={calcResult.total_adjustment_amount}
             totalProfitLossAmount={calcResult.total_profit_loss_amount}
-            targetAllocations={detail.target_allocations}
-            holdings={detail.holdings}
+            targetAllocations={displayedTargetAllocations}
+            holdings={displayedHoldings}
             isEditing={isEditing}
             onUpdateWeight={handleUpdateWeight}
             onUpdateQuantity={handleUpdateQuantity}
@@ -703,6 +941,17 @@ export default function PortfolioPage() {
             <BarChart3 className="w-4 h-4 mr-1" />
             통합 대시보드
           </Button>
+          {portfolios.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={allSnapshotLoading}
+              onClick={handleRefreshAllSnapshots}
+            >
+              <Camera className={`w-4 h-4 mr-1 ${allSnapshotLoading ? 'animate-pulse' : ''}`} />
+              {allSnapshotLoading ? '적용 중...' : '전체 스냅샷 적용'}
+            </Button>
+          )}
         </div>
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger asChild>
@@ -768,10 +1017,17 @@ export default function PortfolioPage() {
       {totalSummary && portfolios.length > 0 && (
         <Card>
           <CardContent className="py-4">
+            {totalSummary.snapshot_date && (
+              <p className="text-xs text-muted-foreground mb-2">
+                기준일: {totalSummary.snapshot_date.replace(/-/g, '/')}
+              </p>
+            )}
             <div className="flex flex-wrap items-center gap-6">
               <div>
                 <div className="flex items-center gap-1">
-                  <p className="text-sm text-muted-foreground">총 평가금액</p>
+                  <p className="text-sm text-muted-foreground">
+                    총 평가금액
+                  </p>
                   <button
                     onClick={toggleAmount}
                     className="text-muted-foreground hover:text-foreground transition-colors p-0.5"

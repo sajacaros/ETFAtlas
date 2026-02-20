@@ -13,7 +13,7 @@ import { Plus } from 'lucide-react'
 import { etfsApi } from '@/lib/api'
 
 interface AddTickerDialogProps {
-  onAdd: (ticker: string, targetWeight: number, quantity: number, avgPrice?: number) => void
+  onAdd: (ticker: string, targetWeight: number, quantity: number, avgPrice?: number, name?: string) => void
 }
 
 export default function AddTickerDialog({ onAdd }: AddTickerDialogProps) {
@@ -78,7 +78,7 @@ export default function AddTickerDialog({ onAdd }: AddTickerDialogProps) {
     if (!validated || !targetWeight) return
     const tickerValue = isCash ? 'CASH' : ticker
     const parsedAvgPrice = avgPrice ? parseFloat(avgPrice) : undefined
-    onAdd(tickerValue, parseFloat(targetWeight), parseInt(quantity || '0', 10), parsedAvgPrice)
+    onAdd(tickerValue, parseFloat(targetWeight), parseInt(quantity || '0', 10), parsedAvgPrice, tickerName || tickerValue)
     reset()
     setOpen(false)
   }

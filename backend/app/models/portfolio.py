@@ -62,6 +62,7 @@ class PortfolioSnapshot(Base):
     change_amount = Column(Numeric(15, 2), nullable=True)
     change_rate = Column(Float, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     __table_args__ = (UniqueConstraint('portfolio_id', 'date', name='uq_portfolio_snapshot_date'),)
 

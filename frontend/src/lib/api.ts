@@ -145,6 +145,16 @@ export const portfolioApi = {
   delete: async (id: number) => {
     await api.delete(`/portfolios/${id}`)
   },
+  batchUpdate: async (id: number, params: {
+    name?: string;
+    calculation_base?: string;
+    target_total_amount?: number | null;
+    targets: { ticker: string; target_weight: number }[];
+    holdings: { ticker: string; quantity: number; avg_price?: number | null }[];
+  }) => {
+    const { data } = await api.put<PortfolioDetail>(`/portfolios/${id}/batch`, params)
+    return data
+  },
   reorder: async (orders: { id: number; display_order: number }[]) => {
     await api.put('/portfolios/reorder', { orders })
   },
@@ -176,6 +186,14 @@ export const portfolioApi = {
   },
   backfillSnapshots: async (portfolioId: number) => {
     const { data } = await api.post<{ created: number }>(`/portfolios/${portfolioId}/backfill-snapshots`)
+    return data
+  },
+  refreshSnapshot: async (portfolioId: number) => {
+    const { data } = await api.post<{ date: string; total_value: number; change_amount: number | null; change_rate: number | null }>(`/portfolios/${portfolioId}/refresh-snapshot`)
+    return data
+  },
+  refreshAllSnapshots: async () => {
+    const { data } = await api.post<{ refreshed: number; skipped: number }>('/portfolios/refresh-snapshots')
     return data
   },
   getDashboard: async (portfolioId: number) => {

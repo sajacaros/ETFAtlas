@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS portfolio_snapshots (
     change_amount DECIMAL(15, 2),
     change_rate DOUBLE PRECISION,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uq_portfolio_snapshot_date UNIQUE (portfolio_id, date)
 );
 

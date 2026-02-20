@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List
 from decimal import Decimal
-from datetime import date
+from datetime import date, datetime
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from ..database import get_db
@@ -17,6 +17,9 @@ from ..schemas.portfolio import (
     DashboardResponse, DashboardSummary, DashboardSummaryItem, ChartDataPoint,
     TotalHoldingsResponse, TotalHoldingItem,
     BackfillSnapshotResponse,
+    RefreshSnapshotResponse,
+    RefreshAllSnapshotsResponse,
+    PortfolioBatchUpdate,
 )
 from ..domain.portfolio_calculation import (
     calculate_portfolio, TargetInput, HoldingInput,
@@ -77,6 +80,7 @@ async def get_portfolios(
         PortfolioSnapshot.date,
         PortfolioSnapshot.change_amount,
         PortfolioSnapshot.change_rate,
+        PortfolioSnapshot.updated_at,
     ).join(
         latest_sub,
         (PortfolioSnapshot.portfolio_id == latest_sub.c.portfolio_id) &
@@ -99,6 +103,7 @@ async def get_portfolios(
             target_total_amount=p.target_total_amount,
             current_value=cur_val,
             current_value_date=value_map[p.id].date.isoformat() if p.id in value_map else None,
+            current_value_updated_at=value_map[p.id].updated_at.isoformat() if p.id in value_map and value_map[p.id].updated_at else None,
             daily_change_amount=value_map[p.id].change_amount if p.id in value_map else None,
             daily_change_rate=value_map[p.id].change_rate if p.id in value_map else None,
             invested_amount=inv_amt,
@@ -172,6 +177,73 @@ async def update_portfolio(
         portfolio.calculation_base = request.calculation_base
     if request.target_total_amount is not None:
         portfolio.target_total_amount = request.target_total_amount
+    db.commit()
+    db.refresh(portfolio)
+    return portfolio
+
+
+@router.put("/{portfolio_id}/batch", response_model=PortfolioDetailResponse)
+async def batch_update_portfolio(
+    portfolio_id: int,
+    request: PortfolioBatchUpdate,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    portfolio = _get_portfolio_or_404(db, portfolio_id, user_id)
+
+    # Update settings
+    if request.name is not None:
+        portfolio.name = request.name
+    if request.calculation_base is not None:
+        portfolio.calculation_base = request.calculation_base
+    if request.target_total_amount is not None:
+        portfolio.target_total_amount = request.target_total_amount
+
+    # Sync targets: desired state approach
+    existing_targets = db.query(TargetAllocation).filter(
+        TargetAllocation.portfolio_id == portfolio.id
+    ).all()
+    existing_target_map = {t.ticker: t for t in existing_targets}
+    new_target_tickers = {t.ticker for t in request.targets}
+
+    for t in existing_targets:
+        if t.ticker not in new_target_tickers:
+            db.delete(t)
+
+    for t in request.targets:
+        if t.ticker in existing_target_map:
+            existing_target_map[t.ticker].target_weight = t.target_weight
+        else:
+            db.add(TargetAllocation(
+                portfolio_id=portfolio.id,
+                ticker=t.ticker,
+                target_weight=t.target_weight,
+            ))
+
+    # Sync holdings: desired state approach
+    existing_holdings = db.query(Holding).filter(
+        Holding.portfolio_id == portfolio.id
+    ).all()
+    existing_holding_map = {h.ticker: h for h in existing_holdings}
+    new_holding_tickers = {h.ticker for h in request.holdings}
+
+    for h in existing_holdings:
+        if h.ticker not in new_holding_tickers:
+            db.delete(h)
+
+    for h in request.holdings:
+        if h.ticker in existing_holding_map:
+            existing_holding_map[h.ticker].quantity = h.quantity
+            if h.avg_price is not None:
+                existing_holding_map[h.ticker].avg_price = h.avg_price
+        else:
+            db.add(Holding(
+                portfolio_id=portfolio.id,
+                ticker=h.ticker,
+                quantity=h.quantity,
+                avg_price=h.avg_price,
+            ))
+
     db.commit()
     db.refresh(portfolio)
     return portfolio
@@ -256,6 +328,8 @@ def _build_dashboard_response(snapshots: list) -> DashboardResponse:
             cumulative_rate=round(c_rate, 2),
         ))
 
+    last_updated_at = getattr(last, 'updated_at', None) if snapshots else None
+
     return DashboardResponse(
         summary=DashboardSummary(
             current_value=current_value,
@@ -264,9 +338,28 @@ def _build_dashboard_response(snapshots: list) -> DashboardResponse:
             monthly=monthly,
             yearly=yearly,
             ytd=ytd,
+            snapshot_date=last.date.isoformat() if snapshots else None,
+            updated_at=last_updated_at.isoformat() if last_updated_at else None,
         ),
         chart_data=chart_data,
     )
+
+
+@router.post("/refresh-snapshots", response_model=RefreshAllSnapshotsResponse)
+async def refresh_all_snapshots(
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    portfolios = db.query(Portfolio).filter(Portfolio.user_id == user_id).all()
+    refreshed = 0
+    skipped = 0
+    for p in portfolios:
+        result = _refresh_snapshot(db, p.id)
+        if result is not None:
+            refreshed += 1
+        else:
+            skipped += 1
+    return RefreshAllSnapshotsResponse(refreshed=refreshed, skipped=skipped)
 
 
 @router.get("/dashboard/total", response_model=DashboardResponse)
@@ -281,17 +374,19 @@ async def get_total_dashboard(
     results = db.query(
         PortfolioSnapshot.date,
         func.sum(PortfolioSnapshot.total_value).label('total_value'),
+        func.max(PortfolioSnapshot.updated_at).label('updated_at'),
     ).filter(
         PortfolioSnapshot.portfolio_id.in_(portfolio_ids),
     ).group_by(PortfolioSnapshot.date).order_by(PortfolioSnapshot.date.asc()).all()
 
     # Convert Row objects to simple namespace for _build_dashboard_response
     class SnapshotRow:
-        def __init__(self, d, tv):
+        def __init__(self, d, tv, ua=None):
             self.date = d
             self.total_value = tv
+            self.updated_at = ua
 
-    snapshots = [SnapshotRow(r.date, r.total_value) for r in results]
+    snapshots = [SnapshotRow(r.date, r.total_value, r.updated_at) for r in results]
     return _build_dashboard_response(snapshots)
 
 
@@ -354,6 +449,19 @@ async def get_total_holdings(
     holdings_out.sort(key=lambda x: x.weight, reverse=True)
 
     return TotalHoldingsResponse(holdings=holdings_out, total_value=grand_total)
+
+
+@router.post("/{portfolio_id}/refresh-snapshot", response_model=RefreshSnapshotResponse)
+async def refresh_snapshot(
+    portfolio_id: int,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    portfolio = _get_portfolio_or_404(db, portfolio_id, user_id)
+    result = _refresh_snapshot(db, portfolio.id)
+    if result is None:
+        raise HTTPException(status_code=400, detail="가격 데이터가 없습니다. DAG 실행 후 다시 시도하세요.")
+    return RefreshSnapshotResponse(**result)
 
 
 @router.get("/{portfolio_id}/dashboard", response_model=DashboardResponse)
@@ -558,6 +666,71 @@ async def delete_target(
 
     db.delete(allocation)
     db.commit()
+
+
+# --- Snapshot Refresh ---
+
+def _refresh_snapshot(db: Session, portfolio_id: int) -> dict | None:
+    """최근 거래일 기준으로 스냅샷을 갱신(UPSERT)한다.
+
+    Returns:
+        dict with date, total_value, change_amount, change_rate or None if impossible.
+    """
+    price_service = PriceService(db)
+    snapshot_date = price_service.get_latest_price_date()
+    if not snapshot_date:
+        return None
+
+    holdings = db.query(Holding).filter(Holding.portfolio_id == portfolio_id).all()
+    if not holdings:
+        return None
+
+    tickers = [h.ticker for h in holdings if h.ticker != 'CASH']
+    prices = price_service.get_prices(tickers) if tickers else {}
+
+    total_value = Decimal('0')
+    for h in holdings:
+        if h.ticker == 'CASH':
+            total_value += Decimal(str(h.quantity))
+        elif h.ticker in prices:
+            total_value += Decimal(str(h.quantity)) * prices[h.ticker]
+
+    prev = db.query(PortfolioSnapshot).filter(
+        PortfolioSnapshot.portfolio_id == portfolio_id,
+        PortfolioSnapshot.date < snapshot_date,
+    ).order_by(PortfolioSnapshot.date.desc()).first()
+
+    prev_value = Decimal(str(prev.total_value)) if prev else None
+    change_amount = total_value - prev_value if prev_value is not None else None
+    change_rate = float(change_amount / prev_value * 100) if prev_value and prev_value != 0 else None
+
+    existing = db.query(PortfolioSnapshot).filter(
+        PortfolioSnapshot.portfolio_id == portfolio_id,
+        PortfolioSnapshot.date == snapshot_date,
+    ).first()
+
+    now = datetime.utcnow()
+    if existing:
+        existing.total_value = total_value
+        existing.prev_value = prev_value
+        existing.change_amount = change_amount
+        existing.change_rate = change_rate
+        existing.updated_at = now
+    else:
+        db.add(PortfolioSnapshot(
+            portfolio_id=portfolio_id, date=snapshot_date,
+            total_value=total_value, prev_value=prev_value,
+            change_amount=change_amount, change_rate=change_rate,
+            updated_at=now,
+        ))
+    db.commit()
+
+    return {
+        "date": snapshot_date.isoformat(),
+        "total_value": total_value,
+        "change_amount": change_amount,
+        "change_rate": change_rate,
+    }
 
 
 # --- Holdings ---

@@ -451,13 +451,14 @@ $$) as (result agtype);</pre>
   <div class="callout">하나의 PostgreSQL에 관계형 테이블과 그래프 데이터가 공존합니다. CRUD는 관계형 테이블, 관계 탐색은 그래프 &mdash; 이게 Apache AGE의 가장 큰 장점입니다.</div>
 
   <h3 class="sub-title">데이터 파이프라인 &mdash; Airflow 활용</h3>
-  <p>ETF Atlas에서는 <span class="hl">5개의 Airflow DAG</span>를 운영하고 있습니다.</p>
+  <p>ETF Atlas에서는 <span class="hl">6개의 Airflow DAG</span>를 운영하고 있습니다.</p>
   <ul>
-    <li><strong>일별 ETF 동기화 (AGE)</strong> &mdash; 거래일 다음날 새벽 4시, KRX 데이터 수집 &rarr; ETF/Price 노드 생성 &rarr; HOLDS 관계 &rarr; 수익률 계산 &rarr; Discord 알림</li>
-    <li><strong>실시간 가격 수집 (RDB)</strong> &mdash; 평일 장중 10분마다, <span class="tech">ShortCircuitOperator</span>로 장 오픈 여부 판단 후 실행</li>
+    <li><strong>일별 ETF 동기화 (AGE)</strong> &mdash; 화~토 06:00, 07:00 KST 2회 실행, KRX 데이터 수집 &rarr; ETF/Price 노드 생성 &rarr; HOLDS 관계 &rarr; 수익률 계산 &rarr; Discord 알림</li>
+    <li><strong>실시간 가격 수집 + 스냅샷 (RDB)</strong> &mdash; 평일 장중 10분마다, <span class="tech">ShortCircuitOperator</span>로 장 오픈 여부 판단 후 현재가 수집 &rarr; 포트폴리오 스냅샷 갱신</li>
     <li><strong>주간 태깅 (AGE)</strong> &mdash; 토요일 새벽 3시, 규칙 기반 + 키워드 매칭 + LLM 분류 3단계 전략</li>
     <li><strong>RDB 메타데이터 동기화</strong> &mdash; 평일 오전 7시, KRX에서 ETF 코드/이름 동기화</li>
     <li><strong>백필 (AGE)</strong> &mdash; 수동 실행, 과거 거래일 데이터 한꺼번에 수집 (보유종목 수집에 6시간 타임아웃)</li>
+    <li><strong>코드 예제 임베딩</strong> &mdash; 수동 실행, Python 코드 예제를 OpenAI 임베딩으로 생성해 <span class="tech">pgvector</span>에 적재 (챗봇 few-shot용)</li>
   </ul>
 
   <h3 class="sub-title">Airflow에서 유용했던 기능들</h3>
@@ -490,11 +491,7 @@ ORDER BY similarity DESC LIMIT 5</pre>
   <div class="callout-warn">관계형 DB였다면 자기 조인 + GROUP BY + HAVING으로 복잡해질 쿼리가, 그래프에서는 <span class="hl">MATCH 패턴</span>으로 자연스럽게 표현됩니다.</div>
 
   <h3 class="sub-title">AI 챗봇 &mdash; 전체 구조</h3>
-  <p><span class="tech">ChatService</span> 클래스가 핵심. 두 가지 실행 경로:</p>
-  <ul>
-    <li><strong>단순 질문</strong> &rarr; smolagents <span class="hl-purple">CodeAgent</span>가 <span class="hl">ReAct 방식</span>으로 처리</li>
-    <li><strong>복잡한 질문</strong> &rarr; <span class="hl">Plan-Execute-Summarize</span> 방식으로 처리</li>
-  </ul>
+  <p><span class="tech">ChatService</span> 클래스가 핵심. smolagents <span class="hl-purple">CodeAgent</span>가 <span class="hl">ReAct 방식</span>으로 모든 질문을 처리합니다.</p>
   <p>모델은 LiteLLM을 통해 <span class="tech">GPT-4.1-mini</span> 사용, <span class="hl">10개의 커스텀 Tool</span> 등록.</p>
   <ul>
     <li><strong>검색:</strong> ETF 검색, 종목 검색, 태그 목록</li>
@@ -516,19 +513,21 @@ holdings = graph_query(
     "MATCH (e:ETF)-[h:HOLDS]->(s:Stock {code: '"
     + stock_code + "'}) ..."
 )</pre>
-  <p>최대 <span class="hl">10스텝</span>까지 반복. 에러 시 에이전트가 스스로 코드를 수정해서 재시도합니다.</p>
+  <p>최대 <span class="hl">15스텝</span>까지 반복. 에러 시 에이전트가 스스로 코드를 수정해서 재시도합니다.</p>
 
-  <h3 class="sub-title">AI 챗봇 &mdash; Plan-Execute-Summarize</h3>
-  <p>복잡한 질문에서 CodeAgent가 방향을 잃는 문제 &rarr; <span class="hl">질의 복잡도에 따라 실행 경로를 분기</span>:</p>
+  <h3 class="sub-title">AI 챗봇 &mdash; 복잡한 질문 처리</h3>
+  <p>CodeAgent는 Python 코드를 직접 생성하므로, <span class="hl">for 루프와 결과 체이닝</span>으로 복잡한 질문도 단일 ReAct 루프에서 처리합니다.</p>
   <ul>
-    <li>예상 도구 호출 <strong>3회 이하</strong> &rarr; 기존 ReAct</li>
-    <li>예상 도구 호출 <strong>4회 이상</strong> &rarr; Plan-Execute-Summarize</li>
+    <li><strong>Few-shot 코드 예제</strong> &mdash; <span class="tech">pgvector</span>에 저장된 25개의 Python 코드 예시 중 유사한 3개를 프롬프트에 주입</li>
+    <li><strong>시스템 프롬프트 가이드</strong> &mdash; for 루프, 결과 체이닝, 데이터 정렬/필터링 패턴을 명시</li>
   </ul>
-  <div class="callout">
-    <strong>Plan:</strong> LLM이 실행 계획을 JSON으로 생성 (<span class="tech">$results[0].code</span> 처럼 변수 참조)<br>
-    <strong>Execute:</strong> 계획대로 도구를 순차 실행, 변수 치환<br>
-    <strong>Summarize:</strong> 수집된 결과를 LLM이 종합해서 최종 답변 생성
-  </div>
+<pre>results = []
+for code in etf_codes:
+    info = get_etf_info(etf_code=code)
+    results.append(json.loads(info))
+sorted_results = sorted(results,
+    key=lambda x: x.get("expense_ratio", 999))</pre>
+  <div class="callout">에이전트가 Python 코드를 직접 작성하기 때문에, 여러 도구를 반복 호출하고 결과를 조합하는 복잡한 질문도 단일 ReAct 루프로 처리됩니다.</div>
 
   <h3 class="sub-title">AI 챗봇 &mdash; Tool 정의</h3>
 <pre>class ETFSearchTool(Tool):
@@ -547,7 +546,8 @@ holdings = graph_query(
   <div class="callout-warn"><strong>핵심은 description</strong> &mdash; 에이전트가 이 설명을 보고 어떤 도구를 호출할지 결정합니다.</div>
 
   <h3 class="sub-title">AI 챗봇 &mdash; Few-shot 학습</h3>
-  <p><span class="hl">100여 개의 Cypher 쿼리 예시</span>를 <span class="tech">pgvector</span>에 임베딩으로 저장. 사용자 질문과 유사한 3개의 예시를 벡터 검색으로 찾아 프롬프트에 주입합니다.</p>
+  <p><span class="hl">25개의 Python 코드 예시</span>를 <span class="tech">OpenAI text-embedding-3-small</span>로 임베딩해 <span class="tech">pgvector</span>에 저장. 사용자 질문과 유사한 3개의 예시를 벡터 검색으로 찾아 프롬프트에 주입합니다.</p>
+  <p>코드 예시에는 "반도체 ETF 3개의 가격 추이 비교", "삼성전자 보유 ETF 중 보수율 낮은 3개 조회" 등 <span class="hl">여러 도구를 조합하는 실전 패턴</span>이 담겨 있습니다.</p>
   <div class="callout">같은 PostgreSQL 안에서 <span class="hl-blue">벡터 검색</span>과 <span class="hl-blue">그래프 쿼리</span>가 동시에 일어납니다.</div>
 
   <h3 class="sub-title">포트폴리오 관리 & 대시보드</h3>

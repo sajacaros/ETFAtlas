@@ -189,6 +189,12 @@ export interface WatchlistChange {
   weight_change: number
 }
 
+export interface WatchlistChangesResponse {
+  current_date: string | null
+  previous_date: string | null
+  changes: WatchlistChange[]
+}
+
 // Similar ETF types
 export interface SimilarETF {
   etf_code: string

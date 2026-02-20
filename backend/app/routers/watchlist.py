@@ -41,7 +41,7 @@ async def get_watches(
     ]
 
 
-class WatchlistChangeResponse(BaseModel):
+class WatchlistChangeItem(BaseModel):
     etf_code: str
     etf_name: str
     stock_code: str
@@ -52,7 +52,13 @@ class WatchlistChangeResponse(BaseModel):
     weight_change: float
 
 
-@router.get("/changes", response_model=List[WatchlistChangeResponse])
+class WatchlistChangesResponse(BaseModel):
+    current_date: str | None = None
+    previous_date: str | None = None
+    changes: List[WatchlistChangeItem]
+
+
+@router.get("/changes", response_model=WatchlistChangesResponse)
 async def get_watchlist_changes(
     period: str = Query("1d", pattern="^(1d|1w|1m)$"),
     base_date: str = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
@@ -64,16 +70,21 @@ async def get_watchlist_changes(
     watched = graph.get_user_watches(user_id)
 
     results = []
+    current_date = None
+    previous_date = None
     for item in watched:
         etf_code = item["etf_code"]
         etf_name = item["etf_name"]
-        changes = graph.get_etf_holdings_changes(etf_code, period, base_date)
+        changes, cur_d, prev_d = graph.get_etf_holdings_changes(etf_code, period, base_date)
+        if cur_d and not current_date:
+            current_date = cur_d
+            previous_date = prev_d
         for c in changes:
             if c["change_type"] == "unchanged":
                 continue
             if abs(c["weight_change"]) <= 3:
                 continue
-            results.append(WatchlistChangeResponse(
+            results.append(WatchlistChangeItem(
                 etf_code=etf_code,
                 etf_name=etf_name,
                 stock_code=c["stock_code"],
@@ -85,7 +96,11 @@ async def get_watchlist_changes(
             ))
 
     results.sort(key=lambda x: abs(x.weight_change), reverse=True)
-    return results
+    return WatchlistChangesResponse(
+        current_date=current_date,
+        previous_date=previous_date,
+        changes=results,
+    )
 
 
 @router.get("/codes", response_model=List[str])

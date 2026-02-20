@@ -32,6 +32,7 @@ class PortfolioResponse(BaseModel):
     target_total_amount: Optional[Decimal] = None
     current_value: Optional[Decimal] = None
     current_value_date: Optional[str] = None
+    current_value_updated_at: Optional[str] = None
     daily_change_amount: Optional[Decimal] = None
     daily_change_rate: Optional[float] = None
     invested_amount: Optional[Decimal] = None
@@ -141,6 +142,8 @@ class DashboardSummary(BaseModel):
     ytd: Optional[DashboardSummaryItem] = None
     invested_amount: Optional[Decimal] = None
     investment_return: Optional[DashboardSummaryItem] = None
+    snapshot_date: Optional[str] = None
+    updated_at: Optional[str] = None
 
 
 class ChartDataPoint(BaseModel):
@@ -169,6 +172,39 @@ class TotalHoldingsResponse(BaseModel):
     total_value: Decimal
 
 
+# --- Batch Update ---
+class BatchTargetItem(BaseModel):
+    ticker: str
+    target_weight: Decimal
+
+
+class BatchHoldingItem(BaseModel):
+    ticker: str
+    quantity: Decimal
+    avg_price: Optional[Decimal] = None
+
+
+class PortfolioBatchUpdate(BaseModel):
+    name: Optional[str] = None
+    calculation_base: Optional[str] = None
+    target_total_amount: Optional[Decimal] = None
+    targets: list[BatchTargetItem]
+    holdings: list[BatchHoldingItem]
+
+
 # --- Backfill ---
 class BackfillSnapshotResponse(BaseModel):
     created: int
+
+
+# --- Refresh Snapshot ---
+class RefreshSnapshotResponse(BaseModel):
+    date: str
+    total_value: Decimal
+    change_amount: Optional[Decimal] = None
+    change_rate: Optional[float] = None
+
+
+class RefreshAllSnapshotsResponse(BaseModel):
+    refreshed: int
+    skipped: int

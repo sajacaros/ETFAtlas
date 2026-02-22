@@ -80,8 +80,9 @@ async def create_code_example(
 ):
     """Create a new code example with synchronous embedding."""
     embedding_service = EmbeddingService(db)
+    question_generalized = embedding_service.generalize_question(body.question)
     try:
-        emb = embedding_service.get_embedding(body.question)
+        emb = embedding_service.get_embedding(question_generalized)
         emb_str = "[" + ",".join(str(v) for v in emb) + "]"
     except Exception as e:
         logger.warning(f"Embedding generation failed: {e}")
@@ -89,6 +90,7 @@ async def create_code_example(
 
     example = CodeExample(
         question=body.question,
+        question_generalized=question_generalized,
         code=body.code,
         description=body.description,
         created_by=admin_id,
@@ -139,9 +141,11 @@ async def update_code_example(
 
     # Re-embed if question changed
     if question_changed:
+        embedding_service = EmbeddingService(db)
+        question_generalized = embedding_service.generalize_question(example.question)
+        example.question_generalized = question_generalized
         try:
-            embedding_service = EmbeddingService(db)
-            emb = embedding_service.get_embedding(example.question)
+            emb = embedding_service.get_embedding(question_generalized)
             emb_str = "[" + ",".join(str(v) for v in emb) + "]"
             db.execute(
                 text("UPDATE code_examples SET embedding = :emb\\:\\:vector, status = 'embedded' WHERE id = :id"),
@@ -272,10 +276,11 @@ async def embed_chat_log(
         raise HTTPException(status_code=400, detail="No code available to embed")
     description = body.description or ""
 
-    # Generate embedding
+    # Generate embedding (using generalized question)
     embedding_service = EmbeddingService(db)
+    question_generalized = embedding_service.generalize_question(question)
     try:
-        emb = embedding_service.get_embedding(question)
+        emb = embedding_service.get_embedding(question_generalized)
         emb_str = "[" + ",".join(str(v) for v in emb) + "]"
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Embedding generation failed: {e}")
@@ -283,6 +288,7 @@ async def embed_chat_log(
     # Insert into code_examples
     example = CodeExample(
         question=question,
+        question_generalized=question_generalized,
         code=code,
         description=description,
         created_by=admin_id,

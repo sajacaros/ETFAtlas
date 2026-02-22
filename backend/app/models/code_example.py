@@ -9,6 +9,7 @@ class CodeExample(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     question = Column(Text, nullable=False)
+    question_generalized = Column(Text, nullable=True)
     code = Column(Text, nullable=False)
     description = Column(Text, nullable=True)
     embedding = Column(Text, nullable=True)  # vector(1536), managed via raw SQL

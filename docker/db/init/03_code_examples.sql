@@ -2,6 +2,7 @@
 CREATE TABLE IF NOT EXISTS code_examples (
     id SERIAL PRIMARY KEY,
     question TEXT NOT NULL,
+    question_generalized TEXT,
     code TEXT NOT NULL,
     description TEXT,
     embedding vector(1536),

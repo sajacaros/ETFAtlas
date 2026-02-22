@@ -38,8 +38,32 @@ dag = DAG(
 )
 
 
+from generalize_prompt import GENERALIZE_SYSTEM_PROMPT
+
+
+def _generalize_questions(client, questions):
+    """LLM으로 질문 목록을 일반화. 개별 호출."""
+    results = []
+    for q in questions:
+        try:
+            resp = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": GENERALIZE_SYSTEM_PROMPT},
+                    {"role": "user", "content": q},
+                ],
+                temperature=0,
+                max_tokens=200,
+            )
+            results.append(resp.choices[0].message.content.strip())
+        except Exception as e:
+            log.warning("Generalization failed for '%s': %s", q, e)
+            results.append(q)
+    return results
+
+
 def embed_and_load():
-    """DB에서 미임베딩 레코드 조회 -> 배치 임베딩 -> UPDATE."""
+    """DB에서 미임베딩 레코드 조회 -> 일반화 -> 배치 임베딩 -> UPDATE."""
     from openai import OpenAI
 
     conn = get_db_connection()
@@ -47,7 +71,7 @@ def embed_and_load():
     try:
         # 승인됨(active) 상태의 미임베딩 예제 조회
         cur.execute(
-            "SELECT id, question FROM code_examples "
+            "SELECT id, question, question_generalized FROM code_examples "
             "WHERE status = 'active' "
             "ORDER BY id"
         )
@@ -65,13 +89,32 @@ def embed_and_load():
 
         client = OpenAI(api_key=api_key)
 
-        # 배치 단위로 임베딩 생성 및 업데이트
+        # question_generalized가 없는 레코드는 LLM으로 생성
+        needs_generalization = [r for r in rows if not r[2]]
+        if needs_generalization:
+            log.info("Generating generalized questions for %d examples.", len(needs_generalization))
+            gen_questions = _generalize_questions(client, [r[1] for r in needs_generalization])
+            for (row_id, _, _), gen_q in zip(needs_generalization, gen_questions):
+                cur.execute(
+                    "UPDATE code_examples SET question_generalized = %s WHERE id = %s",
+                    (gen_q, row_id),
+                )
+            conn.commit()
+            # 다시 조회하여 최신 question_generalized 반영
+            cur.execute(
+                "SELECT id, question, question_generalized FROM code_examples "
+                "WHERE status = 'active' "
+                "ORDER BY id"
+            )
+            rows = cur.fetchall()
+
+        # 배치 단위로 임베딩 생성 및 업데이트 (question_generalized 우선 사용)
         for i in range(0, len(rows), BATCH_SIZE):
             batch = rows[i : i + BATCH_SIZE]
             ids = [r[0] for r in batch]
-            questions = [r[1] for r in batch]
+            embed_inputs = [r[2] or r[1] for r in batch]
 
-            resp = client.embeddings.create(model=EMBEDDING_MODEL, input=questions)
+            resp = client.embeddings.create(model=EMBEDDING_MODEL, input=embed_inputs)
             embeddings = [item.embedding for item in resp.data]
 
             for row_id, emb in zip(ids, embeddings):

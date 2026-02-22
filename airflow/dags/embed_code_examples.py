@@ -1,11 +1,10 @@
 """
 Python 코드 예제 임베딩 DAG
 
-code_examples.json을 읽어 OpenAI 임베딩 생성 후 code_examples 테이블에 적재.
-수동 트리거 전용 — 예제 JSON 변경 시에만 실행.
+DB에서 status='active'(승인됨, 미임베딩)인 레코드를 찾아 임베딩 생성 후 status='embedded'로 전환.
+수동 트리거 전용 — 초기 시드 적재 후 또는 새 예제 추가 시 실행.
 """
 
-import json
 import logging
 import os
 from datetime import datetime, timedelta
@@ -17,8 +16,8 @@ from age_utils import get_db_connection
 
 log = logging.getLogger(__name__)
 
-EXAMPLES_PATH = "/opt/airflow/data/code_examples.json"
 EMBEDDING_MODEL = "text-embedding-3-small"
+BATCH_SIZE = 50
 
 default_args = {
     "owner": "etf-atlas",
@@ -32,7 +31,7 @@ default_args = {
 dag = DAG(
     "embed_code_examples",
     default_args=default_args,
-    description="Python 코드 예제 임베딩 적재 (수동 트리거)",
+    description="승인된 코드 예제 중 미임베딩 건 임베딩 (수동 트리거)",
     schedule_interval=None,
     catchup=False,
     tags=["embedding", "manual"],
@@ -40,48 +39,52 @@ dag = DAG(
 
 
 def embed_and_load():
-    """JSON 읽기 -> 배치 임베딩 -> TRUNCATE + INSERT."""
+    """DB에서 미임베딩 레코드 조회 -> 배치 임베딩 -> UPDATE."""
     from openai import OpenAI
-
-    with open(EXAMPLES_PATH, encoding="utf-8") as f:
-        examples = json.load(f)
-
-    if not examples:
-        log.warning("No examples found in %s", EXAMPLES_PATH)
-        return
-
-    log.info("Embedding %d code examples...", len(examples))
-
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is not set")
-
-    client = OpenAI(api_key=api_key)
-
-    questions = [ex["question"] for ex in examples]
-    resp = client.embeddings.create(model=EMBEDDING_MODEL, input=questions)
-    embeddings = [item.embedding for item in resp.data]
 
     conn = get_db_connection()
     cur = conn.cursor()
     try:
-        cur.execute("TRUNCATE TABLE code_examples")
+        # 승인됨(active) 상태의 미임베딩 예제 조회
+        cur.execute(
+            "SELECT id, question FROM code_examples "
+            "WHERE status = 'active' "
+            "ORDER BY id"
+        )
+        rows = cur.fetchall()
 
-        for ex, emb in zip(examples, embeddings):
-            emb_str = "[" + ",".join(str(v) for v in emb) + "]"
-            cur.execute(
-                "INSERT INTO code_examples (question, code, description, embedding) "
-                "VALUES (%s, %s, %s, %s::vector)",
-                (
-                    ex["question"],
-                    ex["code"],
-                    ex.get("description", ""),
-                    emb_str,
-                ),
-            )
+        if not rows:
+            log.info("No unembedded active examples found. Nothing to do.")
+            return
+
+        log.info("Found %d unembedded examples to process.", len(rows))
+
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError("OPENAI_API_KEY is not set")
+
+        client = OpenAI(api_key=api_key)
+
+        # 배치 단위로 임베딩 생성 및 업데이트
+        for i in range(0, len(rows), BATCH_SIZE):
+            batch = rows[i : i + BATCH_SIZE]
+            ids = [r[0] for r in batch]
+            questions = [r[1] for r in batch]
+
+            resp = client.embeddings.create(model=EMBEDDING_MODEL, input=questions)
+            embeddings = [item.embedding for item in resp.data]
+
+            for row_id, emb in zip(ids, embeddings):
+                emb_str = "[" + ",".join(str(v) for v in emb) + "]"
+                cur.execute(
+                    "UPDATE code_examples SET embedding = %s::vector, status = 'embedded' WHERE id = %s",
+                    (emb_str, row_id),
+                )
+
+            log.info("Embedded batch %d-%d (%d items)", i + 1, i + len(batch), len(batch))
 
         conn.commit()
-        log.info("Loaded %d code examples into code_examples table", len(examples))
+        log.info("Successfully embedded %d code examples.", len(rows))
     except Exception:
         conn.rollback()
         raise

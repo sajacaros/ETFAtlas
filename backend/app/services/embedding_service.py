@@ -47,6 +47,7 @@ class EmbeddingService:
             "SELECT question, code, description, "
             "embedding <=> :emb\\:\\:vector AS distance "
             "FROM code_examples "
+            "WHERE status = 'embedded' "
             "ORDER BY embedding <=> :emb\\:\\:vector "
             "LIMIT :top_k"
         )

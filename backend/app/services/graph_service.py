@@ -80,34 +80,47 @@ class GraphService:
         """
         return self.execute_cypher(query, {"stock_code": stock_code})
 
+    def _get_latest_holds_date(self, etf_code: str) -> str | None:
+        """ETF의 가장 최근 HOLDS 날짜 조회"""
+        query = """
+        MATCH (:ETF {code: $etf_code})-[h:HOLDS]->(:Stock)
+        WITH DISTINCT h.date as d
+        RETURN {date: d}
+        ORDER BY d DESC
+        LIMIT 1
+        """
+        rows = self.execute_cypher(query, {"etf_code": etf_code})
+        if rows:
+            return self.parse_agtype(rows[0]["result"])["date"]
+        return None
+
     def find_similar_etfs(self, etf_code: str, min_overlap: int = 5) -> List[Dict]:
+        # 0) 최신 HOLDS 날짜 조회
+        latest_date = self._get_latest_holds_date(etf_code)
+        if not latest_date:
+            return []
+
         # 1) 입력 ETF의 비중 합 (정규화 기준)
         self_sum_query = """
-        MATCH (e1:ETF {code: $etf_code})-[h1:HOLDS]->(s:Stock)
-        WITH e1, s, h1 ORDER BY h1.date DESC
-        WITH e1, s, head(collect(h1)) as latest1
-        WITH SUM(latest1.weight) as self_sum
+        MATCH (:ETF {code: $etf_code})-[h1:HOLDS {date: $latest_date}]->(s:Stock)
+        WITH SUM(h1.weight) as self_sum
         RETURN {self_sum: self_sum}
         """
-        self_sum_rows = self.execute_cypher(self_sum_query, {"etf_code": etf_code})
+        self_sum_rows = self.execute_cypher(self_sum_query, {"etf_code": etf_code, "latest_date": latest_date})
         self_sum = self.parse_agtype(self_sum_rows[0]["result"])["self_sum"] if self_sum_rows else 1.0
 
-        # 2) 다른 ETF와의 비중 겹침 유사도
+        # 2) 다른 ETF와의 비중 겹침 유사도 (날짜 고정으로 collect 제거)
         query = """
-        MATCH (e1:ETF {code: $etf_code})-[h1:HOLDS]->(s:Stock)
-        WITH e1, s, h1 ORDER BY h1.date DESC
-        WITH e1, s, head(collect(h1)) as latest1
-        MATCH (e2:ETF)-[h2:HOLDS]->(s) WHERE e1 <> e2
-        WITH e2, s, latest1, h2 ORDER BY h2.date DESC
-        WITH e2, s, latest1, head(collect(h2)) as latest2
+        MATCH (e1:ETF {code: $etf_code})-[h1:HOLDS {date: $latest_date}]->(s:Stock)<-[h2:HOLDS {date: $latest_date}]-(e2:ETF)
+        WHERE e1 <> e2
         WITH e2, COUNT(s) as overlap,
-             SUM(CASE WHEN latest1.weight < latest2.weight THEN latest1.weight ELSE latest2.weight END) as similarity
+             SUM(CASE WHEN h1.weight < h2.weight THEN h1.weight ELSE h2.weight END) as similarity
         WHERE overlap >= $min_overlap
         RETURN {etf_code: e2.code, name: e2.name, overlap: overlap, similarity: similarity}
         ORDER BY similarity DESC
         LIMIT 5
         """
-        rows = self.execute_cypher(query, {"etf_code": etf_code, "min_overlap": min_overlap})
+        rows = self.execute_cypher(query, {"etf_code": etf_code, "latest_date": latest_date, "min_overlap": min_overlap})
         results = [self.parse_agtype(row["result"]) for row in rows]
         for r in results:
             r["similarity"] = round(r["similarity"] / self_sum * 100, 1)
@@ -236,15 +249,16 @@ class GraphService:
 
     def get_holdings_by_etf_graph(self, etf_code: str) -> List[Dict]:
         """ETF 보유종목 TOP 10 (비중순)"""
+        latest_date = self._get_latest_holds_date(etf_code)
+        if not latest_date:
+            return []
         query = """
-        MATCH (e:ETF {code: $etf_code})-[h:HOLDS]->(s:Stock)
-        WITH s, h ORDER BY h.date DESC
-        WITH s, head(collect(h)) as latest
-        RETURN {stock_code: s.code, stock_name: s.name, weight: latest.weight}
-        ORDER BY latest.weight DESC
+        MATCH (:ETF {code: $etf_code})-[h:HOLDS {date: $latest_date}]->(s:Stock)
+        RETURN {stock_code: s.code, stock_name: s.name, weight: h.weight}
+        ORDER BY h.weight DESC
         LIMIT 10
         """
-        rows = self.execute_cypher(query, {"etf_code": etf_code})
+        rows = self.execute_cypher(query, {"etf_code": etf_code, "latest_date": latest_date})
         return [self.parse_agtype(row["result"]) for row in rows]
 
     def get_tags_by_etf(self, etf_code: str) -> List[str]:
@@ -259,15 +273,16 @@ class GraphService:
 
     def get_etf_holdings_full(self, etf_code: str) -> List[Dict]:
         """ETF 전체 보유종목 (최신 날짜 기준)"""
+        latest_date = self._get_latest_holds_date(etf_code)
+        if not latest_date:
+            return []
         query = """
-        MATCH (e:ETF {code: $etf_code})-[h:HOLDS]->(s:Stock)
-        WITH s, h ORDER BY h.date DESC
-        With s, head(collect(h)) as latest
+        MATCH (:ETF {code: $etf_code})-[h:HOLDS {date: $latest_date}]->(s:Stock)
         RETURN {stock_code: s.code, stock_name: s.name,
-                weight: latest.weight, shares: latest.shares, recorded_at: latest.date}
-        ORDER BY latest.weight DESC
+                weight: h.weight, shares: h.shares, recorded_at: h.date}
+        ORDER BY h.weight DESC
         """
-        rows = self.execute_cypher(query, {"etf_code": etf_code})
+        rows = self.execute_cypher(query, {"etf_code": etf_code, "latest_date": latest_date})
         return [self.parse_agtype(row["result"]) for row in rows]
 
     def _get_holdings_at(self, etf_code: str, target_date: str = None) -> tuple[Dict[str, Dict], str | None]:

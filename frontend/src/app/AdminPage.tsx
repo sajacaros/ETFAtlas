@@ -175,7 +175,6 @@ function CodeExamplesTab() {
             <TableHead className="w-[60px]">ID</TableHead>
             <TableHead>Question</TableHead>
             <TableHead className="w-[100px]">상태</TableHead>
-            <TableHead className="w-[100px]">임베딩</TableHead>
             <TableHead className="w-[140px]">생성일</TableHead>
             <TableHead className="w-[100px]">작업</TableHead>
           </TableRow>
@@ -183,13 +182,13 @@ function CodeExamplesTab() {
         <TableBody>
           {loading ? (
             <TableRow>
-              <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+              <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
                 로딩 중...
               </TableCell>
             </TableRow>
           ) : items.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+              <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
                 데이터가 없습니다
               </TableCell>
             </TableRow>
@@ -200,13 +199,6 @@ function CodeExamplesTab() {
                 <TableCell className="max-w-[400px] truncate">{item.question}</TableCell>
                 <TableCell>
                   <Badge variant={statusBadgeVariant(item.status)}>{item.status}</Badge>
-                </TableCell>
-                <TableCell>
-                  {item.has_embedding ? (
-                    <Badge variant="secondary">O</Badge>
-                  ) : (
-                    <span className="text-muted-foreground">-</span>
-                  )}
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground">
                   {item.created_at ? new Date(item.created_at).toLocaleDateString() : '-'}

@@ -9,7 +9,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Search, PieChart, User, LogOut, MessageCircle, Bell, BookOpen } from 'lucide-react'
+import { Search, PieChart, User, LogOut, MessageCircle, Bell, BookOpen, Shield } from 'lucide-react'
 import StoryDialog from '@/components/StoryDialog'
 
 export default function Header() {
@@ -56,6 +56,15 @@ export default function Header() {
               <MessageCircle className="w-4 h-4" />
               ETF 챗봇
             </Link>
+            {user?.is_admin && (
+              <Link
+                to="/admin"
+                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+              >
+                <Shield className="w-4 h-4" />
+                관리
+              </Link>
+            )}
           </nav>
         </div>
 

@@ -244,13 +244,21 @@ export const chatApi = {
     const abortController = new AbortController()
     const baseUrl = `${API_URL}/api`
 
+    const token = localStorage.getItem('token')
     fetch(`${baseUrl}/chat/message/stream`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
       body: JSON.stringify({ message, history }),
       signal: abortController.signal,
     })
       .then(async (response) => {
+        if (!response.ok) {
+          onError(`서버 오류 (${response.status})`)
+          return
+        }
         const reader = response.body?.getReader()
         if (!reader) return
         const decoder = new TextDecoder()

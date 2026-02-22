@@ -129,6 +129,27 @@ CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_portfolio_id ON portfolio_sna
 CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_date ON portfolio_snapshots(date);
 CREATE INDEX IF NOT EXISTS idx_ticker_prices_date ON ticker_prices(date);
 
+-- Roles (역할 관리)
+CREATE TABLE IF NOT EXISTS roles (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(50) UNIQUE NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO roles (name, description) VALUES
+    ('admin', '관리자'), ('member', '일반 회원')
+ON CONFLICT (name) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS user_roles (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role_id INTEGER NOT NULL REFERENCES roles(id),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, role_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_roles_user_id ON user_roles(user_id);
+
 -- Grant permissions
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO postgres;
 GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO postgres;

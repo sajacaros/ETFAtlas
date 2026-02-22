@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from google.oauth2 import id_token
 from google.auth.transport import requests
 from ..models.user import User
+from ..models.role import Role, UserRole
 from ..config import get_settings
 
 settings = get_settings()
@@ -51,10 +52,12 @@ class AuthService:
         self.db.commit()
         self.db.refresh(user)
 
-        # AGE User 노드에 role 설정
-        from .graph_service import GraphService
-        graph = GraphService(self.db)
-        graph.set_user_role(user.id, "admin" if is_first else "member")
+        # RDB 역할 할당
+        role_name = "admin" if is_first else "member"
+        role = self.db.query(Role).filter(Role.name == role_name).first()
+        if role:
+            self.db.add(UserRole(user_id=user.id, role_id=role.id))
+            self.db.commit()
 
         return user
 

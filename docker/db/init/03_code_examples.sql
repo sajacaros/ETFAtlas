@@ -4,8 +4,12 @@ CREATE TABLE IF NOT EXISTS code_examples (
     question TEXT NOT NULL,
     code TEXT NOT NULL,
     description TEXT,
-    embedding vector(1536) NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    embedding vector(1536),
+    status VARCHAR(20) DEFAULT 'active',
+    created_by INTEGER REFERENCES users(id),
+    source_chat_log_id INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_code_examples_embedding

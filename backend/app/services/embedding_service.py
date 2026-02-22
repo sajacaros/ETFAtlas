@@ -6,6 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
+from .generalize_prompt import GENERALIZE_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,23 @@ class EmbeddingService:
         self.db = db
         settings = get_settings()
         self._client = OpenAI(api_key=settings.openai_api_key)
+
+    def generalize_question(self, question: str) -> str:
+        """LLM으로 질문에서 특정 ETF/종목명을 제거하고 패턴만 남긴 일반화 질문 생성."""
+        try:
+            resp = self._client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": GENERALIZE_SYSTEM_PROMPT},
+                    {"role": "user", "content": question},
+                ],
+                temperature=0,
+                max_tokens=200,
+            )
+            return resp.choices[0].message.content.strip()
+        except Exception as e:
+            logger.warning(f"Question generalization failed: {e}")
+            return question
 
     def get_embedding(self, text_input: str) -> List[float]:
         """단일 텍스트 임베딩 생성."""
@@ -34,8 +52,13 @@ class EmbeddingService:
         )
         return [item.embedding for item in resp.data]
 
-    def find_similar_code_examples(self, question: str, top_k: int = 3) -> List[Dict[str, Any]]:
-        """질문과 유사한 Python 코드 예제 검색."""
+    def find_similar_code_examples(
+        self, question: str, top_k: int = 3, max_distance: float = 0.35,
+    ) -> List[Dict[str, Any]]:
+        """질문과 유사한 Python 코드 예제 검색.
+
+        max_distance: 코사인 거리 임계값 (0.35 = 유사도 0.65 이상만 반환).
+        """
         try:
             emb = self.get_embedding(question)
         except Exception as e:
@@ -48,11 +71,14 @@ class EmbeddingService:
             "embedding <=> :emb\\:\\:vector AS distance "
             "FROM code_examples "
             "WHERE status = 'embedded' "
+            "AND embedding <=> :emb\\:\\:vector < :max_dist "
             "ORDER BY embedding <=> :emb\\:\\:vector "
             "LIMIT :top_k"
         )
         try:
-            rows = self.db.execute(query, {"emb": emb_str, "top_k": top_k})
+            rows = self.db.execute(
+                query, {"emb": emb_str, "top_k": top_k, "max_dist": max_distance},
+            )
             return [
                 {"question": r.question, "code": r.code, "description": r.description}
                 for r in rows

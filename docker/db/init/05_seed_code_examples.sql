@@ -744,7 +744,7 @@ else:
 
 -- Example 36: 특정 ETF에서 특정 종목의 비중이 급격히 변한 시점 찾기
 INSERT INTO code_examples (question, code, description, status, embedding, created_by, source_chat_log_id)
-VALUES ($q$KoAct 바이오헬스케어액티브에서 알테오젠 비중이 급격히 변한 시점을 알려줘$q$, $c$import datetime
+VALUES ($q$ETF에서 특정 종목의 비중이 급변한 시점을 분석해줘$q$, $c$import datetime
 
 # 1. ETF 코드 확인
 search = etf_search(query='KoAct 바이오헬스케어')

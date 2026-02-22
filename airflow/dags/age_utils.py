@@ -835,6 +835,26 @@ def record_collection_run(date_str: str) -> bool:
         conn.close()
 
 
+def _query_holdings(cur, etf_code: str, date_str: str) -> dict:
+    """특정 날짜의 보유종목 비중 조회. {stock_code: {name, weight}} 딕셔너리 반환."""
+    import json
+
+    results = execute_cypher(cur, """
+        MATCH (e:ETF {code: $etf_code})-[h:HOLDS {date: $date}]->(s:Stock)
+        RETURN {code: s.code, name: s.name, weight: h.weight}
+    """, {'etf_code': etf_code, 'date': date_str})
+
+    holdings = {}
+    for row in results:
+        if row[0]:
+            data = json.loads(_parse_age_value(row[0]))
+            holdings[data['code']] = {
+                'name': data['name'],
+                'weight': float(data['weight']) if data.get('weight') else 0,
+            }
+    return holdings
+
+
 def send_discord_notification(date_str: str):
     """admin 유저의 즐겨찾기 기반 비중변화를 디스코드로 발송."""
     import httpx
@@ -849,21 +869,35 @@ def send_discord_notification(date_str: str):
     cur = init_age(conn)
 
     try:
-        # admin 유저 조회
-        results = execute_cypher(cur, """
-            MATCH (u:User {role: 'admin'})-[:WATCHES]->(e:ETF)
-            RETURN {user_id: u.user_id, etf_code: e.code, etf_name: e.name}
-        """, {})
+        # RDB에서 admin user_id 조회
+        rdb_cur = conn.cursor()
+        rdb_cur.execute(
+            "SELECT ur.user_id FROM user_roles ur "
+            "JOIN roles r ON r.id = ur.role_id "
+            "WHERE r.name = 'admin'"
+        )
+        admin_ids = [row[0] for row in rdb_cur.fetchall()]
+        rdb_cur.close()
 
-        if not results:
-            log.info("No admin watches found — skipping Discord notification")
+        if not admin_ids:
+            log.info("No admin users found — skipping Discord notification")
             return
 
+        # AGE에서 admin 유저의 WATCHES 조회
         watches = []
-        for row in results:
-            raw = _parse_age_value(row[0])
-            data = json.loads(raw)
-            watches.append(data)
+        for uid in admin_ids:
+            results = execute_cypher(cur, """
+                MATCH (u:User {user_id: $user_id})-[:WATCHES]->(e:ETF)
+                RETURN {user_id: u.user_id, etf_code: e.code, etf_name: e.name}
+            """, {'user_id': uid})
+            for row in results:
+                if row[0]:
+                    data = json.loads(_parse_age_value(row[0]))
+                    watches.append(data)
+
+        if not watches:
+            log.info("No admin watches found — skipping Discord notification")
+            return
 
         # 전일 HOLDS 날짜 조회
         if watches:

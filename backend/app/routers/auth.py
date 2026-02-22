@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..services.auth_service import AuthService
+from ..models.role import Role, UserRole
 from ..utils.jwt import create_access_token, get_current_user_id
 
 router = APIRouter()
@@ -22,6 +23,7 @@ class UserResponse(BaseModel):
     email: str
     name: str | None
     picture: str | None
+    is_admin: bool = False
 
     class Config:
         from_attributes = True
@@ -54,4 +56,13 @@ async def get_current_user(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
-    return user
+    is_admin = db.query(UserRole).join(Role).filter(
+        UserRole.user_id == user.id, Role.name == "admin"
+    ).first() is not None
+    return UserResponse(
+        id=user.id,
+        email=user.email,
+        name=user.name,
+        picture=user.picture,
+        is_admin=is_admin,
+    )

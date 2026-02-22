@@ -620,39 +620,6 @@ class GraphService:
         self.db.commit()
         return len(rows) > 0
 
-    # ── User role methods ──
-
-    def get_user_role(self, user_id: int) -> str:
-        """유저 역할 조회. 없으면 'member'."""
-        query = """
-        MATCH (u:User {user_id: $user_id})
-        RETURN {role: u.role}
-        """
-        rows = self.execute_cypher(query, {"user_id": user_id})
-        if rows:
-            result = self.parse_agtype(rows[0]["result"])
-            return result.get("role") or "member"
-        return "member"
-
-    def set_user_role(self, user_id: int, role: str):
-        """유저 역할 설정."""
-        query = """
-        MERGE (u:User {user_id: $user_id})
-        SET u.role = $role
-        RETURN {role: u.role}
-        """
-        self.execute_cypher(query, {"user_id": user_id, "role": role})
-        self.db.commit()
-
-    def get_admin_user_ids(self) -> list[int]:
-        """admin 역할 유저 ID 목록."""
-        query = """
-        MATCH (u:User {role: 'admin'})
-        RETURN {user_id: u.user_id}
-        """
-        rows = self.execute_cypher(query, {})
-        return [self.parse_agtype(row["result"])["user_id"] for row in rows]
-
     def get_latest_close_prices_fallback(self, tickers: List[str]) -> Dict[str, Decimal]:
         """최신 종가 폴백 조회 (날짜 무관, 가장 최근 Price) — PriceService에서 호출"""
         prices: Dict[str, Decimal] = {}

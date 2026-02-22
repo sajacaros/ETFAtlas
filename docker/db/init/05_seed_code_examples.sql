@@ -2,13 +2,13 @@
 -- 05_seed_code_examples.sql
 -- Seed code_examples table with predefined examples from code_examples.json
 -- This script deletes any previously JSON-seeded rows (where source_chat_log_id
--- and created_by are both NULL) and re-inserts all 35 examples.
+-- and created_by are both NULL) and re-inserts all 36 examples.
 -- =============================================================================
 
 -- Remove previously seeded examples (not user-created, not from chat logs)
 DELETE FROM code_examples WHERE source_chat_log_id IS NULL AND created_by IS NULL;
 
--- Insert all 35 code examples
+-- Insert all 36 code examples
 -- Example 1: 반도체 ETF 3개의 가격 추이를 비교해줘
 INSERT INTO code_examples (question, code, description, status, embedding, created_by, source_chat_log_id)
 VALUES ($q$반도체 ETF 3개의 가격 추이를 비교해줘$q$, $c$# 1. 반도체 태그 ETF 목록 조회
@@ -741,3 +741,44 @@ else:
     for etf in etfs:
         lines.append(f"| {etf['name']} | {etf['prev_weight']}% | {etf['latest_weight']}% | +{round(etf['change'], 2)}%p | {etf.get('expense_ratio', 'N/A')} |")
     final_answer('\n'.join(lines))$c$, $d$종목 검색 → HOLDS 관계 이력 비교 Cypher(collect + 인덱싱) → 비중 증가 필터$d$, 'active', NULL, NULL, NULL);
+
+-- Example 36: 특정 ETF에서 특정 종목의 비중이 급격히 변한 시점 찾기
+INSERT INTO code_examples (question, code, description, status, embedding, created_by, source_chat_log_id)
+VALUES ($q$KoAct 바이오헬스케어액티브에서 알테오젠 비중이 급격히 변한 시점을 알려줘$q$, $c$import datetime
+
+# 1. ETF 코드 확인
+search = etf_search(query='KoAct 바이오헬스케어')
+etf_code = json.loads(search)[0]['code']
+
+# 2. 종목 코드 확인
+search = stock_search(query='알테오젠')
+stock_code = json.loads(search)[0]['code']
+
+# 3. 해당 ETF에서 해당 종목의 날짜별 비중 이력 조회 (기간 미지정 시 최근 1개월)
+since = (datetime.date.today() - datetime.timedelta(days=30)).isoformat()
+results = graph_query(cypher=f"MATCH (e:ETF {{code: '{etf_code}'}})-[h:HOLDS]->(s:Stock {{code: '{stock_code}'}}) WHERE h.date >= '{since}' RETURN {{date: h.date, weight: h.weight, shares: h.shares}} ORDER BY h.date")
+history = json.loads(results)
+
+# 4. 전일 대비 비중 변화량 계산
+for i in range(len(history)):
+    if i == 0:
+        history[i]['change'] = 0.0
+    else:
+        history[i]['change'] = round(history[i]['weight'] - history[i-1]['weight'], 2)
+
+# 5. 급변 구간 추출: 변화량 큰 상위 5일의 날짜 범위를 날짜순으로 표시
+top5 = sorted(history, key=lambda x: abs(x['change']), reverse=True)[:5]
+min_date = min(h['date'] for h in top5)
+max_date = max(h['date'] for h in top5)
+# 급변 구간 전일부터 포함하여 흐름을 보여줌
+min_idx = max(0, next(i for i, h in enumerate(history) if h['date'] == min_date) - 1)
+max_idx = next(i for i, h in enumerate(history) if h['date'] == max_date)
+period = history[min_idx:max_idx + 1]
+
+lines = [f'## 비중 급변 구간 ({period[0]["date"]} ~ {period[-1]["date"]})', '| 날짜 | 비중(%) | 보유수량 | 전일대비(%p) |', '|---|---|---|---|']
+for h in period:
+    lines.append(f"| {h['date']} | {h['weight']:.2f}% | {h['shares']}주 | {h['change']:+.2f}%p |")
+lines.extend(['', '## 전체 비중 이력', '| 날짜 | 비중(%) | 보유수량 | 전일대비(%p) |', '|---|---|---|---|'])
+for h in history:
+    lines.append(f"| {h['date']} | {h['weight']:.2f}% | {h['shares']}주 | {h['change']:+.2f}%p |")
+final_answer('\n'.join(lines))$c$, $d$ETF+종목 검색 → graph_query로 날짜별 HOLDS 이력 전체 조회 → 전일대비 변화량 계산 → 급변 시점 정렬$d$, 'active', NULL, NULL, NULL);

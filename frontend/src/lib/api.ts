@@ -20,6 +20,8 @@ import type {
   SimilarETF,
   ChatMessage,
   ChatResponse,
+  AdminCodeExampleList,
+  AdminChatLogList,
 } from '@/types/api'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
@@ -291,6 +293,46 @@ export const notificationApi = {
   },
   check: async () => {
     const { data } = await api.post<{ checked_at: string }>('/notifications/check')
+    return data
+  },
+}
+
+// Admin
+export const adminApi = {
+  listCodeExamples: async (status?: string, skip = 0, limit = 50) => {
+    const params: Record<string, string | number> = { skip, limit }
+    if (status) params.status = status
+    const { data } = await api.get<AdminCodeExampleList>('/admin/code-examples', { params })
+    return data
+  },
+  createCodeExample: async (body: { question: string; code: string; description?: string }) => {
+    const { data } = await api.post('/admin/code-examples', body)
+    return data
+  },
+  updateCodeExample: async (id: number, body: { question?: string; code?: string; description?: string }) => {
+    const { data } = await api.put(`/admin/code-examples/${id}`, body)
+    return data
+  },
+  archiveCodeExample: async (id: number) => {
+    const { data } = await api.delete(`/admin/code-examples/${id}`)
+    return data
+  },
+  listChatLogs: async (status?: string, skip = 0, limit = 50) => {
+    const params: Record<string, string | number> = { skip, limit }
+    if (status) params.status = status
+    const { data } = await api.get<AdminChatLogList>('/admin/chat-logs', { params })
+    return data
+  },
+  reviewChatLog: async (id: number, action: string) => {
+    const { data } = await api.post(`/admin/chat-logs/${id}/review`, { action })
+    return data
+  },
+  embedChatLog: async (id: number, body: { question?: string; code?: string; description?: string }) => {
+    const { data } = await api.post(`/admin/chat-logs/${id}/embed`, body)
+    return data
+  },
+  withdrawChatLog: async (id: number) => {
+    const { data } = await api.post(`/admin/chat-logs/${id}/withdraw`)
     return data
   },
 }

@@ -3,6 +3,40 @@ export interface User {
   email: string
   name: string | null
   picture: string | null
+  is_admin: boolean
+}
+
+// Admin types
+export interface AdminCodeExample {
+  id: number
+  question: string
+  code: string
+  description: string | null
+  status: string
+  has_embedding: boolean
+  source_chat_log_id: number | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface AdminCodeExampleList {
+  items: AdminCodeExample[]
+  total: number
+}
+
+export interface AdminChatLog {
+  id: number
+  user_id: number
+  question: string
+  answer: string
+  generated_code: string | null
+  status: string
+  created_at: string
+}
+
+export interface AdminChatLogList {
+  items: AdminChatLog[]
+  total: number
 }
 
 export interface ETF {

@@ -1,7 +1,11 @@
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
 from .routers import auth, etfs, watchlist, portfolio, tags, chat, notifications, admin
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
@@ -31,6 +35,17 @@ app.include_router(tags.router, prefix="/api/tags", tags=["Tags"])
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
 app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
+
+
+@app.on_event("startup")
+async def _validate_encryption_key():
+    from .utils.encryption import _get_key
+    try:
+        _get_key()
+        logger.info("ENCRYPTION_KEY validated successfully")
+    except RuntimeError as e:
+        logger.error(f"Startup check failed: {e}")
+        raise
 
 
 @app.get("/")

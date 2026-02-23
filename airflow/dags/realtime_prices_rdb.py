@@ -218,7 +218,8 @@ def update_snapshots(**context):
 
             # 평가금액 계산
             total_value = Decimal('0')
-            for ticker, qty in holdings:
+            for ticker, enc_qty in holdings:
+                qty = Decimal(decrypt_value(enc_qty))
                 if ticker == 'CASH':
                     total_value += qty
                 elif ticker in price_map:

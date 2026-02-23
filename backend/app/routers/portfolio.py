@@ -371,22 +371,31 @@ async def get_total_dashboard(
     if not portfolio_ids:
         return _build_dashboard_response([])
 
-    results = db.query(
-        PortfolioSnapshot.date,
-        func.sum(PortfolioSnapshot.total_value).label('total_value'),
-        func.max(PortfolioSnapshot.updated_at).label('updated_at'),
-    ).filter(
+    # Fetch all snapshots for user's portfolios (encrypted columns need app-level aggregation)
+    all_snapshots = db.query(PortfolioSnapshot).filter(
         PortfolioSnapshot.portfolio_id.in_(portfolio_ids),
-    ).group_by(PortfolioSnapshot.date).order_by(PortfolioSnapshot.date.asc()).all()
+    ).order_by(PortfolioSnapshot.date.asc()).all()
 
-    # Convert Row objects to simple namespace for _build_dashboard_response
+    # Group by date and sum total_value in Python
+    date_agg: dict = {}
+    for s in all_snapshots:
+        key = s.date
+        if key not in date_agg:
+            date_agg[key] = {'total_value': Decimal('0'), 'updated_at': s.updated_at}
+        date_agg[key]['total_value'] += Decimal(str(s.total_value))
+        if s.updated_at and (date_agg[key]['updated_at'] is None or s.updated_at > date_agg[key]['updated_at']):
+            date_agg[key]['updated_at'] = s.updated_at
+
     class SnapshotRow:
         def __init__(self, d, tv, ua=None):
             self.date = d
             self.total_value = tv
             self.updated_at = ua
 
-    snapshots = [SnapshotRow(r.date, r.total_value, r.updated_at) for r in results]
+    snapshots = [
+        SnapshotRow(d, agg['total_value'], agg['updated_at'])
+        for d, agg in sorted(date_agg.items())
+    ]
     return _build_dashboard_response(snapshots)
 
 

@@ -6,3 +6,4 @@ yfinance>=0.2.0
 openai>=1.0.0
 langchain==1.2.9
 langchain-openai==1.1.8
+cryptography>=42.0.0

@@ -25,7 +25,8 @@ import {
   DialogFooter,
   DialogDescription,
 } from '@/components/ui/dialog'
-import { ShieldAlert, Plus, Pencil, Archive, Check, X, Upload, Undo2 } from 'lucide-react'
+import { Switch } from '@/components/ui/switch'
+import { ShieldAlert, Plus, Pencil, Archive, Check, X, Upload, Undo2, Search, Loader2 } from 'lucide-react'
 
 const STATUS_FILTERS = {
   codeExamples: [
@@ -91,6 +92,14 @@ export default function AdminPage() {
 
 // ============ Code Examples Tab ============
 
+interface SearchResult {
+  id: number
+  question: string
+  question_generalized: string | null
+  description: string | null
+  distance: number
+}
+
 function CodeExamplesTab() {
   const { toast } = useToast()
   const [items, setItems] = useState<AdminCodeExample[]>([])
@@ -99,6 +108,11 @@ function CodeExamplesTab() {
   const [loading, setLoading] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editItem, setEditItem] = useState<AdminCodeExample | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<SearchResult[] | null>(null)
+  const [searching, setSearching] = useState(false)
+  const [generalize, setGeneralize] = useState(false)
+  const [queryGeneralized, setQueryGeneralized] = useState<string | null>(null)
 
   const fetchItems = useCallback(async () => {
     setLoading(true)
@@ -144,6 +158,24 @@ function CodeExamplesTab() {
     }
   }, [editItem, fetchItems, toast])
 
+  const handleSearch = useCallback(async () => {
+    if (!searchQuery.trim()) {
+      setSearchResults(null)
+      setQueryGeneralized(null)
+      return
+    }
+    setSearching(true)
+    try {
+      const res = await adminApi.searchSimilarExamples(searchQuery.trim(), 5, generalize)
+      setSearchResults(res.results)
+      setQueryGeneralized(res.query_generalized)
+    } catch {
+      toast({ title: '유사도 검색 실패', variant: 'destructive' })
+    } finally {
+      setSearching(false)
+    }
+  }, [searchQuery, generalize, toast])
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -153,7 +185,7 @@ function CodeExamplesTab() {
               key={f.value}
               variant={statusFilter === f.value ? 'default' : 'outline'}
               size="sm"
-              onClick={() => setStatusFilter(f.value)}
+              onClick={() => { setStatusFilter(f.value); setSearchResults(null); setSearchQuery('') }}
             >
               {f.label}
             </Button>
@@ -169,11 +201,70 @@ function CodeExamplesTab() {
         </Button>
       </div>
 
+      {statusFilter === 'embedded' && (
+        <div className="space-y-2">
+          <div className="flex gap-2 items-center">
+            <div className="relative flex-1">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                placeholder="질문을 입력하여 유사도 검색 테스트..."
+                className="pl-9"
+              />
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <Switch checked={generalize} onCheckedChange={setGeneralize} />
+              <Label className="text-sm cursor-pointer" onClick={() => setGeneralize(!generalize)}>일반화</Label>
+            </div>
+            <Button size="sm" onClick={handleSearch} disabled={searching || !searchQuery.trim()}>
+              {searching ? <Loader2 className="w-4 h-4 animate-spin" /> : '검색'}
+            </Button>
+            {searchResults && (
+              <Button size="sm" variant="ghost" onClick={() => { setSearchResults(null); setSearchQuery(''); setQueryGeneralized(null) }}>
+                초기화
+              </Button>
+            )}
+          </div>
+          {queryGeneralized && (
+            <div className="text-sm text-muted-foreground px-1">
+              일반화 결과: <span className="text-foreground">{queryGeneralized}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {searchResults && (
+        <div className="rounded-md border bg-muted/50 p-3 space-y-2">
+          <div className="text-sm font-medium">유사도 검색 결과 ({searchResults.length}건)</div>
+          {searchResults.length === 0 ? (
+            <p className="text-sm text-muted-foreground">매칭된 예제가 없습니다.</p>
+          ) : (
+            searchResults.map((r) => (
+              <div key={r.id} className="flex items-center gap-3 text-sm">
+                <Badge variant="outline" className="shrink-0 w-16 justify-center">
+                  {Math.round((1 - r.distance) * 100)}%
+                </Badge>
+                <span className="text-muted-foreground shrink-0">#{r.id}</span>
+                <span className="truncate">{r.question}</span>
+                {r.question_generalized && r.question_generalized !== r.question && (
+                  <span className="text-muted-foreground truncate shrink-0 max-w-[200px]">
+                    → {r.question_generalized}
+                  </span>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
       <Table>
         <TableHeader>
           <TableRow>
             <TableHead className="w-[60px]">ID</TableHead>
             <TableHead>Question</TableHead>
+            <TableHead>일반화</TableHead>
             <TableHead className="w-[100px]">상태</TableHead>
             <TableHead className="w-[140px]">생성일</TableHead>
             <TableHead className="w-[100px]">작업</TableHead>
@@ -182,51 +273,68 @@ function CodeExamplesTab() {
         <TableBody>
           {loading ? (
             <TableRow>
-              <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+              <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                 로딩 중...
               </TableCell>
             </TableRow>
           ) : items.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+              <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                 데이터가 없습니다
               </TableCell>
             </TableRow>
           ) : (
-            items.map((item) => (
-              <TableRow key={item.id}>
-                <TableCell>{item.id}</TableCell>
-                <TableCell className="max-w-[400px] truncate">{item.question}</TableCell>
-                <TableCell>
-                  <Badge variant={statusBadgeVariant(item.status)}>{item.status}</Badge>
-                </TableCell>
-                <TableCell className="text-sm text-muted-foreground">
-                  {item.created_at ? new Date(item.created_at).toLocaleDateString() : '-'}
-                </TableCell>
-                <TableCell>
-                  <div className="flex gap-1">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={() => { setEditItem(item); setDialogOpen(true) }}
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </Button>
-                    {item.status === 'embedded' && (
+            items.map((item) => {
+              const match = searchResults?.find((r) => r.id === item.id)
+              return (
+                <TableRow key={item.id} className={match ? 'bg-primary/10' : undefined}>
+                  <TableCell>
+                    <div className="flex items-center gap-1">
+                      {item.id}
+                      {match && (
+                        <Badge variant="secondary" className="text-[10px] px-1 py-0">
+                          {Math.round((1 - match.distance) * 100)}%
+                        </Badge>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell className="max-w-[300px] truncate">{item.question}</TableCell>
+                  <TableCell className="max-w-[300px] truncate text-muted-foreground">
+                    {item.question_generalized && item.question_generalized !== item.question
+                      ? item.question_generalized
+                      : <span className="text-muted-foreground/50">동일</span>}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={statusBadgeVariant(item.status)}>{item.status}</Badge>
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {item.created_at ? new Date(item.created_at).toLocaleDateString() : '-'}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex gap-1">
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-8 w-8 text-destructive"
-                        onClick={() => handleArchive(item.id)}
+                        className="h-8 w-8"
+                        onClick={() => { setEditItem(item); setDialogOpen(true) }}
                       >
-                        <Archive className="w-4 h-4" />
+                        <Pencil className="w-4 h-4" />
                       </Button>
-                    )}
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))
+                      {item.status === 'embedded' && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-destructive"
+                          onClick={() => handleArchive(item.id)}
+                        >
+                          <Archive className="w-4 h-4" />
+                        </Button>
+                      )}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              )
+            })
           )}
         </TableBody>
       </Table>

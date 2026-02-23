@@ -58,6 +58,7 @@ async def list_code_examples(
             {
                 "id": item.id,
                 "question": item.question,
+                "question_generalized": item.question_generalized,
                 "code": item.code,
                 "description": item.description,
                 "status": item.status,
@@ -70,6 +71,25 @@ async def list_code_examples(
         ],
         "total": total,
     }
+
+
+@router.get("/code-examples/search")
+async def search_similar_code_examples(
+    q: str = Query(..., min_length=1),
+    top_k: int = Query(5, ge=1, le=20),
+    generalize: bool = Query(False),
+    db: Session = Depends(get_db),
+    admin_id: int = Depends(get_admin_user_id),
+):
+    """유사도 기반 코드 예제 검색 (임베딩 테스트용)."""
+    embedding_service = EmbeddingService(db)
+    search_query = q
+    query_generalized = None
+    if generalize:
+        query_generalized = embedding_service.generalize_question(q)
+        search_query = query_generalized
+    results = embedding_service.find_similar_code_examples(search_query, top_k=top_k, max_distance=1.0)
+    return {"query": q, "query_generalized": query_generalized, "results": results}
 
 
 @router.post("/code-examples")

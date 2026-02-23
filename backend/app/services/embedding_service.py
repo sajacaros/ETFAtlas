@@ -23,7 +23,7 @@ class EmbeddingService:
         """LLM으로 질문에서 특정 ETF/종목명을 제거하고 패턴만 남긴 일반화 질문 생성."""
         try:
             resp = self._client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4.1-mini",
                 messages=[
                     {"role": "system", "content": GENERALIZE_SYSTEM_PROMPT},
                     {"role": "user", "content": question},
@@ -54,10 +54,13 @@ class EmbeddingService:
 
     def find_similar_code_examples(
         self, question: str, top_k: int = 3, max_distance: float = 0.35,
+        similarity_gap: float = 0.05,
     ) -> List[Dict[str, Any]]:
         """질문과 유사한 Python 코드 예제 검색.
 
         max_distance: 코사인 거리 임계값 (0.35 = 유사도 0.65 이상만 반환).
+        similarity_gap: 1등과의 유사도 차이 허용 범위 (0.05 = 5%).
+            1등 유사도 대비 이 값 이상 떨어지면 제외.
         """
         try:
             emb = self.get_embedding(question)
@@ -67,7 +70,7 @@ class EmbeddingService:
 
         emb_str = "[" + ",".join(str(v) for v in emb) + "]"
         query = text(
-            "SELECT question, code, description, "
+            "SELECT id, question, question_generalized, code, description, "
             "embedding <=> :emb\\:\\:vector AS distance "
             "FROM code_examples "
             "WHERE status = 'embedded' "
@@ -79,10 +82,25 @@ class EmbeddingService:
             rows = self.db.execute(
                 query, {"emb": emb_str, "top_k": top_k, "max_dist": max_distance},
             )
-            return [
-                {"question": r.question, "code": r.code, "description": r.description}
+            results = [
+                {
+                    "id": r.id,
+                    "question": r.question,
+                    "question_generalized": r.question_generalized,
+                    "code": r.code,
+                    "description": r.description,
+                    "distance": round(r.distance, 4),
+                }
                 for r in rows
             ]
+            # 1등 대비 유사도 차이가 similarity_gap 이상이면 제외
+            if results and similarity_gap > 0:
+                best_distance = results[0]["distance"]
+                results = [
+                    r for r in results
+                    if r["distance"] - best_distance <= similarity_gap
+                ]
+            return results
         except Exception as e:
             logger.warning(f"code_examples pgvector search failed: {e}")
             return []

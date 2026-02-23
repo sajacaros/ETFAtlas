@@ -240,6 +240,7 @@ export const chatApi = {
     onStep: (step: import('@/types/api').ChatStep) => void,
     onAnswer: (answer: string) => void,
     onError: (error: string) => void,
+    onMatchedExamples?: (examples: import('@/types/api').MatchedCodeExample[]) => void,
   ) => {
     const abortController = new AbortController()
     const baseUrl = `${API_URL}/api`
@@ -279,6 +280,7 @@ export const chatApi = {
               if (event.type === 'step') onStep(event.data)
               else if (event.type === 'answer') onAnswer(event.data.answer)
               else if (event.type === 'error') onError(event.data.message)
+              else if (event.type === 'matched_examples' && onMatchedExamples) onMatchedExamples(event.data.examples)
             } catch { /* ignore parse errors */ }
           }
         }
@@ -323,6 +325,12 @@ export const adminApi = {
   },
   archiveCodeExample: async (id: number) => {
     const { data } = await api.delete(`/admin/code-examples/${id}`)
+    return data
+  },
+  searchSimilarExamples: async (q: string, topK = 5, generalize = false) => {
+    const { data } = await api.get<{ query: string; query_generalized: string | null; results: Array<{ id: number; question: string; question_generalized: string | null; description: string | null; distance: number }> }>(
+      '/admin/code-examples/search', { params: { q, top_k: topK, generalize } }
+    )
     return data
   },
   listChatLogs: async (status?: string, skip = 0, limit = 50) => {

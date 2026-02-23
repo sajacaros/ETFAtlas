@@ -10,6 +10,7 @@ export interface User {
 export interface AdminCodeExample {
   id: number
   question: string
+  question_generalized: string | null
   code: string
   description: string | null
   status: string
@@ -207,9 +208,17 @@ export interface ChatStep {
   error: string | null
 }
 
+export interface MatchedCodeExample {
+  question: string
+  question_generalized: string | null
+  description: string | null
+  distance: number
+}
+
 export interface ChatResponse {
   answer: string
   steps: ChatStep[]
+  matched_examples: MatchedCodeExample[]
 }
 
 // Watchlist change types

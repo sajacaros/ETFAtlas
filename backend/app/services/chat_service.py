@@ -604,7 +604,8 @@ class ChatService:
     # ReAct 경로
     # ------------------------------------------------------------------
 
-    def _build_prompt(self, message: str, history: List[Dict[str, str]]) -> str:
+    def _build_prompt(self, message: str, history: List[Dict[str, str]]) -> tuple:
+        """프롬프트를 구성하고, 매칭된 코드 예제도 함께 반환한다."""
         parts = [SYSTEM_PROMPT, ""]
         if self._tag_names:
             parts.append(f"## 사용 가능한 태그 목록\n{', '.join(self._tag_names)}\n")
@@ -623,11 +624,11 @@ class ChatService:
                 parts.append(f"{role}: {msg['content']}")
             parts.append("")
         parts.append(f"## 현재 질문:\n{message}")
-        return "\n".join(parts)
+        return "\n".join(parts), code_examples
 
     def _react(self, message: str, history: List[Dict[str, str]]) -> Dict:
         """CodeAgent ReAct로 질의를 처리한다."""
-        prompt = self._build_prompt(message, history)
+        prompt, matched_examples = self._build_prompt(message, history)
         try:
             result = self.agent.run(prompt)
         except Exception:
@@ -642,14 +643,19 @@ class ChatService:
             answer = last_obs if last_obs else "죄송합니다. 답변 생성에 실패했습니다. 다시 질문해 주세요."
         else:
             answer = str(result)
-        return {"answer": answer, "steps": steps}
+        return {"answer": answer, "steps": steps, "matched_examples": matched_examples}
 
     def _react_stream(self, message: str, history: List[Dict[str, str]]):
         """CodeAgent ReAct 스트리밍으로 질의를 처리한다."""
         from smolagents.memory import ActionStep
         from smolagents.agents import FinalAnswerStep
 
-        prompt = self._build_prompt(message, history)
+        prompt, matched_examples = self._build_prompt(message, history)
+        if matched_examples:
+            yield {
+                "type": "matched_examples",
+                "data": {"examples": matched_examples},
+            }
         got_final_answer = False
         last_observations = ""
         for event in self.agent.run(prompt, stream=True):

@@ -175,6 +175,13 @@ def collect_prices(**context):
 
 def update_snapshots(**context):
     """ticker_prices 기반으로 포트폴리오 스냅샷 갱신."""
+    import sys, os
+    # Add backend to path for encryption utility
+    backend_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'backend')
+    if backend_path not in sys.path:
+        sys.path.insert(0, backend_path)
+    from app.utils.encryption import encrypt_value, decrypt_value
+
     conn = get_db_connection()
     cur = conn.cursor()
 
@@ -224,12 +231,21 @@ def update_snapshots(**context):
                 ORDER BY date DESC LIMIT 1
             """, (pid, today_str))
             prev = cur.fetchone()
-            prev_value = Decimal(str(prev[0])) if prev else None
+            if prev and prev[0]:
+                prev_value = Decimal(decrypt_value(prev[0]))
+            else:
+                prev_value = None
             change_amount = total_value - prev_value if prev_value else None
             change_rate = (
                 float(change_amount / prev_value * 100)
                 if prev_value and prev_value != 0 else None
             )
+
+            # Encrypt values before storing
+            enc_total = encrypt_value(str(total_value))
+            enc_prev = encrypt_value(str(prev_value)) if prev_value is not None else None
+            enc_change_amt = encrypt_value(str(change_amount)) if change_amount is not None else None
+            enc_change_rate = encrypt_value(str(change_rate)) if change_rate is not None else None
 
             # UPSERT
             cur.execute("""
@@ -243,8 +259,8 @@ def update_snapshots(**context):
                     prev_value = EXCLUDED.prev_value,
                     change_amount = EXCLUDED.change_amount,
                     change_rate = EXCLUDED.change_rate
-            """, (pid, today_str, total_value, prev_value,
-                  change_amount, change_rate))
+            """, (pid, today_str, enc_total, enc_prev,
+                  enc_change_amt, enc_change_rate))
             snapshot_count += 1
 
         conn.commit()

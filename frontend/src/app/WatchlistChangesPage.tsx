@@ -162,7 +162,7 @@ export default function WatchlistChangesPage() {
 
       {currentDate && previousDate && (
         <p className="text-sm text-muted-foreground">
-          기준일: {previousDate} → {currentDate}
+          기준일: {previousDate?.slice(2).replace(/-/g, '/')} → {currentDate?.slice(2).replace(/-/g, '/')}
         </p>
       )}
 

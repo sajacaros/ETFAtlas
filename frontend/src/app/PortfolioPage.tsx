@@ -116,11 +116,12 @@ function SortablePortfolioCard({
                   <span className="text-sm font-normal text-muted-foreground">
                     {(() => {
                       const d = new Date(p.current_value_updated_at + 'Z')
+                      const yy = String(d.getFullYear()).slice(2)
                       const mm = String(d.getMonth() + 1).padStart(2, '0')
                       const dd = String(d.getDate()).padStart(2, '0')
                       const hh = String(d.getHours()).padStart(2, '0')
                       const mi = String(d.getMinutes()).padStart(2, '0')
-                      return `${mm}/${dd} ${hh}:${mi}`
+                      return `${yy}/${mm}/${dd} ${hh}:${mi}`
                     })()}:
                   </span>
                 )}{' '}
@@ -1019,7 +1020,13 @@ export default function PortfolioPage() {
           <CardContent className="py-4">
             {totalSummary.snapshot_date && (
               <p className="text-xs text-muted-foreground mb-2">
-                기준일: {totalSummary.snapshot_date.replace(/-/g, '/')}
+                기준일: {totalSummary.snapshot_date.slice(2).replace(/-/g, '/')}
+                {totalSummary.updated_at && (() => {
+                  const d = new Date(totalSummary.updated_at + (totalSummary.updated_at.endsWith('Z') ? '' : 'Z'))
+                  const hh = String(d.getHours()).padStart(2, '0')
+                  const mi = String(d.getMinutes()).padStart(2, '0')
+                  return ` ${hh}:${mi}`
+                })()}
               </p>
             )}
             <div className="flex flex-wrap items-center gap-6">

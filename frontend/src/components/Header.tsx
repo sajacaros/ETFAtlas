@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import { useNotification } from '@/hooks/useNotification'
@@ -16,6 +16,8 @@ export default function Header() {
   const { user, isAuthenticated, logout } = useAuth()
   const { hasNew } = useNotification()
   const [storyOpen, setStoryOpen] = useState(false)
+  const [imgError, setImgError] = useState(false)
+  const handleImgError = useCallback(() => setImgError(true), [])
 
   return (
     <header className="border-b bg-white">
@@ -80,11 +82,13 @@ export default function Header() {
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" className="flex items-center gap-2">
-                  {user?.picture ? (
+                  {user?.picture && !imgError ? (
                     <img
                       src={user.picture}
                       alt={user.name || ''}
                       className="w-8 h-8 rounded-full"
+                      referrerPolicy="no-referrer"
+                      onError={handleImgError}
                     />
                   ) : (
                     <User className="w-5 h-5" />

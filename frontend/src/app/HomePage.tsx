@@ -426,7 +426,7 @@ export default function HomePage() {
         {/* ETF 목록 (검색/태그 공용) */}
         {latestDate && (
           <div className="text-sm text-muted-foreground text-right">
-            기준일: {latestDate}
+            기준일: {latestDate?.slice(2).replace(/-/g, '/')}
           </div>
         )}
         {isLoading ? (

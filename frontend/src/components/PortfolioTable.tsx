@@ -79,6 +79,20 @@ export default function PortfolioTable({
   const targetMap = new Map(targetAllocations.map((t) => [t.ticker, t]))
   const holdingMap = new Map(holdings.map((h) => [h.ticker, h]))
 
+  // 편집 모드에서 목표비중 합계를 실시간 반영
+  const liveTotalWeight = useMemo(() => {
+    if (!isEditing) return totalWeight
+    return rows.reduce((sum, row) => {
+      if (!targetMap.has(row.ticker)) return sum
+      const edited = editingWeight[row.ticker]
+      if (edited !== undefined) {
+        const val = parseFloat(edited)
+        return sum + (isNaN(val) ? 0 : val)
+      }
+      return sum + Number(row.target_weight)
+    }, 0)
+  }, [isEditing, totalWeight, rows, targetAllocations, editingWeight])
+
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
       if (sortDir === 'asc') {
@@ -186,7 +200,7 @@ export default function PortfolioTable({
     }
   }
 
-  const weightIsWarning = Math.abs(totalWeight - 100) > 0.001
+  const weightIsWarning = Math.abs(liveTotalWeight - 100) > 0.001
 
   return (
     <Table className="table-fixed">
@@ -391,7 +405,7 @@ export default function PortfolioTable({
           <TableRow>
             <TableCell className="font-semibold">합계</TableCell>
             <TableCell className={`text-right font-semibold ${weightIsWarning ? 'text-red-600' : ''}`}>
-              {Number(totalWeight).toFixed(1)}%
+              {Number(liveTotalWeight).toFixed(1)}%
             </TableCell>
             <TableCell />
             <TableCell />

@@ -1,7 +1,8 @@
-from sqlalchemy import Column, Integer, String, DateTime, Date, Float, ForeignKey, Numeric, UniqueConstraint
+from sqlalchemy import Column, Integer, String, DateTime, Date, ForeignKey, Numeric, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from ..database import Base
+from ..utils.encryption import EncryptedDecimal, EncryptedFloat
 
 
 class Portfolio(Base):
@@ -43,8 +44,8 @@ class Holding(Base):
     id = Column(Integer, primary_key=True, index=True)
     portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=False)
     ticker = Column(String(20), nullable=False)
-    quantity = Column(Numeric(15, 4), nullable=False, default=0)
-    avg_price = Column(Numeric(12, 2), nullable=True)
+    quantity = Column(EncryptedDecimal, nullable=False, default=0)
+    avg_price = Column(EncryptedDecimal, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -57,10 +58,10 @@ class PortfolioSnapshot(Base):
     id = Column(Integer, primary_key=True, index=True)
     portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=False)
     date = Column(Date, nullable=False)
-    total_value = Column(Numeric(15, 2), nullable=False)
-    prev_value = Column(Numeric(15, 2), nullable=True)
-    change_amount = Column(Numeric(15, 2), nullable=True)
-    change_rate = Column(Float, nullable=True)
+    total_value = Column(EncryptedDecimal, nullable=False)
+    prev_value = Column(EncryptedDecimal, nullable=True)
+    change_amount = Column(EncryptedDecimal, nullable=True)
+    change_rate = Column(EncryptedFloat, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

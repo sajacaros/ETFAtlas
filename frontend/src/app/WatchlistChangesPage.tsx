@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { TrendingUp, TrendingDown, ArrowLeft, AlertCircle, Calendar } from 'lucide-react'
+import { TrendingUp, TrendingDown, ArrowLeft, AlertCircle, Calendar, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -18,6 +18,9 @@ import { useAuth } from '@/hooks/useAuth'
 import { useNotification } from '@/hooks/useNotification'
 import type { WatchlistChange } from '@/types/api'
 
+type SortKey = 'etf_name' | 'stock_name' | 'change_type' | 'previous_weight' | 'current_weight' | 'weight_change'
+type SortDir = 'asc' | 'desc'
+
 export default function WatchlistChangesPage() {
   const { isAuthenticated } = useAuth()
   const { markChecked } = useNotification()
@@ -28,6 +31,8 @@ export default function WatchlistChangesPage() {
   const [baseDate, setBaseDate] = useState('')
   const [filter, setFilter] = useState<'all' | 'increased' | 'decreased'>('all')
   const [loading, setLoading] = useState(true)
+  const [sortKey, setSortKey] = useState<SortKey>('weight_change')
+  const [sortDir, setSortDir] = useState<SortDir>('desc')
 
   // 페이지 진입 시 알림 확인 처리
   useEffect(() => {
@@ -62,6 +67,48 @@ export default function WatchlistChangesPage() {
     if (filter === 'decreased') return c.change_type === 'decreased' || c.change_type === 'removed'
     return true
   })
+
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortKey(key)
+      setSortDir(key === 'weight_change' ? 'desc' : 'asc')
+    }
+  }
+
+  const sortedChanges = useMemo(() => {
+    const sorted = [...filteredChanges]
+    const dir = sortDir === 'asc' ? 1 : -1
+    sorted.sort((a, b) => {
+      switch (sortKey) {
+        case 'etf_name':
+          return dir * a.etf_name.localeCompare(b.etf_name)
+        case 'stock_name':
+          return dir * a.stock_name.localeCompare(b.stock_name)
+        case 'change_type': {
+          const order: Record<string, number> = { added: 0, increased: 1, decreased: 2, removed: 3 }
+          return dir * ((order[a.change_type] ?? 4) - (order[b.change_type] ?? 4))
+        }
+        case 'previous_weight':
+          return dir * (a.previous_weight - b.previous_weight)
+        case 'current_weight':
+          return dir * (a.current_weight - b.current_weight)
+        case 'weight_change':
+          return dir * (Math.abs(a.weight_change) - Math.abs(b.weight_change))
+        default:
+          return 0
+      }
+    })
+    return sorted
+  }, [filteredChanges, sortKey, sortDir])
+
+  const SortIcon = ({ col }: { col: SortKey }) => {
+    if (sortKey !== col) return <ArrowUpDown className="w-3 h-3 ml-1 opacity-30" />
+    return sortDir === 'asc'
+      ? <ArrowUp className="w-3 h-3 ml-1" />
+      : <ArrowDown className="w-3 h-3 ml-1" />
+  }
 
   const getChangeIcon = (type: string) => {
     switch (type) {
@@ -168,7 +215,7 @@ export default function WatchlistChangesPage() {
 
       {loading ? (
         <div className="text-center py-12 text-muted-foreground">로딩 중...</div>
-      ) : filteredChanges.length === 0 ? (
+      ) : sortedChanges.length === 0 ? (
         <Card className="p-8">
           <div className="flex flex-col items-center gap-3 text-muted-foreground">
             <AlertCircle className="w-10 h-10" />
@@ -183,16 +230,28 @@ export default function WatchlistChangesPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>ETF</TableHead>
-                <TableHead>종목</TableHead>
-                <TableHead>변화</TableHead>
-                <TableHead className="text-right">이전</TableHead>
-                <TableHead className="text-right">현재</TableHead>
-                <TableHead className="text-right">변화량</TableHead>
+                <TableHead className="cursor-pointer select-none" onClick={() => handleSort('etf_name')}>
+                  <span className="inline-flex items-center">ETF<SortIcon col="etf_name" /></span>
+                </TableHead>
+                <TableHead className="cursor-pointer select-none" onClick={() => handleSort('stock_name')}>
+                  <span className="inline-flex items-center">종목<SortIcon col="stock_name" /></span>
+                </TableHead>
+                <TableHead className="cursor-pointer select-none" onClick={() => handleSort('change_type')}>
+                  <span className="inline-flex items-center">변화<SortIcon col="change_type" /></span>
+                </TableHead>
+                <TableHead className="cursor-pointer select-none text-right" onClick={() => handleSort('previous_weight')}>
+                  <span className="inline-flex items-center justify-end w-full">이전<SortIcon col="previous_weight" /></span>
+                </TableHead>
+                <TableHead className="cursor-pointer select-none text-right" onClick={() => handleSort('current_weight')}>
+                  <span className="inline-flex items-center justify-end w-full">현재<SortIcon col="current_weight" /></span>
+                </TableHead>
+                <TableHead className="cursor-pointer select-none text-right" onClick={() => handleSort('weight_change')}>
+                  <span className="inline-flex items-center justify-end w-full">변화량<SortIcon col="weight_change" /></span>
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredChanges.map((c, i) => (
+              {sortedChanges.map((c, i) => (
                 <TableRow key={`${c.etf_code}-${c.stock_code}-${i}`}>
                   <TableCell>
                     <Link

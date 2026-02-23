@@ -8,17 +8,27 @@ from sqlalchemy.types import TypeDecorator
 
 
 def _get_key() -> bytes:
-    from ..config import get_settings
-    key_hex = get_settings().encryption_key
+    """Get encryption key directly from environment variable."""
+    key_hex = os.environ.get('ENCRYPTION_KEY', '')
     if not key_hex:
-        raise RuntimeError("ENCRYPTION_KEY is not set")
+        raise RuntimeError("ENCRYPTION_KEY environment variable is not set")
     return bytes.fromhex(key_hex)
+
+
+_aesgcm_instance: AESGCM | None = None
+
+
+def _get_aesgcm() -> AESGCM:
+    """Return a cached AESGCM instance (created once per process)."""
+    global _aesgcm_instance
+    if _aesgcm_instance is None:
+        _aesgcm_instance = AESGCM(_get_key())
+    return _aesgcm_instance
 
 
 def encrypt_value(plaintext: str) -> str:
     """Encrypt a string value and return Base64-encoded ciphertext."""
-    key = _get_key()
-    aesgcm = AESGCM(key)
+    aesgcm = _get_aesgcm()
     nonce = os.urandom(12)  # 96-bit nonce for GCM
     ciphertext = aesgcm.encrypt(nonce, plaintext.encode('utf-8'), None)
     return base64.b64encode(nonce + ciphertext).decode('ascii')
@@ -26,8 +36,7 @@ def encrypt_value(plaintext: str) -> str:
 
 def decrypt_value(token: str) -> str:
     """Decrypt a Base64-encoded ciphertext and return the plaintext string."""
-    key = _get_key()
-    aesgcm = AESGCM(key)
+    aesgcm = _get_aesgcm()
     raw = base64.b64decode(token)
     nonce = raw[:12]
     ciphertext = raw[12:]

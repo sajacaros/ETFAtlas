@@ -47,7 +47,7 @@ def _generalize_questions(client, questions):
     for q in questions:
         try:
             resp = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4.1-mini",
                 messages=[
                     {"role": "system", "content": GENERALIZE_SYSTEM_PROMPT},
                     {"role": "user", "content": q},

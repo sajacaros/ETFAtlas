@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect, KeyboardEvent } from 'react'
-import { Send, Loader2, MessageCircle, ChevronRight, Trash2 } from 'lucide-react'
+import { Send, Loader2, MessageCircle, ChevronRight, Trash2, BookOpen } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { chatApi } from '@/lib/api'
-import type { ChatMessage, ChatStep } from '@/types/api'
+import type { ChatMessage, ChatStep, MatchedCodeExample } from '@/types/api'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
@@ -17,6 +17,7 @@ const EXAMPLE_QUESTIONS = [
 
 interface DisplayMessage extends ChatMessage {
   steps?: ChatStep[]
+  matchedExamples?: MatchedCodeExample[]
 }
 
 export default function ChatPage() {
@@ -24,6 +25,7 @@ export default function ChatPage() {
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [streamingSteps, setStreamingSteps] = useState<ChatStep[]>([])
+  const [streamingExamples, setStreamingExamples] = useState<MatchedCodeExample[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -41,9 +43,11 @@ export default function ChatPage() {
     setInput('')
     setIsLoading(true)
     setStreamingSteps([])
+    setStreamingExamples([])
 
     const history = messages.map((m) => ({ role: m.role, content: m.content }))
     const collectedSteps: ChatStep[] = []
+    let collectedExamples: MatchedCodeExample[] = []
 
     chatApi.streamMessage(
       trimmed,
@@ -55,9 +59,10 @@ export default function ChatPage() {
       (answer) => {
         setMessages([
           ...newMessages,
-          { role: 'assistant', content: answer, steps: collectedSteps },
+          { role: 'assistant', content: answer, steps: collectedSteps, matchedExamples: collectedExamples },
         ])
         setStreamingSteps([])
+        setStreamingExamples([])
         setIsLoading(false)
         textareaRef.current?.focus()
       },
@@ -68,11 +73,17 @@ export default function ChatPage() {
             role: 'assistant',
             content: `죄송합니다. 오류가 발생했습니다: ${error}`,
             steps: collectedSteps,
+            matchedExamples: collectedExamples,
           },
         ])
         setStreamingSteps([])
+        setStreamingExamples([])
         setIsLoading(false)
         textareaRef.current?.focus()
+      },
+      (examples) => {
+        collectedExamples = examples
+        setStreamingExamples(examples)
       },
     )
   }
@@ -150,6 +161,9 @@ export default function ChatPage() {
                   )}
                 </CardContent>
               </Card>
+              {msg.matchedExamples && msg.matchedExamples.length > 0 && (
+                <MatchedExamplesView examples={msg.matchedExamples} />
+              )}
               {msg.steps && msg.steps.length > 0 && <StepsView steps={msg.steps} />}
             </div>
           </div>
@@ -167,6 +181,9 @@ export default function ChatPage() {
                     : '생각 중...'}
                 </CardContent>
               </Card>
+              {streamingExamples.length > 0 && (
+                <MatchedExamplesView examples={streamingExamples} />
+              )}
               {streamingSteps.length > 0 && <StepsView steps={streamingSteps} defaultOpen />}
             </div>
           </div>
@@ -197,6 +214,37 @@ export default function ChatPage() {
         </Button>
       </div>
     </div>
+  )
+}
+
+function MatchedExamplesView({ examples }: { examples: MatchedCodeExample[] }) {
+  return (
+    <details className="mt-1">
+      <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground flex items-center gap-1 select-none">
+        <BookOpen className="w-3 h-3" />
+        참고 코드 예제 ({examples.length}건)
+      </summary>
+      <div className="mt-1 space-y-1">
+        {examples.map((ex, i) => (
+          <div key={i} className="text-xs border rounded p-2 bg-background space-y-0.5">
+            <div className="flex items-center gap-2">
+              <span className="font-medium">{ex.question}</span>
+              <span className="text-muted-foreground shrink-0">
+                유사도 {Math.round((1 - ex.distance) * 100)}%
+              </span>
+            </div>
+            {ex.question_generalized && ex.question_generalized !== ex.question && (
+              <div className="text-muted-foreground">
+                일반화: {ex.question_generalized}
+              </div>
+            )}
+            {ex.description && (
+              <div className="text-muted-foreground">{ex.description}</div>
+            )}
+          </div>
+        ))}
+      </div>
+    </details>
   )
 }
 

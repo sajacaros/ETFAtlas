@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24 * 7  # 7 days
 
+    # Encryption
+    encryption_key: str = ""  # 32-byte hex key for AES-256-GCM
+
     # Google OAuth
     google_client_id: str = ""
     google_client_secret: str = ""

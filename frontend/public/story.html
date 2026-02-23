@@ -636,21 +636,6 @@ sorted_results = sorted(results,
   <h2 class="chapter-title">시행착오</h2>
   <div class="chapter-divider"></div>
 
-  <h3 class="sub-title">smolagents &mdash; 프롬프트 엔지니어링의 중요성</h3>
-  <p>smolagents에서 <span class="hl">가장 어려웠던 건 기술이 아니라 프롬프트</span>였습니다.</p>
-  <p>도구의 <span class="tech">description</span>을 어떻게 쓰느냐에 따라 에이전트의 도구 선택 정확도가 크게 달라집니다.</p>
-  <div class="compare">
-    <div class="compare-card" style="border-color: var(--red);">
-      <h4 style="color: var(--red);">Before</h4>
-      <p>"ETF를 검색합니다" &rarr; 에이전트가 ETF 검색 대신 직접 Cypher 쿼리를 날리는 경우가 많았음</p>
-    </div>
-    <div class="compare-card" style="border-color: var(--green);">
-      <h4 style="color: var(--green);">After</h4>
-      <p>"코드나 이름의 일부로 ETF를 검색합니다. 전체 목록이 아닌 <span class="hl">특정 ETF를 찾을 때</span> 사용하세요." &rarr; 정확도 향상</p>
-    </div>
-  </div>
-  <div class="callout-warn">시스템 프롬프트에 <span class="hl">"태그 이름을 사용하기 전에 반드시 list_tags를 먼저 호출하세요"</span> 같은 규칙을 명시해야 합니다. 안 그러면 에이전트가 태그 이름을 추측해서 잘못된 쿼리를 만듭니다.</div>
-
   <h3 class="sub-title">스냅샷과 멱등성 &mdash; "오늘"이 도대체 언제인가</h3>
   <p><span class="hl">"매일 장 마감 후에 포트폴리오 가치를 계산해서 저장한다."</span> 단순해 보이지만, 기준일과 수집일의 정의가 미흡한 상태에서 출발하니 <span class="hl">커밋 10개 넘게</span> 수정이 필요했습니다.</p>
 
@@ -677,14 +662,6 @@ sorted_results = sorted(results,
   </ul>
   <div class="callout">결국 <span class="hl">"기준일"과 "수집일"을 분리</span>하고, <span class="tech">date.today()</span> 대신 데이터가 알려주는 날짜를 쓰고, 데이터가 없으면 아무것도 하지 않는 것. 이 세 가지로 정리가 됐는데, 만들면서 하나씩 구체화된 부분이라 처음부터 다 예측하기는 어려웠을 겁니다.</div>
 
-  <h3 class="sub-title">가격 데이터 이전 &mdash; RDB에서 AGE로</h3>
-  <p>처음에는 <span class="tech">etf_prices</span>, <span class="tech">stock_prices</span> 관계형 테이블에 가격을 저장. 챗봇을 만들면서 문제 발생 &mdash; 모든 도구는 AGE 그래프만 조회하는데, 가격만 RDB에 있어서 SQL과 Cypher를 오가야 했습니다.</p>
-  <p>해결: <span class="tech">Price</span> 노드 + <span class="tech">HAS_PRICE</span> 관계를 추가하고 RDB 테이블은 제거. 가격 서비스는 <span class="hl">4단계 폴백 전략</span>:</p>
-  <ul>
-    <li>60초 캐시 &rarr; 당일 AGE Price 노드 &rarr; yfinance API &rarr; AGE 최신 Price 노드</li>
-  </ul>
-  <div class="callout">데이터 저장소는 <strong>"어디서 주로 조회하느냐"</strong>에 맞춰야 합니다. 챗봇이 주 소비자라면, 챗봇이 접근하는 저장소에 데이터를 두는 게 자연스럽습니다.</div>
-
   <h3 class="sub-title">그래프 vs 관계형 &mdash; 어디에 뭘 넣을까</h3>
   <div class="compare">
     <div class="compare-card">
@@ -704,6 +681,7 @@ sorted_results = sorted(results,
       </ul>
     </div>
   </div>
+  <p>대표적인 사례가 가격 데이터입니다. 처음에는 <span class="tech">etf_prices</span>, <span class="tech">stock_prices</span> 관계형 테이블에 저장했지만, 챗봇의 모든 도구가 AGE 그래프만 조회하는 구조여서 SQL과 Cypher를 오가야 했습니다. 결국 <span class="tech">Price</span> 노드와 <span class="tech">HAS_PRICE</span> 관계를 추가하고 RDB 테이블은 제거했습니다. <span class="hl">데이터 저장소는 "어디서 주로 조회하느냐"에 맞춰야</span> 한다는 교훈을 얻었습니다.</p>
   <div class="callout-green"><strong>"전부 그래프" 또는 "전부 관계형"이 아니라 데이터 특성에 맞게 섞어 쓰는 게 현실적인 접근.</strong> Apache AGE의 장점이 바로 이 분리를 한 DB에서 할 수 있다는 것입니다.</div>
 </section>
 

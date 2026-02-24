@@ -138,7 +138,7 @@ export default function SharedPortfolioDetailPage() {
                       labelFormatter={(l: string) => l}
                     />
                     <Line
-                      type="monotone"
+                      type="linear"
                       dataKey="value"
                       stroke="#2563eb"
                       strokeWidth={2}

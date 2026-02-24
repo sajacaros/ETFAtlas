@@ -25,6 +25,7 @@ import type {
   SharedPortfolioListItem,
   SharedPortfolioDetail,
   SharedReturnsResponse,
+  SharedReturnsSummary,
   ShareToggleResponse,
 } from '@/types/api'
 
@@ -232,6 +233,10 @@ export const sharedApi = {
   },
   getReturns: async (shareToken: string, period: string = '1m') => {
     const { data } = await api.get<SharedReturnsResponse>(`/shared/${shareToken}/returns`, { params: { period } })
+    return data
+  },
+  getReturnsSummary: async (shareToken: string) => {
+    const { data } = await api.get<SharedReturnsSummary>(`/shared/${shareToken}/returns-summary`)
     return data
   },
 }

@@ -253,3 +253,9 @@ class SharedReturnsResponse(BaseModel):
     period: str
     actual_start_date: str
     chart_data: list[SharedReturnsChartPoint]
+
+
+class SharedReturnsSummary(BaseModel):
+    returns_1w: Optional[float] = None
+    returns_1m: Optional[float] = None
+    returns_3m: Optional[float] = None

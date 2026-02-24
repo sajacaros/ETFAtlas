@@ -312,6 +312,12 @@ export interface SharedReturnsResponse {
   chart_data: SharedReturnsChartPoint[]
 }
 
+export interface SharedReturnsSummary {
+  returns_1w: number | null
+  returns_1m: number | null
+  returns_3m: number | null
+}
+
 export interface ShareToggleResponse {
   is_shared: boolean
   share_token: string | null

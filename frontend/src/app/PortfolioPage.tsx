@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Trash2, ArrowLeft, AlertTriangle, RefreshCw, Pencil, Check, BarChart3, Eye, EyeOff, GripVertical, Camera } from 'lucide-react'
+import { Plus, Trash2, ArrowLeft, AlertTriangle, RefreshCw, Pencil, Check, BarChart3, Eye, EyeOff, GripVertical, Camera, Share2, Copy } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -796,6 +796,44 @@ export default function PortfolioPage() {
             </Button>
           </div>
         </div>
+
+        {/* 공유 설정 */}
+        {detail && (
+          <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg">
+            <Share2 className="w-5 h-5 text-muted-foreground" />
+            <div className="flex-1">
+              <span className="text-sm font-medium">포트폴리오 공유</span>
+              {detail.is_shared && detail.share_token && (
+                <div className="flex items-center gap-2 mt-1">
+                  <code className="text-xs bg-background px-2 py-1 rounded">
+                    {window.location.origin}/shared/{detail.share_token}
+                  </code>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      navigator.clipboard.writeText(
+                        `${window.location.origin}/shared/${detail.share_token}`
+                      )
+                    }}
+                  >
+                    <Copy className="w-3 h-3" />
+                  </Button>
+                </div>
+              )}
+            </div>
+            <Button
+              variant={detail.is_shared ? 'default' : 'outline'}
+              size="sm"
+              onClick={async () => {
+                const res = await portfolioApi.toggleShare(detail.id, !detail.is_shared)
+                setDetail({ ...detail, is_shared: res.is_shared, share_token: res.share_token })
+              }}
+            >
+              {detail.is_shared ? '공유 중' : '공유하기'}
+            </Button>
+          </div>
+        )}
 
         {/* Settings bar */}
         <Card>

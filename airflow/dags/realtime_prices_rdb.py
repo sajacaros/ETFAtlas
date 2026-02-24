@@ -129,7 +129,8 @@ def check_market_open(**context):
 
 
 def collect_prices(**context):
-    """포트폴리오 보유 종목의 현재가를 yfinance에서 조회하여 ticker_prices에 업서트."""
+    """포트폴리오 보유 종목의 현재가를 yfinance에서 조회하여 ticker_prices에 업서트.
+    3개월치 미만인 종목은 과거 데이터도 백필한다."""
     import yfinance as yf
 
     conn = get_db_connection()
@@ -147,26 +148,59 @@ def collect_prices(**context):
         log.info(f"Collecting prices for {len(tickers)} tickers")
 
         today = datetime.now(KST).date()
+        min_date = today - timedelta(days=90)
+
+        # 종목별 기존 데이터 건수 확인
+        cur.execute("""
+            SELECT ticker, COUNT(*) FROM ticker_prices
+            WHERE ticker = ANY(%s) AND date >= %s
+            GROUP BY ticker
+        """, (tickers, min_date.isoformat()))
+        count_map = {row[0]: row[1] for row in cur.fetchall()}
+
         success_count = 0
+        backfill_count = 0
 
         for ticker in tickers:
             try:
                 yf_ticker = f"{ticker}.KS"
-                hist = yf.Ticker(yf_ticker).history(period="1d")
-                if not hist.empty:
-                    close = Decimal(str(int(hist["Close"].iloc[-1])))
-                    cur.execute("""
-                        INSERT INTO ticker_prices (ticker, date, price, updated_at)
-                        VALUES (%s, %s, %s, NOW())
-                        ON CONFLICT (ticker, date)
-                        DO UPDATE SET price = EXCLUDED.price, updated_at = NOW()
-                    """, (ticker, today.isoformat(), close))
-                    success_count += 1
+                existing = count_map.get(ticker, 0)
+
+                if existing < 60:
+                    # 3개월치 미만 → 4개월 과거 데이터 백필
+                    hist = yf.Ticker(yf_ticker).history(period="4mo")
+                    if not hist.empty:
+                        for idx, row in hist.iterrows():
+                            d = idx.date() if hasattr(idx, 'date') else idx
+                            close = Decimal(str(int(row["Close"])))
+                            cur.execute("""
+                                INSERT INTO ticker_prices (ticker, date, price, updated_at)
+                                VALUES (%s, %s, %s, NOW())
+                                ON CONFLICT (ticker, date)
+                                DO UPDATE SET price = EXCLUDED.price, updated_at = NOW()
+                            """, (ticker, d.isoformat(), close))
+                        backfill_count += 1
+                        success_count += 1
+                else:
+                    # 충분한 데이터 → 오늘치만 수집
+                    hist = yf.Ticker(yf_ticker).history(period="1d")
+                    if not hist.empty:
+                        close = Decimal(str(int(hist["Close"].iloc[-1])))
+                        cur.execute("""
+                            INSERT INTO ticker_prices (ticker, date, price, updated_at)
+                            VALUES (%s, %s, %s, NOW())
+                            ON CONFLICT (ticker, date)
+                            DO UPDATE SET price = EXCLUDED.price, updated_at = NOW()
+                        """, (ticker, today.isoformat(), close))
+                        success_count += 1
             except Exception as e:
                 log.warning(f"Failed to fetch price for {ticker}: {e}")
 
         conn.commit()
-        log.info(f"Upserted {success_count}/{len(tickers)} ticker prices")
+        log.info(
+            f"Upserted {success_count}/{len(tickers)} ticker prices "
+            f"(backfilled {backfill_count} tickers)"
+        )
 
     finally:
         cur.close()

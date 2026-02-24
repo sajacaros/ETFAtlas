@@ -137,6 +137,16 @@ export default function SharedPortfolioDetailPage() {
                         <YAxis
                           tickFormatter={(v: number) => `${(v / 10000).toFixed(0)}만`}
                           tick={{ fontSize: 12 }}
+                          domain={[
+                            (dataMin: number) => {
+                              const padding = (dataMin * 0.05)
+                              return Math.floor((dataMin - padding) / 10000) * 10000
+                            },
+                            (dataMax: number) => {
+                              const padding = (dataMax * 0.05)
+                              return Math.ceil((dataMax + padding) / 10000) * 10000
+                            },
+                          ]}
                         />
                         <Tooltip
                           formatter={(v: number) => [`${v.toLocaleString()}원`, '평가금액']}

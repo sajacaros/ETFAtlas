@@ -3,7 +3,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
-from .routers import auth, etfs, watchlist, portfolio, tags, chat, notifications, admin
+from .routers import auth, etfs, watchlist, portfolio, tags, chat, notifications, admin, shared
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,7 @@ app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(etfs.router, prefix="/api/etfs", tags=["ETFs"])
 app.include_router(watchlist.router, prefix="/api/watchlist", tags=["Watchlist"])
 app.include_router(portfolio.router, prefix="/api/portfolios", tags=["Portfolio"])
+app.include_router(shared.router, prefix="/api/shared", tags=["Shared"])
 app.include_router(tags.router, prefix="/api/tags", tags=["Tags"])
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])

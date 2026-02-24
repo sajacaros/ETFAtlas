@@ -120,6 +120,8 @@ class PortfolioDetailResponse(BaseModel):
     name: str
     calculation_base: str
     target_total_amount: Optional[Decimal] = None
+    is_shared: bool = False
+    share_token: Optional[str] = None
     target_allocations: list[TargetAllocationResponse] = []
     holdings: list[HoldingResponse] = []
 
@@ -208,3 +210,46 @@ class RefreshSnapshotResponse(BaseModel):
 class RefreshAllSnapshotsResponse(BaseModel):
     refreshed: int
     skipped: int
+
+
+# --- Sharing ---
+class ShareToggleRequest(BaseModel):
+    is_shared: bool
+
+
+class ShareToggleResponse(BaseModel):
+    is_shared: bool
+    share_token: Optional[str] = None
+    share_url: Optional[str] = None
+
+
+class SharedPortfolioListItem(BaseModel):
+    portfolio_name: str
+    user_name: str
+    share_token: str
+    tickers_count: int
+    updated_at: Optional[str] = None
+
+
+class SharedAllocationItem(BaseModel):
+    ticker: str
+    name: str
+    weight: float
+
+
+class SharedPortfolioDetail(BaseModel):
+    portfolio_name: str
+    user_name: str
+    allocations: list[SharedAllocationItem]
+
+
+class SharedReturnsChartPoint(BaseModel):
+    date: str
+    value: float
+
+
+class SharedReturnsResponse(BaseModel):
+    base_amount: int = 10_000_000
+    period: str
+    actual_start_date: str
+    chart_data: list[SharedReturnsChartPoint]

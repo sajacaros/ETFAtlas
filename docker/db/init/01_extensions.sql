@@ -62,6 +62,8 @@ CREATE TABLE IF NOT EXISTS portfolios (
     calculation_base VARCHAR(20) NOT NULL DEFAULT 'CURRENT_TOTAL',
     target_total_amount DECIMAL(15, 2),
     display_order INTEGER NOT NULL DEFAULT 0,
+    is_shared BOOLEAN NOT NULL DEFAULT FALSE,
+    share_token UUID UNIQUE DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

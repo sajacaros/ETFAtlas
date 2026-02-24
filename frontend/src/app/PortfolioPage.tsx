@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Trash2, ArrowLeft, AlertTriangle, RefreshCw, Pencil, Check, BarChart3, Eye, EyeOff, GripVertical, Camera, Share2, Copy } from 'lucide-react'
+import { Plus, Trash2, ArrowLeft, AlertTriangle, RefreshCw, Pencil, Check, BarChart3, Eye, EyeOff, GripVertical, Camera, Share2 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -752,15 +752,38 @@ export default function PortfolioPage() {
             {calcLoading && <span className="text-sm text-muted-foreground">계산 중...</span>}
             {isEditing && <AddTickerDialog onAdd={handleAddTicker} />}
             {!isEditing && (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={snapshotLoading}
-                onClick={handleRefreshSnapshot}
-              >
-                <Camera className={`w-4 h-4 mr-1 ${snapshotLoading ? 'animate-pulse' : ''}`} />
-                {snapshotLoading ? '적용 중...' : '스냅샷 적용'}
-              </Button>
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={snapshotLoading}
+                  onClick={handleRefreshSnapshot}
+                >
+                  <Camera className={`w-4 h-4 mr-1 ${snapshotLoading ? 'animate-pulse' : ''}`} />
+                  {snapshotLoading ? '적용 중...' : '스냅샷 적용'}
+                </Button>
+                <Button
+                  variant={detail.is_shared ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={async () => {
+                    try {
+                      const res = await portfolioApi.toggleShare(detail.id, !detail.is_shared)
+                      setDetail({ ...detail, is_shared: res.is_shared, share_token: res.share_token })
+                      if (res.is_shared && res.share_token) {
+                        await navigator.clipboard.writeText(`${window.location.origin}/shared/${res.share_token}`)
+                        toast({ title: '공유 링크가 복사되었습니다' })
+                      } else {
+                        toast({ title: '공유가 해제되었습니다' })
+                      }
+                    } catch {
+                      toast({ title: '공유 설정 변경 실패', variant: 'destructive' })
+                    }
+                  }}
+                >
+                  <Share2 className="w-4 h-4 mr-1" />
+                  {detail.is_shared ? '공유 중' : '공유'}
+                </Button>
+              </>
             )}
             <Button
               variant="outline"
@@ -796,53 +819,6 @@ export default function PortfolioPage() {
             </Button>
           </div>
         </div>
-
-        {/* 공유 설정 */}
-        {detail && (
-          <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg">
-            <Share2 className="w-5 h-5 text-muted-foreground" />
-            <div className="flex-1">
-              <span className="text-sm font-medium">포트폴리오 공유</span>
-              {detail.is_shared && detail.share_token && (
-                <div className="flex items-center gap-2 mt-1">
-                  <code className="text-xs bg-background px-2 py-1 rounded">
-                    {window.location.origin}/shared/{detail.share_token}
-                  </code>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={async () => {
-                      try {
-                        await navigator.clipboard.writeText(
-                          `${window.location.origin}/shared/${detail.share_token}`
-                        )
-                        toast({ title: '링크가 복사되었습니다' })
-                      } catch {
-                        // Silent fallback
-                      }
-                    }}
-                  >
-                    <Copy className="w-3 h-3" />
-                  </Button>
-                </div>
-              )}
-            </div>
-            <Button
-              variant={detail.is_shared ? 'default' : 'outline'}
-              size="sm"
-              onClick={async () => {
-                try {
-                  const res = await portfolioApi.toggleShare(detail.id, !detail.is_shared)
-                  setDetail({ ...detail, is_shared: res.is_shared, share_token: res.share_token })
-                } catch {
-                  toast({ title: '공유 설정 변경 실패', variant: 'destructive' })
-                }
-              }}
-            >
-              {detail.is_shared ? '공유 중' : '공유하기'}
-            </Button>
-          </div>
-        )}
 
         {/* Settings bar */}
         <Card>

@@ -9,7 +9,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Search, PieChart, User, LogOut, MessageCircle, Bell, BookOpen, Shield } from 'lucide-react'
+import { Search, PieChart, User, LogOut, MessageCircle, Bell, BookOpen, Shield, Share2 } from 'lucide-react'
 import StoryDialog from '@/components/StoryDialog'
 
 export default function Header() {
@@ -40,6 +40,13 @@ export default function Header() {
             >
               <PieChart className="w-4 h-4" />
               포트폴리오
+            </Link>
+            <Link
+              to="/shared"
+              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+            >
+              <Share2 className="w-4 h-4" />
+              Shared
             </Link>
             <Link
               to="/watchlist/changes"

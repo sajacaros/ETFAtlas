@@ -811,10 +811,15 @@ export default function PortfolioPage() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => {
-                      navigator.clipboard.writeText(
-                        `${window.location.origin}/shared/${detail.share_token}`
-                      )
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(
+                          `${window.location.origin}/shared/${detail.share_token}`
+                        )
+                        toast({ title: '링크가 복사되었습니다' })
+                      } catch {
+                        // Silent fallback
+                      }
                     }}
                   >
                     <Copy className="w-3 h-3" />
@@ -826,8 +831,12 @@ export default function PortfolioPage() {
               variant={detail.is_shared ? 'default' : 'outline'}
               size="sm"
               onClick={async () => {
-                const res = await portfolioApi.toggleShare(detail.id, !detail.is_shared)
-                setDetail({ ...detail, is_shared: res.is_shared, share_token: res.share_token })
+                try {
+                  const res = await portfolioApi.toggleShare(detail.id, !detail.is_shared)
+                  setDetail({ ...detail, is_shared: res.is_shared, share_token: res.share_token })
+                } catch {
+                  toast({ title: '공유 설정 변경 실패', variant: 'destructive' })
+                }
               }}
             >
               {detail.is_shared ? '공유 중' : '공유하기'}

@@ -1,3 +1,4 @@
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List
 from decimal import Decimal
@@ -20,6 +21,7 @@ from ..schemas.portfolio import (
     RefreshSnapshotResponse,
     RefreshAllSnapshotsResponse,
     PortfolioBatchUpdate,
+    ShareToggleRequest, ShareToggleResponse,
 )
 from ..domain.portfolio_calculation import (
     calculate_portfolio, TargetInput, HoldingInput,
@@ -153,6 +155,27 @@ async def create_portfolio(
     return portfolio
 
 
+@router.put("/{portfolio_id}/share", response_model=ShareToggleResponse)
+async def toggle_share(
+    portfolio_id: int,
+    body: ShareToggleRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    portfolio = _get_portfolio_or_404(db, portfolio_id, user_id)
+    portfolio.is_shared = body.is_shared
+    if body.is_shared and not portfolio.share_token:
+        portfolio.share_token = uuid.uuid4()
+    db.commit()
+    db.refresh(portfolio)
+    token_str = str(portfolio.share_token) if portfolio.share_token else None
+    return ShareToggleResponse(
+        is_shared=portfolio.is_shared,
+        share_token=token_str,
+        share_url=f"/shared/{token_str}" if portfolio.is_shared and token_str else None,
+    )
+
+
 @router.get("/{portfolio_id}", response_model=PortfolioDetailResponse)
 async def get_portfolio(
     portfolio_id: int,
@@ -160,7 +183,16 @@ async def get_portfolio(
     db: Session = Depends(get_db)
 ):
     portfolio = _get_portfolio_or_404(db, portfolio_id, user_id)
-    return portfolio
+    return PortfolioDetailResponse(
+        id=portfolio.id,
+        name=portfolio.name,
+        calculation_base=portfolio.calculation_base,
+        target_total_amount=portfolio.target_total_amount,
+        is_shared=portfolio.is_shared,
+        share_token=str(portfolio.share_token) if portfolio.share_token else None,
+        target_allocations=[TargetAllocationResponse.model_validate(t) for t in portfolio.target_allocations],
+        holdings=[HoldingResponse.model_validate(h) for h in portfolio.holdings],
+    )
 
 
 @router.put("/{portfolio_id}", response_model=PortfolioResponse)

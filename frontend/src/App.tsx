@@ -9,6 +9,8 @@ import ChatPage from './app/ChatPage'
 import PortfolioPage from './app/PortfolioPage'
 import PortfolioDashboardPage from './app/PortfolioDashboardPage'
 import WatchlistChangesPage from './app/WatchlistChangesPage'
+import SharedPortfoliosPage from '@/app/SharedPortfoliosPage'
+import SharedPortfolioDetailPage from '@/app/SharedPortfolioDetailPage'
 import AdminPage from './app/AdminPage'
 import LoginPage from './app/LoginPage'
 import AuthCallbackPage from './app/AuthCallbackPage'
@@ -29,6 +31,8 @@ function App() {
             <Route path="/portfolio/dashboard" element={<PortfolioDashboardPage />} />
             <Route path="/portfolio/:id/dashboard" element={<PortfolioDashboardPage />} />
             <Route path="/watchlist/changes" element={<WatchlistChangesPage />} />
+            <Route path="/shared" element={<SharedPortfoliosPage />} />
+            <Route path="/shared/:shareToken" element={<SharedPortfolioDetailPage />} />
             <Route path="/chat" element={<ChatPage />} />
             <Route path="/admin" element={<AdminPage />} />
             <Route path="/login" element={<LoginPage />} />

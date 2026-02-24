@@ -22,6 +22,10 @@ import type {
   ChatResponse,
   AdminCodeExampleList,
   AdminChatLogList,
+  SharedPortfolioListItem,
+  SharedPortfolioDetail,
+  SharedReturnsResponse,
+  ShareToggleResponse,
 } from '@/types/api'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
@@ -208,6 +212,26 @@ export const portfolioApi = {
   },
   getTotalHoldings: async () => {
     const { data } = await api.get<TotalHoldingsResponse>('/portfolios/dashboard/total/holdings')
+    return data
+  },
+  toggleShare: async (portfolioId: number, isShared: boolean) => {
+    const { data } = await api.put<ShareToggleResponse>(`/portfolios/${portfolioId}/share`, { is_shared: isShared })
+    return data
+  },
+}
+
+// Shared Portfolios
+export const sharedApi = {
+  getAll: async () => {
+    const { data } = await api.get<SharedPortfolioListItem[]>('/shared/')
+    return data
+  },
+  get: async (shareToken: string) => {
+    const { data } = await api.get<SharedPortfolioDetail>(`/shared/${shareToken}`)
+    return data
+  },
+  getReturns: async (shareToken: string, period: string = '1m') => {
+    const { data } = await api.get<SharedReturnsResponse>(`/shared/${shareToken}/returns`, { params: { period } })
     return data
   },
 }

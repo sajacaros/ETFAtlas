@@ -1,6 +1,8 @@
-from sqlalchemy import Column, Integer, String, DateTime, Date, ForeignKey, Numeric, UniqueConstraint
+from sqlalchemy import Column, Integer, String, DateTime, Date, ForeignKey, Numeric, Boolean, UniqueConstraint
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import relationship
 from datetime import datetime
+import uuid
 from ..database import Base
 from ..utils.encryption import EncryptedDecimal, EncryptedFloat
 
@@ -14,6 +16,8 @@ class Portfolio(Base):
     calculation_base = Column(String(20), nullable=False, default="CURRENT_TOTAL")
     target_total_amount = Column(Numeric(15, 2), nullable=True)
     display_order = Column(Integer, nullable=False, default=0)
+    is_shared = Column(Boolean, nullable=False, default=False)
+    share_token = Column(PG_UUID(as_uuid=True), unique=True, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

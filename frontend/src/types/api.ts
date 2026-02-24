@@ -120,6 +120,8 @@ export interface PortfolioDetail {
   name: string
   calculation_base: CalculationBase
   target_total_amount: number | null
+  is_shared: boolean
+  share_token: string | null
   target_allocations: TargetAllocationItem[]
   holdings: HoldingItem[]
 }
@@ -275,4 +277,43 @@ export interface ChartDataPoint {
 export interface DashboardResponse {
   summary: DashboardSummary
   chart_data: ChartDataPoint[]
+}
+
+// Shared Portfolio types
+export interface SharedPortfolioListItem {
+  portfolio_name: string
+  user_name: string
+  share_token: string
+  tickers_count: number
+  updated_at: string | null
+}
+
+export interface SharedAllocationItem {
+  ticker: string
+  name: string
+  weight: number
+}
+
+export interface SharedPortfolioDetail {
+  portfolio_name: string
+  user_name: string
+  allocations: SharedAllocationItem[]
+}
+
+export interface SharedReturnsChartPoint {
+  date: string
+  value: number
+}
+
+export interface SharedReturnsResponse {
+  base_amount: number
+  period: string
+  actual_start_date: string
+  chart_data: SharedReturnsChartPoint[]
+}
+
+export interface ShareToggleResponse {
+  is_shared: boolean
+  share_token: string | null
+  share_url: string | null
 }

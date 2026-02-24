@@ -1,3 +1,5 @@
+import uuid as uuid_module
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, text
@@ -21,34 +23,48 @@ router = APIRouter()
 
 @router.get("/", response_model=list[SharedPortfolioListItem])
 async def list_shared_portfolios(db: Session = Depends(get_db)):
-    portfolios = (
-        db.query(Portfolio, User.name.label("user_name"))
+    ticker_count_sub = (
+        db.query(
+            TargetAllocation.portfolio_id,
+            func.count(TargetAllocation.id).label("tickers_count"),
+        )
+        .group_by(TargetAllocation.portfolio_id)
+        .subquery()
+    )
+
+    rows = (
+        db.query(
+            Portfolio,
+            User.name.label("user_name"),
+            func.coalesce(ticker_count_sub.c.tickers_count, 0).label("tickers_count"),
+        )
         .join(User, Portfolio.user_id == User.id)
-        .filter(Portfolio.is_shared == True)
+        .outerjoin(ticker_count_sub, Portfolio.id == ticker_count_sub.c.portfolio_id)
+        .filter(Portfolio.is_shared.is_(True))
         .order_by(Portfolio.updated_at.desc())
         .all()
     )
-    result = []
-    for p, user_name in portfolios:
-        tickers_count = (
-            db.query(func.count(TargetAllocation.id))
-            .filter(TargetAllocation.portfolio_id == p.id)
-            .scalar()
-        )
-        result.append(SharedPortfolioListItem(
+
+    return [
+        SharedPortfolioListItem(
             portfolio_name=p.name,
             user_name=user_name or "익명",
             share_token=str(p.share_token),
             tickers_count=tickers_count,
             updated_at=p.updated_at.isoformat() if p.updated_at else None,
-        ))
-    return result
+        )
+        for p, user_name, tickers_count in rows
+    ]
 
 
 def _get_shared_portfolio(db: Session, share_token: str) -> Portfolio:
+    try:
+        token_uuid = uuid_module.UUID(share_token)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Shared portfolio not found")
     portfolio = db.query(Portfolio).filter(
-        Portfolio.share_token == share_token,
-        Portfolio.is_shared == True,
+        Portfolio.share_token == token_uuid,
+        Portfolio.is_shared.is_(True),
     ).first()
     if not portfolio:
         raise HTTPException(status_code=404, detail="Shared portfolio not found")

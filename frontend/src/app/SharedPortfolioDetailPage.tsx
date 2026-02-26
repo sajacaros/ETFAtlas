@@ -64,7 +64,6 @@ export default function SharedPortfolioDetailPage() {
         </Link>
         <div>
           <h1 className="text-2xl font-bold">{detail.portfolio_name}</h1>
-          <p className="text-sm text-muted-foreground">{detail.user_name}</p>
         </div>
       </div>
 

@@ -225,7 +225,6 @@ class ShareToggleResponse(BaseModel):
 
 class SharedPortfolioListItem(BaseModel):
     portfolio_name: str
-    user_name: str
     share_token: str
     tickers_count: int
     updated_at: Optional[str] = None
@@ -239,7 +238,6 @@ class SharedAllocationItem(BaseModel):
 
 class SharedPortfolioDetail(BaseModel):
     portfolio_name: str
-    user_name: str
     allocations: list[SharedAllocationItem]
 
 

@@ -282,7 +282,6 @@ export interface DashboardResponse {
 // Shared Portfolio types
 export interface SharedPortfolioListItem {
   portfolio_name: string
-  user_name: string
   share_token: string
   tickers_count: number
   updated_at: string | null
@@ -296,7 +295,6 @@ export interface SharedAllocationItem {
 
 export interface SharedPortfolioDetail {
   portfolio_name: string
-  user_name: string
   allocations: SharedAllocationItem[]
 }
 

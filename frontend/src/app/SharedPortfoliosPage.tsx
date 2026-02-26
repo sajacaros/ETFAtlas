@@ -62,7 +62,6 @@ export default function SharedPortfoliosPage() {
               </CardHeader>
               <CardContent>
                 <div className="text-sm text-muted-foreground space-y-1">
-                  <p>{p.user_name}</p>
                   <p>종목 {p.tickers_count}개</p>
                   {p.updated_at && (
                     <p className="text-xs">

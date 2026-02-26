@@ -278,7 +278,16 @@ async def batch_update_portfolio(
 
     db.commit()
     db.refresh(portfolio)
-    return portfolio
+    return PortfolioDetailResponse(
+        id=portfolio.id,
+        name=portfolio.name,
+        calculation_base=portfolio.calculation_base,
+        target_total_amount=portfolio.target_total_amount,
+        is_shared=portfolio.is_shared,
+        share_token=str(portfolio.share_token) if portfolio.share_token else None,
+        target_allocations=[TargetAllocationResponse.model_validate(t) for t in portfolio.target_allocations],
+        holdings=[HoldingResponse.model_validate(h) for h in portfolio.holdings],
+    )
 
 
 @router.delete("/{portfolio_id}", status_code=status.HTTP_204_NO_CONTENT)

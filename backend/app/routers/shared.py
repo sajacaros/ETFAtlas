@@ -8,7 +8,6 @@ from datetime import date, timedelta
 
 from ..database import get_db
 from ..models.portfolio import Portfolio, TargetAllocation
-from ..models.user import User
 from ..schemas.portfolio import (
     SharedPortfolioListItem,
     SharedPortfolioDetail,
@@ -36,10 +35,8 @@ async def list_shared_portfolios(db: Session = Depends(get_db)):
     rows = (
         db.query(
             Portfolio,
-            User.name.label("user_name"),
             func.coalesce(ticker_count_sub.c.tickers_count, 0).label("tickers_count"),
         )
-        .join(User, Portfolio.user_id == User.id)
         .outerjoin(ticker_count_sub, Portfolio.id == ticker_count_sub.c.portfolio_id)
         .filter(Portfolio.is_shared.is_(True))
         .order_by(Portfolio.updated_at.desc())
@@ -49,12 +46,11 @@ async def list_shared_portfolios(db: Session = Depends(get_db)):
     return [
         SharedPortfolioListItem(
             portfolio_name=p.name,
-            user_name=user_name or "익명",
             share_token=str(p.share_token),
             tickers_count=tickers_count,
             updated_at=p.updated_at.isoformat() if p.updated_at else None,
         )
-        for p, user_name, tickers_count in rows
+        for p, tickers_count in rows
     ]
 
 
@@ -75,7 +71,6 @@ def _get_shared_portfolio(db: Session, share_token: str) -> Portfolio:
 @router.get("/{share_token}", response_model=SharedPortfolioDetail)
 async def get_shared_portfolio(share_token: str, db: Session = Depends(get_db)):
     portfolio = _get_shared_portfolio(db, share_token)
-    user = db.query(User).filter(User.id == portfolio.user_id).first()
 
     allocations = (
         db.query(TargetAllocation)
@@ -89,7 +84,6 @@ async def get_shared_portfolio(share_token: str, db: Session = Depends(get_db)):
 
     return SharedPortfolioDetail(
         portfolio_name=portfolio.name,
-        user_name=user.name if user else "익명",
         allocations=[
             SharedAllocationItem(
                 ticker=a.ticker,

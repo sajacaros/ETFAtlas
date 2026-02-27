@@ -46,6 +46,21 @@ def _format_monetary_fields(data: dict) -> dict:
     return data
 
 
+_PERCENT_FIELDS = {
+    "change_rate", "return_1d", "return_1w", "return_1m", "return_3m",
+    "market_cap_change_1w", "similarity",
+    "weight", "current_weight", "previous_weight", "weight_change",
+}
+
+
+def _format_percent_fields(data: dict) -> dict:
+    """백분율 필드에 '%' 접미사를 추가하여 LLM의 단위 혼동을 방지한다."""
+    for k in _PERCENT_FIELDS:
+        if k in data and data[k] is not None:
+            data[k] = f'{float(data[k]):.2f}%'
+    return data
+
+
 class ETFSearchTool(Tool):
     name = "etf_search"
     description = """ETF를 이름이나 코드로 검색합니다. ETF(KODEX, TIGER, ARIRANG 등 상장지수펀드) 전용이며, 주식 종목(삼성전자 등) 검색은 stock_search를 사용하세요.
@@ -166,6 +181,7 @@ etf_search로 ETF 코드를 먼저 확인한 후 사용하세요.
         results = graph_service.find_similar_etfs(etf_code)
         if not results:
             return "유사 ETF 없음"
+        results = [_format_percent_fields(r) for r in results]
         return json.dumps(results, ensure_ascii=False, default=str)
 
 
@@ -213,7 +229,7 @@ etf_search로 ETF 코드를 먼저 확인한 후 사용하세요."""
             "ORDER BY latest.weight DESC LIMIT 10",
             {"etf_code": etf_code},
         )
-        info["top_holdings"] = [GraphService.parse_agtype(h["result"]) for h in holdings] if holdings else []
+        info["top_holdings"] = [_format_percent_fields(GraphService.parse_agtype(h["result"])) for h in holdings] if holdings else []
         # 최근 수익률 (1주/1개월/3개월)
         prices = graph_service.get_etf_prices(etf_code, days=90)
         if prices:
@@ -229,7 +245,7 @@ etf_search로 ETF 코드를 먼저 확인한 후 사용하세요."""
                     past = [c for c in closes if c[0] <= target_date]
                     if past:
                         past_close = past[-1][1]
-                        returns[label] = round((latest_close - past_close) / past_close * 100, 2)
+                        returns[label] = f'{round((latest_close - past_close) / past_close * 100, 2):.2f}%'
                 if returns:
                     info["returns"] = returns
         return json.dumps(info, ensure_ascii=False, default=str)
@@ -263,6 +279,7 @@ etf_search로 ETF 코드를 먼저 확인한 후 사용하세요."""
         filtered = [c for c in changes if c["change_type"] != "unchanged"]
         if not filtered:
             return "변동 없음"
+        filtered = [_format_percent_fields(c) for c in filtered]
         return json.dumps(filtered, ensure_ascii=False, default=str)
 
 
@@ -308,7 +325,7 @@ etf_search로 ETF 코드를 먼저 확인한 후 사용하세요. 주식 종목 
         market_caps = [p.get("market_cap") for p in prices if p.get("market_cap") is not None]
         net_assets_list = [p.get("net_assets") for p in prices if p.get("net_assets") is not None]
 
-        summary = _format_monetary_fields({
+        summary = _format_percent_fields(_format_monetary_fields({
             "etf_code": etf_code,
             "period": period,
             "data_count": len(prices),
@@ -322,7 +339,7 @@ etf_search로 ETF 코드를 먼저 확인한 후 사용하세요. 주식 종목 
             "avg_volume": round(sum(volumes) / len(volumes)) if volumes else None,
             "latest_market_cap": market_caps[-1] if market_caps else None,
             "latest_net_assets": net_assets_list[-1] if net_assets_list else None,
-        })
+        }))
 
         daily = [
             _format_monetary_fields({
@@ -378,7 +395,7 @@ stock_search로 종목 코드를 먼저 확인한 후 사용하세요. ETF 가�
         closes = [p["close"] for p in prices if p["close"] is not None]
         volumes = [p["volume"] for p in prices if p["volume"] is not None]
 
-        summary = {
+        summary = _format_percent_fields({
             "stock_code": stock_code,
             "period": period,
             "data_count": len(prices),
@@ -390,10 +407,10 @@ stock_search로 종목 코드를 먼저 확인한 후 사용하세요. ETF 가�
             "low": min(closes) if closes else None,
             "change_rate": round((closes[-1] - closes[0]) / closes[0] * 100, 2) if len(closes) >= 2 else None,
             "avg_volume": round(sum(volumes) / len(volumes)) if volumes else None,
-        }
+        })
 
         daily = [
-            {
+            _format_percent_fields({
                 "date": p["date"],
                 "open": p["open"],
                 "high": p["high"],
@@ -401,7 +418,7 @@ stock_search로 종목 코드를 먼저 확인한 후 사용하세요. ETF 가�
                 "close": p["close"],
                 "volume": p["volume"],
                 "change_rate": p["change_rate"],
-            }
+            })
             for p in prices
         ]
 
@@ -464,14 +481,14 @@ etf_search로 ETF 코드를 먼저 확인한 후 사용하세요."""
                 "ORDER BY latest.weight DESC LIMIT 5",
                 {"etf_code": code},
             )
-            etf_data["top_holdings"] = [GraphService.parse_agtype(h["result"]) for h in holdings] if holdings else []
+            etf_data["top_holdings"] = [_format_percent_fields(GraphService.parse_agtype(h["result"])) for h in holdings] if holdings else []
 
             # 최근 1개월 수익률 + 순자산
             prices = graph_service.get_etf_prices(code, days=30)
             if prices:
                 closes = [p["close"] for p in prices if p["close"] is not None]
                 if len(closes) >= 2:
-                    etf_data["return_1m"] = round((closes[-1] - closes[0]) / closes[0] * 100, 2)
+                    etf_data["return_1m"] = f'{round((closes[-1] - closes[0]) / closes[0] * 100, 2):.2f}%'
                 net_assets_list = [p.get("net_assets") for p in prices if p.get("net_assets") is not None]
                 if net_assets_list:
                     etf_data["latest_net_assets"] = net_assets_list[-1]
@@ -544,7 +561,7 @@ RETURN {code: e.code, name: e.name, company: c.name}"""
         if not rows:
             return "조회 결과 없음"
         results = _format_expense_ratio([GraphService.parse_agtype(row["result"]) for row in rows])
-        results = [_format_monetary_fields(r) for r in results]
+        results = [_format_percent_fields(_format_monetary_fields(r)) for r in results]
         return json.dumps(results, ensure_ascii=False, default=str)
 
 
@@ -618,12 +635,14 @@ class ChatService:
                 parts.append(f"Q: {ex['question']}\n```python\n{ex['code']}\n```")
             parts.append("")
         if history:
-            parts.append("## 이전 대화:")
+            parts.append("## 이전 대화 (참고용)")
+            parts.append("아래는 이전 대화 내용입니다. 맥락 파악에만 참고하세요.")
+            parts.append("이전 대화의 조건(개수, 필터 등)을 현재 질문에 적용하지 마세요.")
             for msg in history[-10:]:
                 role = "사용자" if msg["role"] == "user" else "어시스턴트"
                 parts.append(f"{role}: {msg['content']}")
             parts.append("")
-        parts.append(f"## 현재 질문:\n{message}")
+        parts.append(f"## 현재 질문 (이 질문의 조건만 따르세요):\n{message}")
         return "\n".join(parts), code_examples
 
     def _react(self, message: str, history: List[Dict[str, str]]) -> Dict:

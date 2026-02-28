@@ -899,17 +899,19 @@ def send_discord_notification(date_str: str):
             log.info("No admin watches found — skipping Discord notification")
             return
 
-        # 전일 HOLDS 날짜 조회
+        # 1주일 전 HOLDS 날짜 조회 (가장 가까운 거래일)
         if watches:
+            from datetime import datetime, timedelta
+            one_week_ago = (datetime.strptime(date_str, '%Y-%m-%d') - timedelta(days=7)).strftime('%Y-%m-%d')
             first_etf = watches[0]['etf_code']
             prev_results = execute_cypher(cur, """
                 MATCH (e:ETF {code: $code})-[h:HOLDS]->(:Stock)
                 WITH DISTINCT h.date as d
-                WHERE d < $date
+                WHERE d <= $target_date
                 RETURN {date: d}
                 ORDER BY d DESC
                 LIMIT 1
-            """, {'code': first_etf, 'date': date_str})
+            """, {'code': first_etf, 'target_date': one_week_ago})
             prev_date = None
             if prev_results:
                 raw = _parse_age_value(prev_results[0][0])

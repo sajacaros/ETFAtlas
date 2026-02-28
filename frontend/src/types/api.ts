@@ -321,3 +321,26 @@ export interface ShareToggleResponse {
   share_token: string | null
   share_url: string | null
 }
+
+// Risk Analysis types
+export interface RiskChartPoint {
+  date: string
+  value: number
+  return_rate: number
+}
+
+export interface DrawdownPoint {
+  date: string
+  drawdown: number
+}
+
+export interface RiskAnalysisResponse {
+  period: string
+  actual_start_date: string
+  total_return: number
+  mdd: number
+  volatility: number
+  sharpe_ratio: number | null
+  chart_data: RiskChartPoint[]
+  drawdown_data: DrawdownPoint[]
+}

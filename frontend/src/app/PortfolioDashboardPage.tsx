@@ -5,7 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { portfolioApi } from '@/lib/api'
 import { useAuth } from '@/hooks/useAuth'
-import type { DashboardResponse, DashboardSummaryItem, TotalHoldingsResponse } from '@/types/api'
+import type { DashboardResponse, DashboardSummaryItem, TotalHoldingsResponse, RiskAnalysisResponse } from '@/types/api'
+import RiskAnalysisDialog from '@/components/RiskAnalysisDialog'
 import {
   ComposedChart,
   Line,
@@ -93,6 +94,8 @@ export default function PortfolioDashboardPage() {
   const [period, setPeriod] = useState<'1M' | '3M' | '6M' | '1Y' | 'ALL'>('ALL')
   const [chartOpen, setChartOpen] = useState(true)
   const isTotal = !id
+  const [riskData, setRiskData] = useState<RiskAnalysisResponse | null>(null)
+  const [riskDialogOpen, setRiskDialogOpen] = useState(false)
 
   useEffect(() => {
     if (!isAuthenticated) return
@@ -125,6 +128,13 @@ export default function PortfolioDashboardPage() {
     }
     fetchHoldings()
   }, [isAuthenticated, isTotal])
+
+  useEffect(() => {
+    if (!isAuthenticated || isTotal || !id) return
+    portfolioApi.getRiskAnalysis(Number(id), '3m')
+      .then(setRiskData)
+      .catch(() => {})
+  }, [isAuthenticated, id, isTotal])
 
   const chartDataWithChange = useMemo(() => {
     const all = dashboard?.chart_data ?? []
@@ -265,6 +275,43 @@ export default function PortfolioDashboardPage() {
         <SummaryCard title="전년대비" item={summary.yearly} />
         <SummaryCard title="올해 수익률 (YTD)" item={summary.ytd} />
       </div>
+
+      {/* Risk Summary Card (individual portfolio only) */}
+      {!isTotal && riskData && (
+        <>
+          <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => setRiskDialogOpen(true)}>
+            <CardHeader className="px-4 py-2 pb-1">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                포트폴리오 리스크 (현재 구성 기준)
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="px-4 pb-3 pt-0">
+              <div className="flex items-center gap-6">
+                <div>
+                  <p className="text-xs text-muted-foreground">MDD</p>
+                  <p className="text-lg font-bold text-blue-500">{riskData.mdd.toFixed(2)}%</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">변동성</p>
+                  <p className="text-lg font-bold">{riskData.volatility.toFixed(2)}%</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">샤프비율</p>
+                  <p className="text-lg font-bold">{riskData.sharpe_ratio?.toFixed(2) ?? '-'}</p>
+                </div>
+                <Button variant="ghost" size="sm" className="ml-auto text-xs text-muted-foreground">
+                  자세히 보기 →
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+          <RiskAnalysisDialog
+            open={riskDialogOpen}
+            onOpenChange={setRiskDialogOpen}
+            portfolioId={Number(id)}
+          />
+        </>
+      )}
 
       {/* Value Chart */}
       <Card>

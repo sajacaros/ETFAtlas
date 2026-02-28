@@ -33,7 +33,7 @@ async def get_notification_status(
         or latest.created_at > user.last_notification_checked_at
     )
 
-    # 즐겨찾기에 실제 3%p 초과 비중 변화가 있을 때만 빨간 점 표시
+    # 즐겨찾기에 실제 3%p 초과 비중 변화가 있을 때만 빨간 점 표시 (1주일 기준)
     if has_new:
         from ..services.graph_service import GraphService
         graph = GraphService(db)
@@ -43,7 +43,7 @@ async def get_notification_status(
         else:
             has_new = False
             for item in watched:
-                changes, _, _ = graph.get_etf_holdings_changes(item["etf_code"], "1d")
+                changes, _, _ = graph.get_etf_holdings_changes(item["etf_code"], "1w")
                 if any(c["change_type"] != "unchanged" and abs(c["weight_change"]) > 3
                        for c in changes):
                     has_new = True

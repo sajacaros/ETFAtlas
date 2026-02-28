@@ -1,8 +1,9 @@
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, status
+import math
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from typing import List
 from decimal import Decimal
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from ..database import get_db
@@ -22,6 +23,7 @@ from ..schemas.portfolio import (
     RefreshAllSnapshotsResponse,
     PortfolioBatchUpdate,
     ShareToggleRequest, ShareToggleResponse,
+    RiskAnalysisResponse, RiskChartPoint, DrawdownPoint,
 )
 from ..domain.portfolio_calculation import (
     calculate_portfolio, TargetInput, HoldingInput,
@@ -512,6 +514,128 @@ async def refresh_snapshot(
     if result is None:
         raise HTTPException(status_code=400, detail="가격 데이터가 없습니다. DAG 실행 후 다시 시도하세요.")
     return RefreshSnapshotResponse(**result)
+
+
+@router.get("/{portfolio_id}/risk-analysis", response_model=RiskAnalysisResponse)
+async def get_risk_analysis(
+    portfolio_id: int,
+    period: str = Query(default="3m", pattern="^(1m|3m|6m|1y)$"),
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    portfolio = _get_portfolio_or_404(db, portfolio_id, user_id)
+
+    allocations = (
+        db.query(TargetAllocation)
+        .filter(TargetAllocation.portfolio_id == portfolio.id)
+        .all()
+    )
+    tickers = [a.ticker for a in allocations if a.ticker != "CASH"]
+    weights = {a.ticker: float(a.target_weight) / 100.0 for a in allocations if a.ticker != "CASH"}
+
+    if not tickers:
+        raise HTTPException(status_code=400, detail="No ETF tickers in portfolio")
+
+    period_days = {"1m": 30, "3m": 90, "6m": 180, "1y": 365}
+    today = date.today()
+    start_date = today - timedelta(days=period_days[period])
+
+    from sqlalchemy import text as sa_text
+
+    result = db.execute(
+        sa_text("""
+            SELECT ticker, date, price
+            FROM ticker_prices
+            WHERE ticker = ANY(:tickers)
+              AND date >= :start_date
+            ORDER BY date
+        """),
+        {"tickers": tickers, "start_date": start_date},
+    )
+
+    price_map: dict[date, dict[str, float]] = {}
+    all_dates: set[date] = set()
+    for row in result:
+        t, d, p = row.ticker, row.date, float(row.price)
+        price_map.setdefault(d, {})[t] = p
+        all_dates.add(d)
+
+    common_dates = sorted(
+        d for d in all_dates
+        if all(t in price_map.get(d, {}) for t in tickers)
+    )
+
+    if len(common_dates) < 2:
+        raise HTTPException(status_code=404, detail="Insufficient price data")
+
+    total_weight = sum(weights.values())
+    norm_weights = {t: w / total_weight for t, w in weights.items()} if total_weight > 0 else weights
+
+    base_amount = 10_000_000
+    start = common_dates[0]
+    virtual_quantities: dict[str, float] = {}
+    for t in tickers:
+        allocated = base_amount * norm_weights.get(t, 0)
+        start_price = price_map[start][t]
+        virtual_quantities[t] = allocated / start_price if start_price > 0 else 0
+
+    daily_values: list[tuple[date, float]] = []
+    for d in common_dates:
+        value = sum(virtual_quantities[t] * price_map[d][t] for t in tickers)
+        daily_values.append((d, value))
+
+    total_return = ((daily_values[-1][1] - base_amount) / base_amount) * 100
+
+    peak = daily_values[0][1]
+    mdd = 0.0
+    drawdown_data = []
+    for d, v in daily_values:
+        if v > peak:
+            peak = v
+        dd = ((v - peak) / peak) * 100 if peak > 0 else 0.0
+        if dd < mdd:
+            mdd = dd
+        drawdown_data.append(DrawdownPoint(date=d.isoformat(), drawdown=round(dd, 2)))
+
+    daily_returns: list[float] = []
+    for i in range(1, len(daily_values)):
+        prev_val = daily_values[i - 1][1]
+        curr_val = daily_values[i][1]
+        daily_returns.append((curr_val - prev_val) / prev_val if prev_val > 0 else 0.0)
+
+    if len(daily_returns) >= 2:
+        mean_r = sum(daily_returns) / len(daily_returns)
+        variance = sum((r - mean_r) ** 2 for r in daily_returns) / (len(daily_returns) - 1)
+        daily_vol = math.sqrt(variance)
+        volatility = daily_vol * math.sqrt(252) * 100
+    else:
+        volatility = 0.0
+
+    sharpe_ratio = None
+    if volatility > 0:
+        trading_days = len(daily_returns)
+        annualized_return = ((daily_values[-1][1] / base_amount) ** (252 / trading_days) - 1) * 100 if trading_days > 0 else 0.0
+        sharpe_ratio = round((annualized_return - 3.5) / volatility, 2)
+
+    chart_data = []
+    for d, v in daily_values:
+        ret = ((v - base_amount) / base_amount) * 100
+        chart_data.append(RiskChartPoint(
+            date=d.isoformat(),
+            value=round(v, 0),
+            return_rate=round(ret, 2),
+        ))
+
+    return RiskAnalysisResponse(
+        period=period,
+        actual_start_date=common_dates[0].isoformat(),
+        total_return=round(total_return, 2),
+        mdd=round(mdd, 2),
+        volatility=round(volatility, 2),
+        sharpe_ratio=sharpe_ratio,
+        chart_data=chart_data,
+        drawdown_data=drawdown_data,
+    )
 
 
 @router.get("/{portfolio_id}/dashboard", response_model=DashboardResponse)

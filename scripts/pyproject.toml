@@ -11,4 +11,5 @@ dependencies = [
     "networkx>=3.0",
     "pandas>=2.0.0",
     "pykrx==1.2.3",
+    "yfinance>=0.2.36",
 ]

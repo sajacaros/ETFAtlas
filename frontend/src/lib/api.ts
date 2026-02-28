@@ -27,6 +27,7 @@ import type {
   SharedReturnsResponse,
   SharedReturnsSummary,
   ShareToggleResponse,
+  RiskAnalysisResponse,
 } from '@/types/api'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
@@ -217,6 +218,10 @@ export const portfolioApi = {
   },
   toggleShare: async (portfolioId: number, isShared: boolean) => {
     const { data } = await api.put<ShareToggleResponse>(`/portfolios/${portfolioId}/share`, { is_shared: isShared })
+    return data
+  },
+  getRiskAnalysis: async (portfolioId: number, period: string = '3m') => {
+    const { data } = await api.get<RiskAnalysisResponse>(`/portfolios/${portfolioId}/risk-analysis`, { params: { period } })
     return data
   },
 }

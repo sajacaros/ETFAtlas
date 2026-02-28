@@ -133,7 +133,7 @@ export default function PortfolioDashboardPage() {
     if (!isAuthenticated || isTotal || !id) return
     portfolioApi.getRiskAnalysis(Number(id), '3m')
       .then(setRiskData)
-      .catch(() => {})
+      .catch((err) => { console.error('Failed to fetch risk data', err) })
   }, [isAuthenticated, id, isTotal])
 
   const chartDataWithChange = useMemo(() => {

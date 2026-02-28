@@ -5,7 +5,7 @@ from typing import List
 from decimal import Decimal
 from datetime import date, datetime, timedelta
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, text as sa_text
 from ..database import get_db
 from ..models.portfolio import Portfolio, TargetAllocation, Holding, PortfolioSnapshot
 from ..utils.jwt import get_current_user_id
@@ -540,7 +540,6 @@ async def get_risk_analysis(
     today = date.today()
     start_date = today - timedelta(days=period_days[period])
 
-    from sqlalchemy import text as sa_text
 
     result = db.execute(
         sa_text("""

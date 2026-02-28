@@ -257,3 +257,26 @@ class SharedReturnsSummary(BaseModel):
     returns_1w: Optional[float] = None
     returns_1m: Optional[float] = None
     returns_3m: Optional[float] = None
+
+
+# --- Risk Analysis ---
+class RiskChartPoint(BaseModel):
+    date: str
+    value: float
+    return_rate: float
+
+
+class DrawdownPoint(BaseModel):
+    date: str
+    drawdown: float
+
+
+class RiskAnalysisResponse(BaseModel):
+    period: str
+    actual_start_date: str
+    total_return: float
+    mdd: float
+    volatility: float
+    sharpe_ratio: Optional[float] = None
+    chart_data: list[RiskChartPoint]
+    drawdown_data: list[DrawdownPoint]

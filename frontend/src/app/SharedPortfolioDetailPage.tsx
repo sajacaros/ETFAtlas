@@ -4,10 +4,11 @@ import { sharedApi } from '@/lib/api'
 import type { SharedPortfolioDetail, SharedReturnsResponse, SharedReturnsSummary } from '@/types/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, ChevronDown, ChevronUp } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronUp, Download } from 'lucide-react'
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
 } from 'recharts'
+import { generateSharedPdf } from '@/lib/sharedPdf'
 
 const PERIODS = [
   { key: '1w', label: '1주' },
@@ -31,6 +32,22 @@ export default function SharedPortfolioDetailPage() {
   const [loading, setLoading] = useState(true)
   const [returnsError, setReturnsError] = useState<string | null>(null)
   const [chartOpen, setChartOpen] = useState(false)
+  const [pdfLoading, setPdfLoading] = useState(false)
+
+  const handleDownloadPdf = async () => {
+    if (!detail) return
+    setPdfLoading(true)
+    try {
+      await generateSharedPdf({
+        detail,
+        summary: summary ?? null,
+      })
+    } catch (err) {
+      console.error('PDF generation failed', err)
+    } finally {
+      setPdfLoading(false)
+    }
+  }
 
   useEffect(() => {
     if (!shareToken) return
@@ -62,9 +79,19 @@ export default function SharedPortfolioDetailPage() {
         <Link to="/shared">
           <Button variant="ghost" size="sm"><ArrowLeft className="w-4 h-4 mr-1" />목록</Button>
         </Link>
-        <div>
+        <div className="flex-1">
           <h1 className="text-2xl font-bold">{detail.portfolio_name}</h1>
         </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleDownloadPdf}
+          disabled={pdfLoading}
+          className="shrink-0"
+        >
+          <Download className="w-4 h-4 mr-1" />
+          {pdfLoading ? '생성 중...' : 'PDF'}
+        </Button>
       </div>
 
       {/* 가상 수익률 요약 + 접이식 차트 */}

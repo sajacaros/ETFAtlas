@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, ChevronDown, ChevronUp } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronUp, Download } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { portfolioApi } from '@/lib/api'
@@ -18,6 +18,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts'
+import { generateDashboardPdf } from '@/lib/dashboardPdf'
 
 function formatNumber(n: number): string {
   return new Intl.NumberFormat('ko-KR').format(Math.round(n))
@@ -96,6 +97,25 @@ export default function PortfolioDashboardPage() {
   const isTotal = !id
   const [riskData, setRiskData] = useState<RiskAnalysisResponse | null>(null)
   const [riskDialogOpen, setRiskDialogOpen] = useState(false)
+  const [pdfLoading, setPdfLoading] = useState(false)
+
+  const handleDownloadPdf = async () => {
+    if (!dashboard) return
+    setPdfLoading(true)
+    try {
+      await generateDashboardPdf({
+        title: isTotal ? '통합 대시보드' : '대시보드',
+        summary: dashboard.summary,
+        riskData: riskData ?? null,
+        totalHoldings: totalHoldings ?? null,
+        isTotal,
+      })
+    } catch (err) {
+      console.error('PDF generation failed', err)
+    } finally {
+      setPdfLoading(false)
+    }
+  }
 
   useEffect(() => {
     if (!isAuthenticated) return
@@ -235,6 +255,16 @@ export default function PortfolioDashboardPage() {
             </p>
           )}
         </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleDownloadPdf}
+          disabled={pdfLoading}
+          className="shrink-0"
+        >
+          <Download className="w-4 h-4 mr-1" />
+          {pdfLoading ? '생성 중...' : 'PDF'}
+        </Button>
       </div>
 
       {!isTotal && (

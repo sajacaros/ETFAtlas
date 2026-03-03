@@ -1,6 +1,9 @@
 import jsPDF from 'jspdf'
-import 'jspdf-autotable'
+import { applyPlugin } from 'jspdf-autotable'
 import type { UserOptions } from 'jspdf-autotable'
+
+// Register autoTable plugin on jsPDF prototype
+applyPlugin(jsPDF)
 
 // jspdf-autotable type augmentation
 declare module 'jspdf' {

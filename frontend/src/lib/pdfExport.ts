@@ -1,10 +1,11 @@
 import jsPDF from 'jspdf'
 import 'jspdf-autotable'
+import type { UserOptions } from 'jspdf-autotable'
 
 // jspdf-autotable type augmentation
 declare module 'jspdf' {
   interface jsPDF {
-    autoTable: (options: unknown) => jsPDF
+    autoTable: (options: UserOptions) => jsPDF
     lastAutoTable: { finalY: number }
   }
 }
@@ -20,24 +21,23 @@ const COLORS = {
   headerBg: [241, 245, 249] as [number, number, number],   // slate-100
 }
 
-let fontLoaded = false
+let cachedFontBase64: string | null = null
 
 async function loadKoreanFont(doc: jsPDF): Promise<void> {
-  if (fontLoaded) {
-    doc.setFont(FONT_NAME)
-    return
+  if (!cachedFontBase64) {
+    const response = await fetch('/fonts/NotoSansKR-Regular.ttf')
+    if (!response.ok) {
+      throw new Error(`Failed to load Korean font: ${response.status}`)
+    }
+    const buffer = await response.arrayBuffer()
+    cachedFontBase64 = btoa(
+      new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
+    )
   }
 
-  const response = await fetch('/fonts/NotoSansKR-Regular.ttf')
-  const buffer = await response.arrayBuffer()
-  const base64 = btoa(
-    new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
-  )
-
-  doc.addFileToVFS('NotoSansKR-Regular.ttf', base64)
+  doc.addFileToVFS('NotoSansKR-Regular.ttf', cachedFontBase64)
   doc.addFont('NotoSansKR-Regular.ttf', FONT_NAME, 'normal')
   doc.setFont(FONT_NAME)
-  fontLoaded = true
 }
 
 function formatNumber(n: number): string {

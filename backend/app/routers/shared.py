@@ -100,14 +100,24 @@ def _calc_return_rate(
     weights: dict[str, float],
     price_map: dict[str, dict[date, float]],
     all_dates: set[date],
+    period_days: int = 0,
 ) -> float | None:
-    """공통 날짜 기반 가상 수익률(%) 계산. 데이터 부족 시 None 반환."""
+    """공통 날짜 기반 가상 수익률(%) 계산. 데이터 부족 시 None 반환.
+
+    period_days > 0이면 common_dates의 실제 범위가 요청 기간의 70% 미만일 때 None 반환.
+    (상장한 지 얼마 안 된 종목이 포함된 경우 왜곡 방지)
+    """
     common_dates = sorted(
         d for d in all_dates
         if all(d in price_map.get(t, {}) for t in tickers)
     )
     if len(common_dates) < 2:
         return None
+
+    if period_days > 0:
+        actual_span = (common_dates[-1] - common_dates[0]).days
+        if actual_span < period_days * 0.7:
+            return None
 
     total_weight = sum(weights.values())
     if total_weight <= 0:
@@ -173,7 +183,7 @@ async def get_shared_returns_summary(
     for key, days in periods.items():
         cutoff = today - timedelta(days=days)
         filtered = {d for d in all_dates if d >= cutoff}
-        returns[key] = _calc_return_rate(tickers, weights, price_map, filtered)
+        returns[key] = _calc_return_rate(tickers, weights, price_map, filtered, period_days=days)
 
     return SharedReturnsSummary(
         returns_1w=round(returns["1w"], 2) if returns["1w"] is not None else None,
@@ -241,6 +251,14 @@ async def get_shared_returns(
 
     if len(common_dates) < 2:
         raise HTTPException(status_code=404, detail="Insufficient price data")
+
+    p_days = period_days[period]
+    actual_span = (common_dates[-1] - common_dates[0]).days
+    if actual_span < p_days * 0.7:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Insufficient price data: covers {actual_span} days, need at least {int(p_days * 0.7)} days for {period} period",
+        )
 
     actual_start_date = common_dates[0]
     base_amount = 10_000_000

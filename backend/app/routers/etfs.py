@@ -4,6 +4,7 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..services.graph_service import GraphService
+from ..services.etf_service import ETFService
 
 router = APIRouter()
 
@@ -62,6 +63,11 @@ class UniverseETFResponse(BaseModel):
     market_cap_change_1w: float | None = None
 
 
+class ETFSearchResponse(BaseModel):
+    code: str
+    name: str
+
+
 @router.get("/latest-date")
 async def get_latest_date(db: Session = Depends(get_db)):
     """최신 가격 데이터 기준일 조회"""
@@ -92,15 +98,15 @@ async def search_etfs_universe(
     return graph.search_etfs_in_universe(q, limit)
 
 
-@router.get("/search", response_model=List[UniverseETFResponse])
+@router.get("/search", response_model=List[ETFSearchResponse])
 async def search_etfs(
     q: str = Query(..., min_length=1, description="Search query"),
     limit: int = Query(50, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
-    """ETF 검색 (AGE 기반, 시가총액순)"""
-    graph = GraphService(db)
-    return graph.search_etfs_in_universe(q, limit)
+    """ETF 검색 (RDB 기반, 전체 ETF 대상)"""
+    service = ETFService(db)
+    return service.search_etfs(q, limit)
 
 
 @router.get("/{code}", response_model=ETFResponse)

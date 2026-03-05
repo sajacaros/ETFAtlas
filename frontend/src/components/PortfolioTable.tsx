@@ -8,7 +8,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Trash2, ArrowUp, ArrowDown } from 'lucide-react'
@@ -220,14 +219,13 @@ export default function PortfolioTable({
             <div>리밸런싱</div>
             <div className="text-xs text-muted-foreground font-normal">수량 / 금액</div>
           </TableHead>
-          <SortableHead label="상태" sortField="status" className={`text-center ${COL_W}`} />
           {isEditing && <TableHead className="w-[40px]" />}
         </TableRow>
       </TableHeader>
       <TableBody>
         {rows.length === 0 ? (
           <TableRow>
-            <TableCell colSpan={isEditing ? 13 : 12} className="text-center text-muted-foreground py-8">
+            <TableCell colSpan={isEditing ? 12 : 11} className="text-center text-muted-foreground py-8">
               종목을 추가해주세요
             </TableCell>
           </TableRow>
@@ -350,12 +348,12 @@ export default function PortfolioTable({
                       : `${row.profit_loss_rate > 0 ? '+' : ''}${Number(row.profit_loss_rate).toFixed(2)}%`}
                   </div>
                 </TableCell>
-                {/* 리밸런싱 (수량 / 금액) */}
+                {/* 리밸런싱 (수량 / 금액) - 색상으로 상태 표현 */}
                 <TableCell
                   className={`text-right font-mono ${
-                    row.required_quantity > 0
+                    row.status === 'BUY'
                       ? 'text-green-600'
-                      : row.required_quantity < 0
+                      : row.status === 'SELL'
                         ? 'text-red-600'
                         : ''
                   }`}
@@ -368,20 +366,6 @@ export default function PortfolioTable({
                     {row.adjustment_amount > 0 ? '+' : ''}
                     {formatNumber(row.adjustment_amount)}
                   </div>
-                </TableCell>
-                {/* 상태 */}
-                <TableCell className="text-center">
-                  <Badge
-                    className={`whitespace-nowrap ${
-                      row.status === 'BUY'
-                        ? 'bg-green-100 text-green-700 hover:bg-green-100'
-                        : row.status === 'SELL'
-                          ? 'bg-red-100 text-red-700 hover:bg-red-100'
-                          : 'bg-gray-100 text-gray-600 hover:bg-gray-100'
-                    }`}
-                  >
-                    {row.status === 'BUY' ? '매수' : row.status === 'SELL' ? '매도' : '유지'}
-                  </Badge>
                 </TableCell>
                 {isEditing && (
                   <TableCell>
@@ -443,7 +427,6 @@ export default function PortfolioTable({
                 {formatNumber(totalAdjustmentAmount)}
               </div>
             </TableCell>
-            <TableCell />
             {isEditing && <TableCell />}
           </TableRow>
         </TableFooter>

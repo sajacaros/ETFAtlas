@@ -95,84 +95,113 @@ function SortablePortfolioCard({
           </button>
           <CardTitle className="text-lg">{p.name}</CardTitle>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="text-destructive hover:text-destructive"
-          onClick={(e) => {
-            e.stopPropagation()
-            onDelete(p.id)
-          }}
-        >
-          <Trash2 className="w-4 h-4" />
-        </Button>
+        <div className="flex items-center gap-1">
+          {p.current_value_updated_at && (
+            <span className="text-[10px] text-muted-foreground">
+              {(() => {
+                const d = new Date(p.current_value_updated_at + 'Z')
+                const yy = String(d.getFullYear()).slice(2)
+                const mm = String(d.getMonth() + 1).padStart(2, '0')
+                const dd = String(d.getDate()).padStart(2, '0')
+                const hh = String(d.getHours()).padStart(2, '0')
+                const mi = String(d.getMinutes()).padStart(2, '0')
+                return `${yy}/${mm}/${dd} ${hh}:${mi}`
+              })()}
+            </span>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-destructive hover:text-destructive"
+            onClick={(e) => {
+              e.stopPropagation()
+              onDelete(p.id)
+            }}
+          >
+            <Trash2 className="w-4 h-4" />
+          </Button>
+        </div>
       </CardHeader>
       <CardContent>
-        <div>
-          {p.current_value != null && p.current_value_date ? (
-            <>
-              <p className="text-lg font-bold font-mono">
-                {p.current_value_updated_at && (
-                  <span className="text-sm font-normal text-muted-foreground">
-                    {(() => {
-                      const d = new Date(p.current_value_updated_at + 'Z')
-                      const yy = String(d.getFullYear()).slice(2)
-                      const mm = String(d.getMonth() + 1).padStart(2, '0')
-                      const dd = String(d.getDate()).padStart(2, '0')
-                      const hh = String(d.getHours()).padStart(2, '0')
-                      const mi = String(d.getMinutes()).padStart(2, '0')
-                      return `${yy}/${mm}/${dd} ${hh}:${mi}`
-                    })()}:
-                  </span>
-                )}{' '}
+        {p.current_value != null && p.current_value_date ? (
+          <div className="space-y-2">
+            {/* 평가금액 */}
+            <div>
+              <p className="text-xs text-muted-foreground">평가금액</p>
+              <p className="text-xl font-bold font-mono">
                 {fmn(p.current_value, amountVisible)}{amountVisible && '원'}
               </p>
-              <p className={`text-sm font-mono ${(p.daily_change_rate ?? 0) >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
-                {amountVisible ? (
-                  <>
-                    <span className="font-normal text-muted-foreground">전일대비</span>{' '}
-                    {(p.daily_change_amount ?? 0) >= 0 ? '+' : ''}{formatNumber(p.daily_change_amount ?? 0)}원
-                    ({(p.daily_change_rate ?? 0) >= 0 ? '+' : ''}{(p.daily_change_rate ?? 0).toFixed(2)}%)
-                  </>
-                ) : (
-                  '••••••'
-                )}
-              </p>
-              {p.investment_return_rate != null && (
-                <p className={`text-xs font-mono mt-1 ${p.investment_return_rate >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
+            </div>
+
+            {/* 투자원금 / 수익금 */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <p className="text-xs text-muted-foreground">투자원금</p>
+                <p className="text-sm font-mono">
+                  {p.invested_amount == null ? '-' : !amountVisible ? '••••••' : `${formatNumber(p.invested_amount)}원`}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">수익금</p>
+                {p.invested_amount == null ? (
+                  <p className="text-sm font-mono">-</p>
+                ) : (() => {
+                  const profit = p.current_value! - p.invested_amount!
+                  return (
+                    <p className={`text-sm font-mono ${profit >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
+                      {amountVisible ? `${profit >= 0 ? '+' : ''}${formatNumber(profit)}원` : '••••••'}
+                    </p>
+                  )
+                })()}
+              </div>
+            </div>
+
+            {/* 수익률 / 전일대비 */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <p className="text-xs text-muted-foreground">수익률</p>
+                <p className={`text-sm font-mono font-semibold ${p.investment_return_rate != null ? (p.investment_return_rate >= 0 ? 'text-red-500' : 'text-blue-500') : ''}`}>
+                  {p.investment_return_rate == null ? '-' : amountVisible ? `${p.investment_return_rate >= 0 ? '+' : ''}${p.investment_return_rate.toFixed(2)}%` : '••••••'}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">전일대비</p>
+                <p className={`text-sm font-mono font-semibold ${(p.daily_change_rate ?? 0) >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
                   {amountVisible ? (
                     <>
-                      투자금액 {formatNumber(p.invested_amount ?? 0)}원 / 수익률 {p.investment_return_rate >= 0 ? '+' : ''}{p.investment_return_rate.toFixed(2)}%
+                      {(p.daily_change_amount ?? 0) >= 0 ? '+' : ''}{formatNumber(p.daily_change_amount ?? 0)}원
+                      <span className="font-normal text-xs ml-0.5">
+                        ({(p.daily_change_rate ?? 0) >= 0 ? '+' : ''}{(p.daily_change_rate ?? 0).toFixed(2)}%)
+                      </span>
                     </>
-                  ) : (
-                    '투자수익률 ••••••'
-                  )}
+                  ) : '••••••'}
                 </p>
-              )}
-            </>
-          ) : (
-            <div>
-              <p className="text-sm text-muted-foreground">평가금액 없음</p>
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-2"
-                disabled={backfillLoading === p.id}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onBackfill(p.id)
-                }}
-              >
-                <RefreshCw className={`w-3 h-3 mr-1 ${backfillLoading === p.id ? 'animate-spin' : ''}`} />
-                {backfillLoading === p.id ? '생성 중...' : '스냅샷 생성'}
-              </Button>
+              </div>
             </div>
-          )}
-        </div>
+
+          </div>
+        ) : (
+          <div>
+            <p className="text-sm text-muted-foreground">평가금액 없음</p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-2"
+              disabled={backfillLoading === p.id}
+              onClick={(e) => {
+                e.stopPropagation()
+                onBackfill(p.id)
+              }}
+            >
+              <RefreshCw className={`w-3 h-3 mr-1 ${backfillLoading === p.id ? 'animate-spin' : ''}`} />
+              {backfillLoading === p.id ? '생성 중...' : '스냅샷 생성'}
+            </Button>
+          </div>
+        )}
         <Button
           variant="outline"
           size="sm"
-          className="mt-3"
+          className="mt-1"
           onClick={(e) => {
             e.stopPropagation()
             onDashboard(p.id)
@@ -441,21 +470,6 @@ export default function PortfolioPage() {
     }
   }
 
-  const handleChangeBase = async (base: CalculationBase) => {
-    if (!selectedId || !detail) return
-    if (isEditing) {
-      setDraftCalcBase(base)
-      return
-    }
-    try {
-      const updated = await portfolioApi.update(selectedId, { calculation_base: base })
-      setDetail({ ...detail, ...updated })
-      setPortfolios(portfolios.map((p) => (p.id === selectedId ? { ...p, ...updated } : p)))
-      loadCalc(selectedId)
-    } catch {
-      toast({ title: '업데이트 실패', variant: 'destructive' })
-    }
-  }
 
   const handleUpdateCash = async (value: string) => {
     if (!selectedId) return
@@ -820,103 +834,85 @@ export default function PortfolioPage() {
           </div>
         </div>
 
-        {/* Settings bar */}
-        <Card>
-          <CardContent className="py-4">
-            <div className="flex flex-wrap items-center gap-6">
-              <div className="flex items-center gap-2">
-                <Label className="text-sm whitespace-nowrap">계산 기준:</Label>
-                {isEditing ? (
-                  <div className="flex gap-1">
-                    <Button
-                      size="sm"
-                      variant={draftCalcBase === 'CURRENT_TOTAL' ? 'default' : 'outline'}
-                      onClick={() => handleChangeBase('CURRENT_TOTAL')}
-                    >
-                      보유 총액
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant={draftCalcBase === 'TARGET_AMOUNT' ? 'default' : 'outline'}
-                      onClick={() => handleChangeBase('TARGET_AMOUNT')}
-                    >
-                      목표 금액
-                    </Button>
+        {/* Summary bar */}
+        {(() => {
+          const p = portfolios.find((pf) => pf.id === selectedId)
+          if (!p || p.current_value == null) return null
+          const profit = p.invested_amount != null ? p.current_value - p.invested_amount : null
+          return (
+            <Card>
+              <CardContent className="py-3">
+                <div className="flex flex-wrap items-center gap-6">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm text-muted-foreground">평가금액</span>
+                    <span className="text-lg font-bold font-mono">{formatNumber(p.current_value)}원</span>
                   </div>
-                ) : (
-                  <span className="text-sm font-medium">
-                    {detail.calculation_base === 'CURRENT_TOTAL' ? '보유 총액' : '목표 금액'}
-                  </span>
-                )}
-              </div>
-
-              {(isEditing ? draftCalcBase : detail.calculation_base) === 'CURRENT_TOTAL' && (
-                <div className="flex items-center gap-2">
-                  <Label className="text-sm whitespace-nowrap">예수금:</Label>
-                  {isEditing ? (
-                    <Input
-                      type="text"
-                      inputMode="numeric"
-                      className="w-40 h-8"
-                      value={editCash}
-                      onChange={(e) => {
-                        const raw = e.target.value.replace(/,/g, '')
-                        if (raw === '' || /^\d+$/.test(raw)) {
-                          setEditCash(raw === '' ? '' : formatNumber(parseInt(raw, 10)))
-                        }
-                      }}
-                      onBlur={() => handleUpdateCash(editCash)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          handleUpdateCash(editCash)
-                          ;(e.target as HTMLInputElement).blur()
-                        }
-                      }}
-                      placeholder="예: 500,000"
-                    />
-                  ) : (
-                    <span className="font-mono text-sm">{editCash || '0'}원</span>
+                  {p.invested_amount != null && (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm text-muted-foreground">투자원금</span>
+                      <span className="text-sm font-mono">{formatNumber(p.invested_amount)}원</span>
+                    </div>
                   )}
-                </div>
-              )}
-
-              {(isEditing ? draftCalcBase : detail.calculation_base) === 'TARGET_AMOUNT' && (
-                <div className="flex items-center gap-2">
-                  <Label className="text-sm whitespace-nowrap">목표 금액:</Label>
-                  {isEditing ? (
-                    <Input
-                      type="number"
-                      className="w-40 h-8"
-                      value={editAmount}
-                      onChange={(e) => setEditAmount(e.target.value)}
-                      onBlur={() => handleUpdateSettings('target_total_amount', editAmount)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          handleUpdateSettings('target_total_amount', editAmount)
-                          ;(e.target as HTMLInputElement).blur()
-                        }
-                      }}
-                      placeholder="예: 10000000"
-                    />
-                  ) : (
-                    <span className="font-mono text-sm">
-                      {editAmount ? formatNumber(parseFloat(editAmount)) : '0'}원
-                    </span>
+                  {profit != null && (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm text-muted-foreground">수익금</span>
+                      <span className={`text-sm font-mono font-semibold ${profit >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
+                        {profit >= 0 ? '+' : ''}{formatNumber(profit)}원
+                      </span>
+                    </div>
                   )}
+                  {p.investment_return_rate != null && (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm text-muted-foreground">수익률</span>
+                      <span className={`text-sm font-mono font-semibold ${p.investment_return_rate >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
+                        {p.investment_return_rate >= 0 ? '+' : ''}{p.investment_return_rate.toFixed(2)}%
+                      </span>
+                    </div>
+                  )}
+                  {p.daily_change_amount != null && (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm text-muted-foreground">전일대비</span>
+                      <span className={`text-sm font-mono font-semibold ${(p.daily_change_rate ?? 0) >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
+                        {(p.daily_change_amount ?? 0) >= 0 ? '+' : ''}{formatNumber(p.daily_change_amount)}원
+                        <span className="font-normal text-xs ml-0.5">
+                          ({(p.daily_change_rate ?? 0) >= 0 ? '+' : ''}{(p.daily_change_rate ?? 0).toFixed(2)}%)
+                        </span>
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-1.5 ml-auto">
+                    <span className="text-sm text-muted-foreground">예수금</span>
+                    {isEditing ? (
+                      <Input
+                        type="text"
+                        inputMode="numeric"
+                        className="w-32 h-7 text-sm"
+                        value={editCash}
+                        onChange={(e) => {
+                          const raw = e.target.value.replace(/,/g, '')
+                          if (raw === '' || /^\d+$/.test(raw)) {
+                            setEditCash(raw === '' ? '' : formatNumber(parseInt(raw, 10)))
+                          }
+                        }}
+                        onBlur={() => handleUpdateCash(editCash)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            handleUpdateCash(editCash)
+                            ;(e.target as HTMLInputElement).blur()
+                          }
+                        }}
+                        placeholder="예: 500,000"
+                      />
+                    ) : (
+                      <span className="text-sm font-mono">{editCash || '0'}원</span>
+                    )}
+                  </div>
                 </div>
-              )}
+              </CardContent>
+            </Card>
+          )
+        })()}
 
-              {calcResult && (
-                <div className="flex items-center gap-2 ml-auto">
-                  <span className="text-sm text-muted-foreground">기준금액:</span>
-                  <span className="font-mono font-semibold">
-                    {formatNumber(calcResult.base_amount)}원
-                  </span>
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
 
         {/* Weight warning */}
         {calcResult?.weight_warning && (
@@ -957,7 +953,7 @@ export default function PortfolioPage() {
 
   // List view
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <h1 className="text-3xl font-bold">포트폴리오</h1>

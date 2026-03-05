@@ -138,8 +138,7 @@ def backfill_prices(**context):
                         cur.execute("""
                             INSERT INTO ticker_prices (ticker, date, price, updated_at)
                             VALUES (%s, %s, %s, NOW())
-                            ON CONFLICT (ticker, date)
-                            DO UPDATE SET price = EXCLUDED.price, updated_at = NOW()
+                            ON CONFLICT (ticker, date) DO NOTHING
                         """, (code, d.isoformat(), close))
                         count += 1
 

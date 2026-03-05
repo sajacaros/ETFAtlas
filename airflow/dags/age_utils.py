@@ -246,15 +246,34 @@ def _get_krx_data_for_exact_date(date: str) -> list:
 # ──────────────────────────────────────────────
 
 def get_valid_ticker_set(date: str) -> set:
-    """KOSPI + KOSDAQ + ETF 상장종목 코드 집합 반환 (채권/파생/현금 등 제외용)"""
-    from pykrx import stock
+    """KOSPI + KOSDAQ + ETF 상장종목 코드 집합 반환 (채권/파생/현금 등 제외용)
 
-    kospi = set(stock.get_market_ticker_list(date, market='KOSPI'))
-    kosdaq = set(stock.get_market_ticker_list(date, market='KOSDAQ'))
-    etfs = set(stock.get_etf_ticker_list(date))
-    valid = kospi | kosdaq | etfs
-    log.info(f"Valid tickers: KOSPI={len(kospi)}, KOSDAQ={len(kosdaq)}, "
-             f"ETF={len(etfs)}, total={len(valid)}")
+    AGE 그래프의 ETF+Stock 코드를 primary로 사용하고,
+    pykrx KRX 스크래핑은 fallback으로만 시도한다.
+    """
+    # Primary: AGE 그래프에서 조회
+    etf_codes = get_etf_codes_from_age()
+    stock_codes = get_stock_codes_from_age()
+    valid = etf_codes | stock_codes
+
+    if valid:
+        log.info(f"Valid tickers from AGE: ETF={len(etf_codes)}, "
+                 f"Stock={len(stock_codes)}, total={len(valid)}")
+        return valid
+
+    # Fallback: pykrx KRX 스크래핑 (AGE가 비어있을 때만)
+    log.warning("AGE returned no tickers, falling back to pykrx KRX scraping")
+    from pykrx import stock
+    try:
+        kospi = set(stock.get_market_ticker_list(date, market='KOSPI'))
+        kosdaq = set(stock.get_market_ticker_list(date, market='KOSDAQ'))
+        etfs = set(stock.get_etf_ticker_list(date))
+        valid = kospi | kosdaq | etfs
+        log.info(f"Valid tickers (pykrx fallback): KOSPI={len(kospi)}, "
+                 f"KOSDAQ={len(kosdaq)}, ETF={len(etfs)}, total={len(valid)}")
+    except Exception as e:
+        log.warning(f"pykrx fallback also failed: {e}")
+        valid = set()
     return valid
 
 
@@ -333,10 +352,18 @@ def _parse_age_value(raw):
 
 
 def get_business_days(from_date: str, to_date: str) -> list[str]:
-    """pykrx로 영업일 목록 조회. YYYYMMDD 리스트 반환."""
+    """pykrx로 영업일 목록 조회. YYYYMMDD 리스트 반환.
+
+    pykrx 내부 KRX 스크래핑 API가 불안정하므로,
+    공개 API(get_market_ohlcv_by_date)로 영업일을 추출한다.
+    """
     from pykrx import stock
-    business_days = stock.get_previous_business_days(fromdate=from_date, todate=to_date)
-    return [d.strftime('%Y%m%d') for d in business_days]
+    try:
+        df = stock.get_market_ohlcv_by_date(from_date, to_date, '005930')
+        return [d.strftime('%Y%m%d') for d in df.index]
+    except Exception as e:
+        log.warning(f"Failed to get business days via OHLCV: {e}")
+        return []
 
 
 def get_last_collected_date() -> str | None:
@@ -414,6 +441,47 @@ def get_etf_codes_from_age() -> set[str]:
         conn.close()
 
 
+def get_stock_codes_from_age() -> set[str]:
+    """AGE에서 Stock 코드 집합 조회."""
+    conn = get_db_connection()
+    cur = init_age(conn)
+    try:
+        results = execute_cypher(cur, "MATCH (s:Stock) RETURN s.code")
+        codes = set()
+        for row in results:
+            if row[0]:
+                code = _parse_age_value(row[0])
+                if code:
+                    codes.add(code)
+        return codes
+    finally:
+        cur.close()
+        conn.close()
+
+
+def get_etf_names_from_age() -> dict[str, str]:
+    """AGE에서 ETF code→name 매핑 조회."""
+    import json
+
+    conn = get_db_connection()
+    cur = init_age(conn)
+    try:
+        results = execute_cypher(cur, """
+            MATCH (e:ETF) WHERE e.name IS NOT NULL
+            RETURN {code: e.code, name: e.name}
+        """)
+        names = {}
+        for row in results:
+            if row[0]:
+                data = json.loads(_parse_age_value(row[0]))
+                if data.get('code') and data.get('name'):
+                    names[data['code']] = data['name']
+        return names
+    finally:
+        cur.close()
+        conn.close()
+
+
 # ──────────────────────────────────────────────
 # 공용 수집 함수
 # ──────────────────────────────────────────────
@@ -447,7 +515,7 @@ def collect_universe_and_prices(dates: list[str]) -> tuple[set[str], list[dict],
                 pass
         log.info(f"Loaded expense ratio for {len(fee_map)} ETFs")
     except Exception as e:
-        log.warning(f"Failed to fetch ETF fee data: {e}")
+        log.warning(f"Failed to fetch ETF fee data (pykrx KRX scraping may be broken): {e}")
 
     conn = get_db_connection()
     cur = init_age(conn)
@@ -600,12 +668,40 @@ def collect_holdings_for_dates(etf_codes: list[str], dates: list[str]):
 
     for bd in dates:
         date_str = f"{bd[:4]}-{bd[4:6]}-{bd[6:8]}"
+
+        # AGE에서 이미 HOLDS 엣지가 있는 ETF 스킵
+        conn_chk = get_db_connection()
+        cur_chk = init_age(conn_chk)
+        try:
+            results = execute_cypher(cur_chk, """
+                MATCH (e:ETF)-[h:HOLDS {date: $date}]->(:Stock)
+                WITH DISTINCT e.code AS code
+                RETURN code
+            """, {'date': date_str})
+            existing_holds = set()
+            for row in results:
+                if row[0]:
+                    code = _parse_age_value(row[0])
+                    if code:
+                        existing_holds.add(code)
+        finally:
+            cur_chk.close()
+            conn_chk.close()
+
+        remaining_etfs = [c for c in etf_codes if c not in existing_holds]
+        if not remaining_etfs:
+            log.info(f"[{bd}] All {len(etf_codes)} ETFs already have HOLDS, skipping")
+            continue
+        if existing_holds:
+            log.info(f"[{bd}] Skipping {len(existing_holds)} ETFs with existing HOLDS, "
+                     f"fetching {len(remaining_etfs)}")
+
         valid_tickers = get_valid_ticker_set(bd)
 
         all_holds = []
         all_stock_codes = set()
 
-        for ticker in etf_codes:
+        for ticker in remaining_etfs:
             try:
                 df = pykrx_stock.get_etf_portfolio_deposit_file(ticker, bd)
                 if df is not None and not df.empty:
@@ -634,7 +730,8 @@ def collect_holdings_for_dates(etf_codes: list[str], dates: list[str]):
                 log.warning(f"Failed PDF for {ticker} on {bd}: {e}")
 
         if not all_holds:
-            log.info(f"[{bd}] No holdings data, skipping")
+            log.warning(f"[{bd}] No holdings data — pykrx get_etf_portfolio_deposit_file "
+                        f"may be broken (KRX scraping API issue). Skipping.")
             continue
 
         conn = get_db_connection()
@@ -651,13 +748,15 @@ def collect_holdings_for_dates(etf_codes: list[str], dates: list[str]):
                 # 신규 Stock만 이름 조회 + is_etf 설정
                 new_stocks = all_stock_codes - known_stocks
                 if new_stocks:
-                    etf_tickers = set(pykrx_stock.get_etf_ticker_list(bd))
+                    # AGE 기반 ETF 코드/이름 매핑 (pykrx KRX 스크래핑 대체)
+                    etf_tickers = get_etf_codes_from_age()
+                    etf_name_map = get_etf_names_from_age()
                     name_items = []
                     for code in new_stocks:
                         try:
                             is_etf = code in etf_tickers
                             if is_etf:
-                                name = str(pykrx_stock.get_etf_ticker_name(code))
+                                name = etf_name_map.get(code) or str(pykrx_stock.get_etf_ticker_name(code))
                             else:
                                 name = str(pykrx_stock.get_market_ticker_name(code))
                             if not name or isinstance(name, pd.DataFrame):
@@ -723,8 +822,14 @@ def collect_holdings_for_dates(etf_codes: list[str], dates: list[str]):
 
 
 def collect_stock_prices_for_dates(dates: list[str]):
-    """날짜별 Stock 가격 배치 저장."""
+    """날짜별 Stock 가격 배치 저장.
+
+    pykrx Naver 백엔드(get_market_ohlcv_by_date)를 사용하여
+    종목별로 가격을 조회한다. KRX 스크래핑 API(get_market_ohlcv_by_ticker)가
+    깨져있으므로 이 방식을 사용.
+    """
     from pykrx import stock as pykrx_stock
+    import time
 
     if not dates:
         return
@@ -751,7 +856,7 @@ def collect_stock_prices_for_dates(dates: list[str]):
         return
 
     log.info(f"Collecting prices for {len(stock_codes)} stocks "
-             f"across {len(dates)} dates")
+             f"across {len(dates)} dates (via Naver backend)")
     total_success = 0
 
     for bd in dates:
@@ -759,23 +864,57 @@ def collect_stock_prices_for_dates(dates: list[str]):
         cur = init_age(conn)
         try:
             date_str = f"{bd[:4]}-{bd[4:6]}-{bd[6:8]}"
-            df = pykrx_stock.get_market_ohlcv_by_ticker(bd)
-            if df is None or df.empty:
-                continue
 
+            # AGE에서 이미 가격이 있는 종목 스킵
+            existing_prices = set()
+            try:
+                results = execute_cypher(cur, """
+                    MATCH (s:Stock)-[:HAS_PRICE]->(p:Price {date: $date})
+                    RETURN s.code
+                """, {'date': date_str})
+                for row in results:
+                    if row[0]:
+                        code = _parse_age_value(row[0])
+                        if code:
+                            existing_prices.add(code)
+            except Exception:
+                pass
+
+            remaining = stock_codes - existing_prices
+            if not remaining:
+                log.info(f"[{bd}] All {len(stock_codes)} stock prices already collected, skipping")
+                continue
+            if existing_prices:
+                log.info(f"[{bd}] Skipping {len(existing_prices)} stocks with existing prices, "
+                         f"fetching {len(remaining)}")
+
+            # 종목별 Naver 백엔드로 가격 조회
             items = []
-            for code in stock_codes:
-                if code in df.index:
-                    row = df.loc[code]
-                    items.append({
-                        'code': code, 'date': date_str,
-                        'open': float(row.get('시가', 0)),
-                        'high': float(row.get('고가', 0)),
-                        'low': float(row.get('저가', 0)),
-                        'close': float(row.get('종가', 0)),
-                        'volume': int(row.get('거래량', 0)),
-                        'change_rate': float(row.get('등락률', 0)),
-                    })
+            error_count = 0
+            for code in sorted(remaining):
+                try:
+                    df = pykrx_stock.get_market_ohlcv_by_date(bd, bd, code)
+                    if df is not None and not df.empty:
+                        row = df.iloc[0]
+                        items.append({
+                            'code': code, 'date': date_str,
+                            'open': float(row.get('시가', 0)),
+                            'high': float(row.get('고가', 0)),
+                            'low': float(row.get('저가', 0)),
+                            'close': float(row.get('종가', 0)),
+                            'volume': int(row.get('거래량', 0)),
+                            'change_rate': float(row.get('등락률', 0)),
+                        })
+                except Exception as e:
+                    error_count += 1
+                    if error_count <= 5:
+                        log.warning(f"Failed price for {code} on {bd}: {e}")
+                    elif error_count == 6:
+                        log.warning(f"Suppressing further per-stock errors for {bd}...")
+                time.sleep(0.3)
+
+            if error_count > 5:
+                log.warning(f"[{bd}] {error_count} total stock price errors")
 
             if not items:
                 continue

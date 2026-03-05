@@ -28,7 +28,7 @@ let cachedFontBase64: string | null = null
 
 async function loadKoreanFont(doc: jsPDF): Promise<void> {
   if (!cachedFontBase64) {
-    const response = await fetch('/fonts/NotoSansKR-Regular.ttf')
+    const response = await fetch('/fonts/NotoSansKR-Medium.ttf')
     if (!response.ok) {
       throw new Error(`Failed to load Korean font: ${response.status}`)
     }
@@ -38,8 +38,8 @@ async function loadKoreanFont(doc: jsPDF): Promise<void> {
     )
   }
 
-  doc.addFileToVFS('NotoSansKR-Regular.ttf', cachedFontBase64)
-  doc.addFont('NotoSansKR-Regular.ttf', FONT_NAME, 'normal')
+  doc.addFileToVFS('NotoSansKR-Medium.ttf', cachedFontBase64)
+  doc.addFont('NotoSansKR-Medium.ttf', FONT_NAME, 'normal')
   doc.setFont(FONT_NAME)
 }
 

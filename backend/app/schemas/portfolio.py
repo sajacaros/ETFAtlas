@@ -146,6 +146,7 @@ class DashboardSummary(BaseModel):
     investment_return: Optional[DashboardSummaryItem] = None
     snapshot_date: Optional[str] = None
     updated_at: Optional[str] = None
+    price_updated_at: Optional[str] = None
 
 
 class ChartDataPoint(BaseModel):

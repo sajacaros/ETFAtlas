@@ -97,15 +97,14 @@ function SortablePortfolioCard({
         </div>
         <div className="flex items-center gap-1">
           {p.current_value_updated_at && (
-            <span className="text-[10px] text-muted-foreground">
+            <span className="text-xs text-muted-foreground">
               {(() => {
                 const d = new Date(p.current_value_updated_at + 'Z')
-                const yy = String(d.getFullYear()).slice(2)
                 const mm = String(d.getMonth() + 1).padStart(2, '0')
                 const dd = String(d.getDate()).padStart(2, '0')
                 const hh = String(d.getHours()).padStart(2, '0')
                 const mi = String(d.getMinutes()).padStart(2, '0')
-                return `${yy}/${mm}/${dd} ${hh}:${mi}`
+                return `${mm}/${dd} ${hh}:${mi}`
               })()}
             </span>
           )}
@@ -1039,12 +1038,20 @@ export default function PortfolioPage() {
           <CardContent className="py-4">
             {totalSummary.snapshot_date && (
               <p className="text-xs text-muted-foreground mb-2">
-                기준일: {totalSummary.snapshot_date.slice(2).replace(/-/g, '/')}
+                스냅샷: {totalSummary.snapshot_date.slice(2).replace(/-/g, '/')}
                 {totalSummary.updated_at && (() => {
                   const d = new Date(totalSummary.updated_at + (totalSummary.updated_at.endsWith('Z') ? '' : 'Z'))
                   const hh = String(d.getHours()).padStart(2, '0')
                   const mi = String(d.getMinutes()).padStart(2, '0')
                   return ` ${hh}:${mi}`
+                })()}
+                {totalSummary.price_updated_at && (() => {
+                  const d = new Date(totalSummary.price_updated_at + (totalSummary.price_updated_at.endsWith('Z') ? '' : 'Z'))
+                  const mm = String(d.getMonth() + 1).padStart(2, '0')
+                  const dd = String(d.getDate()).padStart(2, '0')
+                  const hh = String(d.getHours()).padStart(2, '0')
+                  const mi = String(d.getMinutes()).padStart(2, '0')
+                  return ` · 수집: ${mm}/${dd} ${hh}:${mi}`
                 })()}
               </p>
             )}

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, text as sa_text
 from ..database import get_db
 from ..models.portfolio import Portfolio, TargetAllocation, Holding, PortfolioSnapshot
+from ..models.ticker_price import TickerPrice
 from ..utils.jwt import get_current_user_id
 from ..schemas.portfolio import (
     PortfolioCreate, PortfolioUpdate, PortfolioResponse,
@@ -93,6 +94,9 @@ async def get_portfolios(
 
     value_map = {row.portfolio_id: row for row in latest_values}
 
+    # ticker_prices 테이블에서 가격 최종 수집 시간 조회
+    latest_price_updated = db.query(func.max(TickerPrice.updated_at)).scalar()
+
     result = []
     for p in portfolios:
         cur_val = Decimal(str(value_map[p.id].total_value)) if p.id in value_map else None
@@ -107,7 +111,7 @@ async def get_portfolios(
             target_total_amount=p.target_total_amount,
             current_value=cur_val,
             current_value_date=value_map[p.id].date.isoformat() if p.id in value_map else None,
-            current_value_updated_at=value_map[p.id].updated_at.isoformat() if p.id in value_map and value_map[p.id].updated_at else None,
+            current_value_updated_at=latest_price_updated.isoformat() if latest_price_updated else None,
             daily_change_amount=value_map[p.id].change_amount if p.id in value_map else None,
             daily_change_rate=value_map[p.id].change_rate if p.id in value_map else None,
             invested_amount=inv_amt,
@@ -372,6 +376,7 @@ def _build_dashboard_response(snapshots: list) -> DashboardResponse:
         ))
 
     last_updated_at = getattr(last, 'updated_at', None) if snapshots else None
+    last_price_updated_at = getattr(last, 'price_updated_at', None) if snapshots else None
 
     return DashboardResponse(
         summary=DashboardSummary(
@@ -383,6 +388,7 @@ def _build_dashboard_response(snapshots: list) -> DashboardResponse:
             ytd=ytd,
             snapshot_date=last.date.isoformat() if snapshots else None,
             updated_at=last_updated_at.isoformat() if last_updated_at else None,
+            price_updated_at=last_price_updated_at.isoformat() if last_price_updated_at else None,
         ),
         chart_data=chart_data,
     )
@@ -424,19 +430,22 @@ async def get_total_dashboard(
     for s in all_snapshots:
         key = s.date
         if key not in date_agg:
-            date_agg[key] = {'total_value': Decimal('0'), 'updated_at': s.updated_at}
+            date_agg[key] = {'total_value': Decimal('0'), 'updated_at': s.updated_at, 'price_updated_at': s.price_updated_at}
         date_agg[key]['total_value'] += Decimal(str(s.total_value))
         if s.updated_at and (date_agg[key]['updated_at'] is None or s.updated_at > date_agg[key]['updated_at']):
             date_agg[key]['updated_at'] = s.updated_at
+        if s.price_updated_at and (date_agg[key]['price_updated_at'] is None or s.price_updated_at > date_agg[key]['price_updated_at']):
+            date_agg[key]['price_updated_at'] = s.price_updated_at
 
     class SnapshotRow:
-        def __init__(self, d, tv, ua=None):
+        def __init__(self, d, tv, ua=None, pua=None):
             self.date = d
             self.total_value = tv
             self.updated_at = ua
+            self.price_updated_at = pua
 
     snapshots = [
-        SnapshotRow(d, agg['total_value'], agg['updated_at'])
+        SnapshotRow(d, agg['total_value'], agg['updated_at'], agg['price_updated_at'])
         for d, agg in sorted(date_agg.items())
     ]
     return _build_dashboard_response(snapshots)
@@ -882,18 +891,23 @@ def _refresh_snapshot(db: Session, portfolio_id: int) -> dict | None:
         PortfolioSnapshot.date == snapshot_date,
     ).first()
 
+    # 스냅샷 시점의 가격 수집 시간 기록
+    latest_price_updated = db.query(func.max(TickerPrice.updated_at)).scalar()
+
     now = datetime.utcnow()
     if existing:
         existing.total_value = total_value
         existing.prev_value = prev_value
         existing.change_amount = change_amount
         existing.change_rate = change_rate
+        existing.price_updated_at = latest_price_updated
         existing.updated_at = now
     else:
         db.add(PortfolioSnapshot(
             portfolio_id=portfolio_id, date=snapshot_date,
             total_value=total_value, prev_value=prev_value,
             change_amount=change_amount, change_rate=change_rate,
+            price_updated_at=latest_price_updated,
             updated_at=now,
         ))
     db.commit()

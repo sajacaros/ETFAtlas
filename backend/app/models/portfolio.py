@@ -66,6 +66,7 @@ class PortfolioSnapshot(Base):
     prev_value = Column(EncryptedDecimal, nullable=True)
     change_amount = Column(EncryptedDecimal, nullable=True)
     change_rate = Column(EncryptedFloat, nullable=True)
+    price_updated_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

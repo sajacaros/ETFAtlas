@@ -266,6 +266,7 @@ export interface DashboardSummary {
   investment_return: DashboardSummaryItem | null
   snapshot_date: string | null
   updated_at: string | null
+  price_updated_at: string | null
 }
 
 export interface ChartDataPoint {

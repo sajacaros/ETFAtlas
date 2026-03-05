@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS portfolio_snapshots (
     prev_value TEXT,
     change_amount TEXT,
     change_rate TEXT,
+    price_updated_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uq_portfolio_snapshot_date UNIQUE (portfolio_id, date)

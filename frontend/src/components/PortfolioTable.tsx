@@ -207,21 +207,21 @@ export default function PortfolioTable({
       <TableHeader>
         <TableRow>
           <SortableHead label="종목" sortField="name" className={COL_W2} />
-          <SortableHead label="목표 비중(%)" sortField="target_weight" className={`text-right ${COL_W}`} />
-          <SortableHead label="목표 금액" sortField="target_amount" className={`text-right ${COL_W}`} />
-          <SortableHead label="목표 수량" sortField="target_quantity" className={`text-right ${COL_W}`} />
-          <SortableHead label="현재 비중(%)" sortField="current_weight" className={`text-right ${COL_W}`} />
-          <SortableHead label="보유 수량" sortField="holding_quantity" className={`text-right ${COL_W}`} />
+          <SortableHead label="목표비중" sortField="target_weight" className={`text-right ${COL_W}`} />
+          <SortableHead label="현재비중" sortField="current_weight" className={`text-right ${COL_W}`} />
+          <SortableHead label="목표수량" sortField="target_quantity" className={`text-right ${COL_W}`} />
+          <SortableHead label="보유수량" sortField="holding_quantity" className={`text-right ${COL_W}`} />
           <SortableHead label="평단가" sortField="avg_price" className={`text-right ${COL_W}`} />
           <SortableHead label="현재가" sortField="current_price" className={`text-right ${COL_W}`} />
-          <SortableHead label="평가 금액" sortField="holding_amount" className={`text-right ${COL_W}`} />
+          <SortableHead label="목표금액" sortField="target_amount" className={`text-right ${COL_W}`} />
+          <SortableHead label="평가금액" sortField="holding_amount" className={`text-right ${COL_W}`} />
           <TableHead className={`text-right ${COL_W}`}>수익</TableHead>
           <TableHead className={`text-right ${COL_W}`}>
             <div>리밸런싱</div>
             <div className="text-xs text-muted-foreground font-normal">수량 / 금액</div>
           </TableHead>
           <SortableHead label="상태" sortField="status" className={`text-center ${COL_W}`} />
-          {isEditing && <TableHead className="w-[40px]"></TableHead>}
+          {isEditing && <TableHead className="w-[40px]" />}
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -243,7 +243,7 @@ export default function PortfolioTable({
                   <div className="text-sm truncate">{row.name}</div>
                   <div className="font-mono text-xs text-muted-foreground">{row.ticker}</div>
                 </TableCell>
-                {/* 목표 비중 */}
+                {/* 비중 - 목표 */}
                 <TableCell className="text-right">
                   {target ? (
                     isEditing ? (
@@ -267,17 +267,15 @@ export default function PortfolioTable({
                     <span className="text-muted-foreground">-</span>
                   )}
                 </TableCell>
-                {/* 목표 금액 */}
-                <TableCell className="text-right font-mono">{formatNumber(row.target_amount)}</TableCell>
-                {/* 목표 수량 */}
-                <TableCell className="text-right font-mono">{formatNumber(row.target_quantity)}</TableCell>
-                {/* 현재 비중 */}
+                {/* 비중 - 현재 */}
                 <TableCell className="text-right font-mono text-sm text-muted-foreground">
                   {totalHoldingAmount > 0
                     ? (row.holding_amount / totalHoldingAmount * 100).toFixed(1)
                     : '-'}
                 </TableCell>
-                {/* 보유 수량 */}
+                {/* 수량 - 목표 */}
+                <TableCell className="text-right font-mono">{formatNumber(row.target_quantity)}</TableCell>
+                {/* 수량 - 보유 */}
                 <TableCell className="text-right">
                   {isEditing ? (
                     <Input
@@ -296,7 +294,7 @@ export default function PortfolioTable({
                     <span className="font-mono text-sm">{formatNumber(Math.round(Number(row.holding_quantity)))}</span>
                   )}
                 </TableCell>
-                {/* 평단가 */}
+                {/* 가격 - 평단가 */}
                 <TableCell className="text-right">
                   {row.ticker === 'CASH' ? (
                     <span className="text-muted-foreground">-</span>
@@ -320,7 +318,7 @@ export default function PortfolioTable({
                     </span>
                   )}
                 </TableCell>
-                {/* 현재가 */}
+                {/* 가격 - 현재가 */}
                 <TableCell className={`text-right font-mono ${
                   row.ticker === 'CASH' || row.price_change_rate == null ? '' :
                   row.price_change_rate > 0 ? 'text-red-500' : row.price_change_rate < 0 ? 'text-blue-500' : ''
@@ -332,7 +330,9 @@ export default function PortfolioTable({
                     </div>
                   )}
                 </TableCell>
-                {/* 평가 금액 */}
+                {/* 금액 - 목표 */}
+                <TableCell className="text-right font-mono">{formatNumber(row.target_amount)}</TableCell>
+                {/* 금액 - 평가 */}
                 <TableCell className="text-right font-mono">{formatNumber(row.holding_amount)}</TableCell>
                 {/* 수익 (금액 / 수익률) */}
                 <TableCell className={`text-right font-mono text-sm ${
@@ -407,17 +407,18 @@ export default function PortfolioTable({
             <TableCell className={`text-right font-semibold ${weightIsWarning ? 'text-red-600' : ''}`}>
               {Number(liveTotalWeight).toFixed(1)}%
             </TableCell>
-            <TableCell />
-            <TableCell />
             <TableCell className="text-right font-semibold text-muted-foreground">
               {totalHoldingAmount > 0 ? '100.0' : '-'}
             </TableCell>
             <TableCell />
             <TableCell />
             <TableCell />
+            <TableCell />
+            <TableCell />
             <TableCell className="text-right font-mono font-semibold">
               {formatNumber(totalHoldingAmount)}
             </TableCell>
+            {/* 수익 */}
             <TableCell className={`text-right font-mono font-semibold ${
               totalProfitLossAmount == null ? '' :
               totalProfitLossAmount > 0 ? 'text-red-500' : totalProfitLossAmount < 0 ? 'text-blue-500' : ''
@@ -426,6 +427,7 @@ export default function PortfolioTable({
                 ? `${totalProfitLossAmount > 0 ? '+' : ''}${formatNumber(totalProfitLossAmount)}`
                 : '-'}
             </TableCell>
+            {/* 리밸런싱 */}
             <TableCell
               className={`text-right font-mono font-semibold ${
                 totalAdjustmentAmount > 0

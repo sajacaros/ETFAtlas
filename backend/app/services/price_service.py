@@ -1,13 +1,7 @@
-import time
 from datetime import date
 from decimal import Decimal
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-
-
-# Module-level cache: {ticker: (price, timestamp)}
-_price_cache: dict[str, tuple[Decimal, float]] = {}
-_CACHE_TTL = 60  # seconds
 
 
 class PriceService:
@@ -18,45 +12,24 @@ class PriceService:
         """
         Get latest prices for tickers.
         Strategy:
-        1. Return cached prices if within 60 seconds
-        2. RDB ticker_prices 테이블에서 최신 가격 조회
-        3. 없으면 yfinance로 조회 (폴백)
+        1. RDB ticker_prices 테이블에서 최신 가격 조회
+        2. 없으면 yfinance로 조회 (폴백)
         CASH is excluded (handled by domain layer).
         """
         query_tickers = [t for t in tickers if t != "CASH"]
         if not query_tickers:
             return {}
 
-        now = time.time()
-        prices: dict[str, Decimal] = {}
+        # Step 1: RDB ticker_prices (최신 날짜 기준)
+        prices = self._get_rdb_prices(query_tickers)
 
-        # Step 1: Check cache
-        missing = []
-        for ticker in query_tickers:
-            cached = _price_cache.get(ticker)
-            if cached and (now - cached[1]) < _CACHE_TTL:
-                prices[ticker] = cached[0]
-            else:
-                missing.append(ticker)
-
-        if not missing:
-            return prices
-
-        # Step 2: RDB ticker_prices (최신 날짜 기준)
-        rdb_prices = self._get_rdb_prices(missing)
-        for ticker, price in rdb_prices.items():
-            _price_cache[ticker] = (price, now)
-            prices[ticker] = price
-
-        still_missing = [t for t in missing if t not in prices]
+        still_missing = [t for t in query_tickers if t not in prices]
         if not still_missing:
             return prices
 
-        # Step 3: yfinance fallback
+        # Step 2: yfinance fallback
         yf_prices = self._get_yfinance_prices(still_missing)
-        for ticker, price in yf_prices.items():
-            _price_cache[ticker] = (price, now)
-            prices[ticker] = price
+        prices.update(yf_prices)
 
         return prices
 

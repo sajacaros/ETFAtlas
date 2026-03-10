@@ -146,7 +146,7 @@ export const portfolioApi = {
     const { data } = await api.post<Portfolio>('/portfolios/', params)
     return data
   },
-  update: async (id: number, params: { name?: string; calculation_base?: string; target_total_amount?: number | null }) => {
+  update: async (id: number, params: { name?: string; calculation_base?: string; target_total_amount?: number | null; snapshot_enabled?: boolean }) => {
     const { data } = await api.put<Portfolio>(`/portfolios/${id}`, params)
     return data
   },

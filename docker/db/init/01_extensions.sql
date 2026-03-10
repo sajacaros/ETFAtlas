@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS portfolios (
     display_order INTEGER NOT NULL DEFAULT 0,
     is_shared BOOLEAN NOT NULL DEFAULT FALSE,
     share_token UUID UNIQUE DEFAULT NULL,
+    snapshot_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -113,6 +114,7 @@ CREATE TABLE IF NOT EXISTS collection_runs (
 );
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS last_notification_checked_at TIMESTAMP;
+ALTER TABLE portfolios ADD COLUMN IF NOT EXISTS snapshot_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Ticker Prices (실시간 현재가 캐시 - 티커별 하루 1건)
 CREATE TABLE IF NOT EXISTS ticker_prices (

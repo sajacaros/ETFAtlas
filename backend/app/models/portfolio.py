@@ -18,6 +18,7 @@ class Portfolio(Base):
     display_order = Column(Integer, nullable=False, default=0)
     is_shared = Column(Boolean, nullable=False, default=False)
     share_token = Column(PG_UUID(as_uuid=True), unique=True, nullable=True)
+    snapshot_enabled = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useNavigate } from 'react-router-dom'
 import { Plus, Trash2, ArrowLeft, AlertTriangle, RefreshCw, Pencil, Check, BarChart3, Eye, EyeOff, GripVertical, Share2 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -46,8 +47,7 @@ function SortablePortfolioCard({
   portfolio: p,
   onSelect,
   onDelete,
-  onBackfill,
-  backfillLoading,
+  onToggleSnapshot,
   onDashboard,
   amountVisible,
   formatMaskedNumber: fmn,
@@ -55,8 +55,7 @@ function SortablePortfolioCard({
   portfolio: Portfolio
   onSelect: (id: number) => void
   onDelete: (id: number) => void
-  onBackfill: (id: number) => void
-  backfillLoading: number | null
+  onToggleSnapshot: (id: number, enabled: boolean) => void
   onDashboard: (id: number) => void
   amountVisible: boolean
   formatMaskedNumber: (v: number, visible: boolean) => string
@@ -122,7 +121,7 @@ function SortablePortfolioCard({
         </div>
       </CardHeader>
       <CardContent>
-        {p.current_value != null && p.current_value_date ? (
+        {p.snapshot_enabled && p.current_value != null && p.current_value_date ? (
           <div className="space-y-2">
             {/* 평가금액 */}
             <div>
@@ -177,38 +176,38 @@ function SortablePortfolioCard({
                 </p>
               </div>
             </div>
-
           </div>
+        ) : p.snapshot_enabled ? (
+          <p className="text-sm text-muted-foreground">스냅샷 대기 중</p>
         ) : (
-          <div>
-            <p className="text-sm text-muted-foreground">평가금액 없음</p>
-            <Button
-              variant="outline"
-              size="sm"
-              className="mt-2"
-              disabled={backfillLoading === p.id}
-              onClick={(e) => {
-                e.stopPropagation()
-                onBackfill(p.id)
-              }}
-            >
-              <RefreshCw className={`w-3 h-3 mr-1 ${backfillLoading === p.id ? 'animate-spin' : ''}`} />
-              {backfillLoading === p.id ? '생성 중...' : '스냅샷 생성'}
-            </Button>
-          </div>
+          <p className="text-sm text-muted-foreground">스냅샷 비활성</p>
         )}
-        <Button
-          variant="outline"
-          size="sm"
-          className="mt-1"
-          onClick={(e) => {
-            e.stopPropagation()
-            onDashboard(p.id)
-          }}
-        >
-          <BarChart3 className="w-4 h-4 mr-1" />
-          대시보드
-        </Button>
+
+        <div className="flex items-center justify-between mt-3">
+          <div className="flex items-center gap-2">
+            <Switch
+              checked={p.snapshot_enabled}
+              onCheckedChange={(checked) => {
+                onToggleSnapshot(p.id, checked)
+              }}
+              onClick={(e) => e.stopPropagation()}
+            />
+            <span className="text-xs text-muted-foreground">
+              {p.snapshot_enabled ? '스냅샷 활성' : '스냅샷 비활성'}
+            </span>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation()
+              onDashboard(p.id)
+            }}
+          >
+            <BarChart3 className="w-4 h-4 mr-1" />
+            대시보드
+          </Button>
+        </div>
       </CardContent>
     </Card>
   )
@@ -226,9 +225,6 @@ export default function PortfolioPage() {
   const [detail, setDetail] = useState<PortfolioDetail | null>(null)
   const [calcResult, setCalcResult] = useState<CalculationResult | null>(null)
   const [calcLoading, setCalcLoading] = useState(false)
-
-  // Backfill
-  const [backfillLoading, setBackfillLoading] = useState<number | null>(null)
 
   // Snapshot refresh
 
@@ -401,18 +397,14 @@ export default function PortfolioPage() {
     }
   }
 
-  const handleBackfill = async (id: number) => {
-    setBackfillLoading(id)
+  const handleToggleSnapshot = async (id: number, enabled: boolean) => {
     try {
-      const result = await portfolioApi.backfillSnapshots(id)
+      await portfolioApi.update(id, { snapshot_enabled: enabled })
       const data = await portfolioApi.getAll()
       setPortfolios(data)
-      toast({ title: `스냅샷 ${result.created}개가 생성되었습니다` })
-    } catch (err: unknown) {
-      const message = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '스냅샷 생성 실패'
-      toast({ title: message, variant: 'destructive' })
-    } finally {
-      setBackfillLoading(null)
+      toast({ title: enabled ? '스냅샷이 활성화되었습니다' : '스냅샷이 비활성화되었습니다' })
+    } catch {
+      toast({ title: '스냅샷 설정 변경 실패', variant: 'destructive' })
     }
   }
 
@@ -1061,8 +1053,7 @@ export default function PortfolioPage() {
                   portfolio={p}
                   onSelect={selectPortfolio}
                   onDelete={handleDelete}
-                  onBackfill={handleBackfill}
-                  backfillLoading={backfillLoading}
+                  onToggleSnapshot={handleToggleSnapshot}
                   onDashboard={(id) => navigate(`/portfolio/${id}/dashboard`)}
                   amountVisible={amountVisible}
                   formatMaskedNumber={formatMaskedNumber}

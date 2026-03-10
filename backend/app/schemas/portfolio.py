@@ -14,6 +14,7 @@ class PortfolioUpdate(BaseModel):
     name: Optional[str] = None
     calculation_base: Optional[str] = None
     target_total_amount: Optional[Decimal] = None
+    snapshot_enabled: Optional[bool] = None
 
 
 class PortfolioReorderItem(BaseModel):
@@ -37,6 +38,7 @@ class PortfolioResponse(BaseModel):
     daily_change_rate: Optional[float] = None
     invested_amount: Optional[Decimal] = None
     investment_return_rate: Optional[float] = None
+    snapshot_enabled: bool = False
 
     class Config:
         from_attributes = True
@@ -122,6 +124,7 @@ class PortfolioDetailResponse(BaseModel):
     target_total_amount: Optional[Decimal] = None
     is_shared: bool = False
     share_token: Optional[str] = None
+    snapshot_enabled: bool = False
     target_allocations: list[TargetAllocationResponse] = []
     holdings: list[HoldingResponse] = []
 
@@ -192,11 +195,6 @@ class PortfolioBatchUpdate(BaseModel):
     target_total_amount: Optional[Decimal] = None
     targets: list[BatchTargetItem]
     holdings: list[BatchHoldingItem]
-
-
-# --- Backfill ---
-class BackfillSnapshotResponse(BaseModel):
-    created: int
 
 
 

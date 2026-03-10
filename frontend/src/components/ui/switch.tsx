@@ -7,7 +7,7 @@ interface SwitchProps extends Omit<React.ButtonHTMLAttributes<HTMLButtonElement>
 }
 
 const Switch = React.forwardRef<HTMLButtonElement, SwitchProps>(
-  ({ className, checked = false, onCheckedChange, ...props }, ref) => {
+  ({ className, checked = false, onCheckedChange, onClick, ...props }, ref) => {
     return (
       <button
         ref={ref}
@@ -21,7 +21,10 @@ const Switch = React.forwardRef<HTMLButtonElement, SwitchProps>(
           checked ? 'bg-primary' : 'bg-input',
           className,
         )}
-        onClick={() => onCheckedChange?.(!checked)}
+        onClick={(e) => {
+          onClick?.(e)
+          onCheckedChange?.(!checked)
+        }}
         {...props}
       >
         <span

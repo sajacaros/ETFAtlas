@@ -224,7 +224,12 @@ def update_snapshots(**context):
         today_str = today.isoformat()
 
         # 보유 종목이 있는 포트폴리오 조회
-        cur.execute("SELECT DISTINCT portfolio_id FROM holdings")
+        cur.execute("""
+            SELECT DISTINCT h.portfolio_id
+            FROM holdings h
+            JOIN portfolios p ON p.id = h.portfolio_id
+            WHERE p.snapshot_enabled = true
+        """)
         portfolio_ids = [row[0] for row in cur.fetchall()]
 
         if not portfolio_ids:

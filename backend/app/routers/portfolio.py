@@ -20,8 +20,6 @@ from ..schemas.portfolio import (
     DashboardResponse, DashboardSummary, DashboardSummaryItem, ChartDataPoint,
     TotalHoldingsResponse, TotalHoldingItem,
     BackfillSnapshotResponse,
-    RefreshSnapshotResponse,
-    RefreshAllSnapshotsResponse,
     PortfolioBatchUpdate,
     ShareToggleRequest, ShareToggleResponse,
     RiskAnalysisResponse, RiskChartPoint, DrawdownPoint,
@@ -376,7 +374,6 @@ def _build_dashboard_response(snapshots: list) -> DashboardResponse:
         ))
 
     last_updated_at = getattr(last, 'updated_at', None) if snapshots else None
-    last_price_updated_at = getattr(last, 'price_updated_at', None) if snapshots else None
 
     return DashboardResponse(
         summary=DashboardSummary(
@@ -388,27 +385,9 @@ def _build_dashboard_response(snapshots: list) -> DashboardResponse:
             ytd=ytd,
             snapshot_date=last.date.isoformat() if snapshots else None,
             updated_at=last_updated_at.isoformat() if last_updated_at else None,
-            price_updated_at=last_price_updated_at.isoformat() if last_price_updated_at else None,
         ),
         chart_data=chart_data,
     )
-
-
-@router.post("/refresh-snapshots", response_model=RefreshAllSnapshotsResponse)
-async def refresh_all_snapshots(
-    user_id: int = Depends(get_current_user_id),
-    db: Session = Depends(get_db),
-):
-    portfolios = db.query(Portfolio).filter(Portfolio.user_id == user_id).all()
-    refreshed = 0
-    skipped = 0
-    for p in portfolios:
-        result = _refresh_snapshot(db, p.id)
-        if result is not None:
-            refreshed += 1
-        else:
-            skipped += 1
-    return RefreshAllSnapshotsResponse(refreshed=refreshed, skipped=skipped)
 
 
 @router.get("/dashboard/total", response_model=DashboardResponse)
@@ -430,22 +409,19 @@ async def get_total_dashboard(
     for s in all_snapshots:
         key = s.date
         if key not in date_agg:
-            date_agg[key] = {'total_value': Decimal('0'), 'updated_at': s.updated_at, 'price_updated_at': s.price_updated_at}
+            date_agg[key] = {'total_value': Decimal('0'), 'updated_at': s.updated_at}
         date_agg[key]['total_value'] += Decimal(str(s.total_value))
         if s.updated_at and (date_agg[key]['updated_at'] is None or s.updated_at > date_agg[key]['updated_at']):
             date_agg[key]['updated_at'] = s.updated_at
-        if s.price_updated_at and (date_agg[key]['price_updated_at'] is None or s.price_updated_at > date_agg[key]['price_updated_at']):
-            date_agg[key]['price_updated_at'] = s.price_updated_at
 
     class SnapshotRow:
-        def __init__(self, d, tv, ua=None, pua=None):
+        def __init__(self, d, tv, ua=None):
             self.date = d
             self.total_value = tv
             self.updated_at = ua
-            self.price_updated_at = pua
 
     snapshots = [
-        SnapshotRow(d, agg['total_value'], agg['updated_at'], agg['price_updated_at'])
+        SnapshotRow(d, agg['total_value'], agg['updated_at'])
         for d, agg in sorted(date_agg.items())
     ]
     return _build_dashboard_response(snapshots)
@@ -510,19 +486,6 @@ async def get_total_holdings(
     holdings_out.sort(key=lambda x: x.weight, reverse=True)
 
     return TotalHoldingsResponse(holdings=holdings_out, total_value=grand_total)
-
-
-@router.post("/{portfolio_id}/refresh-snapshot", response_model=RefreshSnapshotResponse)
-async def refresh_snapshot(
-    portfolio_id: int,
-    user_id: int = Depends(get_current_user_id),
-    db: Session = Depends(get_db),
-):
-    portfolio = _get_portfolio_or_404(db, portfolio_id, user_id)
-    result = _refresh_snapshot(db, portfolio.id)
-    if result is None:
-        raise HTTPException(status_code=400, detail="가격 데이터가 없습니다. DAG 실행 후 다시 시도하세요.")
-    return RefreshSnapshotResponse(**result)
 
 
 @router.get("/{portfolio_id}/risk-analysis", response_model=RiskAnalysisResponse)
@@ -851,74 +814,6 @@ async def delete_target(
 
 
 # --- Snapshot Refresh ---
-
-def _refresh_snapshot(db: Session, portfolio_id: int) -> dict | None:
-    """최근 거래일 기준으로 스냅샷을 갱신(UPSERT)한다.
-
-    Returns:
-        dict with date, total_value, change_amount, change_rate or None if impossible.
-    """
-    price_service = PriceService(db)
-    snapshot_date = price_service.get_latest_price_date()
-    if not snapshot_date:
-        return None
-
-    holdings = db.query(Holding).filter(Holding.portfolio_id == portfolio_id).all()
-    if not holdings:
-        return None
-
-    tickers = [h.ticker for h in holdings if h.ticker != 'CASH']
-    prices = price_service.get_prices(tickers) if tickers else {}
-
-    total_value = Decimal('0')
-    for h in holdings:
-        if h.ticker == 'CASH':
-            total_value += Decimal(str(h.quantity))
-        elif h.ticker in prices:
-            total_value += Decimal(str(h.quantity)) * prices[h.ticker]
-
-    prev = db.query(PortfolioSnapshot).filter(
-        PortfolioSnapshot.portfolio_id == portfolio_id,
-        PortfolioSnapshot.date < snapshot_date,
-    ).order_by(PortfolioSnapshot.date.desc()).first()
-
-    prev_value = Decimal(str(prev.total_value)) if prev else None
-    change_amount = total_value - prev_value if prev_value is not None else None
-    change_rate = float(change_amount / prev_value * 100) if prev_value and prev_value != 0 else None
-
-    existing = db.query(PortfolioSnapshot).filter(
-        PortfolioSnapshot.portfolio_id == portfolio_id,
-        PortfolioSnapshot.date == snapshot_date,
-    ).first()
-
-    # 스냅샷 시점의 가격 수집 시간 기록
-    latest_price_updated = db.query(func.max(TickerPrice.updated_at)).scalar()
-
-    now = datetime.utcnow()
-    if existing:
-        existing.total_value = total_value
-        existing.prev_value = prev_value
-        existing.change_amount = change_amount
-        existing.change_rate = change_rate
-        existing.price_updated_at = latest_price_updated
-        existing.updated_at = now
-    else:
-        db.add(PortfolioSnapshot(
-            portfolio_id=portfolio_id, date=snapshot_date,
-            total_value=total_value, prev_value=prev_value,
-            change_amount=change_amount, change_rate=change_rate,
-            price_updated_at=latest_price_updated,
-            updated_at=now,
-        ))
-    db.commit()
-
-    return {
-        "date": snapshot_date.isoformat(),
-        "total_value": total_value,
-        "change_amount": change_amount,
-        "change_rate": change_rate,
-    }
-
 
 # --- Holdings ---
 

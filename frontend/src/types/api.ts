@@ -98,6 +98,7 @@ export interface Portfolio {
   daily_change_rate: number | null
   invested_amount: number | null
   investment_return_rate: number | null
+  snapshot_enabled: boolean
 }
 
 export interface TargetAllocationItem {
@@ -122,6 +123,7 @@ export interface PortfolioDetail {
   target_total_amount: number | null
   is_shared: boolean
   share_token: string | null
+  snapshot_enabled: boolean
   target_allocations: TargetAllocationItem[]
   holdings: HoldingItem[]
 }

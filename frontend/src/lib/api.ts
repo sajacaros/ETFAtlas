@@ -192,10 +192,6 @@ export const portfolioApi = {
     const { data } = await api.get<CalculationResult>(`/portfolios/${portfolioId}/calculate`)
     return data
   },
-  backfillSnapshots: async (portfolioId: number) => {
-    const { data } = await api.post<{ created: number }>(`/portfolios/${portfolioId}/backfill-snapshots`)
-    return data
-  },
   getDashboard: async (portfolioId: number) => {
     const { data } = await api.get<DashboardResponse>(`/portfolios/${portfolioId}/dashboard`)
     return data

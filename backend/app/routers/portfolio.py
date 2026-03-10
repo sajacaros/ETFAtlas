@@ -19,7 +19,6 @@ from ..schemas.portfolio import (
     PortfolioDetailResponse,
     DashboardResponse, DashboardSummary, DashboardSummaryItem, ChartDataPoint,
     TotalHoldingsResponse, TotalHoldingItem,
-    BackfillSnapshotResponse,
     PortfolioBatchUpdate,
     ShareToggleRequest, ShareToggleResponse,
     RiskAnalysisResponse, RiskChartPoint, DrawdownPoint,
@@ -107,6 +106,7 @@ async def get_portfolios(
             name=p.name,
             calculation_base=p.calculation_base,
             target_total_amount=p.target_total_amount,
+            snapshot_enabled=p.snapshot_enabled,
             current_value=cur_val,
             current_value_date=value_map[p.id].date.isoformat() if p.id in value_map else None,
             current_value_updated_at=latest_price_updated.isoformat() if latest_price_updated else None,
@@ -192,11 +192,74 @@ async def get_portfolio(
         name=portfolio.name,
         calculation_base=portfolio.calculation_base,
         target_total_amount=portfolio.target_total_amount,
+        snapshot_enabled=portfolio.snapshot_enabled,
         is_shared=portfolio.is_shared,
         share_token=str(portfolio.share_token) if portfolio.share_token else None,
         target_allocations=[TargetAllocationResponse.model_validate(t) for t in portfolio.target_allocations],
         holdings=[HoldingResponse.model_validate(h) for h in portfolio.holdings],
     )
+
+
+def _try_create_immediate_snapshot(db: Session, portfolio: Portfolio):
+    """snapshot_enabled 토글 ON 시 ticker_prices 기반으로 즉시 스냅샷 생성 시도."""
+    holdings = db.query(Holding).filter(Holding.portfolio_id == portfolio.id).all()
+    if not holdings:
+        return
+
+    tickers = [h.ticker for h in holdings if h.ticker != 'CASH']
+    if not tickers:
+        total_value = sum(Decimal(str(h.quantity)) for h in holdings if h.ticker == 'CASH')
+    else:
+        latest_date = db.query(func.max(TickerPrice.date)).scalar()
+        if not latest_date:
+            return
+
+        price_rows = db.query(TickerPrice).filter(
+            TickerPrice.ticker.in_(tickers),
+            TickerPrice.date == latest_date,
+        ).all()
+        price_map = {r.ticker: Decimal(str(r.price)) for r in price_rows}
+
+        if any(t not in price_map for t in tickers):
+            return
+
+        total_value = Decimal('0')
+        for h in holdings:
+            if h.ticker == 'CASH':
+                total_value += Decimal(str(h.quantity))
+            else:
+                total_value += Decimal(str(h.quantity)) * price_map[h.ticker]
+
+    today = date.today()
+    existing = db.query(PortfolioSnapshot).filter(
+        PortfolioSnapshot.portfolio_id == portfolio.id,
+        PortfolioSnapshot.date == today,
+    ).first()
+
+    if existing:
+        existing.total_value = total_value
+        existing.updated_at = datetime.utcnow()
+    else:
+        prev_snapshot = db.query(PortfolioSnapshot).filter(
+            PortfolioSnapshot.portfolio_id == portfolio.id,
+            PortfolioSnapshot.date < today,
+        ).order_by(PortfolioSnapshot.date.desc()).first()
+
+        prev_value = Decimal(str(prev_snapshot.total_value)) if prev_snapshot else None
+        change_amount = total_value - prev_value if prev_value else None
+        change_rate = float(change_amount / prev_value * 100) if prev_value and prev_value != 0 else None
+
+        snapshot = PortfolioSnapshot(
+            portfolio_id=portfolio.id,
+            date=today,
+            total_value=total_value,
+            prev_value=prev_value,
+            change_amount=change_amount,
+            change_rate=change_rate,
+        )
+        db.add(snapshot)
+
+    db.commit()
 
 
 @router.put("/{portfolio_id}", response_model=PortfolioResponse)
@@ -207,14 +270,26 @@ async def update_portfolio(
     db: Session = Depends(get_db)
 ):
     portfolio = _get_portfolio_or_404(db, portfolio_id, user_id)
+
+    snapshot_just_enabled = (
+        request.snapshot_enabled is True and not portfolio.snapshot_enabled
+    )
+
     if request.name is not None:
         portfolio.name = request.name
     if request.calculation_base is not None:
         portfolio.calculation_base = request.calculation_base
     if request.target_total_amount is not None:
         portfolio.target_total_amount = request.target_total_amount
+    if request.snapshot_enabled is not None:
+        portfolio.snapshot_enabled = request.snapshot_enabled
+
     db.commit()
     db.refresh(portfolio)
+
+    if snapshot_just_enabled:
+        _try_create_immediate_snapshot(db, portfolio)
+
     return portfolio
 
 
@@ -287,6 +362,7 @@ async def batch_update_portfolio(
         name=portfolio.name,
         calculation_base=portfolio.calculation_base,
         target_total_amount=portfolio.target_total_amount,
+        snapshot_enabled=portfolio.snapshot_enabled,
         is_shared=portfolio.is_shared,
         share_token=str(portfolio.share_token) if portfolio.share_token else None,
         target_allocations=[TargetAllocationResponse.model_validate(t) for t in portfolio.target_allocations],
@@ -648,102 +724,6 @@ async def get_portfolio_dashboard(
     return response
 
 
-# --- Backfill Snapshots ---
-
-def _get_latest_trading_date(db: Session) -> date | None:
-    """AGE Price 노드에서 최신 거래일을 조회한다."""
-    from ..services.graph_service import GraphService
-    graph_service = GraphService(db)
-    query = """
-    MATCH (e:ETF)-[:HAS_PRICE]->(p:Price)
-    RETURN {date: p.date}
-    ORDER BY p.date DESC
-    LIMIT 1
-    """
-    rows = graph_service.execute_cypher(query)
-    if rows:
-        parsed = GraphService.parse_agtype(rows[0]["result"])
-        date_str = parsed.get("date")
-        if date_str:
-            from datetime import date as dt_date
-            return dt_date.fromisoformat(date_str)
-    return None
-
-
-def _fetch_prices_by_yfinance(tickers: list[str], trading_date: date) -> dict[str, Decimal]:
-    """yfinance로 특정 거래일의 종가를 조회한다."""
-    import yfinance as yf
-    from datetime import timedelta
-
-    prices: dict[str, Decimal] = {}
-    # yfinance history는 end를 exclusive로 처리하므로 +1일
-    start = trading_date.isoformat()
-    end = (trading_date + timedelta(days=1)).isoformat()
-
-    for ticker in tickers:
-        try:
-            yf_ticker = f"{ticker}.KS"
-            hist = yf.Ticker(yf_ticker).history(start=start, end=end)
-            if not hist.empty and hist['Close'].iloc[0] > 0:
-                prices[ticker] = Decimal(str(int(hist['Close'].iloc[0])))
-        except Exception:
-            pass
-
-    return prices
-
-
-@router.post("/{portfolio_id}/backfill-snapshots", response_model=BackfillSnapshotResponse)
-async def backfill_snapshots(
-    portfolio_id: int,
-    user_id: int = Depends(get_current_user_id),
-    db: Session = Depends(get_db),
-):
-    portfolio = _get_portfolio_or_404(db, portfolio_id, user_id)
-
-    # 기존 스냅샷 존재 시 409
-    existing = db.query(PortfolioSnapshot).filter(
-        PortfolioSnapshot.portfolio_id == portfolio_id,
-    ).first()
-    if existing:
-        raise HTTPException(status_code=409, detail="Snapshots already exist for this portfolio")
-
-    # 보유 종목 조회
-    holdings = db.query(Holding).filter(Holding.portfolio_id == portfolio.id).all()
-    if not holdings:
-        raise HTTPException(status_code=400, detail="No holdings in this portfolio")
-
-    # 최신 거래일 조회
-    trading_date = _get_latest_trading_date(db)
-    if not trading_date:
-        raise HTTPException(status_code=400, detail="No trading date found")
-
-    # ETF 종목의 종가를 yfinance로 조회
-    tickers = [h.ticker for h in holdings if h.ticker != 'CASH']
-    prices = _fetch_prices_by_yfinance(tickers, trading_date) if tickers else {}
-
-    missing = [t for t in tickers if t not in prices]
-    if missing:
-        raise HTTPException(status_code=400, detail=f"Price not found for: {', '.join(missing)}")
-
-    # 평가금액 계산
-    total_value = Decimal('0')
-    for h in holdings:
-        if h.ticker == 'CASH':
-            total_value += Decimal(str(h.quantity))
-        else:
-            total_value += Decimal(str(h.quantity)) * prices[h.ticker]
-
-    snapshot = PortfolioSnapshot(
-        portfolio_id=portfolio.id,
-        date=trading_date,
-        total_value=total_value,
-    )
-    db.add(snapshot)
-    db.commit()
-
-    return BackfillSnapshotResponse(created=1)
-
-
 # --- Target Allocations ---
 
 @router.post("/{portfolio_id}/targets", response_model=TargetAllocationResponse, status_code=status.HTTP_201_CREATED)
@@ -812,8 +792,6 @@ async def delete_target(
     db.delete(allocation)
     db.commit()
 
-
-# --- Snapshot Refresh ---
 
 # --- Holdings ---
 

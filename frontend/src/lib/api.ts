@@ -196,14 +196,6 @@ export const portfolioApi = {
     const { data } = await api.post<{ created: number }>(`/portfolios/${portfolioId}/backfill-snapshots`)
     return data
   },
-  refreshSnapshot: async (portfolioId: number) => {
-    const { data } = await api.post<{ date: string; total_value: number; change_amount: number | null; change_rate: number | null }>(`/portfolios/${portfolioId}/refresh-snapshot`)
-    return data
-  },
-  refreshAllSnapshots: async () => {
-    const { data } = await api.post<{ refreshed: number; skipped: number }>('/portfolios/refresh-snapshots')
-    return data
-  },
   getDashboard: async (portfolioId: number) => {
     const { data } = await api.get<DashboardResponse>(`/portfolios/${portfolioId}/dashboard`)
     return data

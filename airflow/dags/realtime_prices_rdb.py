@@ -293,7 +293,8 @@ def update_snapshots(**context):
                     total_value = EXCLUDED.total_value,
                     prev_value = EXCLUDED.prev_value,
                     change_amount = EXCLUDED.change_amount,
-                    change_rate = EXCLUDED.change_rate
+                    change_rate = EXCLUDED.change_rate,
+                    updated_at = NOW()
             """, (pid, today_str, enc_total, enc_prev,
                   enc_change_amt, enc_change_rate))
             snapshot_count += 1

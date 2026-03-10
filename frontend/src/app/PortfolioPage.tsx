@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Trash2, ArrowLeft, AlertTriangle, RefreshCw, Pencil, Check, BarChart3, Eye, EyeOff, GripVertical, Camera, Share2 } from 'lucide-react'
+import { Plus, Trash2, ArrowLeft, AlertTriangle, RefreshCw, Pencil, Check, BarChart3, Eye, EyeOff, GripVertical, Share2 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -231,8 +231,6 @@ export default function PortfolioPage() {
   const [backfillLoading, setBackfillLoading] = useState<number | null>(null)
 
   // Snapshot refresh
-  const [snapshotLoading, setSnapshotLoading] = useState(false)
-  const [allSnapshotLoading, setAllSnapshotLoading] = useState(false)
 
   // Create dialog
   const [createOpen, setCreateOpen] = useState(false)
@@ -400,39 +398,6 @@ export default function PortfolioPage() {
       toast({ title: '포트폴리오가 삭제되었습니다' })
     } catch {
       toast({ title: '삭제 실패', variant: 'destructive' })
-    }
-  }
-
-  const handleRefreshSnapshot = async () => {
-    if (!selectedId) return
-    setSnapshotLoading(true)
-    try {
-      const result = await portfolioApi.refreshSnapshot(selectedId)
-      const data = await portfolioApi.getAll()
-      setPortfolios(data)
-      toast({ title: `스냅샷 적용 완료 (${result.date})` })
-    } catch (err: unknown) {
-      const message = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '스냅샷 적용 실패'
-      toast({ title: message, variant: 'destructive' })
-    } finally {
-      setSnapshotLoading(false)
-    }
-  }
-
-  const handleRefreshAllSnapshots = async () => {
-    setAllSnapshotLoading(true)
-    try {
-      const result = await portfolioApi.refreshAllSnapshots()
-      const data = await portfolioApi.getAll()
-      setPortfolios(data)
-      const { summary } = await portfolioApi.getTotalDashboard()
-      setTotalSummary(summary)
-      toast({ title: `스냅샷 적용 완료 (${result.refreshed}개 갱신, ${result.skipped}개 건너뜀)` })
-    } catch (err: unknown) {
-      const message = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '전체 스냅샷 적용 실패'
-      toast({ title: message, variant: 'destructive' })
-    } finally {
-      setAllSnapshotLoading(false)
     }
   }
 
@@ -767,15 +732,6 @@ export default function PortfolioPage() {
             {!isEditing && (
               <>
                 <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={snapshotLoading}
-                  onClick={handleRefreshSnapshot}
-                >
-                  <Camera className={`w-4 h-4 mr-1 ${snapshotLoading ? 'animate-pulse' : ''}`} />
-                  {snapshotLoading ? '적용 중...' : '스냅샷 적용'}
-                </Button>
-                <Button
                   variant={detail.is_shared ? 'default' : 'outline'}
                   size="sm"
                   onClick={async () => {
@@ -960,17 +916,6 @@ export default function PortfolioPage() {
             <BarChart3 className="w-4 h-4 mr-1" />
             통합 대시보드
           </Button>
-          {portfolios.length > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={allSnapshotLoading}
-              onClick={handleRefreshAllSnapshots}
-            >
-              <Camera className={`w-4 h-4 mr-1 ${allSnapshotLoading ? 'animate-pulse' : ''}`} />
-              {allSnapshotLoading ? '적용 중...' : '전체 스냅샷 적용'}
-            </Button>
-          )}
         </div>
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger asChild>
@@ -1038,20 +983,13 @@ export default function PortfolioPage() {
           <CardContent className="py-4">
             {totalSummary.snapshot_date && (
               <p className="text-xs text-muted-foreground mb-2">
-                스냅샷: {totalSummary.snapshot_date.slice(2).replace(/-/g, '/')}
                 {totalSummary.updated_at && (() => {
                   const d = new Date(totalSummary.updated_at + (totalSummary.updated_at.endsWith('Z') ? '' : 'Z'))
-                  const hh = String(d.getHours()).padStart(2, '0')
-                  const mi = String(d.getMinutes()).padStart(2, '0')
-                  return ` ${hh}:${mi}`
-                })()}
-                {totalSummary.price_updated_at && (() => {
-                  const d = new Date(totalSummary.price_updated_at + (totalSummary.price_updated_at.endsWith('Z') ? '' : 'Z'))
                   const mm = String(d.getMonth() + 1).padStart(2, '0')
                   const dd = String(d.getDate()).padStart(2, '0')
                   const hh = String(d.getHours()).padStart(2, '0')
                   const mi = String(d.getMinutes()).padStart(2, '0')
-                  return ` · 수집: ${mm}/${dd} ${hh}:${mi}`
+                  return `기준: ${mm}/${dd} ${hh}:${mi}`
                 })()}
               </p>
             )}

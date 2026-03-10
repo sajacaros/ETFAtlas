@@ -121,67 +121,66 @@ function SortablePortfolioCard({
         </div>
       </CardHeader>
       <CardContent>
-        {p.snapshot_enabled && p.current_value != null && p.current_value_date ? (
-          <div className="space-y-2">
-            {/* 평가금액 */}
-            <div>
-              <p className="text-xs text-muted-foreground">평가금액</p>
-              <p className="text-xl font-bold font-mono">
-                {fmn(p.current_value, amountVisible)}{amountVisible && '원'}
-              </p>
-            </div>
+        {(() => {
+          const hasData = p.snapshot_enabled && p.current_value != null && p.current_value_date
+          return (
+            <div className="space-y-2">
+              {/* 평가금액 */}
+              <div>
+                <p className="text-xs text-muted-foreground">평가금액</p>
+                <p className="text-xl font-bold font-mono">
+                  {hasData ? <>{fmn(p.current_value!, amountVisible)}{amountVisible && '원'}</> : '-'}
+                </p>
+              </div>
 
-            {/* 투자원금 / 수익금 */}
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <p className="text-xs text-muted-foreground">투자원금</p>
-                <p className="text-sm font-mono">
-                  {p.invested_amount == null ? '-' : !amountVisible ? '••••••' : `${formatNumber(p.invested_amount)}원`}
-                </p>
+              {/* 투자원금 / 수익금 */}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <p className="text-xs text-muted-foreground">투자원금</p>
+                  <p className="text-sm font-mono">
+                    {!hasData || p.invested_amount == null ? '-' : !amountVisible ? '••••••' : `${formatNumber(p.invested_amount)}원`}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">수익금</p>
+                  {!hasData || p.invested_amount == null ? (
+                    <p className="text-sm font-mono">-</p>
+                  ) : (() => {
+                    const profit = p.current_value! - p.invested_amount!
+                    return (
+                      <p className={`text-sm font-mono ${profit >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
+                        {amountVisible ? `${profit >= 0 ? '+' : ''}${formatNumber(profit)}원` : '••••••'}
+                      </p>
+                    )
+                  })()}
+                </div>
               </div>
-              <div>
-                <p className="text-xs text-muted-foreground">수익금</p>
-                {p.invested_amount == null ? (
-                  <p className="text-sm font-mono">-</p>
-                ) : (() => {
-                  const profit = p.current_value! - p.invested_amount!
-                  return (
-                    <p className={`text-sm font-mono ${profit >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
-                      {amountVisible ? `${profit >= 0 ? '+' : ''}${formatNumber(profit)}원` : '••••••'}
-                    </p>
-                  )
-                })()}
-              </div>
-            </div>
 
-            {/* 수익률 / 전일대비 */}
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <p className="text-xs text-muted-foreground">수익률</p>
-                <p className={`text-sm font-mono font-semibold ${p.investment_return_rate != null ? (p.investment_return_rate >= 0 ? 'text-red-500' : 'text-blue-500') : ''}`}>
-                  {p.investment_return_rate == null ? '-' : amountVisible ? `${p.investment_return_rate >= 0 ? '+' : ''}${p.investment_return_rate.toFixed(2)}%` : '••••••'}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">전일대비</p>
-                <p className={`text-sm font-mono font-semibold ${(p.daily_change_rate ?? 0) >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
-                  {amountVisible ? (
-                    <>
-                      {(p.daily_change_amount ?? 0) >= 0 ? '+' : ''}{formatNumber(p.daily_change_amount ?? 0)}원
-                      <span className="font-normal text-xs ml-0.5">
-                        ({(p.daily_change_rate ?? 0) >= 0 ? '+' : ''}{(p.daily_change_rate ?? 0).toFixed(2)}%)
-                      </span>
-                    </>
-                  ) : '••••••'}
-                </p>
+              {/* 수익률 / 전일대비 */}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <p className="text-xs text-muted-foreground">수익률</p>
+                  <p className={`text-sm font-mono font-semibold ${hasData && p.investment_return_rate != null ? (p.investment_return_rate >= 0 ? 'text-red-500' : 'text-blue-500') : ''}`}>
+                    {!hasData || p.investment_return_rate == null ? '-' : amountVisible ? `${p.investment_return_rate >= 0 ? '+' : ''}${p.investment_return_rate.toFixed(2)}%` : '••••••'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">전일대비</p>
+                  <p className={`text-sm font-mono font-semibold ${hasData ? ((p.daily_change_rate ?? 0) >= 0 ? 'text-red-500' : 'text-blue-500') : ''}`}>
+                    {!hasData ? '-' : amountVisible ? (
+                      <>
+                        {(p.daily_change_amount ?? 0) >= 0 ? '+' : ''}{formatNumber(p.daily_change_amount ?? 0)}원
+                        <span className="font-normal text-xs ml-0.5">
+                          ({(p.daily_change_rate ?? 0) >= 0 ? '+' : ''}{(p.daily_change_rate ?? 0).toFixed(2)}%)
+                        </span>
+                      </>
+                    ) : '••••••'}
+                  </p>
+                </div>
               </div>
             </div>
-          </div>
-        ) : p.snapshot_enabled ? (
-          <p className="text-sm text-muted-foreground">스냅샷 대기 중</p>
-        ) : (
-          <p className="text-sm text-muted-foreground">스냅샷 비활성</p>
-        )}
+          )
+        })()}
 
         <div className="flex items-center justify-between mt-3">
           <div className="flex items-center gap-2">

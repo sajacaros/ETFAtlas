@@ -117,7 +117,7 @@ docker compose up -d --build backend
 ### 테스트
 
 ```bash
-cd backend && pip install -r requirements.txt pytest && ENCRYPTION_KEY=00 pytest -q
+cd backend && pip install -r requirements-dev.txt && ENCRYPTION_KEY=00 pytest -q
 cd airflow && pytest -q tests   # requests, pytest 필요
 ```
 

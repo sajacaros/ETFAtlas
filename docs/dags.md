@@ -6,11 +6,10 @@ AGE 수집 공용 로직은 `airflow/dags/age_utils.py`에 모여 있다.
 
 | DAG ID | 파일 | 스케줄 | 저장소 | 역할 |
 |--------|------|--------|--------|------|
-| `age_sync_universe` | `sync_universe_age.py` | `30 8 * * 2-6` (화~토 08:30 KST) | AGE | 일일 증분 수집 (첫 실행 시 초기 적재) |
+| `age_sync_universe` | `sync_universe_age.py` | `30 8 * * 2-6` (화~토 08:30 KST) | AGE | 일일 증분 수집 |
 | `age_tagging` | `age_tagging.py` | `0 3 * * 6` (토 03:00 KST) | AGE | ETF 태그 전체 재구축 |
 | `rdb_sync_metadata` | `sync_metadata_rdb.py` | `30 8 * * 1-5` (평일 08:30 KST) | RDB | `etfs` 코드/이름 동기화 |
 | `rdb_realtime_prices` | `realtime_prices_rdb.py` | `*/10 9-15 * * 1-5` | RDB | 장중 현재가 + 포트폴리오 스냅샷 |
-| `rdb_backfill` | `backfill_prices_rdb.py` | 수동 | RDB | `ticker_prices` 종가 백필 |
 | `embed_code_examples` | `embed_code_examples.py` | 수동 | RDB (pgvector) | 챗봇 코드 예제 임베딩 |
 
 ### 데이터 소스
@@ -20,12 +19,12 @@ AGE 수집 공용 로직은 `airflow/dags/age_utils.py`에 모여 있다.
 | KRX Open API (`etf_bydd_trd`) | ETF 일별 시세, 시가총액, 순자산 → 유니버스/ETF 가격 | `KRX_AUTH_KEY` |
 | 한국투자증권 KIS Open API | ETF 현재 구성종목(HOLDS)·종목명, 주식 일봉, 영업일(기준 ETF 일봉), 휴장일 | `KIS_APP_KEY`, `KIS_APP_SECRET` (`KIS_BASE_URL` 선택) |
 | 네이버 증권 모바일 API (비공식) | 신규 ETF 보수율(`totalFee`) | 불필요 |
-| yfinance | 포트폴리오 보유 티커 현재가, `rdb_backfill` ETF 종가 이력 (RDB) | 불필요 |
+| yfinance | 포트폴리오 보유 티커 현재가 (RDB) | 불필요 |
 | LiteLLM 프록시 (OpenAI 호환) | ETF 태그 분류·질문 일반화(`LLM_MODEL`), 코드 예제 임베딩(`EMBEDDING_MODEL`) | `LLM_API_BASE`/`LLM_API_KEY`, `EMBEDDING_API_BASE`/`EMBEDDING_API_KEY` |
 
 ---
 
-## 1. age_sync_universe (일일 증분 + 초기 적재)
+## 1. age_sync_universe (일일 증분)
 
 마지막 수집일 이후 ~ 오늘까지 누락된 영업일의 데이터를 자동 수집한다.
 
@@ -52,7 +51,7 @@ start
 #### 1. fetch_trading_dates
 
 AGE에서 마지막 ETF Price 날짜(`get_last_collected_date`)를 조회하고, 그 다음날부터 오늘까지의 영업일 목록을 반환한다.
-AGE가 비어 있으면(첫 실행) `INITIAL_START_DATE = "20260102"`부터 오늘까지의 영업일을 반환해 초기 적재를 수행한다. 이때도 구성종목(HOLDS)은 최근 거래일 스냅샷 1회만 수집된다(KIS는 날짜 지정 불가). 별도 백필 DAG는 없다.
+AGE가 비어 있으면(첫 실행) 최근 10일 중 마지막 거래일 하루만 반환한다. 과거 이력 백필은 없다(필요해지면 그때 추가). 첫 실행에는 최근 거래일 하루만 수집하고 이후 매일 쌓인다.
 
 #### 2. sync_universe_and_prices
 
@@ -181,20 +180,14 @@ check_market_open → collect_prices → update_snapshots
 ```
 
 - `check_market_open` (ShortCircuit): KIS 국내휴장일조회(`CTCA0903R`, `opnd_yn`)로 오늘이 개장일인지 확인한다. KIS 요청에 따라 결과를 `market_calendar` 테이블에 하루 1회 캐시한다. 판정할 수 없으면(키 없음·오류) 수집을 진행한다. 장 마감(15:30) 이후 이미 갱신된 경우도 건너뛴다.
-- `collect_prices`: `holdings`의 고유 티커(CASH 제외) 현재가를 yfinance로 조회한다. 최근 3개월치가 부족한 티커는 과거 종가도 백필한다.
+- `collect_prices`: `holdings`의 고유 티커(CASH 제외) 현재가를 yfinance로 조회한다. 오늘 날짜 1건만 업서트한다(과거 종가 백필 없음).
 - `update_snapshots`: `snapshot_enabled = true`인 포트폴리오의 평가금액을 계산해 `portfolio_snapshots`에 저장한다 (금액 컬럼은 `ENCRYPTION_KEY`로 암호화).
 
 **저장:** RDB `ticker_prices`, `portfolio_snapshots`
 
 ---
 
-## 5. rdb_backfill (RDB)
-
-수동 트리거 전용. `etfs` 테이블의 전체 ETF에 대해 2025-01-01부터 현재까지 일별 종가를 yfinance 배치 다운로드(20개씩)로 `ticker_prices`에 백필한다.
-
----
-
-## 6. embed_code_examples (pgvector)
+## 5. embed_code_examples (pgvector)
 
 수동 트리거 전용. `code_examples`에서 `status='active'`(승인됨, 미임베딩) 레코드를 찾아 질문을 LLM(`LLM_MODEL`)으로 일반화한 뒤, `EMBEDDING_MODEL`(기본 `embedding-gemma-300m`, 768차원)로 임베딩을 생성하고 `status='embedded'`로 전환한다.
 
@@ -207,7 +200,7 @@ check_market_open → collect_prices → update_snapshots
 | 테이블 | DAG | 적재 태스크 | 용도 |
 |--------|-----|-------------|------|
 | `etfs` | rdb_sync_metadata | sync_etfs_to_rdb | pg_trgm 퍼지 검색, 포트폴리오 ETF 이름 조회 |
-| `ticker_prices` | rdb_realtime_prices, rdb_backfill | collect_prices, backfill_prices | 티커별 일별 가격 캐시 |
+| `ticker_prices` | rdb_realtime_prices | collect_prices | 티커별 일별 가격 캐시 |
 | `portfolio_snapshots` | rdb_realtime_prices | update_snapshots | 포트폴리오 일별 평가금액 이력 |
 | `collection_runs` | age_sync_universe | record_and_notify | 수집 완료 기록, 알림 트리거 |
 | `kis_tokens` | KIS를 호출하는 모든 DAG | - | KIS 접근 토큰 캐시 |

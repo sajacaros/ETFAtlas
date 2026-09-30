@@ -99,13 +99,13 @@ docker compose up -d --build
 
 Airflow UI에서 아래 DAG를 순서대로 수동 실행합니다:
 
-1. **`age_sync_universe`** - 첫 실행 시 초기 적재: ETF 유니버스·가격 이력(2026-01-02~), 현재 구성종목, 주식 가격 이력, 수익률
+1. **`age_sync_universe`** - ETF 유니버스·가격, 현재 구성종목, 주식 가격 (첫 실행은 최근 거래일 하루)
 2. **`rdb_sync_metadata`** - RDB ETF 메타데이터 동기화
 3. **`age_tagging`** - ETF 테마 태그 부여
 4. **`embed_code_examples`** - 챗봇 코드 예시 임베딩
 
 이후에는 `age_sync_universe`, `rdb_sync_metadata`, `rdb_realtime_prices`, `age_tagging`이 스케줄에 따라 자동 실행됩니다.
-구성종목은 KIS API 특성상 과거 날짜를 조회할 수 없어, 1주/1개월 비중 변화는 데이터가 쌓인 뒤부터 보입니다.
+과거 이력 백필은 하지 않습니다. 데이터는 첫 실행일부터 매일 쌓이므로 1주/1개월 수익률·비중 변화, 포트폴리오 추이 차트는 데이터가 쌓인 뒤부터 보입니다.
 
 ### 백엔드 코드 수정 시
 

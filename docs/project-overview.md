@@ -68,12 +68,13 @@
 
 | DAG | 스케줄(KST) | 역할 | 소스 |
 |---|---|---|---|
-| `age_sync_universe` | 화~토 08:30 | 증분(첫 실행 시 2026-01-02부터 초기 적재): 유니버스·가격 → 구성종목(최근 거래일) → 주식 가격·수익률·신규 ETF 태그 | KRX Open API, KIS, 네이버(보수율) |
+| `age_sync_universe` | 화~토 08:30 | 증분(첫 실행은 최근 거래일 하루): 유니버스·가격 → 구성종목(최근 거래일) → 주식 가격·수익률·신규 ETF 태그 | KRX Open API, KIS, 네이버(보수율) |
 | `rdb_sync_metadata` | 평일 08:30 | ETF 코드/이름 → RDB `etfs` | KRX Open API |
 | `rdb_realtime_prices` | 평일 9~15시 10분 간격 | 보유 티커 현재가 → `ticker_prices`, 스냅샷 갱신(`snapshot_enabled` 포트폴리오만) | yfinance, KIS(휴장일, `market_calendar`에 하루 1회 캐시) |
 | `age_tagging` | 토 03:00 | 룰 + LLM 기반 ETF 태그 재구성 | LLM 프록시 |
-| `rdb_backfill` | 수동 | ETF 가격 이력(2025-01~) → `ticker_prices` | yfinance |
 | `embed_code_examples` | 수동 | 코드 예시 질문 일반화 + 임베딩 | LLM 프록시 |
+
+**백필 없음 (2026-09 결정)**: 과거 이력 백필 DAG(`age_backfill`, `rdb_backfill`)와 실시간 DAG 안의 4개월 백필을 모두 제거했다. 첫 실행은 최근 거래일 하루만 수집하고 이후 매일 쌓인다. 1주/1개월 수익률, 포트폴리오 추이 차트, 리스크 분석은 데이터가 쌓인 만큼만 보인다. 필요해지면 그때 추가한다.
 
 ### 구성종목(HOLDS) — KIS Open API
 - `airflow/dags/kis_api_client.py`: `ETF 구성종목시세[국내주식-073]` (`FHKST121600C0`)
@@ -113,7 +114,7 @@
 ## 7. 알려진 이슈 / 다음 할 일
 
 - **보수율은 비공식 API**: KIS/KRX Open API 모두 ETF 총보수를 제공하지 않아 네이버 증권 모바일 API(`etfAnalysis.totalFee`)를 쓴다. 형식이 바뀌면 신규 ETF의 보수율만 비고 수집은 계속된다
-- **실시간 현재가는 yfinance**: `rdb_realtime_prices`, `rdb_backfill`은 아직 yfinance(`.KS`)를 쓴다. KIS 현재가/일봉으로 옮기면 외부 소스를 KIS·KRX로 통일할 수 있다
+- **실시간 현재가는 yfinance**: `rdb_realtime_prices`는 아직 yfinance(`.KS`)를 쓴다. KIS 현재가/일봉으로 옮기면 외부 소스를 KIS·KRX로 통일할 수 있다
 - **스키마 마이그레이션 도구 없음**: init SQL은 볼륨 최초 생성 시에만 실행된다. 스키마를 바꾸면 기존 DB에는 수동 ALTER가 필요. 운영 데이터가 쌓이기 전에 Alembic 도입 검토
 - **테스트 부족**: 인증(`backend/tests`)과 KIS 클라이언트(`airflow/tests`)만 있다. `domain/portfolio_calculation.py` 단위 테스트가 다음 우선순위
 - **대형 파일**: `routers/portfolio.py`, `frontend/src/app/PortfolioPage.tsx`(1000줄+), `airflow/dags/age_utils.py`(1200줄+) 분리 필요

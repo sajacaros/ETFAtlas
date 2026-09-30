@@ -12,7 +12,7 @@
 | 주식 일별 시세 | KIS Open API (국내주식기간별시세) | AGE `Price` |
 | 영업일 | KIS Open API (기준 ETF 069500 일봉) | - |
 | 개장일(휴장일) | KIS Open API (국내휴장일조회) | RDB `market_calendar` |
-| 포트폴리오 티커 현재가, ETF 종가 이력 백필 | yfinance | RDB `ticker_prices` |
+| 포트폴리오 티커 현재가 | yfinance | RDB `ticker_prices` |
 
 수집 흐름과 DAG 구조는 [dags.md](dags.md) 참고.
 
@@ -246,8 +246,6 @@ for code in set(current) | set(previous):
 
 ## 6. 초기 데이터 로드
 
-별도 백필 DAG는 없다. 신규 환경에서 `age_sync_universe` DAG을 처음 실행(수동 트리거 또는 스케줄)하면 AGE가 비어 있음을 감지해 초기 적재를 수행한다.
-
-- 유니버스/ETF 가격/주식 가격: 고정 시작일 `2026-01-02`부터 최근 영업일까지 일괄 수집
-- 구성종목(HOLDS): 현재 스냅샷 1회만 최근 거래일로 저장 (과거 백필 없음)
+백필 DAG는 없다. 신규 환경에서 `age_sync_universe` DAG을 처음 실행하면 AGE가 비어 있음을 감지해 **최근 거래일 하루**의 유니버스·ETF 가격·구성종목·주식 가격만 수집한다.
+이후 매일 증분으로 쌓이며, 1주/1개월 수익률·비중 변화는 데이터가 그만큼 쌓인 뒤부터 계산된다. 과거 이력이 필요해지면 그때 백필을 추가한다.
 - 이후 `age_sync_universe` DAG이 증분 수집을 이어받고, 태그는 `age_tagging` DAG으로 부여

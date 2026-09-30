@@ -457,8 +457,7 @@ $$) as (result agtype);</pre>
     <li><strong>실시간 가격 수집 (RDB)</strong> &mdash; 평일 장중 10분마다, <span class="tech">ShortCircuitOperator</span>로 장 오픈 여부 판단 후 현재가 수집 &rarr; 포트폴리오 스냅샷 갱신</li>
     <li><strong>주간 태깅 (AGE)</strong> &mdash; 토요일 새벽 3시, 규칙 기반 + 키워드 매칭 + LLM 분류 3단계 전략</li>
     <li><strong>RDB 메타데이터 동기화</strong> &mdash; 평일 오전 7시, KRX에서 ETF 코드/이름 동기화</li>
-    <li><strong>초기 적재 (AGE)</strong> &mdash; 수동 실행, 과거 거래일 가격 데이터를 한꺼번에 수집. 보유종목은 KIS API가 날짜 지정을 지원하지 않아 현재 스냅샷 1회만 수집</li>
-    <li><strong>코드 예제 임베딩 (RDB)</strong> &mdash; 수동 실행, 챗봇용 코드 예제를 LLM으로 질문 일반화 후 embedding-gemma-300m(768차원) 임베딩 생성 &rarr; pgvector 저장</li>
+        <li><strong>코드 예제 임베딩 (RDB)</strong> &mdash; 수동 실행, 챗봇용 코드 예제를 LLM으로 질문 일반화 후 embedding-gemma-300m(768차원) 임베딩 생성 &rarr; pgvector 저장</li>
   </ul>
 
   <h3 class="sub-title">Airflow에서 유용했던 기능들</h3>

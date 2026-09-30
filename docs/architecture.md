@@ -120,7 +120,7 @@
 ├── KIS Open API (국내주식기간별시세)       # 주식 일봉, 영업일(기준 ETF 069500 일봉)
 ├── KIS Open API (국내휴장일조회)           # 장중 현재가 DAG의 개장일 판정 (market_calendar 캐시)
 ├── 네이버 증권 모바일 API (비공식)         # 신규 ETF 보수율
-└── yfinance                                # 포트폴리오 티커 현재가, ETF 종가 이력 백필 (RDB)
+└── yfinance                                # 포트폴리오 티커 현재가 (RDB)
 
 구성종목 변화:
 └── 별도 Change 노드 없이, 두 날짜의 HOLDS 스냅샷을 조회 시점에 비교

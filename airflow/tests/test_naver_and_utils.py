@@ -49,3 +49,25 @@ def test_fetch_expense_ratio_failure_returns_none():
 def test_is_listed_security_code(code, expected):
     age_utils = pytest.importorskip("age_utils")  # psycopg2 필요
     assert age_utils.is_listed_security_code(code) is expected
+
+
+@pytest.mark.parametrize("name,ok", [
+    ("KODEX 200", True), ("TIGER 반도체", True),
+    ("KODEX 레버리지", False), ("TIGER 미국S&P500", False), ("KODEX 국고채3년", False),
+    ("TIGER 200커버드콜", False),
+])
+def test_passes_universe_name_filter(name, ok):
+    age_utils = pytest.importorskip("age_utils")
+    assert age_utils.passes_universe_name_filter(name) is ok
+
+
+def test_check_new_universe_candidates():
+    age_utils = pytest.importorskip("age_utils")
+    items = [
+        {"code": "069500", "name": "KODEX 200", "net_assets": 10**13},       # 기존
+        {"code": "091160", "name": "KODEX 반도체", "net_assets": 600 * 10**8},  # 신규
+        {"code": "091230", "name": "TIGER 반도체", "net_assets": 400 * 10**8},  # 500억 미만
+        {"code": "122630", "name": "KODEX 레버리지", "net_assets": 10**13},   # 제외 키워드
+    ]
+    result = age_utils.check_new_universe_candidates(items, {"069500"})
+    assert [c["code"] for c in result] == ["091160"]

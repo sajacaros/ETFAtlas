@@ -33,7 +33,7 @@
 - 구성종목 변화 감지 시 자동 알림
 
 ### 데이터 파이프라인 (Airflow)
-- **ETF 유니버스/가격** - KRX Open API 기반 일별 수집 (순자산 500억 이상 신규 편입)
+- **ETF 유니버스/가격** - KIS 종목 마스터 파일 + ETF 현재가·일봉으로 일별 수집 (순자산 500억 이상 국내 주식형 신규 편입)
 - **구성종목** - 한국투자증권 KIS Open API `ETF 구성종목시세`로 매일 스냅샷 수집 (과거 날짜 조회 불가 → 백필 없음)
 - **주식 가격 / 영업일 / 휴장일** - KIS Open API 일봉·국내휴장일조회
 - **보수율** - 네이버 증권(신규 ETF 편입 시)
@@ -50,14 +50,14 @@
 | Pipeline | Apache Airflow 3.3 (Python 3.14) |
 | Auth | ID/비밀번호 (bcrypt) + JWT |
 | AI | LiteLLM 프록시(OpenAI 호환) — `qwen38-27b`, `embedding-gemma-300m`(768d), pydantic-ai |
-| 외부 데이터 | KRX Open API, 한국투자증권 KIS Open API, 네이버 증권(보수율), yfinance(실시간 현재가) |
+| 외부 데이터 | 한국투자증권 KIS Open API, 네이버 증권(보수율), yfinance(실시간 현재가) |
 
 ## 실행 방법
 
 ### 사전 요구사항
 
 - Docker & Docker Compose
-- API 키: LLM 프록시 키, KRX Open API 인증키, 한국투자증권 KIS 실전투자 앱키
+- API 키: LLM 프록시 키(채팅/임베딩), 한국투자증권 KIS 실전투자 앱키
 
 ### 1. 환경변수 설정
 
@@ -73,8 +73,7 @@ cp .env.example .env
 | `ENCRYPTION_KEY` | 포트폴리오 금액 암호화 키 (32바이트 hex, 위와 같은 방법). **한 번 정하면 변경 금지** | O |
 | `LLM_API_KEY` | LiteLLM 프록시 채팅 모델 키 — 챗봇, ETF 태깅 (`LLM_API_BASE`, `LLM_MODEL`로 변경 가능) | O |
 | `EMBEDDING_API_KEY` | LiteLLM 프록시 임베딩 키 — 챗봇 예시 검색 (`EMBEDDING_API_BASE`, `EMBEDDING_MODEL`로 변경 가능) | O |
-| `KRX_AUTH_KEY` | KRX Open API 인증키 ([발급](https://openapi.krx.co.kr)) — 유니버스/ETF 가격 | O |
-| `KIS_APP_KEY` / `KIS_APP_SECRET` | 한국투자증권 Open API 앱키 ([발급](https://apiportal.koreainvestment.com)) — 구성종목, 주식 일봉, 영업일/휴장일 | O |
+| `KIS_APP_KEY` / `KIS_APP_SECRET` | 한국투자증권 Open API 앱키 ([발급](https://apiportal.koreainvestment.com)) — ETF 목록/시세/구성종목, 주식 일봉, 영업일/휴장일 | O |
 | `AIRFLOW_USER` / `AIRFLOW_PASSWORD` | Airflow UI 로그인 (기본 admin / admin) | - |
 | `AIRFLOW_FERNET_KEY`, `AIRFLOW_SECRET_KEY`, `AIRFLOW_JWT_SECRET` | Airflow 내부 암호화/서명 키 | - |
 | `DISCORD_WEBHOOK_URL` | 수집 완료 알림 | - |
@@ -138,7 +137,7 @@ etf-atlas/
 │   │   └── services/  # 비즈니스 로직 (챗봇, 그래프, 인증 ...)
 │   └── tests/
 ├── airflow/           # 데이터 파이프라인
-│   ├── dags/          # DAG 정의, KRX/KIS API 클라이언트, AGE 유틸
+│   ├── dags/          # DAG 정의, KIS/네이버 클라이언트, AGE 유틸
 │   └── tests/
 ├── docker/
 │   ├── db/            # PostgreSQL + AGE + pgvector 이미지, init SQL

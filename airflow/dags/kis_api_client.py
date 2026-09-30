@@ -5,14 +5,18 @@
   날짜 지정 파라미터가 없어 "호출 시점"의 구성종목만 조회 가능 (과거 백필 불가)
 - 국내주식기간별시세[v1_국내주식-016] (FHKST03010100): 종목/ETF 일봉 (호출당 최대 100건)
 - 국내휴장일조회 (CTCA0903R): 개장일 여부 (KIS 요청: 가급적 1일 1회 호출)
+- ETF/ETN 현재가[v1_국내주식-068] (FHPST02400000): NAV, 순자산총액, 상장주수 (현재 시점)
+- 종목 마스터 파일(kospi_code.mst, 인증 불필요): 전체 ETF 코드/이름 목록
 
 접근 토큰은 24시간 유효, 발급은 1분 1회 제한 → 토큰 캐시(kis_tokens 테이블) 사용
 """
 
 import hashlib
+import io
 import logging
 import threading
 import time
+import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Callable, Optional, Protocol
@@ -22,6 +26,29 @@ import requests
 log = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://openapi.koreainvestment.com:9443"  # 실전투자
+KOSPI_MASTER_URL = "https://new.real.download.dws.co.kr/common/master/kospi_code.mst.zip"
+MASTER_TAIL_LEN = 227   # 행 끝 고정폭 영역(그룹코드부터) 길이 — 공식 샘플 kis_kospi_code_mst.py 기준
+ETF_GROUP_CODE = "EF"
+
+
+def fetch_etf_master(session: Optional[requests.Session] = None) -> list[tuple[str, str]]:
+    """KIS 종목 마스터 파일에서 ETF(그룹코드 EF) (단축코드, 한글명) 목록을 반환한다. 인증 불필요."""
+    http = session or requests
+    resp = http.get(KOSPI_MASTER_URL, timeout=60)
+    resp.raise_for_status()
+    with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+        text = zf.read(zf.namelist()[0]).decode("cp949")
+    etfs = []
+    for row in text.splitlines():
+        if len(row) <= MASTER_TAIL_LEN:
+            continue
+        head, tail = row[:-MASTER_TAIL_LEN], row[-MASTER_TAIL_LEN:]
+        if tail[:2] != ETF_GROUP_CODE:
+            continue
+        code, name = head[0:9].strip(), head[21:].strip()
+        if code and name:
+            etfs.append((code, name))
+    return etfs
 
 
 @dataclass
@@ -49,6 +76,21 @@ class DailyBar:
     close: int          # 종가 (stck_clpr)
     volume: int         # 누적 거래량 (acml_vol)
     change_rate: float  # 전일 대비율 % (prdy_vrss로 계산)
+    trade_value: int = 0  # 누적 거래대금 (acml_tr_pbmn)
+
+
+@dataclass
+class ETFSnapshot:
+    """ETF/ETN 현재가 (호출 시점 값)"""
+    code: str
+    price: int          # 현재가 (stck_prpr)
+    nav: float          # NAV (nav, 없으면 prdy_last_nav)
+    net_assets: int     # 순자산총액 원 단위 (etf_ntas_ttam, 단위 정규화)
+    listed_shares: int  # 상장주수 (lstn_stcn)
+
+    @property
+    def market_cap(self) -> int:
+        return self.price * self.listed_shares
 
 
 class TokenCache(Protocol):
@@ -294,6 +336,30 @@ class KISApiClient:
             close=close,
             volume=self._parse_int(r.get("acml_vol")),
             change_rate=round(diff / prev * 100, 2) if prev > 0 else 0.0,
+            trade_value=self._parse_int(r.get("acml_tr_pbmn")),
+        )
+
+    # 순자산총액이 이 값보다 작으면 억원 단위로 간주 (1억원 미만 ETF는 없음)
+    NET_ASSETS_EOK_THRESHOLD = 100_000_000
+
+    def get_etf_snapshot(self, code: str) -> ETFSnapshot:
+        """ETF/ETN 현재가 조회 — NAV/순자산/상장주수 (호출 시점)."""
+        data = self._get(
+            "/uapi/etfetn/v1/quotations/inquire-price",
+            tr_id="FHPST02400000",
+            params={"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code},
+        )
+        out = data.get("output") or {}
+        net_assets = self._parse_int(out.get("etf_ntas_ttam"))
+        if 0 < net_assets < self.NET_ASSETS_EOK_THRESHOLD:
+            net_assets *= 100_000_000  # 억원 → 원
+        nav = self._parse_float(out.get("nav")) or self._parse_float(out.get("prdy_last_nav"))
+        return ETFSnapshot(
+            code=code,
+            price=self._parse_int(out.get("stck_prpr")),
+            nav=nav,
+            net_assets=net_assets,
+            listed_shares=self._parse_int(out.get("lstn_stcn")),
         )
 
     def is_market_open(self, date: str) -> Optional[bool]:

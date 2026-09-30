@@ -28,7 +28,7 @@ class ETFService:
                         WHEN REPLACE(e.name, ' ', '') ILIKE :like_stripped THEN 6
                         ELSE 7
                     END,
-                    e.net_assets DESC NULLS LAST
+                    e.name
                 LIMIT :lim
             """),
             {

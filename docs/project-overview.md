@@ -68,8 +68,8 @@
 
 | DAG | 스케줄(KST) | 역할 | 소스 |
 |---|---|---|---|
-| `age_sync_universe` | 화~토 08:30 | 증분(첫 실행은 최근 거래일 하루): 유니버스·가격 → 구성종목(최근 거래일) → 주식 가격·수익률·신규 ETF 태그 | KRX Open API, KIS, 네이버(보수율) |
-| `rdb_sync_metadata` | 평일 08:30 | ETF 코드/이름 → RDB `etfs` | KRX Open API |
+| `age_sync_universe` | 화~토 08:30 | 증분(첫 실행은 최근 거래일 하루): 유니버스·가격 → 구성종목(최근 거래일) → 주식 가격·수익률·신규 ETF 태그 | KIS, 네이버(보수율) |
+| `rdb_sync_metadata` | 평일 08:30 | ETF 코드/이름 → RDB `etfs` | KIS 종목 마스터 파일(인증 불필요) |
 | `rdb_realtime_prices` | 평일 9~15시 10분 간격 | 보유 티커 현재가 → `ticker_prices`, 스냅샷 갱신(`snapshot_enabled` 포트폴리오만) | yfinance, KIS(휴장일, `market_calendar`에 하루 1회 캐시) |
 | `age_tagging` | 토 03:00 | 룰 + LLM 기반 ETF 태그 재구성 | LLM 프록시 |
 | `embed_code_examples` | 수동 | 코드 예시 질문 일반화 + 임베딩 | LLM 프록시 |
@@ -83,6 +83,13 @@
 - `shares`는 API에 수량 필드가 없어 `평가금액(etf_vltn_amt) / 현재가(stck_prpr)`로 역산한 추정치
 - 토큰(24h 유효, 발급 1분 1회 제한)은 `kis_tokens`에 캐시, 호출 간 최소 간격 0.06s, `EGW00201`(초당 초과) 재시도, `EGW00123`(토큰 만료) 1회 재발급
 - 실전투자 앱키 필요(`KIS_APP_KEY`, `KIS_APP_SECRET`)
+
+### ETF 목록·유니버스·가격 — KIS (KRX Open API 제거, 2026-09)
+- 목록: KIS 종목 마스터 파일(`kospi_code.mst.zip`, 인증 불필요)의 ETF 그룹(`EF`, 약 1,175개)
+- 신규 편입: 기존 유니버스 + 이름 필터(해외·레버리지·채권·원자재 등 제외) 통과 ETF만 `ETF/ETN 현재가`를 호출해 순자산 500억 이상이면 추가
+- 가격: OHLCV·거래대금은 KIS 일봉(날짜 확정), NAV·순자산·시가총액은 현재가 API라 최근 거래일에만 기록
+- 순자산(`etf_ntas_ttam`) 단위가 문서화되어 있지 않아 1억 미만 값은 억원으로 간주해 환산한다 — 실제 키로 확인 필요
+- 키가 KIS 하나로 줄어든 대신 호출 수는 하루 수백 회(현재가 + 일봉)로 늘었다
 
 ### 그 밖의 KIS 사용처
 - 영업일: 기준 ETF(069500) 일봉 날짜 (`국내주식기간별시세`, 호출당 최대 100일)
@@ -107,6 +114,8 @@
 | AI | OpenAI 직접 호출(gpt-4.1-mini, text-embedding-3-small 1536d), smolagents CodeAgent, langchain, litellm | LiteLLM 프록시(qwen38-27b, embedding-gemma-300m 768d), pydantic-ai tool-calling, openai SDK |
 | 구성종목 | pykrx KRX 스크래핑(날짜별) | KIS Open API(현재 스냅샷), 과거 백필 제거 |
 | 기타 시장 데이터 | pykrx (영업일, 주식 일봉, 장 운영 체크, 보수율 — KRX 로그인 필요, pandas<3 고정) | KIS 일봉/휴장일, 네이버 증권(보수율). pykrx 제거, Airflow 공식 constraints 적용 |
+| ETF 목록·유니버스·가격 | KRX Open API (`KRX_AUTH_KEY`, 날짜당 1회 호출) | KIS 종목 마스터 파일 + ETF 현재가·일봉 (KIS 키 하나로 통일) |
+| 백필 | `age_backfill`, `rdb_backfill`, 실시간 DAG 4개월 백필 | 없음 (첫 실행은 최근 거래일 하루) |
 | 기타 | python-jose, passlib | PyJWT, bcrypt, 인증/KIS 단위 테스트 추가 |
 
 이전 기능별 설계 문서(`docs/plans/*`, 2026-02~03)는 모두 구현 완료되어 삭제했다(git 이력에 남아 있음): 실시간 가격 수집, 포트폴리오 드래그 정렬, few-shot Cypher→Python 코드 예시, 포트폴리오 데이터 암호화, 포트폴리오 공유, 가격 백필, 리스크 분석, PDF 다운로드, `snapshot_enabled` 토글.
@@ -114,7 +123,7 @@
 ## 7. 알려진 이슈 / 다음 할 일
 
 - **보수율은 비공식 API**: KIS/KRX Open API 모두 ETF 총보수를 제공하지 않아 네이버 증권 모바일 API(`etfAnalysis.totalFee`)를 쓴다. 형식이 바뀌면 신규 ETF의 보수율만 비고 수집은 계속된다
-- **실시간 현재가는 yfinance**: `rdb_realtime_prices`는 아직 yfinance(`.KS`)를 쓴다. KIS 현재가/일봉으로 옮기면 외부 소스를 KIS·KRX로 통일할 수 있다
+- **실시간 현재가는 yfinance**: `rdb_realtime_prices`는 아직 yfinance(`.KS`)를 쓴다. KIS 현재가로 옮기면 시세 소스를 KIS 하나로 통일할 수 있다
 - **스키마 마이그레이션 도구 없음**: init SQL은 볼륨 최초 생성 시에만 실행된다. 스키마를 바꾸면 기존 DB에는 수동 ALTER가 필요. 운영 데이터가 쌓이기 전에 Alembic 도입 검토
 - **테스트 부족**: 인증(`backend/tests`)과 KIS 클라이언트(`airflow/tests`)만 있다. `domain/portfolio_calculation.py` 단위 테스트가 다음 우선순위
 - **대형 파일**: `routers/portfolio.py`, `frontend/src/app/PortfolioPage.tsx`(1000줄+), `airflow/dags/age_utils.py`(1200줄+) 분리 필요

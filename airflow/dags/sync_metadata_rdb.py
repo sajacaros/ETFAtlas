@@ -1,6 +1,6 @@
 """
 ETF Metadata RDB Sync DAG (경량)
-- KRX API에서 전체 ETF 목록 수집
+- KIS 종목 마스터 파일에서 전체 ETF 목록 수집
 - RDB etfs 테이블에 code + name만 동기화 (포트폴리오 비유니버스 ETF 이름 조회용)
 
 ETF 상세 메타데이터(net_assets, expense_ratio, issuer 등)는 AGE에서 관리.
@@ -72,48 +72,25 @@ def get_db_connection():
     return conn
 
 
-def fetch_krx_data(**context):
-    """KRX API에서 전체 ETF 목록 조회 (code + name만)"""
-    import os
-    from krx_api_client import KRXApiClient
-
-    # Airflow 3: 수동 실행 시 logical_date가 없을 수 있음 → 현재 시각 기준 (아래에서 최근 거래일로 역추적)
-    logical_date = context.get('logical_date') or datetime.now()
-    date = logical_date.strftime('%Y%m%d')
-
-    auth_key = os.environ.get('KRX_AUTH_KEY', '')
-    if not auth_key:
-        log.warning("KRX_AUTH_KEY not set, cannot fetch KRX data")
-        return []
+def fetch_etf_master(**context):
+    """KIS 종목 마스터 파일에서 전체 ETF 목록 조회 (code + name, 인증 불필요)"""
+    from kis_api_client import fetch_etf_master as fetch
 
     try:
-        client = KRXApiClient(auth_key)
-
-        base_date = datetime.strptime(date, '%Y%m%d')
-        for i in range(7):
-            check_date = (base_date - timedelta(days=i)).strftime('%Y%m%d')
-            result = client.get_etf_daily_trading(check_date)
-            if result:
-                if i > 0:
-                    log.info(f"No data for {date}, using latest trading day: {check_date}")
-                return [
-                    {'code': item.code, 'name': item.name}
-                    for item in result
-                ]
-
-        log.warning(f"No trading data found within 7 days from {date}")
-        return []
+        etfs = fetch()
+        log.info(f"Fetched {len(etfs)} ETFs from KIS master file")
+        return [{'code': code, 'name': name} for code, name in etfs]
     except Exception as e:
-        log.error(f"Failed to get KRX daily data: {e}")
+        log.error(f"Failed to fetch KIS master file: {e}")
         return []
 
 
 def sync_etfs_to_rdb(**context):
     """전체 ETF의 code + name을 etfs RDB 테이블에 동기화"""
     ti = context['ti']
-    krx_data_dicts = ti.xcom_pull(task_ids='fetch_krx_data')
-    if not krx_data_dicts:
-        log.warning("No KRX data available for RDB sync")
+    etf_dicts = ti.xcom_pull(task_ids='fetch_etf_master')
+    if not etf_dicts:
+        log.warning("No ETF master data available for RDB sync")
         return
 
     conn = get_db_connection()
@@ -121,7 +98,7 @@ def sync_etfs_to_rdb(**context):
     success_count = 0
 
     try:
-        for item in krx_data_dicts:
+        for item in etf_dicts:
             try:
                 cur.execute("""
                     INSERT INTO etfs (code, name, updated_at)
@@ -147,9 +124,9 @@ def sync_etfs_to_rdb(**context):
 start = EmptyOperator(task_id='start', dag=dag)
 end = EmptyOperator(task_id='end', dag=dag)
 
-task_fetch_krx_data = PythonOperator(
-    task_id='fetch_krx_data',
-    python_callable=fetch_krx_data,
+task_fetch_etf_master = PythonOperator(
+    task_id='fetch_etf_master',
+    python_callable=fetch_etf_master,
     dag=dag,
 )
 
@@ -160,4 +137,4 @@ task_sync_etfs_to_rdb = PythonOperator(
 )
 
 # Define dependencies
-start >> task_fetch_krx_data >> task_sync_etfs_to_rdb >> end
+start >> task_fetch_etf_master >> task_sync_etfs_to_rdb >> end

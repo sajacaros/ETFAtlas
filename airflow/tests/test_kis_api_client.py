@@ -158,3 +158,50 @@ def test_is_market_open():
     assert client.is_market_open("20261005") is True
     assert client.is_market_open("20261004") is None
     assert client.session.get_calls[0][1]["tr_id"] == "CTCA0903R"
+
+
+def _master_row(code, name, group):
+    head = code.ljust(9) + ("KR7" + code + "000").ljust(12) + name
+    tail = group + " " * 225
+    return head + tail
+
+
+def test_fetch_etf_master_filters_etf_group():
+    import io
+    import zipfile
+    import kis_api_client
+
+    rows = [_master_row("069500", "KODEX 200", "EF"), _master_row("005930", "삼성전자", "ST"),
+            _master_row("0131V0", "1Q 미국우주항공테크", "EF")]
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("kospi_code.mst", "\n".join(rows).encode("cp949"))
+
+    class Session:
+        def get(self, url, timeout):
+            assert url == kis_api_client.KOSPI_MASTER_URL
+            resp = FakeResponse(None)
+            resp.content = buf.getvalue()
+            return resp
+
+    assert kis_api_client.fetch_etf_master(Session()) == [("069500", "KODEX 200"), ("0131V0", "1Q 미국우주항공테크")]
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("123456", 123456 * 100_000_000),          # 억원 단위로 온 경우
+    ("12345600000000", 12345600000000),        # 원 단위로 온 경우
+])
+def test_get_etf_snapshot_normalizes_net_assets(raw, expected):
+    client = make_client([{"rt_cd": "0", "output": {
+        "stck_prpr": "35000", "nav": "35012.5", "etf_ntas_ttam": raw, "lstn_stcn": "1000"}}])
+    snap = client.get_etf_snapshot("069500")
+    assert snap.net_assets == expected
+    assert snap.nav == 35012.5
+    assert snap.market_cap == 35_000_000
+    assert client.session.get_calls[0][1]["tr_id"] == "FHPST02400000"
+
+
+def test_get_etf_snapshot_nav_fallback():
+    client = make_client([{"rt_cd": "0", "output": {
+        "stck_prpr": "100", "nav": "0", "prdy_last_nav": "99.5", "etf_ntas_ttam": "600", "lstn_stcn": "1"}}])
+    assert client.get_etf_snapshot("069500").nav == 99.5

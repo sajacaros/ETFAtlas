@@ -189,59 +189,6 @@ def execute_cypher_batch(cur, cypher_template: str, items: list[dict],
 # KRX 데이터 조회
 # ──────────────────────────────────────────────
 
-def get_krx_daily_data(date: str) -> tuple[list, str]:
-    """KRX Open API에서 ETF 일별매매정보 조회 (최근 거래일 자동 탐색)
-
-    Args:
-        date: 기준일자 (YYYYMMDD 형식)
-
-    Returns:
-        tuple: (ETFDailyData 리스트, 실제 조회된 날짜), 실패 시 (빈 리스트, 빈 문자열)
-    """
-    from datetime import datetime, timedelta
-    from krx_api_client import KRXApiClient
-
-    auth_key = os.environ.get('KRX_AUTH_KEY', '')
-    if not auth_key:
-        log.warning("KRX_AUTH_KEY not set, cannot fetch KRX data")
-        return [], ''
-
-    try:
-        client = KRXApiClient(auth_key)
-
-        base_date = datetime.strptime(date, '%Y%m%d')
-        for i in range(7):
-            check_date = (base_date - timedelta(days=i)).strftime('%Y%m%d')
-            result = client.get_etf_daily_trading(check_date)
-            if result:
-                if i > 0:
-                    log.info(f"No data for {date}, using latest trading day: {check_date}")
-                return result, check_date
-
-        log.warning(f"No trading data found within 7 days from {date}")
-        return [], ''
-    except Exception as e:
-        log.error(f"Failed to get KRX daily data: {e}")
-        return [], ''
-
-
-def _get_krx_data_for_exact_date(date: str) -> list:
-    """KRX API에서 정확히 해당 날짜의 데이터만 조회 (거래일 탐색 없음)"""
-    from krx_api_client import KRXApiClient
-
-    auth_key = os.environ.get('KRX_AUTH_KEY', '')
-    if not auth_key:
-        return []
-
-    try:
-        client = KRXApiClient(auth_key)
-        result = client.get_etf_daily_trading(date)
-        return result if result else []
-    except Exception as e:
-        log.warning(f"Failed to get KRX data for {date}: {e}")
-        return []
-
-
 # ──────────────────────────────────────────────
 # 유니버스 필터링
 # ──────────────────────────────────────────────
@@ -255,65 +202,60 @@ def is_listed_security_code(code: str) -> bool:
     return bool(LISTED_CODE_RE.match(code)) and code not in CASH_CODES
 
 
-def check_new_universe_candidates(krx_data_dicts: list, existing_codes: set) -> list:
-    """새로운 유니버스 후보 ETF 확인
+# 유니버스 조건: 국내 주식형 ETF, 순자산 500억 이상
+FOREIGN_NAME_KEYWORDS = [
+    '미국', '중국', '차이나', '일본', '인도', '베트남', '대만', '유럽', '독일',
+    '글로벌', 'Global', 'China', 'Japan', 'India', ' US', 'USA',
+    'S&P', 'NASDAQ', '나스닥', '다우존스',
+    'MSCI', '선진국', '신흥국', '아시아',
+    '테슬라', 'Tesla', '엔비디아', 'NVIDIA', '구글', 'Google',
+    '애플', 'Apple', '아마존', 'Amazon', '팔란티어', 'Palantir',
+    '브로드컴', 'Broadcom', '알리바바', 'Alibaba', '버크셔', 'Berkshire',
+    '월드', 'World', '국제금', '금액티브',
+]
 
-    조건:
-    - 기존 유니버스에 없음
-    - 순자산 500억 이상
-    - 제외 키워드 미포함
-    - 해외 관련 키워드 미포함
-    """
-    FOREIGN_NAME_KEYWORDS = [
-        '미국', '중국', '차이나', '일본', '인도', '베트남', '대만', '유럽', '독일',
-        '글로벌', 'Global', 'China', 'Japan', 'India', ' US', 'USA',
-        'S&P', 'NASDAQ', '나스닥', '다우존스',
-        'MSCI', '선진국', '신흥국', '아시아',
-        '테슬라', 'Tesla', '엔비디아', 'NVIDIA', '구글', 'Google',
-        '애플', 'Apple', '아마존', 'Amazon', '팔란티어', 'Palantir',
-        '브로드컴', 'Broadcom', '알리바바', 'Alibaba', '버크셔', 'Berkshire',
-        '월드', 'World', '국제금', '금액티브',
-    ]
+EXCLUDE_KEYWORDS = [
+    '레버리지', '인버스', '2X', '곱버스', '2배', '3배',
+    '합성', '선물', '파생', 'synthetic', '혼합',
+    '커버드콜', '커버드', 'covered', '프리미엄',
+    '채권', '국채', '회사채', '크레딧', '금리', '국공채', '단기채', '장기채',
+    '금융채', '특수채', 'TDF', '전단채', '은행채',
+    '국고채', 'TRF',
+    '금현물', '골드', 'gold', '은현물', '실버', 'silver', '원유', 'WTI', '구리', '원자재',
+    '달러', '엔화', '유로', '원화', '통화', 'USD', 'JPY', 'EUR',
+    '머니마켓', 'CD', '단기', 'MMF', 'CMA',
+    '리츠', 'REITs', 'REIT',
+]
 
-    EXCLUDE_KEYWORDS = [
-        '레버리지', '인버스', '2X', '곱버스', '2배', '3배',
-        '합성', '선물', '파생', 'synthetic', '혼합',
-        '커버드콜', '커버드', 'covered', '프리미엄',
-        '채권', '국채', '회사채', '크레딧', '금리', '국공채', '단기채', '장기채',
-        '금융채', '특수채', 'TDF', '전단채', '은행채',
-        '국고채', 'TRF',
-        '금현물', '골드', 'gold', '은현물', '실버', 'silver', '원유', 'WTI', '구리', '원자재',
-        '달러', '엔화', '유로', '원화', '통화', 'USD', 'JPY', 'EUR',
-        '머니마켓', 'CD', '단기', 'MMF', 'CMA',
-        '리츠', 'REITs', 'REIT',
-    ]
+MIN_AUM = 500 * 100_000_000  # 500억
 
-    MIN_AUM = 500 * 100_000_000  # 500억
 
+def passes_universe_name_filter(name: str) -> bool:
+    """제외 키워드(레버리지/채권/원자재 등)·해외 키워드가 없으면 True. API 호출 전 1차 필터."""
+    name_lower = name.lower()
+    if any(kw.lower() in name_lower for kw in EXCLUDE_KEYWORDS):
+        return False
+    if any(kw.lower() in name_lower or kw in name for kw in FOREIGN_NAME_KEYWORDS):
+        return False
+    return True
+
+
+def check_new_universe_candidates(etf_dicts: list, existing_codes: set) -> list:
+    """새로운 유니버스 후보 ETF 확인 (기존 유니버스에 없음 + 이름 필터 통과 + 순자산 500억 이상)"""
     candidates = []
-    for item in krx_data_dicts:
-        code = item['code']
-        if code in existing_codes:
+    for item in etf_dicts:
+        if item['code'] in existing_codes:
             continue
-
-        name = item['name']
-        name_lower = name.lower()
-        net_assets = item.get('net_assets', 0)
-
-        if net_assets < MIN_AUM:
+        if item.get('net_assets', 0) < MIN_AUM:
             continue
-        if any(kw.lower() in name_lower for kw in EXCLUDE_KEYWORDS):
+        if not passes_universe_name_filter(item['name']):
             continue
-        if any(kw.lower() in name_lower or kw in name for kw in FOREIGN_NAME_KEYWORDS):
-            continue
-
         candidates.append({
-            'code': code,
-            'name': name,
+            'code': item['code'],
+            'name': item['name'],
             'index_name': '',
-            'net_assets': net_assets
+            'net_assets': item['net_assets'],
         })
-
     return candidates
 
 
@@ -466,151 +408,171 @@ def get_etf_names_from_age() -> dict[str, str]:
 # ──────────────────────────────────────────────
 
 def collect_universe_and_prices(dates: list[str]) -> tuple[set[str], list[dict], list[str]]:
-    """날짜별 KRX 데이터 → ETF 노드 + 메타데이터(보수율/운용사) + Price 노드 생성.
-    보수율은 신규 ETF에 대해서만 네이버 증권에서 조회한다.
+    """KIS 기반 ETF 유니버스 갱신 + ETF Price 노드 생성.
+
+    - 목록: KIS 종목 마스터 파일(ETF 그룹) — 인증 불필요
+    - 신규 편입: 이름 필터 통과 후보만 ETF 현재가(순자산)를 조회해 500억 이상이면 추가
+    - 가격: 날짜별 OHLCV·거래대금은 KIS 일봉, NAV/순자산/시가총액은 ETF 현재가(최근 거래일에만)
+    - 보수율: 신규 ETF만 네이버 증권에서 조회
+
+    Args:
+        dates: 수집할 영업일 목록 (YYYYMMDD, get_business_days 결과)
 
     Returns:
         (universe_codes, new_etfs_list, actual_dates)
     """
+    from kis_api_client import fetch_etf_master
     from naver_client import fetch_expense_ratios
 
     if not dates:
         return get_etf_codes_from_age(), [], []
 
+    kis = get_kis_client()
+    if kis is None:
+        log.warning("Skipping universe/prices (KIS credentials missing)")
+        return get_etf_codes_from_age(), [], []
+
+    dates = sorted(dates)
+    latest = dates[-1]
     existing_codes = get_etf_codes_from_age()
     all_new_etfs = []
-    actual_dates = []  # KRX API가 반환한 실제 거래일
+
+    # ── 1. 현재 시점 스냅샷: 기존 유니버스 + 이름 필터 통과 후보 ──
+    master = dict(fetch_etf_master())
+    log.info(f"ETF master: {len(master)} ETFs")
+    targets = [c for c in master if c in existing_codes or passes_universe_name_filter(master[c])]
+    snapshots = {}
+    for code in targets:
+        try:
+            snapshots[code] = kis.get_etf_snapshot(code)
+        except Exception as e:
+            log.warning(f"Failed ETF snapshot for {code}: {e}")
+    log.info(f"ETF snapshots: {len(snapshots)}/{len(targets)}")
 
     conn = get_db_connection()
     cur = init_age(conn)
     total_prices = 0
 
     try:
-        seen_dates = set()  # 중복 수집 방지
-        for bd in dates:
-            krx_items, actual_date = get_krx_daily_data(bd)
-            if not krx_items or not actual_date:
-                continue
-            if actual_date in seen_dates:
-                log.info(f"[{bd}] Resolved to {actual_date} (already collected, skipping)")
-                continue
-            seen_dates.add(actual_date)
-            if bd != actual_date:
-                log.info(f"[{bd}] Resolved to actual trading date: {actual_date}")
-            bd = actual_date  # 이후 모든 처리에 실제 거래일 사용
-            actual_dates.append(actual_date)
+        # ── 2. 신규 ETF 노드 + 메타데이터 ──
+        snapshot_dicts = [{'code': c, 'name': master[c], 'net_assets': snap.net_assets}
+                          for c, snap in snapshots.items()]
+        new_candidates = check_new_universe_candidates(snapshot_dicts, existing_codes)
 
-            # ── 신규 ETF 노드 + 메타데이터 ──
-            krx_dicts = [{'code': item.code, 'name': item.name,
-                          'net_assets': item.net_assets} for item in krx_items]
-            new_candidates = check_new_universe_candidates(krx_dicts, existing_codes)
+        if new_candidates:
+            items = [{'code': c['code']} for c in new_candidates]
+            execute_cypher_batch(cur, """
+                MERGE (e:ETF {code: item.code}) RETURN e
+            """, items)
 
-            if new_candidates:
-                items = [{'code': c['code']} for c in new_candidates]
-                execute_cypher_batch(cur, """
-                    MERGE (e:ETF {code: item.code}) RETURN e
-                """, items)
+            # name + expense_ratio (보수율은 KIS/KRX에 없어 네이버 증권에서 조회)
+            fee_map = fetch_expense_ratios([c['code'] for c in new_candidates])
+            with_fee = [{'code': c['code'], 'name': c['name'],
+                         'expense_ratio': fee_map[c['code']]}
+                        for c in new_candidates if c['code'] in fee_map]
+            no_fee = [{'code': c['code'], 'name': c['name']}
+                      for c in new_candidates if c['code'] not in fee_map]
 
-                # name + expense_ratio (보수율은 KIS/KRX에 없어 네이버 증권에서 조회)
-                fee_map = fetch_expense_ratios([c['code'] for c in new_candidates])
-                with_fee = [{'code': c['code'], 'name': c['name'],
-                             'expense_ratio': fee_map[c['code']]}
-                            for c in new_candidates if c['code'] in fee_map]
-                no_fee = [{'code': c['code'], 'name': c['name']}
-                          for c in new_candidates if c['code'] not in fee_map]
-
-                if with_fee:
-                    execute_cypher_batch(cur, """
-                        MATCH (e:ETF {code: item.code})
-                        SET e.name = item.name, e.expense_ratio = item.expense_ratio
-                        RETURN e
-                    """, with_fee)
-                if no_fee:
-                    execute_cypher_batch(cur, """
-                        MATCH (e:ETF {code: item.code})
-                        SET e.name = item.name
-                        RETURN e
-                    """, no_fee)
-
-                # Company + MANAGED_BY
-                seen_companies = set()
-                company_items = []
-                etf_company_pairs = []
-                for c in new_candidates:
-                    company = get_company_from_etf_name(c['name'])
-                    if company not in seen_companies:
-                        company_items.append({'name': company})
-                        seen_companies.add(company)
-                    etf_company_pairs.append({'code': c['code'], 'company': company})
-
-                if company_items:
-                    execute_cypher_batch(cur, """
-                        MERGE (c:Company {name: item.name}) RETURN c
-                    """, company_items)
-                if etf_company_pairs:
-                    execute_cypher_batch(cur, """
-                        MATCH (e:ETF {code: item.code})
-                        MATCH (c:Company {name: item.company})
-                        MERGE (e)-[:MANAGED_BY]->(c)
-                        RETURN 1
-                    """, etf_company_pairs)
-
-                conn.commit()
-                for c in new_candidates:
-                    existing_codes.add(c['code'])
-                all_new_etfs.extend([{'code': c['code'], 'name': c['name']}
-                                     for c in new_candidates])
-                log.info(f"[{bd}] Added {len(new_candidates)} new ETFs with metadata")
-
-            # ── Price 노드 (유니버스만) ──
-            date_str = f"{bd[:4]}-{bd[4:6]}-{bd[6:8]}"
-            price_items = []
-            for item in krx_items:
-                if item.code not in existing_codes:
-                    continue
-                price_items.append({
-                    'code': item.code, 'date': date_str,
-                    'open': item.open_price, 'high': item.high_price,
-                    'low': item.low_price, 'close': item.close_price,
-                    'volume': item.volume, 'nav': item.nav,
-                    'market_cap': item.market_cap, 'net_assets': item.net_assets,
-                    'trade_value': item.trade_value,
-                })
-
-            if price_items:
-                # Step 1: 없으면 생성
+            if with_fee:
                 execute_cypher_batch(cur, """
                     MATCH (e:ETF {code: item.code})
-                    OPTIONAL MATCH (e)-[:HAS_PRICE]->(existing:Price {date: item.date})
-                    WITH e, existing, item WHERE existing IS NULL
-                    CREATE (e)-[:HAS_PRICE]->(:Price {date: item.date})
+                    SET e.name = item.name, e.expense_ratio = item.expense_ratio
                     RETURN e
-                """, price_items)
-                # Step 2: 있으면 업데이트
+                """, with_fee)
+            if no_fee:
                 execute_cypher_batch(cur, """
-                    MATCH (e:ETF {code: item.code})-[:HAS_PRICE]->(p:Price {date: item.date})
-                    SET p.open = item.open, p.high = item.high, p.low = item.low,
-                        p.close = item.close, p.volume = item.volume, p.nav = item.nav,
-                        p.market_cap = item.market_cap, p.net_assets = item.net_assets,
-                        p.trade_value = item.trade_value
-                    RETURN p
-                """, price_items)
+                    MATCH (e:ETF {code: item.code})
+                    SET e.name = item.name
+                    RETURN e
+                """, no_fee)
 
-                valid_na = [it for it in price_items
-                            if it.get('net_assets') and it['net_assets'] > 0]
-                if valid_na:
-                    execute_cypher_batch(cur, """
-                        MATCH (e:ETF {code: item.code})
-                        SET e.net_assets = item.net_assets
-                        RETURN e
-                    """, valid_na)
+            # Company + MANAGED_BY
+            seen_companies = set()
+            company_items = []
+            etf_company_pairs = []
+            for c in new_candidates:
+                company = get_company_from_etf_name(c['name'])
+                if company not in seen_companies:
+                    company_items.append({'name': company})
+                    seen_companies.add(company)
+                etf_company_pairs.append({'code': c['code'], 'company': company})
 
-                conn.commit()
-                total_prices += len(price_items)
-                log.info(f"[{bd}] {len(price_items)} ETF prices saved")
+            if company_items:
+                execute_cypher_batch(cur, """
+                    MERGE (c:Company {name: item.name}) RETURN c
+                """, company_items)
+            if etf_company_pairs:
+                execute_cypher_batch(cur, """
+                    MATCH (e:ETF {code: item.code})
+                    MATCH (c:Company {name: item.company})
+                    MERGE (e)-[:MANAGED_BY]->(c)
+                    RETURN 1
+                """, etf_company_pairs)
 
+            conn.commit()
+            for c in new_candidates:
+                existing_codes.add(c['code'])
+            all_new_etfs.extend([{'code': c['code'], 'name': c['name']}
+                                 for c in new_candidates])
+            log.info(f"[{latest}] Added {len(new_candidates)} new ETFs with metadata")
+
+        # ── 3. Price 노드 (유니버스 ETF) ──
+        price_items = []
+        for code in sorted(existing_codes):
+            try:
+                bars = kis.get_daily_bars(code, dates[0], latest)
+            except Exception as e:
+                log.warning(f"Failed ETF daily bars for {code}: {e}")
+                continue
+            snap = snapshots.get(code)
+            for bar in bars:
+                if bar.date not in dates:
+                    continue
+                item = {
+                    'code': code, 'date': f"{bar.date[:4]}-{bar.date[4:6]}-{bar.date[6:8]}",
+                    'open': bar.open, 'high': bar.high, 'low': bar.low, 'close': bar.close,
+                    'volume': bar.volume, 'trade_value': bar.trade_value,
+                    'nav': None, 'market_cap': None, 'net_assets': None,
+                }
+                if bar.date == latest and snap:
+                    # 현재가 API는 날짜 지정이 안 되므로 최근 거래일에만 반영
+                    item.update(nav=snap.nav, net_assets=snap.net_assets,
+                                market_cap=bar.close * snap.listed_shares)
+                price_items.append(item)
+
+        if price_items:
+            # Step 1: 없으면 생성
+            execute_cypher_batch(cur, """
+                MATCH (e:ETF {code: item.code})
+                OPTIONAL MATCH (e)-[:HAS_PRICE]->(existing:Price {date: item.date})
+                WITH e, existing, item WHERE existing IS NULL
+                CREATE (e)-[:HAS_PRICE]->(:Price {date: item.date})
+                RETURN e
+            """, price_items)
+            # Step 2: 값 갱신
+            execute_cypher_batch(cur, """
+                MATCH (e:ETF {code: item.code})-[:HAS_PRICE]->(p:Price {date: item.date})
+                SET p.open = item.open, p.high = item.high, p.low = item.low,
+                    p.close = item.close, p.volume = item.volume, p.nav = item.nav,
+                    p.market_cap = item.market_cap, p.net_assets = item.net_assets,
+                    p.trade_value = item.trade_value
+                RETURN p
+            """, price_items)
+
+            valid_na = [it for it in price_items if it.get('net_assets')]
+            if valid_na:
+                execute_cypher_batch(cur, """
+                    MATCH (e:ETF {code: item.code})
+                    SET e.net_assets = item.net_assets
+                    RETURN e
+                """, valid_na)
+
+            conn.commit()
+            total_prices = len(price_items)
+
+        actual_dates = sorted({it['date'].replace('-', '') for it in price_items})
         log.info(f"Universe & prices: {len(existing_codes)} ETFs, "
-                 f"{total_prices} price records")
+                 f"{total_prices} price records, dates={actual_dates}")
         return existing_codes, all_new_etfs, actual_dates
 
     finally:

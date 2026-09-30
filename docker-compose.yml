@@ -20,7 +20,6 @@ x-airflow-common: &airflow-common
     # DAG에서 사용하는 앱 설정
     DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-etf_atlas}
     ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
-    KRX_AUTH_KEY: ${KRX_AUTH_KEY:-}
     KIS_APP_KEY: ${KIS_APP_KEY:-}
     KIS_APP_SECRET: ${KIS_APP_SECRET:-}
     KIS_BASE_URL: ${KIS_BASE_URL:-}

@@ -7,7 +7,7 @@
 | **Frontend** | React, TypeScript, Vite, shadcn/ui, Recharts |
 | **Backend** | FastAPI, Pydantic (Python 3.14) |
 | **Database** | PostgreSQL 18 + Apache AGE 1.8.0 (Graph) + pgvector 0.8.6 |
-| **Data Pipeline** | Airflow 3.3.2, KRX Open API, 한국투자증권 KIS Open API, 네이버 증권(보수율), yfinance |
+| **Data Pipeline** | Airflow 3.3.2, 한국투자증권 KIS Open API, 네이버 증권(보수율), yfinance |
 | **AI** | pydantic-ai (tool-calling 에이전트) + LiteLLM 프록시 (OpenAI 호환) |
 | **Auth** | 아이디/비밀번호 (bcrypt) + JWT (PyJWT) |
 
@@ -32,7 +32,7 @@
 │         │                    │                                          │
 │         v                    v                                          │
 │  ┌─────────────┐    ┌────────────────────────────────────────┐         │
-│  │ KRX / KIS   │    │              PostgreSQL                 │         │
+│  │ KIS Open API│    │              PostgreSQL                 │         │
 │  │ Open API    │    │  ┌────────────────┬─────────────────┐  │         │
 │  └─────────────┘    │  │  Apache AGE    │   Relational    │  │         │
 │                     │  │  (ETF/Stock)   │   (User/Auth)   │  │         │
@@ -100,8 +100,8 @@
 │  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐              │
 │  │  영업일     │     │  유니버스   │     │  구성종목   │              │
 │  │  조회       │────>│  + ETF 가격 │────>│  (HOLDS)    │              │
-│  │  (KIS 일봉) │     │ (KRX Open   │     │  (KIS Open  │              │
-│  │             │     │   API)      │     │   API)      │              │
+│  │  (KIS 일봉) │     │ (KIS 마스터 │     │  (KIS Open  │              │
+│  │             │     │ 현재가·일봉)│     │   API)      │              │
 │  └─────────────┘     └──────┬──────┘     └──────┬──────┘              │
 │                              │                   │                      │
 │                              v                   v                      │
@@ -115,9 +115,10 @@
 └─────────────────────────────────────────────────────────────────────────┘
 
 데이터 소스:
-├── KRX Open API (etf_bydd_trd)            # ETF 일별 시세/순자산 → 유니버스, ETF 가격
+├── KIS 종목 마스터 파일 (kospi_code.mst)  # 전체 ETF 코드/이름 (그룹코드 EF, 인증 불필요)
+├── KIS Open API (ETF/ETN 현재가)           # NAV·순자산·상장주수 → 유니버스 편입(500억), 최근 거래일 Price
 ├── KIS Open API (ETF 구성종목시세)         # 호출 시점 구성종목 → 최근 거래일 HOLDS
-├── KIS Open API (국내주식기간별시세)       # 주식 일봉, 영업일(기준 ETF 069500 일봉)
+├── KIS Open API (국내주식기간별시세)       # ETF/주식 일봉, 영업일(기준 ETF 069500 일봉)
 ├── KIS Open API (국내휴장일조회)           # 장중 현재가 DAG의 개장일 판정 (market_calendar 캐시)
 ├── 네이버 증권 모바일 API (비공식)         # 신규 ETF 보수율
 └── yfinance                                # 포트폴리오 티커 현재가 (RDB)
@@ -292,7 +293,7 @@ ETFAtlas/
 │   └── requirements.txt
 │
 ├── airflow/
-│   ├── dags/                      # age_*, rdb_*, embed_code_examples, age_utils.py, krx/kis_api_client.py, naver_client.py
+│   ├── dags/                      # age_*, rdb_*, embed_code_examples, age_utils.py, kis_api_client.py, naver_client.py
 │   └── requirements.txt
 │
 ├── docker/
@@ -411,8 +412,7 @@ AIRFLOW_SECRET_KEY=
 AIRFLOW_JWT_SECRET=
 
 # 데이터 소스
-KRX_AUTH_KEY=               # KRX Open API — 유니버스/ETF 가격
-KIS_APP_KEY=                # 한국투자증권 KIS Open API — 구성종목, 주식 일봉, 영업일, 휴장일
+KIS_APP_KEY=                # 한국투자증권 KIS Open API — ETF 현재가, ETF/주식 일봉, 구성종목, 영업일, 휴장일
 KIS_APP_SECRET=
 KIS_BASE_URL=               # 기본값 https://openapi.koreainvestment.com:9443
 

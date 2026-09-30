@@ -186,10 +186,11 @@ WHERE name ILIKE :like_q           -- 이름 부분 문자열 매칭
    OR code ILIKE :like_q           -- 코드 부분 문자열 매칭
    OR LOWER(name) % LOWER(:q)     -- 트라이그램 유사도 매칭
 ORDER BY
-    (code ILIKE :like_q) DESC,
-    (name ILIKE :like_q) DESC,
-    similarity(LOWER(name), LOWER(:q)) DESC
+    CASE ... END,                  -- 코드/이름 정확·접두·부분 일치 우선순위 (0~7)
+    e.name                         -- 동순위는 이름순
 ```
+
+정렬 상세는 [search.md](search.md) 참고.
 
 ### ILIKE 참고
 

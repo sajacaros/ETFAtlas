@@ -8,17 +8,28 @@
 
 ### 검색 로직 (etf_service.py)
 
-3단계 우선순위로 매칭한다:
+이름/코드 부분 일치(공백 제거 포함) 또는 pg_trgm 유사도로 후보를 찾고, 매칭 종류별 우선순위로 정렬한다:
 
 ```sql
-WHERE name ILIKE :like_q        -- 1. 이름 부분 일치
-   OR code ILIKE :like_q        -- 2. 코드 부분 일치
-   OR LOWER(name) % LOWER(:q)   -- 3. pg_trgm 유사도 (임계값 0.3 이상)
+WHERE e.name ILIKE :like_q OR e.code ILIKE :like_q
+   OR REPLACE(e.name, ' ', '') ILIKE :like_stripped   -- 공백 무시 부분 일치
+   OR LOWER(e.name) % LOWER(:q)                      -- pg_trgm 유사도 (임계값 0.3 이상)
 ORDER BY
-    (code ILIKE :like_q) DESC,              -- 코드 매칭 최우선
-    (name ILIKE :like_q) DESC,              -- 이름 매칭 차선
-    similarity(LOWER(name), LOWER(:q)) DESC  -- 유사도 점수순
+    CASE
+        WHEN e.code ILIKE :q THEN 0                              -- 코드 정확 일치
+        WHEN e.code ILIKE :like_q THEN 1                         -- 코드 부분 일치
+        WHEN e.name ILIKE :q THEN 2                              -- 이름 정확 일치
+        WHEN e.name ILIKE :starts_q THEN 3                       -- 이름 접두 일치
+        WHEN REPLACE(e.name, ' ', '') ILIKE :starts_stripped THEN 4
+        WHEN e.name ILIKE :like_q THEN 5                         -- 이름 부분 일치
+        WHEN REPLACE(e.name, ' ', '') ILIKE :like_stripped THEN 6
+        ELSE 7                                                   -- 유사도 매칭만
+    END,
+    e.name                                                       -- 동순위는 이름순
+LIMIT :lim
 ```
+
+> `etfs` 테이블은 code/name만 가진다 (순자산 등은 AGE ETF 노드). 이전 코드는 동순위 정렬에 존재하지 않는 `etfs.net_assets`를 썼으나 `e.name`으로 수정되었다.
 
 | 단계 | 연산자 | 대소문자 | 설명 |
 |------|--------|----------|------|

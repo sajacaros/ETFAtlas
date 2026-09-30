@@ -6,7 +6,9 @@
 
 | 데이터 | 소스 | 저장 위치 |
 |--------|------|-----------|
-| ETF 목록/일별 시세/순자산 | KRX Open API (`etf_bydd_trd`) | AGE `ETF`, `Price` |
+| ETF 전체 목록 (코드/이름) | KIS 종목 마스터 파일 (`kospi_code.mst.zip`, 인증 불필요) | AGE `ETF`, RDB `etfs` |
+| ETF NAV/순자산/상장주수 (현재 시점) | KIS Open API (ETF/ETN 현재가) | AGE `ETF.net_assets`, 최근 거래일 `Price` |
+| ETF 일별 시세 | KIS Open API (국내주식기간별시세) | AGE `Price` |
 | ETF 보수율 | 네이버 증권 모바일 API (비공식, `etfAnalysis.totalFee`) | AGE `ETF.expense_ratio` |
 | ETF 구성종목 | 한국투자증권 KIS Open API (ETF 구성종목시세) | AGE `Stock`, `HOLDS` |
 | 주식 일별 시세 | KIS Open API (국내주식기간별시세) | AGE `Price` |
@@ -42,51 +44,86 @@
 
 ### 필터링 로직
 
-`airflow/dags/age_utils.py`의 `check_new_universe_candidates()` (요약):
+`airflow/dags/age_utils.py` (요약). `EXCLUDE_KEYWORDS`, `FOREIGN_NAME_KEYWORDS`, `MIN_AUM`은 모듈 상수다.
 
 ```python
 MIN_AUM = 500 * 100_000_000  # 500억
 
-for item in krx_data_dicts:
-    if item['code'] in existing_codes:      # 이미 유니버스
-        continue
-    if item['net_assets'] < MIN_AUM:
-        continue
+def passes_universe_name_filter(name):   # API 호출 전 1차 필터
     if any(kw.lower() in name_lower for kw in EXCLUDE_KEYWORDS):
-        continue
+        return False
     if any(kw.lower() in name_lower or kw in name for kw in FOREIGN_NAME_KEYWORDS):
-        continue
-    candidates.append(...)
+        return False
+    return True
+
+def check_new_universe_candidates(etf_dicts, existing_codes):
+    for item in etf_dicts:               # {code, name, net_assets} — net_assets는 KIS 현재가 스냅샷
+        if item['code'] in existing_codes:   # 이미 유니버스
+            continue
+        if item['net_assets'] < MIN_AUM:
+            continue
+        if not passes_universe_name_filter(item['name']):
+            continue
+        candidates.append(...)
 ```
+
+이름 필터를 먼저 적용해, 현재가 API(순자산 조회)는 기존 유니버스 ∪ 이름 필터 통과 ETF에 대해서만 호출한다.
 
 한번 편입된 ETF는 이후 조건에 미달해도 유니버스에서 제거하지 않는다.
 
 ---
 
-## 1. ETF 목록 / 시세 수집 (KRX Open API)
+## 1. ETF 목록 / 시세 수집 (KIS)
 
-### API
+### ETF 목록: KIS 종목 마스터 파일
 
 ```
-GET https://data-dbg.krx.co.kr/svc/apis/etp/etf_bydd_trd?basDd=YYYYMMDD
-헤더: AUTH_KEY: {KRX_AUTH_KEY}
+GET https://new.real.download.dws.co.kr/common/master/kospi_code.mst.zip   (공개 파일, 인증 불필요)
 ```
 
-`airflow/dags/krx_api_client.py`의 `KRXApiClient.get_etf_daily_trading(date)`. 해당 날짜에 데이터가 없으면(휴장일) 최대 7일 전까지 거슬러 올라가 실제 거래일을 찾는다.
+`airflow/dags/kis_api_client.py`의 `fetch_etf_master()`. zip 안의 `kospi_code.mst`(cp949)를 행 단위로 읽어, 행 끝 227자 고정폭 영역의 앞 2자리(그룹코드)가 `EF`인 행만 ETF로 취한다 (약 1,175개).
+
+| 위치 | 속성 | 비고 |
+|------|------|------|
+| 앞부분 `[0:9]` | code | 단축코드 |
+| 앞부분 `[21:]` | name | 한글명 |
+| 고정폭 영역 `[0:2]` | (그룹코드) | `EF` = ETF |
+
+`age_sync_universe`(유니버스)와 `rdb_sync_metadata`(RDB `etfs`의 code/name 동기화)가 함께 사용한다.
+
+### ETF 현재가 (ETF/ETN 현재가)
+
+```
+GET {KIS_BASE_URL}/uapi/etfetn/v1/quotations/inquire-price
+tr_id: FHPST02400000
+params: FID_COND_MRKT_DIV_CODE=J, FID_INPUT_ISCD={ETF코드}
+```
+
+`KISApiClient.get_etf_snapshot(code)`. 날짜 파라미터가 없어 호출 시점 값만 반환한다.
+
+| KIS 필드 | 속성 | 비고 |
+|----------|------|------|
+| stck_prpr | (현재가) | |
+| nav (없으면 prdy_last_nav) | Price.nav | 최근 거래일 Price에만 저장 |
+| etf_ntas_ttam | ETF.net_assets, Price.net_assets | 원 단위로 저장. 값이 1억 미만이면 억원 단위로 보고 ×1억 (응답 단위 미확인이라 둔 방어 로직) |
+| lstn_stcn | (상장주수) | Price.market_cap = 종가 × 상장주수 |
+
+### ETF 일별 시세 (국내주식기간별시세)
+
+유니버스 ETF마다 `get_daily_bars(code, dates[0], 최근 거래일)`로 일봉을 받는다 (API 상세는 [3절](#3-주식-가격--영업일--휴장일-kis-open-api)).
 
 ### DB 매핑 (Apache AGE - ETF 노드 / Price 노드)
 
-| KRX 필드 | 속성 | 저장 위치 | 비고 |
-|----------|------|-----------|------|
-| ISU_CD | code | ETF | PK |
-| ISU_NM | name | ETF | |
-| INVSTASST_NETASST_TOTAMT | net_assets | ETF, Price | 순자산총액 |
-| BAS_DD | date | Price | `YYYY-MM-DD` |
-| TDD_OPNPRC / TDD_HGPRC / TDD_LWPRC / TDD_CLSPRC | open / high / low / close | Price | |
-| ACC_TRDVOL | volume | Price | |
-| ACC_TRDVAL | trade_value | Price | 거래대금 |
-| NAV | nav | Price | |
-| MKTCAP | market_cap | Price | |
+| 소스 | 속성 | 저장 위치 | 비고 |
+|------|------|-----------|------|
+| 마스터 파일 code / name | code / name | ETF | 신규 편입 시 |
+| 일봉 stck_bsop_date | date | Price | `YYYY-MM-DD` |
+| 일봉 stck_oprc / stck_hgpr / stck_lwpr / stck_clpr | open / high / low / close | Price | 모든 날짜 |
+| 일봉 acml_vol | volume | Price | 모든 날짜 |
+| 일봉 acml_tr_pbmn | trade_value | Price | 거래대금, 모든 날짜 |
+| 현재가 nav | nav | Price | 최근 거래일만 (이전 날짜는 null) |
+| 현재가 etf_ntas_ttam | net_assets | ETF, Price | 최근 거래일만 (이전 날짜는 null) |
+| 일봉 종가 × 현재가 lstn_stcn | market_cap | Price | 최근 거래일만 (이전 날짜는 null) |
 
 ### 추가 메타정보
 
@@ -95,7 +132,7 @@ GET https://data-dbg.krx.co.kr/svc/apis/etp/etf_bydd_trd?basDd=YYYYMMDD
 | expense_ratio | 네이버 증권 `GET https://m.stock.naver.com/api/stock/{code}/etfAnalysis`의 `totalFee` (`airflow/dags/naver_client.py`) | 신규 편입 후보만 조회. 소수점 2째자리 올림. 비공식 API라 실패 시 `expense_ratio` 미설정 |
 | 운용사 | ETF 이름 prefix (KODEX, TIGER, RISE 등) → `ETF_COMPANY_MAP` | `(ETF)-[:MANAGED_BY]->(Company)` |
 
-RDB `etfs` 테이블에는 `rdb_sync_metadata` DAG이 같은 KRX API로 전체 ETF의 code/name만 동기화한다.
+RDB `etfs` 테이블에는 `rdb_sync_metadata` DAG이 같은 마스터 파일로 전체 ETF의 code/name만 동기화한다.
 
 ---
 
@@ -177,6 +214,7 @@ params: FID_COND_MRKT_DIV_CODE=J, FID_INPUT_ISCD={종목코드}, FID_INPUT_DATE_
 | stck_bsop_date | date | `YYYY-MM-DD` |
 | stck_oprc / stck_hgpr / stck_lwpr / stck_clpr | open / high / low / close | float |
 | acml_vol | volume | int |
+| acml_tr_pbmn | (trade_value) | 거래대금. ETF Price에만 저장 |
 | prdy_vrss, prdy_vrss_sign | change_rate | `prdy_vrss / (종가 - prdy_vrss) × 100`. 부호 코드 4(하한)/5(하락)이면 음수로 보정 |
 
 `collect_stock_prices_for_dates(dates)`는 `is_etf = false`인 Stock마다 `get_daily_bars(code, min(dates), max(dates))`를 한 번 호출하고(종목×날짜 호출 없음), AGE에 이미 있는 (종목, 날짜)는 건너뛰며, 50종목마다 커밋한다. `(Stock)-[:HAS_PRICE]->(Price)`로 연결한다.
@@ -227,16 +265,16 @@ for code in set(current) | set(previous):
 
 | 소스 | 제한 | 대응 |
 |------|------|------|
-| KRX Open API | 휴장일 응답 없음 | 최대 7일 전까지 거래일 탐색, 이미 수집한 거래일 skip |
-| KIS Open API | 구성종목 날짜 지정 불가, 토큰 발급 1분 1회, 초당 20건, 일봉 호출당 100건, 휴장일조회 1일 1회 권장 | 최근 거래일로 기록, `kis_tokens` 캐시, 0.06초 간격 + 재시도, 100일 단위 페이지네이션, `market_calendar` 캐시 |
+| KIS 종목 마스터 파일 | cp949 고정폭 포맷 (KIS 공식 샘플 `kis_kospi_code_mst.py` 기준 행 끝 227자) | 227자 이하 행·그룹코드 `EF`가 아닌 행은 건너뜀 |
+| KIS Open API | 구성종목·ETF 현재가 날짜 지정 불가, 토큰 발급 1분 1회, 초당 20건, 일봉 호출당 100건, 휴장일조회 1일 1회 권장 | 최근 거래일로 기록, `kis_tokens` 캐시, 0.06초 간격 + 재시도, 100일 단위 페이지네이션, `market_calendar` 캐시 |
 | 네이버 증권 모바일 API | 비공식 API (사전 공지 없이 변경 가능) | 신규 ETF만 조회, 0.1초 간격, 실패 시 보수율 생략 |
 
 ### 에러 처리
 
 | 상황 | 처리 |
 |------|------|
-| `KRX_AUTH_KEY` 없음 | 빈 결과 반환, 경고 로그 |
-| `KIS_APP_KEY`/`KIS_APP_SECRET` 없음 | 구성종목 수집 skip, 경고 로그 |
+| `KIS_APP_KEY`/`KIS_APP_SECRET` 없음 | 유니버스/ETF 가격·구성종목·주식 가격 수집 skip, 경고 로그 |
+| 개별 ETF 현재가/일봉 조회 실패 | 해당 ETF만 skip, 경고 로그 |
 | 개별 ETF 구성종목 조회 실패 | 해당 ETF만 skip, 실패 건수 로그 |
 | HOLDS 배치 저장 실패 | 해당 배치 rollback 후 다음 배치 진행 |
 | 개별 종목 시세 실패 | 해당 종목만 skip (5건까지 상세 로그) |
@@ -248,4 +286,4 @@ for code in set(current) | set(previous):
 
 백필 DAG는 없다. 신규 환경에서 `age_sync_universe` DAG을 처음 실행하면 AGE가 비어 있음을 감지해 **최근 거래일 하루**의 유니버스·ETF 가격·구성종목·주식 가격만 수집한다.
 이후 매일 증분으로 쌓이며, 1주/1개월 수익률·비중 변화는 데이터가 그만큼 쌓인 뒤부터 계산된다. 과거 이력이 필요해지면 그때 백필을 추가한다.
-- 이후 `age_sync_universe` DAG이 증분 수집을 이어받고, 태그는 `age_tagging` DAG으로 부여
+태그는 `age_tagging` DAG으로 부여한다.

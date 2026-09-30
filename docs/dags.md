@@ -16,8 +16,8 @@ AGE 수집 공용 로직은 `airflow/dags/age_utils.py`에 모여 있다.
 
 | 소스 | 용도 | 인증 |
 |------|------|------|
-| KRX Open API (`etf_bydd_trd`) | ETF 일별 시세, 시가총액, 순자산 → 유니버스/ETF 가격 | `KRX_AUTH_KEY` |
-| 한국투자증권 KIS Open API | ETF 현재 구성종목(HOLDS)·종목명, 주식 일봉, 영업일(기준 ETF 일봉), 휴장일 | `KIS_APP_KEY`, `KIS_APP_SECRET` (`KIS_BASE_URL` 선택) |
+| KIS 종목 마스터 파일 (`kospi_code.mst.zip`) | 전체 ETF 코드/이름 목록 (그룹코드 `EF`) | 불필요 (공개 파일) |
+| 한국투자증권 KIS Open API | ETF 현재가(NAV·순자산·상장주수), ETF/주식 일봉, ETF 현재 구성종목(HOLDS)·종목명, 영업일(기준 ETF 일봉), 휴장일 | `KIS_APP_KEY`, `KIS_APP_SECRET` (`KIS_BASE_URL` 선택) |
 | 네이버 증권 모바일 API (비공식) | 신규 ETF 보수율(`totalFee`) | 불필요 |
 | yfinance | 포트폴리오 보유 티커 현재가 (RDB) | 불필요 |
 | LiteLLM 프록시 (OpenAI 호환) | ETF 태그 분류·질문 일반화(`LLM_MODEL`), 코드 예제 임베딩(`EMBEDDING_MODEL`) | `LLM_API_BASE`/`LLM_API_KEY`, `EMBEDDING_API_BASE`/`EMBEDDING_API_KEY` |
@@ -55,7 +55,7 @@ AGE가 비어 있으면(첫 실행) 최근 10일 중 마지막 거래일 하루�
 
 #### 2. sync_universe_and_prices
 
-`collect_universe_and_prices(dates)`를 호출하고, 신규 편입 ETF(`new_etfs`)와 KRX가 실제로 반환한 거래일(`actual_dates`)을 XCom으로 push한다.
+`collect_universe_and_prices(dates)`를 호출하고, 신규 편입 ETF(`new_etfs`)와 실제로 ETF Price가 저장된 거래일(`actual_dates`)을 XCom으로 push한다.
 
 #### 3. sync_holdings
 
@@ -83,15 +83,22 @@ AGE가 비어 있으면(첫 실행) 최근 10일 중 마지막 거래일 하루�
 
 ### collect_universe_and_prices(dates)
 
-- 날짜별로 KRX Open API(`KRXApiClient.get_etf_daily_trading`)를 호출한다. 해당 날짜에 데이터가 없으면 최대 7일 전까지 거슬러 올라가 실제 거래일을 찾고, 이미 처리한 거래일은 건너뛴다.
-- 유니버스 신규 편입 조건 (`check_new_universe_candidates`):
-  - 순자산 500억 이상
-  - 제외 키워드 미포함: 레버리지, 인버스, 합성/선물, 커버드콜, 채권, 금/원자재, 통화, 머니마켓, 리츠 등
-  - 해외 키워드 미포함: 미국, 중국, 글로벌, S&P, NASDAQ, MSCI, 해외 개별종목명 등
+KRX Open API 없이 KIS만으로 유니버스와 ETF 가격을 갱신한다. `KIS_APP_KEY`/`KIS_APP_SECRET`이 없으면 건너뛴다.
+
+1. **ETF 목록**: `kis_api_client.fetch_etf_master()` — KIS 공개 종목 마스터 파일(`https://new.real.download.dws.co.kr/common/master/kospi_code.mst.zip`, cp949, 행 끝 227자 고정폭 영역의 그룹코드 `EF` = ETF)에서 전체 ETF(약 1,175개) 코드/이름을 받는다. 인증 불필요.
+2. **스냅샷 대상**: 기존 유니버스 ∪ 이름 필터(`passes_universe_name_filter`)를 통과한 ETF.
+3. **현재 스냅샷**: 대상마다 `KISApiClient.get_etf_snapshot(code)` — ETF/ETN 현재가(`FHPST02400000`, `/uapi/etfetn/v1/quotations/inquire-price`)로 현재가(`stck_prpr`), NAV(`nav`, 없으면 `prdy_last_nav`), 순자산총액(`etf_ntas_ttam`), 상장주수(`lstn_stcn`)를 조회한다. 순자산 값이 1억 미만이면 억원 단위로 보고 ×1억 한다 (응답 단위 미확인이라 둔 방어 로직).
+4. **유니버스 신규 편입 조건** (`check_new_universe_candidates`):
+   - 순자산 500억 이상 (`MIN_AUM`)
+   - 제외 키워드 미포함 (`EXCLUDE_KEYWORDS`): 레버리지, 인버스, 합성/선물, 커버드콜, 채권, 금/원자재, 통화, 머니마켓, 리츠 등
+   - 해외 키워드 미포함 (`FOREIGN_NAME_KEYWORDS`): 미국, 중국, 글로벌, S&P, NASDAQ, MSCI, 해외 개별종목명 등
 - 한번 등록된 ETF는 이후 조건에 미달하더라도 유니버스에서 제거하지 않는다.
 - 신규 ETF: `ETF` 노드 MERGE → `name`, `expense_ratio` SET → 이름 prefix로 운용사를 추출해 `(ETF)-[:MANAGED_BY]->(Company)` 연결.
   - 보수율은 신규 편입 후보만 네이버 증권 모바일 API(`naver_client.fetch_expense_ratios`, `https://m.stock.naver.com/api/stock/{code}/etfAnalysis`의 `totalFee`)로 조회하고 소수점 2째자리 올림 처리한다. 비공식 API라 실패하면 `expense_ratio`만 비워 두고 진행한다.
-- 유니버스 ETF의 Price 노드를 저장한다 (AGE MERGE+SET 버그 회피를 위해 "없으면 CREATE" / "있으면 SET" 2단계). 속성: `open, high, low, close, volume, nav, market_cap, net_assets, trade_value`. ETF 노드의 `net_assets`도 갱신한다.
+- 유니버스 ETF마다 KIS 일봉(`get_daily_bars(code, dates[0], 최근 거래일)`, `FHKST03010100`)으로 Price 노드를 저장한다 (AGE MERGE+SET 버그 회피를 위해 "없으면 CREATE" / "있으면 SET" 2단계).
+  - 모든 날짜: `open, high, low, close, volume`, `trade_value`(`acml_tr_pbmn`)
+  - 최근 거래일만: `nav`, `net_assets`, `market_cap`(종가 × 상장주수). 현재가 API에 날짜 파라미터가 없어 그 이전 날짜는 null로 둔다.
+- 최근 거래일 순자산으로 ETF 노드의 `net_assets`도 갱신한다.
 
 **저장:** AGE — `ETF`, `Company` 노드, `MANAGED_BY`, `Price`, `(ETF)-[:HAS_PRICE]->(Price)`
 
@@ -151,17 +158,17 @@ ETF별 최근 45개 Price로 `close_price`, `return_1d`, `return_1w`, `return_1m
 
 ## 3. rdb_sync_metadata (RDB)
 
-KRX Open API에서 전체 ETF 목록을 수집하여 RDB `etfs` 테이블에 code + name만 동기화한다 (포트폴리오의 비유니버스 ETF 이름 조회용).
+KIS 종목 마스터 파일에서 전체 ETF 목록을 받아 RDB `etfs` 테이블에 code + name만 동기화한다 (포트폴리오의 비유니버스 ETF 이름 조회용).
 ETF 상세 메타데이터(순자산, 보수율, 운용사 등)는 AGE에서 관리한다.
 
 - **스케줄**: `30 8 * * 1-5` (평일 08:30 KST)
 - **재시도**: 3회, 5분 간격
 
 ```
-start → fetch_krx_data → sync_etfs_to_rdb → end
+start → fetch_etf_master → sync_etfs_to_rdb → end
 ```
 
-- `fetch_krx_data`: 실행일부터 최대 7일 전까지 거슬러 올라가 데이터가 있는 최근 거래일의 전종목 code/name을 조회한다. `KRX_AUTH_KEY`가 없으면 빈 리스트.
+- `fetch_etf_master`: `kis_api_client.fetch_etf_master()`로 마스터 파일의 ETF(그룹코드 `EF`) code/name 전체(약 1,175개)를 조회한다. 인증이 필요 없다.
 - `sync_etfs_to_rdb`: `INSERT ... ON CONFLICT (code) DO UPDATE`로 UPSERT한다.
 
 **저장:** RDB `etfs` — 프론트엔드 ETF 검색(pg_trgm 퍼지 매칭)과 포트폴리오 ETF 이름 조회에 사용
@@ -212,7 +219,7 @@ check_market_open → collect_prices → update_snapshots
 | 노드/관계 | 적재 함수 | 용도 |
 |-----------|-----------|------|
 | `ETF`, `Company`, `MANAGED_BY` | collect_universe_and_prices | 유니버스, 메타데이터, 운용사 |
-| `Price`, `(ETF)-[:HAS_PRICE]->` | collect_universe_and_prices | ETF 가격 시계열 |
+| `Price`, `(ETF)-[:HAS_PRICE]->` | collect_universe_and_prices (KIS 일봉 + 현재가) | ETF 가격 시계열 |
 | `Stock`, `HOLDS` | collect_holdings (KIS) | 보유종목 (수집일 기준 스냅샷) |
 | `Price`, `(Stock)-[:HAS_PRICE]->` | collect_stock_prices_for_dates (KIS 일봉) | 주식 가격 시계열 |
 | ETF 수익률 속성 | update_etf_returns | 1D/1W/1M 수익률 |
@@ -223,8 +230,7 @@ check_market_open → collect_prices → update_snapshots
 | 변수 | 용도 |
 |------|------|
 | `DATABASE_URL` | 앱 DB(`etf_atlas`) 연결 문자열 (Airflow 메타데이터는 별도 `airflow` DB) |
-| `KRX_AUTH_KEY` | KRX Open API 인증 키 (유니버스/ETF 가격) |
-| `KIS_APP_KEY`, `KIS_APP_SECRET` | KIS Open API 앱키 (구성종목, 주식 일봉, 영업일, 휴장일) |
+| `KIS_APP_KEY`, `KIS_APP_SECRET` | KIS Open API 앱키 (ETF 현재가, ETF/주식 일봉, 구성종목, 영업일, 휴장일) |
 | `KIS_BASE_URL` | KIS 엔드포인트 (기본 `https://openapi.koreainvestment.com:9443`) |
 | `LLM_API_BASE`, `LLM_API_KEY` | LiteLLM 프록시 (기본 `http://localhost:4000`) |
 | `LLM_MODEL` | 태그 분류/질문 일반화 모델 (기본 `qwen38-27b`) |

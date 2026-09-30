@@ -1,11 +1,11 @@
 # PostgreSQL + Apache AGE + pgvector
-FROM postgres:17-bookworm
+FROM postgres:18-trixie
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
     git \
-    postgresql-server-dev-17 \
+    postgresql-server-dev-18 \
     libreadline-dev \
     zlib1g-dev \
     flex \
@@ -13,13 +13,13 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Apache AGE
-RUN git clone --branch release/PG17/1.7.0 --depth 1 https://github.com/apache/age.git /tmp/age \
+RUN git clone --branch release/PG18/1.8.0 --depth 1 https://github.com/apache/age.git /tmp/age \
     && cd /tmp/age \
     && make install \
     && rm -rf /tmp/age
 
 # Install pgvector
-RUN git clone --branch v0.8.0 --depth 1 https://github.com/pgvector/pgvector.git /tmp/pgvector \
+RUN git clone --branch v0.8.6 --depth 1 https://github.com/pgvector/pgvector.git /tmp/pgvector \
     && cd /tmp/pgvector \
     && make \
     && make install \

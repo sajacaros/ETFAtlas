@@ -1,5 +1,5 @@
 -- =============================================================================
--- 05_seed_code_examples.sql
+-- 03_seed_code_examples.sql
 -- Seed code_examples table with predefined examples from code_examples.json
 -- This script deletes any previously JSON-seeded rows (where source_chat_log_id
 -- and created_by are both NULL) and re-inserts all 36 examples.

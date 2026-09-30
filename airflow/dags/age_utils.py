@@ -1,7 +1,7 @@
 """
 age_utils — Apache AGE + KRX 공용 유틸리티
 
-age_backfill / age_sync_universe / age_tagging DAG에서 공통으로 사용하는 함수들.
+age_sync_universe / age_tagging / embed_code_examples DAG에서 공통으로 사용하는 함수들.
 """
 
 import logging

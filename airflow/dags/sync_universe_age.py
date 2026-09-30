@@ -1,10 +1,10 @@
 """
-ETF Universe Sync DAG (Apache AGE) — 일일 증분 수집
+ETF Universe Sync DAG (Apache AGE) — 일일 증분 수집 + 첫 실행 초기 적재
 
 마지막 수집일 이후 ~ 오늘까지 누락된 영업일의 데이터를 자동 수집.
-수집 로직은 age_utils 공용 함수 사용.
-메타데이터/구조 재구축은 age_rebuild_graph DAG(주간)에서 수행.
-태그는 age_tagging DAG에서 부여.
+AGE가 비어 있으면 INITIAL_START_DATE부터 유니버스/ETF 가격/주식 가격 이력을 적재한다.
+구성종목(HOLDS)은 KIS API가 날짜 지정을 지원하지 않아 항상 최근 거래일 스냅샷만 수집한다.
+수집 로직은 age_utils 공용 함수 사용. 태그는 age_tagging DAG에서 부여.
 """
 
 from datetime import datetime, timedelta
@@ -24,6 +24,8 @@ from age_utils import (
 )
 
 log = logging.getLogger(__name__)
+
+INITIAL_START_DATE = "20260102"  # 빈 AGE에서 첫 실행 시 가격 이력 시작일
 
 default_args = {
     'owner': 'etf-atlas',
@@ -49,23 +51,27 @@ dag = DAG(
 # ──────────────────────────────────────────────
 
 def fetch_trading_dates(**context):
-    """마지막 수집일 이후 영업일 목록 조회.
+    """마지막 수집일 이후(첫 실행이면 INITIAL_START_DATE부터) 영업일 목록 조회.
 
     XCom return: 수집 대상 영업일 리스트 (YYYYMMDD)
     """
     today = datetime.now().strftime('%Y%m%d')
 
     last = get_last_collected_date()
-    if not last:
-        log.warning("No previous data in AGE. Run age_backfill first.")
-        return []
-
-    # 마지막 수집일 다음 날부터
-    next_day = (datetime.strptime(last, '%Y%m%d') + timedelta(days=1)).strftime('%Y%m%d')
-    dates = get_business_days(next_day, today)
+    if last:
+        # 마지막 수집일 다음 날부터
+        start = (datetime.strptime(last, '%Y%m%d') + timedelta(days=1)).strftime('%Y%m%d')
+    else:
+        # 첫 실행(빈 AGE): 초기 시작일부터 가격 이력 적재. 구성종목은 KIS 특성상 최근 거래일 1회만 수집
+        start = INITIAL_START_DATE
+        log.info(f"No previous data in AGE. Initial load from {start}")
+    dates = get_business_days(start, today)
 
     if not dates:
-        log.info(f"Already up to date (last: {last})")
+        if last:
+            log.info(f"Already up to date (last: {last})")
+        else:
+            log.warning("No business days for initial load — check KIS_APP_KEY/KIS_APP_SECRET")
         return []
 
     log.info(f"Trading dates to collect: {len(dates)} ({dates[0]} ~ {dates[-1]})")

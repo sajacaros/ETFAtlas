@@ -6,8 +6,7 @@ AGE 수집 공용 로직은 `airflow/dags/age_utils.py`에 모여 있다.
 
 | DAG ID | 파일 | 스케줄 | 저장소 | 역할 |
 |--------|------|--------|--------|------|
-| `age_backfill` | `backfill_age.py` | 수동 | AGE | 초기 데이터 적재 |
-| `age_sync_universe` | `sync_universe_age.py` | `30 8 * * 2-6` (화~토 08:30 KST) | AGE | 일일 증분 수집 |
+| `age_sync_universe` | `sync_universe_age.py` | `30 8 * * 2-6` (화~토 08:30 KST) | AGE | 일일 증분 수집 (첫 실행 시 초기 적재) |
 | `age_tagging` | `age_tagging.py` | `0 3 * * 6` (토 03:00 KST) | AGE | ETF 태그 전체 재구축 |
 | `rdb_sync_metadata` | `sync_metadata_rdb.py` | `30 8 * * 1-5` (평일 08:30 KST) | RDB | `etfs` 코드/이름 동기화 |
 | `rdb_realtime_prices` | `realtime_prices_rdb.py` | `*/10 9-15 * * 1-5` | RDB | 장중 현재가 + 포트폴리오 스냅샷 |
@@ -26,47 +25,7 @@ AGE 수집 공용 로직은 `airflow/dags/age_utils.py`에 모여 있다.
 
 ---
 
-## 1. age_backfill (초기 적재)
-
-신규 환경 구축 시 수동 트리거하여 고정 시작일(`BACKFILL_START = "20260102"`)부터 최근 영업일까지의 데이터를 일괄 적재한다.
-이후 증분 수집은 `age_sync_universe`가 이어받고, 태그는 `age_tagging`을 별도로 실행해 부여한다.
-
-- **재시도**: 0회
-- **Catchup**: 비활성화
-
-### 태스크 구조
-
-```
-get_dates → backfill_universe_and_prices → collect_current_holds → backfill_stock_prices → backfill_returns
-```
-
-### 태스크 상세
-
-#### 1. get_dates
-
-`get_business_days(BACKFILL_START, today)`로 영업일 목록(YYYYMMDD)을 XCom으로 전달한다. 영업일은 기준 ETF(`BUSINESS_DAY_REFERENCE_CODE = '069500'`, KODEX 200)의 KIS 일봉 날짜로 판정한다 (KIS 키가 없거나 실패하면 빈 리스트).
-
-#### 2. backfill_universe_and_prices
-
-`collect_universe_and_prices(dates)` — 날짜별 KRX 데이터로 유니버스 ETF 노드, 메타데이터, ETF Price 노드를 생성한다 (아래 [공용 수집 함수](#공용-수집-함수-age_utils) 참고).
-
-#### 3. collect_current_holds
-
-`collect_holdings(etf_codes, dates[-1])` — KIS API로 **현재** 구성종목 스냅샷을 1회 수집하여 최근 거래일 날짜의 HOLDS로 기록한다.
-KIS API는 날짜 지정을 지원하지 않으므로 과거 구성종목(HOLDS) 백필은 없다.
-Stock 노드가 이 단계에서 생성되므로 주식 가격 백필보다 먼저 실행한다.
-
-#### 4. backfill_stock_prices
-
-`collect_stock_prices_for_dates(dates)` — 전체 기간의 Stock 가격을 수집한다.
-
-#### 5. backfill_returns
-
-`update_etf_returns()` — ETF 1D/1W/1M 수익률을 계산한다.
-
----
-
-## 2. age_sync_universe (일일 증분)
+## 1. age_sync_universe (일일 증분 + 초기 적재)
 
 마지막 수집일 이후 ~ 오늘까지 누락된 영업일의 데이터를 자동 수집한다.
 
@@ -93,7 +52,7 @@ start
 #### 1. fetch_trading_dates
 
 AGE에서 마지막 ETF Price 날짜(`get_last_collected_date`)를 조회하고, 그 다음날부터 오늘까지의 영업일 목록을 반환한다.
-AGE가 비어 있으면 경고 후 빈 리스트를 반환한다 (먼저 `age_backfill` 실행 필요).
+AGE가 비어 있으면(첫 실행) `INITIAL_START_DATE = "20260102"`부터 오늘까지의 영업일을 반환해 초기 적재를 수행한다. 이때도 구성종목(HOLDS)은 최근 거래일 스냅샷 1회만 수집된다(KIS는 날짜 지정 불가). 별도 백필 DAG는 없다.
 
 #### 2. sync_universe_and_prices
 
@@ -167,7 +126,7 @@ ETF별 최근 45개 Price로 `close_price`, `return_1d`, `return_1w`, `return_1m
 
 ---
 
-## 3. age_tagging (태그 재구축)
+## 2. age_tagging (태그 재구축)
 
 전체 ETF의 태그를 룰 기반 + 키워드 + LLM으로 재구축한다.
 
@@ -191,7 +150,7 @@ ETF별 최근 45개 Price로 `close_price`, `return_1d`, `return_1w`, `return_1m
 
 ---
 
-## 4. rdb_sync_metadata (RDB)
+## 3. rdb_sync_metadata (RDB)
 
 KRX Open API에서 전체 ETF 목록을 수집하여 RDB `etfs` 테이블에 code + name만 동기화한다 (포트폴리오의 비유니버스 ETF 이름 조회용).
 ETF 상세 메타데이터(순자산, 보수율, 운용사 등)는 AGE에서 관리한다.
@@ -210,7 +169,7 @@ start → fetch_krx_data → sync_etfs_to_rdb → end
 
 ---
 
-## 5. rdb_realtime_prices (RDB)
+## 4. rdb_realtime_prices (RDB)
 
 장중 10분마다 포트폴리오 보유 종목의 현재가를 `ticker_prices`에 업서트하고 포트폴리오 스냅샷을 갱신한다.
 
@@ -229,13 +188,13 @@ check_market_open → collect_prices → update_snapshots
 
 ---
 
-## 6. rdb_backfill (RDB)
+## 5. rdb_backfill (RDB)
 
 수동 트리거 전용. `etfs` 테이블의 전체 ETF에 대해 2025-01-01부터 현재까지 일별 종가를 yfinance 배치 다운로드(20개씩)로 `ticker_prices`에 백필한다.
 
 ---
 
-## 7. embed_code_examples (pgvector)
+## 6. embed_code_examples (pgvector)
 
 수동 트리거 전용. `code_examples`에서 `status='active'`(승인됨, 미임베딩) 레코드를 찾아 질문을 LLM(`LLM_MODEL`)으로 일반화한 뒤, `EMBEDDING_MODEL`(기본 `embedding-gemma-300m`, 768차원)로 임베딩을 생성하고 `status='embedded'`로 전환한다.
 

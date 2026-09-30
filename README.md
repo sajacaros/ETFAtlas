@@ -99,7 +99,7 @@ docker compose up -d --build
 
 Airflow UI에서 아래 DAG를 순서대로 수동 실행합니다:
 
-1. **`age_backfill`** - 초기 적재: ETF 유니버스·가격 이력, 현재 구성종목, 주식 가격 이력, 수익률
+1. **`age_sync_universe`** - 첫 실행 시 초기 적재: ETF 유니버스·가격 이력(2026-01-02~), 현재 구성종목, 주식 가격 이력, 수익률
 2. **`rdb_sync_metadata`** - RDB ETF 메타데이터 동기화
 3. **`age_tagging`** - ETF 테마 태그 부여
 4. **`embed_code_examples`** - 챗봇 코드 예시 임베딩

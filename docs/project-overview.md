@@ -68,8 +68,7 @@
 
 | DAG | 스케줄(KST) | 역할 | 소스 |
 |---|---|---|---|
-| `age_backfill` | 수동 | **초기 적재**: 유니버스·ETF 가격 이력 → 현재 구성종목 1회 → 주식 가격 이력 → 수익률 | KRX Open API, KIS, 네이버(보수율) |
-| `age_sync_universe` | 화~토 08:30 | 증분: 유니버스·가격 → 구성종목(최근 거래일) → 주식 가격·수익률·신규 ETF 태그 | KRX Open API, KIS, 네이버(보수율) |
+| `age_sync_universe` | 화~토 08:30 | 증분(첫 실행 시 2026-01-02부터 초기 적재): 유니버스·가격 → 구성종목(최근 거래일) → 주식 가격·수익률·신규 ETF 태그 | KRX Open API, KIS, 네이버(보수율) |
 | `rdb_sync_metadata` | 평일 08:30 | ETF 코드/이름 → RDB `etfs` | KRX Open API |
 | `rdb_realtime_prices` | 평일 9~15시 10분 간격 | 보유 티커 현재가 → `ticker_prices`, 스냅샷 갱신(`snapshot_enabled` 포트폴리오만) | yfinance, KIS(휴장일, `market_calendar`에 하루 1회 캐시) |
 | `age_tagging` | 토 03:00 | 룰 + LLM 기반 ETF 태그 재구성 | LLM 프록시 |

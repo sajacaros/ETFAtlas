@@ -1,6 +1,7 @@
 import axios from 'axios'
 import type {
   User,
+  RegisterPayload,
   ETF,
   Holding,
   HoldingChange,
@@ -49,8 +50,20 @@ api.interceptors.request.use((config) => {
 
 // Auth
 export const authApi = {
-  googleLogin: async (token: string) => {
-    const { data } = await api.post<{ access_token: string }>('/auth/google', { token })
+  getSetupStatus: async () => {
+    const { data } = await api.get<{ setup_required: boolean }>('/auth/setup-status')
+    return data
+  },
+  setup: async (payload: RegisterPayload) => {
+    const { data } = await api.post<{ access_token: string }>('/auth/setup', payload)
+    return data
+  },
+  register: async (payload: RegisterPayload) => {
+    const { data } = await api.post<{ access_token: string }>('/auth/register', payload)
+    return data
+  },
+  login: async (username: string, password: string) => {
+    const { data } = await api.post<{ access_token: string }>('/auth/login', { username, password })
     return data
   },
   getMe: async () => {

@@ -1,65 +1,64 @@
 from typing import Optional
+from sqlalchemy import text
 from sqlalchemy.orm import Session
-from google.oauth2 import id_token
-from google.auth.transport import requests
 from ..models.user import User
 from ..models.role import Role, UserRole
-from ..config import get_settings
+from ..utils.security import hash_password, verify_password
 
-settings = get_settings()
+
+class SetupAlreadyCompletedError(Exception):
+    pass
+
+
+class UsernameTakenError(Exception):
+    pass
 
 
 class AuthService:
     def __init__(self, db: Session):
         self.db = db
 
-    def verify_google_token(self, token: str) -> dict:
-        try:
-            idinfo = id_token.verify_oauth2_token(
-                token,
-                requests.Request(),
-                settings.google_client_id
-            )
-            return {
-                "google_id": idinfo["sub"],
-                "email": idinfo["email"],
-                "name": idinfo.get("name", ""),
-                "picture": idinfo.get("picture", "")
-            }
-        except ValueError as e:
-            raise ValueError(f"Invalid Google token: {str(e)}")
+    def setup_required(self) -> bool:
+        return self.db.query(User.id).first() is None
 
-    def get_or_create_user(self, google_data: dict) -> User:
-        user = self.db.query(User).filter(User.google_id == google_data["google_id"]).first()
+    def setup_admin(self, username: str, password: str, name: str | None) -> User:
+        """최초 설치 시 관리자 생성. 사용자가 이미 있으면 거부."""
+        # 동시 setup 요청 경합 방지: 트랜잭션 동안 users 테이블 쓰기 잠금
+        self.db.execute(text("LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE"))
+        if not self.setup_required():
+            self.db.rollback()
+            raise SetupAlreadyCompletedError()
+        return self._create_user(username, password, name, role_name="admin")
 
-        if user:
-            user.name = google_data["name"]
-            user.picture = google_data["picture"]
-            self.db.commit()
-            self.db.refresh(user)
+    def register(self, username: str, password: str, name: str | None) -> User:
+        if self.setup_required():
+            raise SetupAlreadyCompletedError()  # setup 전 일반 가입 불가
+        return self._create_user(username, password, name, role_name="member")
+
+    def authenticate(self, username: str, password: str) -> Optional[User]:
+        user = self.db.query(User).filter(User.username == username).first()
+        if user and verify_password(password, user.password_hash):
             return user
-
-        # 첫 번째 유저인지 확인
-        is_first = self.db.query(User).count() == 0
-
-        user = User(
-            email=google_data["email"],
-            name=google_data["name"],
-            picture=google_data["picture"],
-            google_id=google_data["google_id"]
-        )
-        self.db.add(user)
-        self.db.commit()
-        self.db.refresh(user)
-
-        # RDB 역할 할당
-        role_name = "admin" if is_first else "member"
-        role = self.db.query(Role).filter(Role.name == role_name).first()
-        if role:
-            self.db.add(UserRole(user_id=user.id, role_id=role.id))
-            self.db.commit()
-
-        return user
+        return None
 
     def get_user_by_id(self, user_id: int) -> Optional[User]:
         return self.db.query(User).filter(User.id == user_id).first()
+
+    def _create_user(self, username: str, password: str, name: str | None, role_name: str) -> User:
+        if self.db.query(User.id).filter(User.username == username).first():
+            self.db.rollback()
+            raise UsernameTakenError()
+        user = User(username=username, password_hash=hash_password(password), name=name or username)
+        self.db.add(user)
+        self.db.flush()
+        role = self.db.query(Role).filter(Role.name == role_name).one()
+        self.db.add(UserRole(user_id=user.id, role_id=role.id))
+        self.db.commit()
+        self.db.refresh(user)
+        return user
+
+
+def is_admin(db: Session, user_id: int) -> bool:
+    return db.query(UserRole).join(Role).filter(
+        UserRole.user_id == user_id, Role.name == "admin"
+    ).first() is not None

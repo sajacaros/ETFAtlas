@@ -17,6 +17,7 @@ from age_utils import get_db_connection
 log = logging.getLogger(__name__)
 
 EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_DIM = 768  # code_examples.embedding vector(768)
 BATCH_SIZE = 50
 
 default_args = {
@@ -114,7 +115,9 @@ def embed_and_load():
             ids = [r[0] for r in batch]
             embed_inputs = [r[2] or r[1] for r in batch]
 
-            resp = client.embeddings.create(model=EMBEDDING_MODEL, input=embed_inputs)
+            resp = client.embeddings.create(
+                model=EMBEDDING_MODEL, input=embed_inputs, dimensions=EMBEDDING_DIM
+            )
             embeddings = [item.embedding for item in resp.data]
 
             for row_id, emb in zip(ids, embeddings):

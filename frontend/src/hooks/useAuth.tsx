@@ -1,13 +1,16 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { authApi } from '@/lib/api'
 import { setToken, getToken, removeToken } from '@/lib/auth'
-import type { User } from '@/types/api'
+import type { User, RegisterPayload } from '@/types/api'
 
 interface AuthContextType {
   user: User | null
   isLoading: boolean
   isAuthenticated: boolean
-  login: (googleToken: string) => Promise<void>
+  setupRequired: boolean
+  login: (username: string, password: string) => Promise<void>
+  register: (payload: RegisterPayload) => Promise<void>
+  setup: (payload: RegisterPayload) => Promise<void>
   logout: () => void
 }
 
@@ -16,27 +19,48 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [setupRequired, setSetupRequired] = useState(false)
 
   useEffect(() => {
-    const token = getToken()
-    if (token) {
-      authApi
-        .getMe()
-        .then(setUser)
-        .catch(() => {
+    const init = async () => {
+      try {
+        const { setup_required } = await authApi.getSetupStatus()
+        setSetupRequired(setup_required)
+        if (setup_required) {
           removeToken()
-        })
-        .finally(() => setIsLoading(false))
-    } else {
-      setIsLoading(false)
+          return
+        }
+        if (getToken()) {
+          setUser(await authApi.getMe())
+        }
+      } catch {
+        removeToken()
+      } finally {
+        setIsLoading(false)
+      }
     }
+    init()
   }, [])
 
-  const login = async (googleToken: string) => {
-    const { access_token } = await authApi.googleLogin(googleToken)
-    setToken(access_token)
-    const userData = await authApi.getMe()
-    setUser(userData)
+  const applyToken = async (accessToken: string) => {
+    setToken(accessToken)
+    setUser(await authApi.getMe())
+  }
+
+  const login = async (username: string, password: string) => {
+    const { access_token } = await authApi.login(username, password)
+    await applyToken(access_token)
+  }
+
+  const register = async (payload: RegisterPayload) => {
+    const { access_token } = await authApi.register(payload)
+    await applyToken(access_token)
+  }
+
+  const setup = async (payload: RegisterPayload) => {
+    const { access_token } = await authApi.setup(payload)
+    setSetupRequired(false)
+    await applyToken(access_token)
   }
 
   const logout = () => {
@@ -50,7 +74,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user,
         isLoading,
         isAuthenticated: !!user,
+        setupRequired,
         login,
+        register,
+        setup,
         logout,
       }}
     >

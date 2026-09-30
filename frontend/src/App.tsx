@@ -1,5 +1,6 @@
-import { Routes, Route } from 'react-router-dom'
-import { AuthProvider } from './hooks/useAuth'
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import type { ReactNode } from 'react'
+import { AuthProvider, useAuth } from './hooks/useAuth'
 import { NotificationProvider } from './hooks/useNotification'
 import { AmountVisibilityProvider } from './hooks/useAmountVisibility'
 import Header from './components/Header'
@@ -13,8 +14,18 @@ import SharedPortfoliosPage from '@/app/SharedPortfoliosPage'
 import SharedPortfolioDetailPage from '@/app/SharedPortfolioDetailPage'
 import AdminPage from './app/AdminPage'
 import LoginPage from './app/LoginPage'
-import AuthCallbackPage from './app/AuthCallbackPage'
+import SetupPage from './app/SetupPage'
 import { Toaster } from './components/ui/toaster'
+
+// 최초 설치(사용자 0명) 상태면 모든 경로를 /setup으로 보낸다
+function SetupGuard({ children }: { children: ReactNode }) {
+  const { setupRequired } = useAuth()
+  const location = useLocation()
+  if (setupRequired && location.pathname !== '/setup') {
+    return <Navigate to="/setup" replace />
+  }
+  return <>{children}</>
+}
 
 function App() {
   return (
@@ -24,6 +35,7 @@ function App() {
       <div className="min-h-screen bg-background">
         <Header />
         <main className="container mx-auto py-6 px-4">
+          <SetupGuard>
           <Routes>
             <Route path="/" element={<HomePage />} />
             <Route path="/etf/:code" element={<ETFDetailPage />} />
@@ -36,8 +48,9 @@ function App() {
             <Route path="/chat" element={<ChatPage />} />
             <Route path="/admin" element={<AdminPage />} />
             <Route path="/login" element={<LoginPage />} />
-            <Route path="/auth/callback" element={<AuthCallbackPage />} />
+            <Route path="/setup" element={<SetupPage />} />
           </Routes>
+          </SetupGuard>
         </main>
         <Toaster />
       </div>

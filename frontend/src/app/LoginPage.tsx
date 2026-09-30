@@ -1,29 +1,19 @@
+import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { useEffect } from 'react'
-import { GoogleLogin } from '@react-oauth/google'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import AccountForm from '@/components/AccountForm'
 
 export default function LoginPage() {
   const navigate = useNavigate()
-  const { isAuthenticated, isLoading, login } = useAuth()
+  const { isAuthenticated, isLoading, login, register } = useAuth()
 
   useEffect(() => {
     if (isAuthenticated && !isLoading) {
       navigate('/')
     }
   }, [isAuthenticated, isLoading, navigate])
-
-  const handleGoogleSuccess = async (credentialResponse: { credential?: string }) => {
-    if (credentialResponse.credential) {
-      try {
-        await login(credentialResponse.credential)
-        navigate('/')
-      } catch (err) {
-        console.error('Login failed:', err)
-      }
-    }
-  }
 
   if (isLoading) {
     return (
@@ -39,22 +29,26 @@ export default function LoginPage() {
         <CardHeader className="text-center">
           <CardTitle className="text-2xl">ETF Atlas</CardTitle>
           <CardDescription>
-            ETF 정보 관리 및 인사이트 서비스에 로그인하세요
+            로그인하면 포트폴리오, 워치리스트, AI 챗봇을 사용할 수 있습니다
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex justify-center">
-            <GoogleLogin
-              onSuccess={handleGoogleSuccess}
-              onError={() => console.error('Google Login Failed')}
-              size="large"
-              width="350"
-              text="continue_with"
-            />
-          </div>
-          <p className="text-center text-sm text-muted-foreground">
-            로그인하면 워치리스트와 AI 추천 기능을 사용할 수 있습니다
-          </p>
+        <CardContent>
+          <Tabs defaultValue="login">
+            <TabsList className="grid w-full grid-cols-2 mb-4">
+              <TabsTrigger value="login">로그인</TabsTrigger>
+              <TabsTrigger value="register">회원가입</TabsTrigger>
+            </TabsList>
+            <TabsContent value="login">
+              <AccountForm
+                mode="login"
+                submitLabel="로그인"
+                onSubmit={({ username, password }) => login(username, password)}
+              />
+            </TabsContent>
+            <TabsContent value="register">
+              <AccountForm mode="register" submitLabel="가입하기" onSubmit={register} />
+            </TabsContent>
+          </Tabs>
         </CardContent>
       </Card>
     </div>

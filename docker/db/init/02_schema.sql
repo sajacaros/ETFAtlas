@@ -137,7 +137,7 @@ CREATE TABLE IF NOT EXISTS code_examples (
     question_generalized TEXT,
     code TEXT NOT NULL,
     description TEXT,
-    embedding vector(1536),
+    embedding vector(768),
     status VARCHAR(20) DEFAULT 'active',
     created_by INTEGER REFERENCES users(id),
     source_chat_log_id INTEGER REFERENCES chat_logs(id),

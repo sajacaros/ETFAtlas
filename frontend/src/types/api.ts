@@ -1,9 +1,14 @@
 export interface User {
   id: number
-  email: string
+  username: string
   name: string | null
-  picture: string | null
   is_admin: boolean
+}
+
+export interface RegisterPayload {
+  username: string
+  password: string
+  name?: string
 }
 
 // Admin types

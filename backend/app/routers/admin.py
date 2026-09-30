@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..utils.jwt import get_current_user_id
 from ..services.embedding_service import EmbeddingService
-from ..models.role import Role, UserRole
+from ..services.auth_service import is_admin
 from ..models.chat import ChatLog, ChatLogStatus
 from ..models.code_example import CodeExample
 from ..schemas.chat import (
@@ -29,10 +29,7 @@ def get_admin_user_id(
     user_id: int = Depends(get_current_user_id),
 ) -> int:
     """Verify the user has admin role."""
-    is_admin = db.query(UserRole).join(Role).filter(
-        UserRole.user_id == user_id, Role.name == "admin"
-    ).first()
-    if not is_admin:
+    if not is_admin(db, user_id):
         raise HTTPException(status_code=403, detail="Admin access required")
     return user_id
 

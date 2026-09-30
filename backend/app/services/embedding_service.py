@@ -11,6 +11,7 @@ from .generalize_prompt import GENERALIZE_SYSTEM_PROMPT
 logger = logging.getLogger(__name__)
 
 EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_DIM = 768  # code_examples.embedding vector(768)
 
 
 class EmbeddingService:
@@ -41,6 +42,7 @@ class EmbeddingService:
         resp = self._client.embeddings.create(
             model=EMBEDDING_MODEL,
             input=text_input,
+            dimensions=EMBEDDING_DIM,
         )
         return resp.data[0].embedding
 
@@ -49,6 +51,7 @@ class EmbeddingService:
         resp = self._client.embeddings.create(
             model=EMBEDDING_MODEL,
             input=texts,
+            dimensions=EMBEDDING_DIM,
         )
         return [item.embedding for item in resp.data]
 

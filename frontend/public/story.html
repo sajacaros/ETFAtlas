@@ -453,12 +453,12 @@ $$) as (result agtype);</pre>
   <h3 class="sub-title">데이터 파이프라인 &mdash; Airflow 활용</h3>
   <p>ETF Atlas에서는 <span class="hl">6개의 Airflow DAG</span>를 운영하고 있습니다.</p>
   <ul>
-    <li><strong>일별 ETF 동기화 (AGE)</strong> &mdash; 거래일 다음날 새벽 4시(KST), KRX 데이터 수집 &rarr; ETF/Price 노드 생성 &rarr; HOLDS 관계 &rarr; 수익률 계산 &rarr; Discord 알림</li>
+    <li><strong>일별 ETF 동기화 (AGE)</strong> &mdash; 거래일 다음날 새벽 4시(KST), KRX 데이터 수집 &rarr; ETF/Price 노드 생성 &rarr; KIS 구성종목으로 HOLDS 관계 &rarr; 수익률 계산 &rarr; Discord 알림</li>
     <li><strong>실시간 가격 수집 (RDB)</strong> &mdash; 평일 장중 10분마다, <span class="tech">ShortCircuitOperator</span>로 장 오픈 여부 판단 후 현재가 수집 &rarr; 포트폴리오 스냅샷 갱신</li>
     <li><strong>주간 태깅 (AGE)</strong> &mdash; 토요일 새벽 3시, 규칙 기반 + 키워드 매칭 + LLM 분류 3단계 전략</li>
     <li><strong>RDB 메타데이터 동기화</strong> &mdash; 평일 오전 7시, KRX에서 ETF 코드/이름 동기화</li>
-    <li><strong>백필 (AGE)</strong> &mdash; 수동 실행, 과거 거래일 데이터 한꺼번에 수집 (보유종목 수집에 6시간 타임아웃)</li>
-    <li><strong>코드 예제 임베딩 (RDB)</strong> &mdash; 수동 실행, 챗봇용 코드 예제를 LLM으로 질문 일반화 후 OpenAI 임베딩 생성 &rarr; pgvector 저장</li>
+    <li><strong>초기 적재 (AGE)</strong> &mdash; 수동 실행, 과거 거래일 가격 데이터를 한꺼번에 수집. 보유종목은 KIS API가 날짜 지정을 지원하지 않아 현재 스냅샷 1회만 수집</li>
+    <li><strong>코드 예제 임베딩 (RDB)</strong> &mdash; 수동 실행, 챗봇용 코드 예제를 LLM으로 질문 일반화 후 embedding-gemma-300m(768차원) 임베딩 생성 &rarr; pgvector 저장</li>
   </ul>
 
   <h3 class="sub-title">Airflow에서 유용했던 기능들</h3>
@@ -529,7 +529,7 @@ ORDER BY d DESC LIMIT 1</pre>
 
   <h3 class="sub-title">전체 구조</h3>
   <p><span class="tech">ChatService</span>의 구조는 단순합니다. smolagents의 <span class="hl-purple">CodeAgent</span>가 <span class="hl">ReAct 방식</span>으로 질문을 처리하고, <span class="tech">pgvector</span> 기반 Few-shot 코드 예시가 정확도를 보완합니다.</p>
-  <p>모델은 LiteLLM을 통해 <span class="tech">GPT-4.1-mini</span> 사용, <span class="hl">10개의 커스텀 Tool</span> 등록.</p>
+  <p>모델은 LiteLLM 프록시(OpenAI 호환)를 통해 <span class="tech">qwen38-27b</span> 사용, <span class="hl">10개의 커스텀 Tool</span> 등록.</p>
   <ul>
     <li><strong>검색:</strong> ETF 검색, 종목 검색, 태그 목록</li>
     <li><strong>정보:</strong> ETF 상세, ETF 가격, 주식 가격, 보유종목 변동</li>

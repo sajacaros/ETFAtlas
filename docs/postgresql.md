@@ -4,24 +4,35 @@
 
 | 확장 | 버전 | 용도 |
 |------|------|------|
-| Apache AGE | 1.5.0 | 그래프 데이터베이스 (ETF-종목 관계) |
-| pgvector | 0.7.0 | 벡터 임베딩 저장 및 유사도 검색 |
+| Apache AGE | 1.8.0 | 그래프 데이터베이스 (ETF-종목 관계) |
+| pgvector | 0.8.6 | 벡터 임베딩 저장 및 유사도 검색 |
 | pg_trgm | 내장 | 트라이그램 기반 퍼지 텍스트 검색 |
 
 ## 1. Apache AGE (Graph Extension)
 
 ### 설치
 
-PostgreSQL 16 이미지에서 소스 빌드로 설치한다 (`docker/db/Dockerfile`):
+PostgreSQL 18 이미지(`postgres:18-trixie`)에서 소스 빌드로 설치한다 (`docker/db/Dockerfile`):
 
 ```dockerfile
-RUN apt-get install -y build-essential libreadline-dev zlib1g-dev flex bison \
-    postgresql-server-dev-16
-RUN git clone --branch release/PG16/1.5.0 https://github.com/apache/age.git /tmp/age \
-    && cd /tmp/age && make && make install
+RUN apt-get install -y build-essential git libreadline-dev zlib1g-dev flex bison \
+    postgresql-server-dev-18
+RUN git clone --branch release/PG18/1.8.0 --depth 1 https://github.com/apache/age.git /tmp/age \
+    && cd /tmp/age && make install
 ```
 
 **필수 설정:** `shared_preload_libraries = 'age'` (postgresql.conf)
+
+### 초기화 스크립트 (`docker/db/init/`)
+
+빈 볼륨으로 처음 기동할 때 순서대로 실행된다 (별도 마이그레이션 스크립트 없음 — 스키마 변경 시 DB 재생성).
+
+| 파일 | 내용 |
+|------|------|
+| `00_airflow_db.sql` | Airflow 메타데이터 DB `airflow` 생성 (앱 DB `etf_atlas`와 분리) |
+| `01_extensions.sql` | `age`, `vector`, `pg_trgm` 확장 + `etf_graph` 생성 |
+| `02_schema.sql` | RDB 테이블/인덱스, 기본 역할(admin, member) |
+| `03_seed_code_examples.sql` | 챗봇 코드 예제 시드 (임베딩은 `embed_code_examples` DAG에서 생성) |
 
 ### 초기화 (01_extensions.sql)
 
@@ -38,22 +49,24 @@ SELECT create_graph('etf_graph');  -- 그래프 생성
 
 | 라벨 | 속성 | 설명 |
 |------|------|------|
-| ETF | code, name, updated_at | ETF 종목 |
-| Stock | code, name, is_etf | 보유 종목 |
+| ETF | code, name, expense_ratio, net_assets, close_price, return_1d/1w/1m, market_cap_change_1w | ETF 종목 |
+| Stock | code, name, is_etf | 보유 종목 (이름은 KIS `hts_kor_isnm`) |
 | Company | name | 운용사 |
-| Sector | name | 업종/섹터 |
-| Market | name | KOSPI/KOSDAQ |
-| Change | id, stock_code, stock_name, change_type, before_weight, after_weight, weight_change, detected_at | 보유종목 변동 |
+| Tag | name | 테마/분류 태그 |
+| Price | date, open, high, low, close, volume, ... | 일별 가격 |
+| User | user_id | 사용자 (즐겨찾기용) |
 
 **관계(엣지):**
 
 | 관계 | 속성 | 설명 |
 |------|------|------|
 | `(ETF)-[:MANAGED_BY]->(Company)` | - | 운용사 |
-| `(ETF)-[:HOLDS]->(Stock)` | date, weight, shares | 보유종목 |
-| `(Stock)-[:BELONGS_TO]->(Sector)` | - | 업종 분류 |
-| `(Sector)-[:PART_OF]->(Market)` | - | 시장 구분 |
-| `(ETF)-[:HAS_CHANGE]->(Change)` | - | 변동 이력 |
+| `(ETF)-[:HOLDS]->(Stock)` | date, weight, shares | 보유종목 (KIS 수집일 기준 스냅샷, shares는 추정치) |
+| `(ETF)-[:TAGGED]->(Tag)` | - | 태그 |
+| `(ETF\|Stock)-[:HAS_PRICE]->(Price)` | - | 가격 |
+| `(User)-[:WATCHES]->(ETF)` | added_at | 즐겨찾기 |
+
+상세는 [graph.md](graph.md) 참고.
 
 ### 사용 예 (graph_service.py)
 
@@ -83,7 +96,7 @@ self.db.execute(text("""
 ### 설치
 
 ```dockerfile
-RUN git clone --branch v0.7.0 https://github.com/pgvector/pgvector.git /tmp/pgvector \
+RUN git clone --branch v0.8.6 --depth 1 https://github.com/pgvector/pgvector.git /tmp/pgvector \
     && cd /tmp/pgvector && make && make install
 ```
 
@@ -95,26 +108,39 @@ CREATE EXTENSION IF NOT EXISTS vector;
 
 ### 테이블
 
+챗봇의 few-shot 코드 예제 저장소(`code_examples`)에서 사용한다.
+
 ```sql
-CREATE TABLE etf_embeddings (
-    etf_code VARCHAR(20) PRIMARY KEY,
-    embedding vector(1536),    -- 1536차원 벡터 (OpenAI 임베딩 호환)
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE code_examples (
+    id SERIAL PRIMARY KEY,
+    question TEXT NOT NULL,
+    question_generalized TEXT,
+    code TEXT NOT NULL,
+    description TEXT,
+    embedding vector(768),     -- embedding-gemma-300m (768차원)
+    status VARCHAR(20) DEFAULT 'active',
+    ...
 );
+
+CREATE INDEX idx_code_examples_embedding
+    ON code_examples USING ivfflat (embedding vector_cosine_ops)
+    WITH (lists = 10);
 ```
 
 ### Python 연동
 
-```python
-from pgvector.sqlalchemy import Vector
+`pgvector` 파이썬 패키지는 쓰지 않는다. ORM 모델에서는 `embedding`을 `Text`로 선언하고, 쓰기/검색은 raw SQL로 처리한다.
 
-class ETFEmbedding(Base):
-    embedding = Column(Vector(1536))
+```python
+# embedding_service.py — 코사인 거리 검색
+SELECT id, question, code, embedding <=> :emb::vector AS distance
+FROM code_examples
+WHERE status = 'embedded' AND embedding <=> :emb::vector < :max_dist
+ORDER BY embedding <=> :emb::vector
+LIMIT :top_k
 ```
 
-### 현재 상태
-
-테이블과 모델이 정의되어 있으나, 임베딩 생성 및 시맨틱 검색 기능은 아직 미구현.
+임베딩은 LiteLLM 프록시(`LLM_API_BASE`)의 `EMBEDDING_MODEL`(기본 `embedding-gemma-300m`)로 생성한다.
 
 ## 3. pg_trgm (Trigram Extension)
 
@@ -135,6 +161,8 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 ```
 
 ### 인덱스
+
+현재 `02_schema.sql`에는 `etfs`의 트라이그램 GIN 인덱스가 없다 (ETF 수가 적어 순차 스캔). 필요 시 아래처럼 추가할 수 있다.
 
 ```sql
 CREATE INDEX idx_etfs_name_trgm ON etfs USING GIN (name gin_trgm_ops);
@@ -180,11 +208,10 @@ ORDER BY
 `price_service.py`에서 종목별 최신 가격을 효율적으로 조회:
 
 ```sql
-SELECT DISTINCT ON (etf_code) etf_code, close_price
-FROM etf_prices
-WHERE etf_code = ANY(:tickers)
-  AND close_price IS NOT NULL
-ORDER BY etf_code, date DESC
+SELECT DISTINCT ON (ticker) ticker, price
+FROM ticker_prices
+WHERE ticker = ANY(:tickers)
+ORDER BY ticker, date DESC
 ```
 
 `DISTINCT ON`은 PostgreSQL 전용으로, 지정한 컬럼 기준 첫 번째 행만 반환한다. 서브쿼리 없이 그룹별 최신 행을 가져올 수 있다.
@@ -192,7 +219,7 @@ ORDER BY etf_code, date DESC
 ### ANY() 배열 연산자
 
 ```sql
-WHERE etf_code = ANY(:tickers)
+WHERE ticker = ANY(:tickers)
 ```
 
 배열 파라미터와 비교하여 IN절과 동일하게 동작하지만, 바인드 변수로 배열을 직접 전달할 수 있다.
@@ -202,18 +229,19 @@ WHERE etf_code = ANY(:tickers)
 DAG에서 데이터 적재 시 중복 처리:
 
 ```sql
-INSERT INTO etf_prices (etf_code, date, close_price, ...)
+INSERT INTO ticker_prices (ticker, date, price, updated_at)
 VALUES (...)
-ON CONFLICT (etf_code, date)
-DO UPDATE SET close_price = EXCLUDED.close_price, ...
+ON CONFLICT (ticker, date)
+DO UPDATE SET price = EXCLUDED.price, updated_at = NOW()
 ```
 
 ## 5. DB 연결 설정
 
 ```python
 # database.py
+# psycopg2 드라이버 명시 (SQLAlchemy 2.1+ 기본은 psycopg3)
 engine = create_engine(
-    settings.database_url,
+    settings.database_url.replace("postgresql://", "postgresql+psycopg2://", 1),
     pool_pre_ping=True,    # 커넥션 유효성 사전 검증
     pool_size=10,          # 기본 풀 크기
     max_overflow=20        # 추가 허용 커넥션
@@ -222,18 +250,20 @@ engine = create_engine(
 
 ## 전체 테이블 목록
 
+앱 DB `etf_atlas` 기준 (`docker/db/init/02_schema.sql`). ETF/종목/보유종목/가격 이력은 RDB가 아니라 AGE 그래프에 있다.
+
 | 테이블 | 용도 | 특이사항 |
 |--------|------|----------|
-| users | 사용자 계정 | Google OAuth |
-| etfs | ETF 마스터 | pg_trgm GIN 인덱스 |
-| stocks | 종목 마스터 | ORM으로 생성 |
-| etf_holdings | ETF 보유종목 | ORM으로 생성 |
-| etf_prices | ETF 시세 | 복합 PK (code, date) |
-| stock_prices | 종목 시세 | 복합 PK (code, date) |
-| etf_embeddings | 벡터 임베딩 | pgvector 1536차원 |
-| etf_universe | ETF 유니버스 | DAG 필터링 결과 |
-| watchlists | 관심 목록 | CASCADE 삭제 |
-| watchlist_items | 관심 종목 | UNIQUE(watchlist, etf) |
-| portfolios | 포트폴리오 | 계산 기준 설정 |
-| target_allocations | 목표 비중 | UNIQUE(portfolio, ticker) |
-| holdings | 보유 수량 | UNIQUE(portfolio, ticker) |
+| users | 사용자 계정 | username UNIQUE + bcrypt password_hash |
+| roles | 역할 | admin, member |
+| user_roles | 사용자-역할 매핑 | UNIQUE(user_id, role_id) |
+| etfs | ETF 코드/이름 | pg_trgm 퍼지 검색, `rdb_sync_metadata` DAG이 적재 |
+| portfolios | 포트폴리오 | 공유 토큰, snapshot_enabled |
+| target_allocations | 목표 비중 | UNIQUE(portfolio_id, ticker) |
+| holdings | 보유 수량 | UNIQUE(portfolio_id, ticker), quantity/avg_price 암호화 |
+| portfolio_snapshots | 일별 평가금액 | UNIQUE(portfolio_id, date), 금액 컬럼 암호화 |
+| ticker_prices | 티커별 일별 가격 캐시 | 복합 PK (ticker, date) |
+| collection_runs | 수집 완료 기록 | collected_at UNIQUE, 알림 트리거 |
+| kis_tokens | KIS 접근 토큰 캐시 | PK app_key_hash |
+| chat_logs | 챗봇 대화 로그 | 피드백/검수 상태 |
+| code_examples | 챗봇 코드 예제 | pgvector 768차원, ivfflat |

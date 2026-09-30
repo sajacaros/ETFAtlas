@@ -1,5 +1,7 @@
 # ETF Atlas v1 기능 명세
 
+> **참고:** 이 문서는 v1 당시의 기획 명세이며 현재 구현과 다르다. 인증은 Google OAuth에서 아이디/비밀번호 + JWT로, 구성종목 데이터 소스는 pykrx에서 한국투자증권 KIS Open API로 바뀌었고 유니버스 조건(순자산 500억 이상, 해외 ETF 제외)도 달라졌다. 현재 구성은 [project-overview.md](./project-overview.md)를 참고한다.
+
 ## 프로젝트 목표
 
 ETF 정보 관리를 통한 인사이트 제공

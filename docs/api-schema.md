@@ -1,5 +1,7 @@
 # ETF Atlas API 스키마
 
+> 인증 API는 현재 구현 기준이다. 그 외 섹션(종목/ETF/워치리스트/AI 추천)은 초기 설계안이며 실제 엔드포인트와 다를 수 있다. 현재 API 전체 목록은 Swagger(`http://localhost:9601/docs`)를 참고한다.
+
 ## 공통
 
 ### 응답 형식
@@ -35,73 +37,88 @@
 
 ## 인증 API
 
-### POST /auth/google
+아이디/비밀번호 + JWT 방식 (`backend/app/routers/auth.py`). 인증 API는 공통 응답 래퍼 없이 객체를 그대로 반환하고, 에러는 FastAPI 기본 형식(`{"detail": "..."}`)을 따른다.
+발급된 access token은 이후 요청에 `Authorization: Bearer {access_token}` 헤더로 전달한다 (기본 만료 7일, refresh token 없음).
 
-Google OAuth 로그인 시작
+**비밀번호/아이디 규칙** (setup, register 공통)
+| 필드 | 규칙 |
+|------|------|
+| username | 3~50자, `^[A-Za-z0-9_.-]+$` |
+| password | 8자 이상, 72바이트 이하 (bcrypt 한도) |
+| name | 선택, 최대 255자 |
+
+### GET /api/auth/setup-status
+
+최초 설치(관리자 생성) 필요 여부. 사용자가 한 명도 없으면 `true` — 프론트엔드는 이 경우 `/setup`으로 리다이렉트한다.
 
 **Response**
 ```typescript
 {
-  "data": {
-    "auth_url": string  // Google 로그인 페이지 URL
-  }
+  "setup_required": boolean
 }
 ```
 
-### GET /auth/google/callback
+### POST /api/auth/setup
 
-Google OAuth 콜백 (Google에서 리다이렉트)
-
-**Query Parameters**
-| 파라미터 | 타입 | 설명 |
-|----------|------|------|
-| code | string | Google 인증 코드 |
-| state | string | CSRF 방지 토큰 |
-
-**Response**: 프론트엔드로 리다이렉트 (토큰 포함)
-```
-{FRONTEND_URL}/auth/callback?access_token=xxx&refresh_token=xxx
-```
-
-### POST /auth/refresh
-
-토큰 갱신
+최초 관리자 계정 생성. 사용자가 0명일 때만 허용되며 `admin` 역할을 부여한다.
 
 **Request**
 ```typescript
 {
-  "refresh_token": string
+  "username": string,
+  "password": string,
+  "name"?: string | null
+}
+```
+
+**Response** `201`
+```typescript
+{
+  "access_token": string,
+  "token_type": "bearer"
+}
+```
+
+**에러**
+| HTTP | detail | 설명 |
+|------|--------|------|
+| 409 | `Setup already completed` | 이미 사용자가 존재 |
+| 409 | `Username already exists` | 아이디 중복 |
+
+### POST /api/auth/register
+
+일반 회원가입 (`member` 역할). Request/Response는 `/api/auth/setup`과 동일.
+
+**에러**
+| HTTP | detail | 설명 |
+|------|--------|------|
+| 409 | `Setup required first` | 최초 설치(관리자 생성) 전 |
+| 409 | `Username already exists` | 아이디 중복 |
+
+### POST /api/auth/login
+
+**Request**
+```typescript
+{
+  "username": string,
+  "password": string
 }
 ```
 
 **Response**
 ```typescript
 {
-  "data": {
-    "access_token": string,
-    "refresh_token": string,
-    "expires_in": number  // 초 단위
-  }
+  "access_token": string,
+  "token_type": "bearer"
 }
 ```
 
-### POST /auth/logout
+**에러**
+| HTTP | detail | 설명 |
+|------|--------|------|
+| 401 | `Invalid username or password` | 아이디 또는 비밀번호 불일치 |
 
-로그아웃
-
-**Headers**
-```
-Authorization: Bearer {access_token}
-```
-
-**Response**
-```typescript
-{
-  "message": "success"
-}
-```
-
-### GET /auth/me
+### GET /api/auth/me
 
 내 정보 조회
 
@@ -113,12 +130,10 @@ Authorization: Bearer {access_token}
 **Response**
 ```typescript
 {
-  "data": {
-    "id": string,        // UUID
-    "email": string,
-    "name": string,
-    "created_at": string // ISO 8601
-  }
+  "id": number,
+  "username": string,
+  "name": string | null,
+  "is_admin": boolean
 }
 ```
 
@@ -565,16 +580,15 @@ export interface ApiError {
 
 // 인증
 export interface User {
-  id: string;
-  email: string;
-  name: string;
-  created_at: string;
+  id: number;
+  username: string;
+  name: string | null;
+  is_admin: boolean;
 }
 
-export interface AuthTokens {
+export interface TokenResponse {
   access_token: string;
-  refresh_token: string;
-  expires_in: number;
+  token_type: 'bearer';
 }
 
 // 종목

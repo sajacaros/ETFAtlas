@@ -26,7 +26,7 @@ ORDER BY
 | 이름 매칭 | `ILIKE` | 무시 | 이름에 검색어 직접 포함 (예: '로봇') |
 | 유사도 | `%` (pg_trgm) | `LOWER()` 적용 | 트라이그램 기반 유사 이름 매칭 |
 
-**인덱스:** `etfs` 테이블에 GIN 인덱스 적용
+**인덱스:** 현재 `docker/db/init/02_schema.sql`에는 GIN 인덱스가 없다 (ETF 수가 적어 순차 스캔). 필요 시 아래처럼 추가한다.
 ```sql
 CREATE INDEX idx_etfs_name_trgm ON etfs USING GIN (name gin_trgm_ops);
 CREATE INDEX idx_etfs_code_trgm ON etfs USING GIN (code gin_trgm_ops);

@@ -471,21 +471,28 @@ final_answer(f"KODEX 200의 정보: {info}")
 ### 에이전트 설정
 
 ```python
+# LiteLLM 프록시는 OpenAI 호환 API이므로 smolagents OpenAIModel(openai SDK)로 직접 호출
+model = OpenAIModel(
+    model_id=settings.llm_model,        # LLM_MODEL (기본 qwen38-27b)
+    api_base=settings.llm_api_base,     # LLM_API_BASE (기본 http://localhost:4000)
+    api_key=settings.llm_api_key,       # LLM_API_KEY
+)
 CodeAgent(
     tools=[...10개 도구...],
-    model=LiteLLMModel(model_id="gpt-4.1-mini"),
-    additional_authorized_imports=["json"],  # 허용 임포트
-    max_steps=10,                            # 최대 추론 스텝
+    model=model,
+    additional_authorized_imports=["json", "datetime"],  # 허용 임포트
+    max_steps=15,                                        # 최대 추론 스텝
 )
 ```
 
 | 설정 | 값 | 설명 |
 |------|-----|------|
-| LLM | gpt-4.1-mini | LiteLLM을 통한 OpenAI 모델 |
-| 최대 스텝 | 10 | 무한 루프 방지 |
-| 허용 임포트 | json | 보안상 최소 임포트만 허용 |
+| LLM | `LLM_MODEL` (기본 qwen38-27b) | LiteLLM 프록시(OpenAI 호환)를 smolagents `OpenAIModel`로 호출 (`litellm` 패키지 미사용) |
+| 최대 스텝 | 15 | 무한 루프 방지 |
+| 허용 임포트 | json, datetime | 보안상 최소 임포트만 허용 |
 | 대화 히스토리 | 최근 10개 | 토큰 비용 최적화 |
 | 관찰 결과 제한 | 2,000자 | UI 성능 보호 |
+| few-shot 예제 | 유사 코드 예제 최대 3개 | `code_examples` pgvector 검색 (`EMBEDDING_MODEL`, 768차원) |
 
 ### 에러 처리 (3단계 폴백)
 

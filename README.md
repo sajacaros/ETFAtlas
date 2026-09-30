@@ -8,7 +8,7 @@
 - **ETF 검색** - 이름/종목코드로 ETF 검색 (pg_trgm 기반 유사 검색)
 - **Top ETF** - 시가총액, 수익률 기준 정렬
 - **ETF 상세** - 구성종목, 가격 차트(365일), 카테고리 태그
-- **구성종목 변화 추적** - 1일/1주/1개월 비중 변화 감지
+- **구성종목 변화 추적** - 1일/1주/1개월 비중 변화 감지 (구성종목은 매일 스냅샷으로 누적)
 - **유사 ETF 추천** - 구성종목 겹침 기반 유사도 분석
 
 ### 포트폴리오 관리
@@ -24,7 +24,8 @@
 - 관심종목 구성종목 비중 변화 알림 (3%p 이상)
 
 ### AI 챗봇
-- ETF 관련 질문 응답 (tool-calling 기반 에이전트)
+- ETF 관련 질문 응답 (smolagents CodeAgent — 도구를 조합하는 Python 코드를 생성·실행)
+- 유사 질문의 코드 예시를 pgvector로 검색해 few-shot 주입, 관리자 승인 기반 예시 축적
 - 스트리밍 응답 지원
 
 ### 알림
@@ -32,29 +33,30 @@
 - 구성종목 변화 감지 시 자동 알림
 
 ### 데이터 파이프라인 (Airflow)
-- **ETF 유니버스 수집** - KRX API 기반 일별 자동 수집 (순자산 500억 이상)
-- **구성종목/가격 수집** - ETF 및 개별 주식 OHLCV 데이터
-- **포트폴리오 스냅샷** - 장 마감 후 일별 평가금액 자동 기록
-- **실시간 가격** - 장중 10분 간격 가격 업데이트
-- **자동 태깅** - GPT-4.1-mini 기반 ETF 카테고리 자동 분류
+- **ETF 유니버스/가격** - KRX Open API 기반 일별 수집 (순자산 500억 이상 신규 편입)
+- **구성종목** - 한국투자증권 KIS Open API `ETF 구성종목시세`로 매일 스냅샷 수집 (과거 날짜 조회 불가 → 백필 없음)
+- **주식 가격** - pykrx(Naver) 일봉
+- **실시간 가격 + 포트폴리오 스냅샷** - 장중 10분 간격 현재가 갱신, 스냅샷 켠 포트폴리오의 평가금액 기록
+- **자동 태깅** - LLM(LiteLLM 프록시) 기반 ETF 테마 분류
 
 ## 기술 스택
 
 | 레이어 | 기술 |
 |--------|------|
 | Frontend | React 18, TypeScript, Vite, TailwindCSS, shadcn/ui, Recharts |
-| Backend | FastAPI, SQLAlchemy 2.0 (async), Pydantic |
-| Database | PostgreSQL + Apache AGE (그래프) + pgvector + pg_trgm |
-| Pipeline | Apache Airflow |
-| Auth | Google OAuth 2.0 + JWT |
-| AI | Anthropic Claude, OpenAI GPT, smolagents |
+| Backend | Python 3.14, FastAPI, SQLAlchemy 2.1 (동기, psycopg2), Pydantic 2 |
+| Database | PostgreSQL 18 + Apache AGE 1.8 (그래프) + pgvector 0.8 + pg_trgm |
+| Pipeline | Apache Airflow 3.3 (Python 3.14) |
+| Auth | ID/비밀번호 (bcrypt) + JWT |
+| AI | LiteLLM 프록시(OpenAI 호환) — `qwen38-27b`, `embedding-gemma-300m`(768d), smolagents |
+| 외부 데이터 | KRX Open API, 한국투자증권 KIS Open API, pykrx, yfinance |
 
 ## 실행 방법
 
 ### 사전 요구사항
 
 - Docker & Docker Compose
-- Google OAuth 클라이언트 ID ([Google Cloud Console](https://console.cloud.google.com)에서 발급)
+- API 키: LLM 프록시 키, KRX Open API 인증키, 한국투자증권 KIS 실전투자 앱키
 
 ### 1. 환경변수 설정
 
@@ -62,41 +64,47 @@
 cp .env.example .env
 ```
 
-`.env` 파일을 편집하여 필수 값을 입력합니다:
+`.env` 파일을 편집하여 값을 입력합니다:
 
 | 변수 | 설명 | 필수 |
 |------|------|------|
-| `GOOGLE_CLIENT_ID` | Google OAuth 클라이언트 ID | O |
-| `GOOGLE_CLIENT_SECRET` | Google OAuth 클라이언트 시크릿 | O |
-| `VITE_GOOGLE_CLIENT_ID` | 프론트엔드용 Google 클라이언트 ID (위와 동일 값) | O |
-| `JWT_SECRET` | JWT 서명 키 (임의 문자열) | O |
-| `OPENAI_API_KEY` | ETF 자동 태깅용 | O |
-| `ANTHROPIC_API_KEY` | AI 챗봇용 | O |
-| `KRX_AUTH_KEY` | KRX Open API 인증키 ([발급](https://openapi.krx.co.kr)) | - |
+| `JWT_SECRET` | JWT 서명 키 (`python -c "import secrets; print(secrets.token_hex(32))"`) | O |
+| `ENCRYPTION_KEY` | 포트폴리오 금액 암호화 키 (32바이트 hex, 위와 같은 방법). **한 번 정하면 변경 금지** | O |
+| `LLM_API_KEY` | LiteLLM 프록시 키 (`LLM_API_BASE`, `LLM_MODEL`, `EMBEDDING_MODEL`로 변경 가능) | O |
+| `KRX_AUTH_KEY` | KRX Open API 인증키 ([발급](https://openapi.krx.co.kr)) — 유니버스/ETF 가격 | O |
+| `KIS_APP_KEY` / `KIS_APP_SECRET` | 한국투자증권 Open API 앱키 ([발급](https://apiportal.koreainvestment.com)) — 구성종목 | O |
+| `KRX_ID` / `KRX_PW` | KRX 데이터 마켓플레이스 계정 — pykrx의 보수율 조회 | - |
+| `AIRFLOW_USER` / `AIRFLOW_PASSWORD` | Airflow UI 로그인 (기본 admin / admin) | - |
+| `AIRFLOW_FERNET_KEY`, `AIRFLOW_SECRET_KEY`, `AIRFLOW_JWT_SECRET` | Airflow 내부 암호화/서명 키 | - |
+| `DISCORD_WEBHOOK_URL` | 수집 완료 알림 | - |
 
 ### 2. 서비스 실행
 
 ```bash
-docker compose up -d
+docker compose up -d --build
 ```
 
-### 3. 접속
+### 3. 접속 및 초기 설정
 
 | 서비스 | URL |
 |--------|-----|
 | Frontend | http://localhost:9600 |
 | Backend API Docs | http://localhost:9601/docs |
-| Airflow | http://localhost:9603 (admin / admin) |
+| Airflow | http://localhost:9603 (`AIRFLOW_USER` / `AIRFLOW_PASSWORD`) |
+
+처음 접속하면 **초기 설정(/setup) 화면**이 나옵니다. 여기서 만든 계정이 관리자(admin)가 되고, 이후 사용자는 로그인 화면의 회원가입 탭으로 가입합니다.
 
 ### 4. 초기 데이터 수집
 
-서비스 시작 후 Airflow 웹 UI에서 아래 DAG를 순서대로 실행합니다:
+Airflow UI에서 아래 DAG를 순서대로 수동 실행합니다:
 
-1. **`age_sync_universe`** - ETF 유니버스 및 가격 데이터 수집 (첫 실행 시 최근 45일 백필)
-2. **`etf_rdb_etl`** - RDB 메타데이터 동기화
-3. **`portfolio_snapshot`** - 포트폴리오 스냅샷 생성 (포트폴리오 생성 후)
+1. **`age_backfill`** - 초기 적재: ETF 유니버스·가격 이력, 현재 구성종목, 주식 가격 이력, 수익률
+2. **`rdb_sync_metadata`** - RDB ETF 메타데이터 동기화
+3. **`age_tagging`** - ETF 테마 태그 부여
+4. **`embed_code_examples`** - 챗봇 코드 예시 임베딩
 
-이후에는 각 DAG가 평일 스케줄에 따라 자동 실행됩니다.
+이후에는 `age_sync_universe`, `rdb_sync_metadata`, `rdb_realtime_prices`, `age_tagging`이 스케줄에 따라 자동 실행됩니다.
+구성종목은 KIS API 특성상 과거 날짜를 조회할 수 없어, 1주/1개월 비중 변화는 데이터가 쌓인 뒤부터 보입니다.
 
 ### 백엔드 코드 수정 시
 
@@ -104,6 +112,13 @@ docker compose up -d
 
 ```bash
 docker compose up -d --build backend
+```
+
+### 테스트
+
+```bash
+cd backend && pip install -r requirements.txt pytest && ENCRYPTION_KEY=00 pytest -q
+cd airflow && pytest -q tests   # requests, pytest 필요
 ```
 
 ## 프로젝트 구조
@@ -116,15 +131,19 @@ etf-atlas/
 │       ├── components/# 공통 UI 컴포넌트
 │       └── lib/       # API 클라이언트, 유틸리티
 ├── backend/           # FastAPI 백엔드
-│   └── app/
-│       ├── routers/   # API 라우터 (auth, etfs, portfolios, ...)
-│       ├── models/    # SQLAlchemy 모델
-│       └── services/  # 비즈니스 로직
+│   ├── app/
+│   │   ├── routers/   # API 라우터 (auth, etfs, portfolios, ...)
+│   │   ├── models/    # SQLAlchemy 모델
+│   │   └── services/  # 비즈니스 로직 (챗봇, 그래프, 인증 ...)
+│   └── tests/
 ├── airflow/           # 데이터 파이프라인
-│   └── dags/          # Airflow DAG 정의
-├── docker/            # DB 초기화 스크립트
-│   └── db/init/       # SQL 스키마 및 익스텐션 설정
-├── docs/              # 아키텍처 문서
+│   ├── dags/          # DAG 정의, KRX/KIS API 클라이언트, AGE 유틸
+│   └── tests/
+├── docker/
+│   ├── db/            # PostgreSQL + AGE + pgvector 이미지, init SQL
+│   └── airflow/       # Airflow 이미지
+├── docs/              # 문서 (시작은 docs/project-overview.md)
+├── scripts/           # 그래프 뷰어 등 도구
 ├── docker-compose.yml
 └── .env.example
 ```

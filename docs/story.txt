@@ -451,7 +451,7 @@ ChatService의 구조는 단순합니다.
 smolagents의 CodeAgent가 ReAct 방식으로 질문을 처리하고,
 pgvector 기반 Few-shot 코드 예시가 정확도를 보완합니다.
 
-모델은 LiteLLM을 통해 GPT-4.1-mini를 사용하고,
+모델은 LiteLLM 프록시를 통해 qwen38-27b를 사용하고,
 10개의 커스텀 Tool이 등록되어 있습니다.
 
 도구는 크게 세 카테고리입니다.

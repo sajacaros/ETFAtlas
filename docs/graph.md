@@ -4,7 +4,7 @@
 
 ETF-종목 간 관계를 그래프로 모델링하여 유사 ETF 탐색, 종목 역추적, 포트폴리오 변동 감지 등을 수행한다. PostgreSQL 위에서 동작하는 Apache AGE 확장을 사용하며, Cypher 쿼리 언어로 조회한다.
 
-- **확장**: Apache AGE 1.5.0 (PG16)
+- **확장**: Apache AGE 1.8.0 (PostgreSQL 18)
 - **그래프 이름**: `etf_graph`
 - **쿼리 언어**: Cypher (SQL 래핑)
 
@@ -29,29 +29,25 @@ RDB JOIN으로도 가능하지만, 그래프는 관계 탐색이 직관적이고
                          │ MANAGED_BY
 ┌──────────┐        ┌────┴─────┐          ┌──────────┐
 │   User   │─WATCHES│   ETF    │──HOLDS──▶│  Stock   │
-│{user_id, │  ─────▶│{code,    │          │{code,    │
-│ role}    │        │ name,    │          │ name,    │
+│{user_id} │  ─────▶│{code,    │          │{code,    │
+│          │        │ name,    │          │ name,    │
 └──────────┘        │ expense_ratio,│     │ is_etf}  │
                     │ net_assets,│         └────┬─────┘
                     │ close_price,│             │ HAS_PRICE
                     │ return_1d/1w/1m,│    ┌────▼─────┐
                     │ market_cap_│     │  Price   │
                     │  change_1w}│     │{date,    │
-                    └─┬───┬─────┘     │ open/high│
-                      │   │ TAGGED    │ /low/close,│
-                      │   │           │ volume,  │
-                 HAS_ │   ▼           │ nav, ...}│
-                CHANGE│ ┌──────┐      └──────────┘
-                      │ │ Tag  │            ▲
-                      │ │{name}│            │ HAS_PRICE
-                      │ └──────┘            │
-                 ┌────▼─────┐          (Stock에서도
-                 │  Change  │           HAS_PRICE
-                 │{id,      │           연결)
-                 │ stock_code,│
-                 │ change_type,│
-                 │ weight..} │
-                 └──────────┘
+                    └─────┬─────┘     │ open/high│
+                          │ TAGGED    │ /low/close,│
+                          │           │ volume,  │
+                          ▼           │ nav, ...}│
+                      ┌──────┐        └──────────┘
+                      │ Tag  │              ▲
+                      │{name}│              │ HAS_PRICE
+                      └──────┘              │
+                                       (Stock에서도
+                                        HAS_PRICE
+                                        연결)
 ```
 
 ### 노드
@@ -59,22 +55,20 @@ RDB JOIN으로도 가능하지만, 그래프는 관계 탐색이 직관적이고
 | 라벨 | 속성 | 생성 주체 | 설명 |
 |------|------|-----------|------|
 | ETF | code, name, expense_ratio, net_assets, close_price, return_1d, return_1w, return_1m, market_cap_change_1w, updated_at | DAG: collect_universe_and_prices, update_etf_returns | ETF 종목 |
-| Stock | code, name, is_etf | DAG: collect_holdings_for_dates | 보유 종목 (ETF인 경우 is_etf=true) |
+| Stock | code, name, is_etf | DAG: collect_holdings | 보유 종목 (ETF인 경우 is_etf=true). 주식 이름은 KIS `hts_kor_isnm` |
 | Company | name | DAG: collect_universe_and_prices | 운용사 (삼성자산운용 등) |
 | Tag | name | DAG: age_tagging | 테마/분류 태그 (반도체, AI 등) |
 | Price | date, open, high, low, close, volume, nav, market_cap, net_assets, trade_value, change_rate | DAG: collect_universe_and_prices, collect_stock_prices_for_dates | 일별 가격 데이터 |
-| Change | id, stock_code, stock_name, change_type, before_weight, after_weight, weight_change, detected_at | Backend: weight change detection | 보유종목 변동 이벤트 |
-| User | user_id, role | Backend: graph_service | 사용자 (role: member/admin) |
+| User | user_id | Backend: graph_service | 사용자 (즐겨찾기용. 역할은 RDB `user_roles`) |
 
 ### 관계(엣지)
 
 | 관계 | 방향 | 속성 | 설명 |
 |------|------|------|------|
 | MANAGED_BY | ETF → Company | - | 운용사 관계 |
-| HOLDS | ETF → Stock | date, weight, shares | 보유종목 (날짜별 스냅샷) |
+| HOLDS | ETF → Stock | date, weight, shares | 보유종목 (날짜별 스냅샷). KIS API 호출 시점 구성종목을 최근 거래일 날짜로 저장, shares는 평가금액/현재가 추정치 |
 | TAGGED | ETF → Tag | - | 테마/분류 태그 |
 | HAS_PRICE | ETF/Stock → Price | - | 일별 가격 연결 |
-| HAS_CHANGE | ETF → Change | - | 변동 이력 |
 | WATCHES | User → ETF | added_at | 즐겨찾기 |
 
 ## Cypher 쿼리 실행 방식
@@ -126,7 +120,7 @@ execute_cypher(cur, """
 """, {'code': ticker, 'name': name, 'updated_at': now})
 ```
 
-> **주의:** AGE 1.5.0에서 `MERGE ... SET`을 한 쿼리로 실행하면 오류가 발생하는 버그가 있어, MERGE와 SET을 별도 쿼리로 분리한다.
+> **주의:** AGE 1.5.0에서 `MERGE ... SET`을 한 쿼리로 실행하면 오류가 발생하는 버그가 있어 MERGE와 SET을 별도 쿼리로 분리했다. AGE 1.8.0으로 올린 뒤에도 같은 패턴을 유지한다.
 
 ## 주요 쿼리 패턴
 
@@ -228,10 +222,10 @@ ORDER BY r.added_at DESC
 ### Docker 설정
 
 ```dockerfile
-# docker/db/Dockerfile
+# docker/db/Dockerfile (FROM postgres:18-trixie)
 # AGE 소스 빌드
-RUN git clone --branch release/PG16/1.5.0 https://github.com/apache/age.git /tmp/age \
-    && cd /tmp/age && make && make install
+RUN git clone --branch release/PG18/1.8.0 --depth 1 https://github.com/apache/age.git /tmp/age \
+    && cd /tmp/age && make install
 
 # postgresql.conf에 추가
 shared_preload_libraries = 'age'
@@ -258,9 +252,10 @@ SET search_path = ag_catalog, "$user", public;
 
 ## 알려진 제약 및 주의사항
 
-1. **MERGE + SET 분리**: AGE 1.5.0에서 `MERGE ... SET`을 한 쿼리로 실행하면 오류 발생. 반드시 2단계로 분리.
+1. **MERGE + SET 분리**: AGE 1.5.0에서 `MERGE ... SET`을 한 쿼리로 실행하면 오류가 발생해 2단계로 분리했고, 1.8.0에서도 이 방식을 유지한다.
 2. **콜론 이스케이프**: SQLAlchemy `text()` 사용 시 Cypher의 `:ETF`, `[:HOLDS]` 등을 `\:` 로 이스케이프해야 한다.
 3. **파라미터 치환**: Cypher `$param`과 SQLAlchemy `:param`이 충돌. 수동으로 `$param` 값을 쿼리 문자열에 삽입하여 처리.
 4. **단일 맵 반환**: `execute_cypher`는 `(result agtype)` 컬럼 하나만 반환. 다중 RETURN 값은 `RETURN {key1: val1, key2: val2}` 맵으로 감싸야 한다.
 5. **반환 타입**: 모든 Cypher 결과는 `agtype`으로 반환되어 `parse_agtype()` 파싱 필요.
 6. **날짜별 HOLDS 엣지**: 같은 ETF-Stock 쌍이라도 날짜마다 별도 엣지가 생성되어 시간에 따른 이력이 쌓인다. 최신 데이터 조회 시 `ORDER BY h.date DESC` + `head(collect(h))` 패턴 사용.
+7. **HOLDS 이력 범위**: KIS API는 과거 날짜 구성종목을 조회할 수 없어 HOLDS 이력은 수집을 시작한 날부터만 쌓인다 (초기 적재 시 과거 HOLDS 백필 없음). 보유종목 변화는 Change 노드 없이 두 날짜의 HOLDS를 조회 시점에 비교해 계산한다.

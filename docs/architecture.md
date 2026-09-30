@@ -4,12 +4,12 @@
 
 | 영역 | 기술 |
 |------|------|
-| **Frontend** | React, TypeScript, shadcn/ui, Recharts |
-| **Backend** | FastAPI, Pydantic, authlib (Google OAuth) |
-| **Database** | PostgreSQL + Apache AGE (Graph) + pgvector |
-| **Data Pipeline** | Airflow, pykrx |
-| **AI** | smolagents |
-| **Auth** | Google OAuth2 + JWT |
+| **Frontend** | React, TypeScript, Vite, shadcn/ui, Recharts |
+| **Backend** | FastAPI, Pydantic (Python 3.14) |
+| **Database** | PostgreSQL 18 + Apache AGE 1.8.0 (Graph) + pgvector 0.8.6 |
+| **Data Pipeline** | Airflow 3.3.2, KRX Open API, 한국투자증권 KIS Open API, pykrx |
+| **AI** | smolagents (`OpenAIModel`) + LiteLLM 프록시 (OpenAI 호환) |
+| **Auth** | 아이디/비밀번호 (bcrypt) + JWT (PyJWT) |
 
 ---
 
@@ -24,7 +24,7 @@
 │  │   Frontend   │     │   Backend    │     │   Data Pipeline      │    │
 │  │              │     │              │     │                      │    │
 │  │  React + TS  │────>│   FastAPI    │     │   Airflow DAG        │    │
-│  │  shadcn/ui   │     │              │     │   (Daily 08:00)      │    │
+│  │  shadcn/ui   │     │  (JWT 인증)  │     │   (Daily 08:30)      │    │
 │  │              │     │              │     │                      │    │
 │  └──────────────┘     └──────┬───────┘     └──────────┬───────────┘    │
 │                              │                        │                 │
@@ -32,73 +32,61 @@
 │         │                    │                                          │
 │         v                    v                                          │
 │  ┌─────────────┐    ┌────────────────────────────────────────┐         │
-│  │   Google    │    │              PostgreSQL                 │         │
-│  │   OAuth     │    │  ┌────────────────┬─────────────────┐  │         │
+│  │ KRX / KIS   │    │              PostgreSQL                 │         │
+│  │ Open API    │    │  ┌────────────────┬─────────────────┐  │         │
 │  └─────────────┘    │  │  Apache AGE    │   Relational    │  │         │
 │                     │  │  (ETF/Stock)   │   (User/Auth)   │  │         │
 │                     │  └────────────────┴─────────────────┘  │         │
 │                     └────────────────────────────────────────┘         │
 │                              ^                                          │
 │                              │                                          │
-│                     ┌────────┴───────┐                                 │
-│                     │   smolagents   │                                 │
-│                     │   (AI Agent)   │                                 │
-│                     └────────────────┘                                 │
+│                     ┌────────┴───────┐     ┌────────────────┐          │
+│                     │   smolagents   │────>│ LiteLLM 프록시 │          │
+│                     │   (AI Agent)   │     │ (LLM/임베딩)   │          │
+│                     └────────────────┘     └────────────────┘          │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 인증 (Google OAuth)
+## 인증 (아이디/비밀번호 + JWT)
 
 ### 플로우
 
 ```
-┌──────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐
-│  사용자  │     │ Frontend │     │ Backend  │     │  Google  │
-└────┬─────┘     └────┬─────┘     └────┬─────┘     └────┬─────┘
-     │                │                │                │
-     │ 1. 로그인 클릭  │                │                │
-     │───────────────>│                │                │
-     │                │ 2. /auth/google│                │
-     │                │───────────────>│                │
-     │                │                │ 3. redirect    │
-     │                │                │───────────────>│
-     │                │                │                │
-     │<───────────────────────────────────────────────────
-     │                4. Google 로그인 페이지            │
-     │                                                  │
-     │                5. 인증 완료, code 전달            │
-     │─────────────────────────────────────────────────>│
-     │                │                │                │
-     │                │                │<───────────────│
-     │                │                │ 6. code + user │
-     │                │                │    info        │
-     │                │                │                │
-     │                │ 7. JWT 발급    │                │
-     │                │<───────────────│                │
-     │                │                │                │
-     │ 8. 로그인 완료 │                │                │
-     │<───────────────│                │                │
-     │                │                │                │
+┌──────────┐     ┌──────────┐     ┌──────────┐
+│  사용자  │     │ Frontend │     │ Backend  │
+└────┬─────┘     └────┬─────┘     └────┬─────┘
+     │                │ 1. GET /api/auth/setup-status
+     │                │───────────────>│
+     │                │ setup_required │
+     │                │<───────────────│
+     │                │                │
+     │  (setup_required = true → /setup 으로 리다이렉트)
+     │ 2. 관리자 계정 입력             │
+     │───────────────>│ POST /api/auth/setup
+     │                │───────────────>│ (사용자 0명일 때만, admin 역할 부여)
+     │                │                │
+     │  (이후 → /login: 로그인 / 회원가입 탭)
+     │ 3. 아이디/비밀번호              │
+     │───────────────>│ POST /api/auth/login 또는 /register
+     │                │───────────────>│ bcrypt 검증 / 해시 저장
+     │                │   JWT 발급     │
+     │                │<───────────────│
+     │ 4. 로그인 완료 │ (localStorage 저장, Authorization: Bearer)
+     │<───────────────│                │
 ```
 
 ### 구현 요소
 
 | 요소 | 설명 |
 |------|------|
-| `authlib` | Google OAuth2 클라이언트 |
-| JWT | access token (1시간) + refresh token (7일) |
-| users 테이블 | Google ID, email, name 저장 |
-
-### 로드맵
-
-```
-v1: Google 로그인
-v2: + 카카오
-v3: + 네이버, 애플
-```
+| `bcrypt` | 비밀번호 해시 (`backend/app/utils/security.py`, 입력 최대 72바이트) |
+| `PyJWT` | HS256 access token (기본 7일, `JWT_SECRET`), refresh token 없음 |
+| 최초 설치 | 사용자가 0명이면 `/setup`에서 관리자 계정 생성 (`POST /api/auth/setup`) |
+| 회원가입 | `POST /api/auth/register` — `member` 역할, 설치 완료 후에만 가능 |
+| users 테이블 | username, password_hash, name 저장 (역할은 `roles`/`user_roles`) |
 
 ---
 
@@ -106,41 +94,37 @@ v3: + 네이버, 애플
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  Daily ETL DAG (08:00 KST)                                              │
+│  age_sync_universe DAG (화~토 08:30 KST)                                │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
 │  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐              │
-│  │  Task 1     │     │  Task 2     │     │  Task 3     │              │
-│  │  ETF 목록   │────>│  구성종목   │────>│  가격 수집  │              │
-│  │  수집       │     │  수집       │     │             │              │
-│  │  (pykrx)    │     │  (pykrx)    │     │  (pykrx)    │              │
-│  └─────────────┘     └─────────────┘     └──────┬──────┘              │
-│                                                  │                      │
-│                                                  v                      │
-│                                          ┌─────────────┐               │
-│                                          │  Task 4     │               │
-│                                          │  스냅샷     │               │
-│                                          │  저장 (AGE) │               │
-│                                          └──────┬──────┘               │
-│                                                  │                      │
-│                                                  v                      │
-│                                          ┌─────────────┐               │
-│                                          │  Task 5     │               │
-│                                          │  변화 감지  │               │
-│                                          └─────────────┘               │
+│  │  영업일     │     │  유니버스   │     │  구성종목   │              │
+│  │  조회       │────>│  + ETF 가격 │────>│  (HOLDS)    │              │
+│  │  (pykrx)    │     │ (KRX Open   │     │  (KIS Open  │              │
+│  │             │     │   API)      │     │   API)      │              │
+│  └─────────────┘     └──────┬──────┘     └──────┬──────┘              │
+│                              │                   │                      │
+│                              v                   v                      │
+│                       ┌─────────────┐     ┌─────────────┐              │
+│                       │ 수익률 계산 │     │ 주식 가격   │              │
+│                       │ 룰 기반 태그│     │ (pykrx)     │              │
+│                       └─────────────┘     │ 수집 기록 + │              │
+│                                           │ 알림        │              │
+│                                           └─────────────┘              │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 
-pykrx 함수:
-├── get_etf_ticker_list()            # ETF 목록
-├── get_etf_portfolio_deposit_file() # 구성종목 (PDF)
-└── get_etf_ohlcv_by_date()          # 가격 데이터
+데이터 소스:
+├── KRX Open API (etf_bydd_trd)            # ETF 일별 시세/순자산 → 유니버스, ETF 가격
+├── KIS Open API (ETF 구성종목시세)         # 호출 시점 구성종목 → 최근 거래일 HOLDS
+└── pykrx                                   # 영업일, 주식 OHLCV(Naver), 보수율(KRX 스크래핑)
 
-변화 감지 로직:
-├── 신규 편입: 어제 없던 종목이 오늘 있음
-├── 완전 제외: 어제 있던 종목이 오늘 없음
-└── 비중 5%p 이상 변화: |오늘 비중 - 어제 비중| >= 5
+구성종목 변화:
+└── 별도 Change 노드 없이, 두 날짜의 HOLDS 스냅샷을 조회 시점에 비교
+    (KIS는 과거 날짜 조회 불가 → HOLDS 이력은 수집을 시작한 날부터 쌓임)
 ```
+
+DAG 상세는 [dags.md](dags.md) 참고.
 
 ---
 
@@ -154,74 +138,54 @@ Nodes:
 │  (ETF)                                                  │
 │  - code: string (PK)                                    │
 │  - name: string                                         │
-│  - type: "active" | "passive"                           │
-│  - manager: string                                      │
-│  - inception_date: date                                 │
+│  - expense_ratio, net_assets: float                     │
+│  - close_price, return_1d/1w/1m, market_cap_change_1w   │
 ├─────────────────────────────────────────────────────────┤
 │  (Stock)                                                │
 │  - code: string (PK)                                    │
-│  - name: string                                         │
-│  - sector: string                                       │
+│  - name: string (KIS hts_kor_isnm)                      │
+│  - is_etf: bool                                         │
 ├─────────────────────────────────────────────────────────┤
-│  (Change)                                               │
-│  - id: string (PK)                                      │
-│  - date: date                                           │
-│  - type: "NEW" | "REMOVED" | "WEIGHT_CHANGE"            │
-│  - stock_code: string                                   │
-│  - stock_name: string                                   │
-│  - before_weight: float (nullable)                      │
-│  - after_weight: float (nullable)                       │
+│  (Price)   date, open, high, low, close, volume, ...    │
+│  (Company) name        (Tag) name        (User) user_id │
 └─────────────────────────────────────────────────────────┘
 
 Edges:
 ┌─────────────────────────────────────────────────────────┐
 │  (ETF)-[:HOLDS {date, weight, shares}]->(Stock)         │
-│  (ETF)-[:HAS_CHANGE]->(Change)                          │
+│  (ETF|Stock)-[:HAS_PRICE]->(Price)                      │
+│  (ETF)-[:MANAGED_BY]->(Company)                         │
+│  (ETF)-[:TAGGED]->(Tag)                                 │
+│  (User)-[:WATCHES {added_at}]->(ETF)                    │
 └─────────────────────────────────────────────────────────┘
 ```
 
-### PostgreSQL (Relational) - 사용자/인증/가격 데이터
+상세는 [graph.md](graph.md) 참고.
+
+### PostgreSQL (Relational) - 사용자/포트폴리오/가격 데이터
+
+스키마 원본은 `docker/db/init/02_schema.sql`. 주요 테이블:
 
 ```sql
--- 사용자
+-- 사용자 (아이디/비밀번호 로그인)
 CREATE TABLE users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    google_id VARCHAR(255) UNIQUE NOT NULL,
-    email VARCHAR(255) NOT NULL,
+    id SERIAL PRIMARY KEY,
+    username VARCHAR(50) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
     name VARCHAR(255),
-    created_at TIMESTAMP DEFAULT NOW()
+    last_notification_checked_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 워치리스트
-CREATE TABLE watchlist (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    etf_code VARCHAR(20) NOT NULL,
-    added_at TIMESTAMP DEFAULT NOW(),
-    UNIQUE(user_id, etf_code)
-);
-
--- ETF 가격 (시계열)
-CREATE TABLE etf_price (
-    etf_code VARCHAR(20),
-    date DATE,
-    open INT,
-    high INT,
-    low INT,
-    close INT,
-    volume BIGINT,
-    PRIMARY KEY (etf_code, date)
-);
-
--- 리프레시 토큰
-CREATE TABLE refresh_tokens (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    token VARCHAR(500) NOT NULL,
-    expires_at TIMESTAMP NOT NULL,
-    created_at TIMESTAMP DEFAULT NOW()
-);
+-- 역할: roles(admin, member) + user_roles
+-- 포트폴리오: portfolios, target_allocations, holdings, portfolio_snapshots
+-- 가격 캐시: ticker_prices (ticker, date)
+-- 수집 기록: collection_runs, KIS 토큰 캐시: kis_tokens
+-- 챗봇: chat_logs, code_examples (embedding vector(768))
 ```
+
+즐겨찾기(워치리스트)는 RDB 테이블이 아니라 AGE `(User)-[:WATCHES]->(ETF)` 관계로 저장한다.
 
 ---
 
@@ -230,12 +194,14 @@ CREATE TABLE refresh_tokens (
 ### 인증
 
 ```
-POST /auth/google              # Google OAuth 시작
-GET  /auth/google/callback     # Google 콜백, JWT 발급
-POST /auth/refresh             # 토큰 갱신
-POST /auth/logout              # 로그아웃
-GET  /auth/me                  # 내 정보
+GET  /api/auth/setup-status    # 최초 설치 필요 여부 {setup_required}
+POST /api/auth/setup           # 최초 관리자 생성 (사용자 0명일 때만), JWT 발급
+POST /api/auth/register        # 회원가입 (member), JWT 발급
+POST /api/auth/login           # 로그인, JWT 발급
+GET  /api/auth/me              # 내 정보 {id, username, name, is_admin}
 ```
+
+> 이하 엔드포인트 목록은 초기 설계안이다. 현재 전체 API는 [api-schema.md](api-schema.md) 또는 Swagger(`/docs`) 참고.
 
 ### 종목 검색
 
@@ -276,21 +242,13 @@ GET /api/ai/recommendations     # 워치리스트 기반 종목 추천
 ```cypher
 -- 1. 종목 역추적: 삼성전자를 담은 ETF
 MATCH (e:ETF)-[h:HOLDS {date: $latest_date}]->(s:Stock {code: '005930'})
-RETURN e.code, e.name, e.type, h.weight
+RETURN e.code, e.name, h.weight
 ORDER BY h.weight DESC;
 
--- 2. ETF 포트폴리오 변화 조회
-MATCH (e:ETF {code: $etf_code})-[:HAS_CHANGE]->(c:Change)
-WHERE c.date >= $start_date
-RETURN c.type, c.stock_code, c.stock_name,
-       c.before_weight, c.after_weight, c.date
-ORDER BY c.date DESC;
-
--- 3. 워치리스트 ETF들의 공통 신규편입 종목
-MATCH (e:ETF)-[:HAS_CHANGE]->(c:Change {type: 'NEW'})
-WHERE e.code IN $watchlist_codes AND c.date >= $start_date
-RETURN c.stock_code, c.stock_name, count(*) as etf_count
-ORDER BY etf_count DESC;
+-- 2. ETF 포트폴리오 변화: 두 날짜의 HOLDS 스냅샷을 각각 조회해 애플리케이션에서 비교
+--    (GraphService.get_etf_holdings_changes — added/removed/increased/decreased)
+MATCH (e:ETF {code: $etf_code})-[h:HOLDS {date: $date}]->(s:Stock)
+RETURN s.code, s.name, h.weight;
 ```
 
 ---
@@ -298,70 +256,55 @@ ORDER BY etf_count DESC;
 ## 프로젝트 구조
 
 ```
-etf-atlas/
-├── docs/
-│   ├── v1-spec.md
-│   ├── architecture.md
-│   └── ui-design.md
+ETFAtlas/
+├── docs/                          # 상세 문서
 │
-├── frontend/
+├── frontend/                      # React + TS + Vite (nginx로 서빙)
 │   ├── src/
-│   │   ├── app/
-│   │   │   ├── page.tsx              # 메인 (종목 검색)
-│   │   │   ├── etf/[code]/page.tsx   # ETF 상세
-│   │   │   ├── watchlist/page.tsx    # 워치리스트
-│   │   │   ├── ai/page.tsx           # AI 추천
-│   │   │   └── login/page.tsx        # 로그인
-│   │   ├── components/
-│   │   │   ├── auth/
-│   │   │   │   └── GoogleLoginButton.tsx
-│   │   │   ├── search/
-│   │   │   ├── etf/
-│   │   │   ├── watchlist/
-│   │   │   └── ai/
-│   │   ├── hooks/
-│   │   │   ├── useAuth.ts
-│   │   │   └── ...
-│   │   └── lib/
-│   │       ├── api.ts
-│   │       └── auth.ts
+│   │   ├── App.tsx                # 라우팅 (/setup 리다이렉트 가드 포함)
+│   │   ├── app/                   # 페이지
+│   │   │   ├── HomePage.tsx
+│   │   │   ├── ETFDetailPage.tsx
+│   │   │   ├── PortfolioPage.tsx, PortfolioDashboardPage.tsx
+│   │   │   ├── WatchlistChangesPage.tsx
+│   │   │   ├── SharedPortfoliosPage.tsx, SharedPortfolioDetailPage.tsx
+│   │   │   ├── ChatPage.tsx, AdminPage.tsx
+│   │   │   ├── LoginPage.tsx      # 로그인 / 회원가입 탭
+│   │   │   └── SetupPage.tsx      # 최초 관리자 생성
+│   │   ├── components/            # AccountForm, Header, ui/ (shadcn) 등
+│   │   ├── hooks/                 # useAuth, useNotification 등
+│   │   └── lib/                   # api.ts, auth.ts, PDF 내보내기
 │   └── package.json
 │
 ├── backend/
 │   ├── app/
-│   │   ├── main.py
-│   │   ├── config.py
-│   │   ├── routers/
-│   │   │   ├── auth.py
-│   │   │   ├── stocks.py
-│   │   │   ├── etfs.py
-│   │   │   ├── watchlist.py
-│   │   │   └── ai.py
-│   │   ├── models/
-│   │   │   ├── user.py
-│   │   │   └── watchlist.py
-│   │   ├── services/
-│   │   │   ├── auth_service.py
-│   │   │   ├── graph_service.py
-│   │   │   └── etf_service.py
-│   │   ├── agents/
-│   │   │   └── recommender.py
-│   │   └── utils/
-│   │       └── jwt.py
+│   │   ├── main.py, config.py, database.py
+│   │   ├── routers/               # auth, etfs, watchlist, portfolio, shared, tags, chat, notifications, admin
+│   │   ├── models/                # SQLAlchemy 모델
+│   │   ├── schemas/
+│   │   ├── services/              # auth_service, graph_service, chat_service, embedding_service 등
+│   │   ├── domain/
+│   │   └── utils/                 # jwt.py, security.py(bcrypt), encryption.py
+│   ├── tests/
 │   └── requirements.txt
 │
 ├── airflow/
-│   └── dags/
-│       └── etf_daily_etl.py
+│   ├── dags/                      # age_*, rdb_*, embed_code_examples, age_utils.py, krx/kis_api_client.py
+│   └── requirements.txt
 │
 ├── docker/
+│   ├── airflow/Dockerfile         # apache/airflow:3.3.2-python3.14 + DAG 의존성
 │   └── db/
-│       ├── Dockerfile
+│       ├── Dockerfile             # postgres:18 + AGE 1.8.0 + pgvector 0.8.6
 │       └── init/
-│           └── 01_extensions.sql
+│           ├── 00_airflow_db.sql  # Airflow 메타데이터 DB 생성
+│           ├── 01_extensions.sql  # age, vector, pg_trgm + etf_graph
+│           ├── 02_schema.sql      # RDB 스키마
+│           └── 03_seed_code_examples.sql
 │
+├── scripts/                       # graph_viewer 등 보조 스크립트
 ├── docker-compose.yml
-├── .env
+├── .env.example
 └── README.md
 ```
 
@@ -372,38 +315,44 @@ etf-atlas/
 ### DB (PostgreSQL + AGE + pgvector)
 
 ```dockerfile
-# docker/db/Dockerfile
-FROM apache/age:latest
+# docker/db/Dockerfile (요약)
+FROM postgres:18-trixie
 
-# pgvector 설치
 RUN apt-get update && apt-get install -y \
-    build-essential \
-    git \
-    postgresql-server-dev-16 \
-    && rm -rf /var/lib/apt/lists/*
+    build-essential git postgresql-server-dev-18 libreadline-dev zlib1g-dev flex bison
 
-RUN cd /tmp \
-    && git clone --branch v0.7.0 https://github.com/pgvector/pgvector.git \
-    && cd pgvector \
-    && make \
-    && make install
+# Apache AGE
+RUN git clone --branch release/PG18/1.8.0 --depth 1 https://github.com/apache/age.git /tmp/age \
+    && cd /tmp/age && make install
 
-# 정리
-RUN apt-get remove -y build-essential git postgresql-server-dev-16 \
-    && apt-get autoremove -y
+# pgvector
+RUN git clone --branch v0.8.6 --depth 1 https://github.com/pgvector/pgvector.git /tmp/pgvector \
+    && cd /tmp/pgvector && make && make install
+
+COPY init/ /docker-entrypoint-initdb.d/
+RUN echo "shared_preload_libraries = 'age'" >> /usr/share/postgresql/postgresql.conf.sample
 ```
 
 ```sql
 -- docker/db/init/01_extensions.sql
--- 확장 활성화
 CREATE EXTENSION IF NOT EXISTS age;
 CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
--- AGE 그래프 생성
 LOAD 'age';
 SET search_path = ag_catalog, "$user", public;
 SELECT create_graph('etf_graph');
 ```
+
+init 스크립트는 빈 볼륨으로 처음 기동할 때만 실행된다 (별도 마이그레이션 스크립트 없음).
+
+### Backend / Airflow
+
+| 이미지 | 베이스 |
+|--------|--------|
+| backend | `python:3.14-slim` |
+| frontend | `node:24-alpine` 빌드 → `nginx:alpine` |
+| airflow | `apache/airflow:3.3.2-python3.14` + `airflow/requirements.txt` |
 
 ---
 
@@ -413,87 +362,58 @@ SELECT create_graph('etf_graph');
 
 | 서비스 | 외부 포트 | 내부 포트 | URL |
 |--------|----------|----------|-----|
-| Frontend | 9600 | 3000 | http://localhost:9600 |
+| Frontend | 9600 | 80 | http://localhost:9600 |
 | Backend | 9601 | 8000 | http://localhost:9601 |
 | PostgreSQL | 9602 | 5432 | localhost:9602 |
-| Airflow | 9603 | 8080 | http://localhost:9603 |
+| Airflow (api-server) | 9603 | 8080 | http://localhost:9603 |
 
-### HTTPS 요구사항
+### 서비스 구성 (docker-compose.yml)
 
-| 환경 | URL | HTTPS |
-|------|-----|-------|
-| 개발 (localhost) | `http://localhost:96xx` | 불필요 (Google이 localhost 예외 허용) |
-| 프로덕션 | 실제 도메인 | 필수 |
+| 서비스 | 설명 |
+|--------|------|
+| `db` | PostgreSQL 18 + AGE + pgvector. 앱 DB `etf_atlas`와 Airflow 메타데이터 DB `airflow`를 함께 호스팅 |
+| `backend` | FastAPI (uvicorn) |
+| `frontend` | nginx 정적 서빙 |
+| `airflow-init` | `airflow db migrate` + SimpleAuthManager 비밀번호 파일 생성 (1회성) |
+| `airflow-apiserver` | Airflow UI/API (`api-server`, LocalExecutor) |
+| `airflow-scheduler` | 스케줄러 |
+| `airflow-dag-processor` | DAG 파싱 |
 
-### docker-compose.yml
-
-```yaml
-services:
-  frontend:
-    build: ./frontend
-    ports:
-      - "9600:3000"
-    environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:9601
-      - NEXT_PUBLIC_GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
-    depends_on:
-      - backend
-
-  backend:
-    build: ./backend
-    ports:
-      - "9601:8000"
-    environment:
-      - DATABASE_URL=postgresql://etfatlas:etfatlas@db:5432/etfatlas
-      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
-      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
-      - GOOGLE_REDIRECT_URI=http://localhost:9601/auth/google/callback
-      - JWT_SECRET=${JWT_SECRET}
-      - FRONTEND_URL=http://localhost:9600
-    depends_on:
-      - db
-
-  db:
-    build: ./docker/db
-    ports:
-      - "9602:5432"
-    environment:
-      - POSTGRES_USER=etfatlas
-      - POSTGRES_PASSWORD=etfatlas
-      - POSTGRES_DB=etfatlas
-    volumes:
-      - etfatlas_pgdata:/var/lib/postgresql/data
-      - ./docker/db/init:/docker-entrypoint-initdb.d
-
-  airflow:
-    image: apache/airflow:latest
-    ports:
-      - "9603:8080"
-    environment:
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql://etfatlas:etfatlas@db:5432/etfatlas
-      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
-      - AIRFLOW__CORE__LOAD_EXAMPLES=false
-    volumes:
-      - ./airflow/dags:/opt/airflow/dags
-    depends_on:
-      - db
-
-volumes:
-  etfatlas_pgdata:
-```
+Airflow UI 로그인은 SimpleAuthManager로 `AIRFLOW_USER`/`AIRFLOW_PASSWORD` 계정을 사용한다.
 
 ---
 
 ## 환경 변수
 
-```env
-# .env
-GOOGLE_CLIENT_ID=xxx.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=xxx
-JWT_SECRET=your-secret-key
+`.env.example` 참고. 주요 항목:
 
-# Google OAuth 설정 시 Authorized redirect URIs에 추가:
-# http://localhost:9601/auth/google/callback
+```env
+# Backend
+JWT_SECRET=                 # python -c "import secrets; print(secrets.token_hex(32))"
+ENCRYPTION_KEY=             # 32-byte hex (AES-256-GCM), 한 번 정하면 변경 금지
+
+# AI (LiteLLM 프록시, OpenAI 호환 API)
+LLM_API_BASE=http://localhost:4000
+LLM_API_KEY=
+LLM_MODEL=qwen38-27b
+EMBEDDING_MODEL=embedding-gemma-300m   # 768차원
+
+# Airflow
+AIRFLOW_USER=admin
+AIRFLOW_PASSWORD=admin
+AIRFLOW_FERNET_KEY=
+AIRFLOW_SECRET_KEY=
+AIRFLOW_JWT_SECRET=
+
+# 데이터 소스
+KRX_AUTH_KEY=               # KRX Open API — 유니버스/ETF 가격
+KRX_ID=                     # pykrx KRX 스크래핑(보수율) 로그인
+KRX_PW=
+KIS_APP_KEY=                # 한국투자증권 KIS Open API — ETF 구성종목
+KIS_APP_SECRET=
+KIS_BASE_URL=               # 기본값 https://openapi.koreainvestment.com:9443
+
+DISCORD_WEBHOOK_URL=        # (선택) 수집 완료 알림
 ```
 
 ---

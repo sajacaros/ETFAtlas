@@ -7,8 +7,8 @@
 ## 아키텍처
 
 ```
-DAG (평일 08:00)
-  └─ HOLDS 수집 완료
+DAG age_sync_universe (화~토 08:30)
+  └─ HOLDS 수집 완료 (KIS API, 최근 거래일)
   └─ collection_runs INSERT + NOTIFY new_collection (pg_notify)
   └─ Discord 웹훅 발송 (admin 즐겨찾기 기반)
 
@@ -35,24 +35,20 @@ CREATE TABLE collection_runs (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 유저별 마지막 알림 확인 시각
-ALTER TABLE users ADD COLUMN last_notification_checked_at TIMESTAMP;
+-- 유저별 마지막 알림 확인 시각 (users 테이블 컬럼)
+last_notification_checked_at TIMESTAMP
+
+-- 역할: roles(admin, member) + user_roles
 ```
 
-### AGE
-
-```cypher
--- User 노드에 role 프로퍼티
-(User {user_id: 1, role: 'admin'})   -- 첫 가입자
-(User {user_id: 2, role: 'member'})  -- 이후 가입자
-```
+현재는 모두 `docker/db/init/02_schema.sql`에 포함되어 있다.
 
 ## 알림 채널
 
 | 채널 | 대상 | ETF 소스 | 트리거 | 임계값 |
 |------|------|----------|--------|--------|
 | 인앱 SSE | 로그인 유저 본인 | 본인 즐겨찾기 | pg_notify → SSE push | - |
-| 디스코드 | admin 유저만 | admin 즐겨찾기 | DAG 수집 완료 | 3%p 초과 |
+| 디스코드 | admin 유저만 | admin 즐겨찾기 | DAG 수집 완료 | 3%p 초과 (약 1주 전 HOLDS 대비) |
 
 ## Backend API
 
@@ -93,11 +89,13 @@ SSE는 `EventSource`가 Authorization 헤더를 지원하지 않으므로 query 
 - **Header**: Bell 아이콘에 `hasNew` 시 빨간 dot 뱃지 (`w-2 h-2 bg-red-500 rounded-full`)
 - **WatchlistChangesPage**: 페이지 마운트 시 `markChecked()` 호출 → 뱃지 제거
 
-## 유저 역할 (AGE User.role)
+## 유저 역할 (RDB user_roles)
 
-- `GraphService.get_user_role(user_id)` / `set_user_role(user_id, role)` / `get_admin_user_ids()`
-- `AuthService.get_or_create_user` — 첫 유저 `admin`, 이후 `member`
-- 디스코드 알림은 `role='admin'` 유저의 WATCHES만 대상
+- 역할은 AGE `User` 노드가 아니라 RDB `roles` / `user_roles`에 저장한다.
+- `POST /api/auth/setup`(최초 설치)으로 만든 계정이 `admin`, `POST /api/auth/register`로 가입한 계정은 `member`.
+- `auth_service.is_admin(db, user_id)`로 확인.
+- 디스코드 알림은 `send_discord_notification`이 `user_roles`에서 admin user_id를 조회한 뒤, 해당 유저의 AGE WATCHES만 대상으로 한다.
+- 비교 기준은 약 1주 전 HOLDS 날짜이며, KIS API는 과거 구성종목을 제공하지 않으므로 HOLDS 수집 시작 후 1주가 지나야 비교 대상이 생긴다.
 
 ## 환경 변수
 
@@ -106,6 +104,8 @@ SSE는 `EventSource`가 Authorization 헤더를 지원하지 않으므로 query 
 | `DISCORD_WEBHOOK_URL` | 디스코드 웹훅 URL | 선택 (미설정 시 디스코드 스킵) |
 
 ## 변경된 파일
+
+> 알림 기능 도입 당시 기준 기록이다. 이후 역할 저장 위치는 RDB `user_roles`로 바뀌었고, DB 초기화 스크립트는 `02_schema.sql`로 통합되었다.
 
 ### Backend
 - `models/collection_run.py` — CollectionRun ORM

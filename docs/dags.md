@@ -1,228 +1,241 @@
 # Airflow DAGs
 
-## 1. etf_daily_etl (Apache AGE)
+Airflow 3.3.2 (Python 3.14, 커스텀 이미지 `docker/airflow/Dockerfile`) 위에서 동작한다.
+DAG은 `airflow.sdk.DAG` + `airflow.providers.standard` 오퍼레이터를 사용하며 스케줄은 `schedule=` 인자로 지정한다.
+AGE 수집 공용 로직은 `airflow/dags/age_utils.py`에 모여 있다.
 
-한국 ETF 시장 데이터를 매일 수집하여 Apache AGE 그래프에 저장하는 ETL 파이프라인.
-
-- **DAG ID**: `etf_daily_etl`
-- **스케줄**: `0 8 * * 1-5` (평일 08:00 KST)
-- **재시도**: 3회, 5분 간격
-- **Catchup**: 비활성화
+| DAG ID | 파일 | 스케줄 | 저장소 | 역할 |
+|--------|------|--------|--------|------|
+| `age_backfill` | `backfill_age.py` | 수동 | AGE | 초기 데이터 적재 |
+| `age_sync_universe` | `sync_universe_age.py` | `30 8 * * 2-6` (화~토 08:30 KST) | AGE | 일일 증분 수집 |
+| `age_tagging` | `age_tagging.py` | `0 3 * * 6` (토 03:00 KST) | AGE | ETF 태그 전체 재구축 |
+| `rdb_sync_metadata` | `sync_metadata_rdb.py` | `30 8 * * 1-5` (평일 08:30 KST) | RDB | `etfs` 코드/이름 동기화 |
+| `rdb_realtime_prices` | `realtime_prices_rdb.py` | `*/10 9-15 * * 1-5` | RDB | 장중 현재가 + 포트폴리오 스냅샷 |
+| `rdb_backfill` | `backfill_prices_rdb.py` | 수동 | RDB | `ticker_prices` 종가 백필 |
+| `embed_code_examples` | `embed_code_examples.py` | 수동 | RDB (pgvector) | 챗봇 코드 예제 임베딩 |
 
 ### 데이터 소스
 
 | 소스 | 용도 | 인증 |
 |------|------|------|
-| KRX Open API (`etf_bydd_trd`) | ETF 일별 시세, 시가총액, 순자산 | `KRX_AUTH_KEY` 환경변수 |
-| pykrx 라이브러리 | ETF 메타데이터, 보유종목(PDF), 섹터 분류, 주식 시세 | 불필요 |
-| GPT-4.1-mini | 미분류 ETF 태그 자동 부여 | `OPENAI_API_KEY` 환경변수 |
+| KRX Open API (`etf_bydd_trd`) | ETF 일별 시세, 시가총액, 순자산 → 유니버스/ETF 가격 | `KRX_AUTH_KEY` |
+| 한국투자증권 KIS Open API (ETF 구성종목시세) | ETF 현재 구성종목(HOLDS), 종목명 | `KIS_APP_KEY`, `KIS_APP_SECRET` (`KIS_BASE_URL` 선택) |
+| pykrx 1.2.9 | 영업일 목록, 주식 OHLCV(Naver 백엔드), 장 개장 여부, 보수율(KRX 스크래핑) | 보수율 스크래핑에 `KRX_ID`, `KRX_PW` |
+| yfinance | 포트폴리오 보유 티커 현재가/종가 (RDB) | 불필요 |
+| LiteLLM 프록시 (OpenAI 호환) | ETF 태그 분류(`LLM_MODEL`), 코드 예제 임베딩(`EMBEDDING_MODEL`) | `LLM_API_BASE`, `LLM_API_KEY` |
+
+---
+
+## 1. age_backfill (초기 적재)
+
+신규 환경 구축 시 수동 트리거하여 고정 시작일(`BACKFILL_START = "20260102"`)부터 최근 영업일까지의 데이터를 일괄 적재한다.
+이후 증분 수집은 `age_sync_universe`가 이어받고, 태그는 `age_tagging`을 별도로 실행해 부여한다.
+
+- **재시도**: 0회
+- **Catchup**: 비활성화
+
+### 태스크 구조
+
+```
+get_dates → backfill_universe_and_prices → collect_current_holds → backfill_stock_prices → backfill_returns
+```
+
+### 태스크 상세
+
+#### 1. get_dates
+
+`get_business_days(BACKFILL_START, today)`로 pykrx 영업일 목록(YYYYMMDD)을 XCom으로 전달한다.
+
+#### 2. backfill_universe_and_prices
+
+`collect_universe_and_prices(dates)` — 날짜별 KRX 데이터로 유니버스 ETF 노드, 메타데이터, ETF Price 노드를 생성한다 (아래 [공용 수집 함수](#공용-수집-함수-age_utils) 참고).
+
+#### 3. collect_current_holds
+
+`collect_holdings(etf_codes, dates[-1])` — KIS API로 **현재** 구성종목 스냅샷을 1회 수집하여 최근 거래일 날짜의 HOLDS로 기록한다.
+KIS API는 날짜 지정을 지원하지 않으므로 과거 구성종목(HOLDS) 백필은 없다.
+Stock 노드가 이 단계에서 생성되므로 주식 가격 백필보다 먼저 실행한다.
+
+#### 4. backfill_stock_prices
+
+`collect_stock_prices_for_dates(dates)` — 전체 기간의 Stock 가격을 수집한다.
+
+#### 5. backfill_returns
+
+`update_etf_returns()` — ETF 1D/1W/1M 수익률을 계산한다.
+
+---
+
+## 2. age_sync_universe (일일 증분)
+
+마지막 수집일 이후 ~ 오늘까지 누락된 영업일의 데이터를 자동 수집한다.
+
+- **스케줄**: `30 8 * * 2-6` (거래일 다음날 08:30 KST, 화~토)
+- **재시도**: 3회, 5분 간격
+- **Catchup**: 비활성화
 
 ### 태스크 구조
 
 ```
 start
-  └─ fetch_krx_data
-       ├─ filter_etf_list
-       │    ├─ collect_etf_metadata ─┐
-       │    └─ collect_holdings      ├─ tag_new_etfs ─┐
-       │         ├─ collect_stock_prices ─────────────┤
-       │         └─ detect_portfolio_changes ─────────┤
-       └─ collect_prices ────────────────────────────┘
-                                                    end
+  └─ fetch_trading_dates
+       └─ sync_universe_and_prices
+            ├─ sync_holdings
+            │    ├─ sync_stock_prices ─┐
+            │    └─ record_and_notify ─┤
+            ├─ sync_returns ───────────┤
+            └─ tag_new_etfs ───────────┘
+                                      end
 ```
 
 ### 태스크 상세
 
-#### 1. fetch_krx_data
+#### 1. fetch_trading_dates
 
-KRX Open API(`KRXApiClient.get_etf_daily_trading`)로 ETF 전종목 일별매매정보를 수집한다.
-누락된 영업일이 있으면 자동으로 백필(과거 데이터 소급 수집)한다.
+AGE에서 마지막 ETF Price 날짜(`get_last_collected_date`)를 조회하고, 그 다음날부터 오늘까지의 영업일 목록을 반환한다.
+AGE가 비어 있으면 경고 후 빈 리스트를 반환한다 (먼저 `age_backfill` 실행 필요).
 
-- AGE에서 마지막 Price 노드의 날짜를 조회하여 백필 시작일을 결정한다.
-- DB가 비어있으면(초기 적재) 실행일 기준 45일 전부터 수집하여 약 30 영업일을 확보한다.
-- 누락된 평일(월~금)을 순회하며 KRX API를 호출하고, 응답이 없는 날(공휴일)은 자동 skip한다.
-- 모든 날짜에서 데이터가 없으면 최근 7일 내 거래일을 탐색하는 fallback을 수행한다.
-- 수집 항목: code, name, OHLCV(시가/고가/저가/종가/거래량), 거래대금, NAV, 시가총액, 순자산총액.
-- XCom으로 `trading_date`(최신 거래일), `trading_dates`(수집된 거래일 리스트), return value(krx_data 통합 리스트)를 downstream 태스크에 전달한다.
+#### 2. sync_universe_and_prices
 
-#### 2. filter_etf_list
+`collect_universe_and_prices(dates)`를 호출하고, 신규 편입 ETF(`new_etfs`)와 KRX가 실제로 반환한 거래일(`actual_dates`)을 XCom으로 push한다.
 
-KRX 데이터에서 투자 분석 대상 ETF를 선별하여 AGE 유니버스를 관리한다.
+#### 3. sync_holdings
 
-- AGE의 기존 ETF 노드 코드 목록(= 유니버스)을 읽는다.
-- 새로운 ETF 중 아래 조건을 모두 충족하면 ETF 노드를 MERGE하여 유니버스에 추가한다.
-  - 순자산 500억 이상
-  - 제외 키워드 미포함: 레버리지, 인버스, 채권, 금, 통화, 리츠 등
-  - 해외 시장 키워드 미포함: 미국, 중국, 글로벌, S&P, NASDAQ 등
-- 한번 등록된 ETF는 이후 조건에 미달하더라도 유니버스에서 제거하지 않는다.
-- 유니버스 티커 리스트를 XCom으로 downstream에 전달한다.
+`collect_holdings(etf_codes, actual_dates[-1])` — 여러 날이 밀려 있어도 **최근 거래일 1일치**만 수집한다 (KIS는 과거 날짜 조회 불가).
 
-**저장:** AGE — `ETF` 노드 (MERGE)
+#### 4. sync_stock_prices
 
-#### 3. collect_etf_metadata
+`collect_stock_prices_for_dates(actual_dates)` — 누락된 거래일의 Stock 가격을 수집한다.
 
-유니버스 ETF의 메타데이터(이름, 보수율, 운용사)를 수집하여 그래프에 저장한다.
+#### 5. record_and_notify
 
-- `pykrx.stock.get_etf_ticker_name`으로 ETF 정식 이름을 조회한다.
-- `pykrx.ETF_전종목기본종목`에서 전종목 보수율(ETF_TOT_FEE)을 일괄 조회하고, 소수점 2째자리 올림 처리한다.
-- ETF 노드의 `name`, `expense_ratio`, `updated_at` 속성을 갱신한다.
-- ETF 이름의 prefix(KODEX, TIGER, RISE 등)로 운용사를 추출하여 Company 노드를 생성하고, `(ETF)-[:MANAGED_BY]->(Company)` 관계를 연결한다.
-- ETF당 0.1초 딜레이를 두어 API 부하를 방지한다.
+최근 거래일을 `collection_runs`에 기록(`pg_notify` 발행)하고, 신규 기록일 때만 디스코드 알림을 보낸다. 상세는 [notify.md](notify.md) 참고.
 
-**저장:** AGE — `ETF`, `Company` 노드, `MANAGED_BY` 관계
+#### 6. sync_returns
 
-#### 4. collect_holdings
+`update_etf_returns()` — 새 거래일 데이터가 있을 때만 수익률을 다시 계산한다.
 
-유니버스 ETF별 구성종목(보유종목) 상위 20개를 수집하여 그래프에 저장한다.
+#### 7. tag_new_etfs
 
-- **Pass 1 (데이터 수집):**
-  - `pykrx.stock.get_etf_portfolio_deposit_file`로 각 ETF의 보유종목과 비중을 조회한다.
-  - 비중 기준 상위 20개만 선별한다.
-  - 모든 고유 종목 코드에 대해 `get_market_ticker_name`으로 종목명을 조회한다.
-  - KOSPI/KOSDAQ 업종 인덱스를 순회하여 종목별 (시장, 섹터) 매핑을 구성한다.
-  - ETF당 0.5초 딜레이를 두어 API 부하를 방지한다.
-
-- **노드 사전 생성:**
-  - Stock 노드를 일괄 MERGE하고 `name`, `is_etf` 속성을 설정한다.
-  - Market, Sector 노드를 일괄 MERGE하고 `(Sector)-[:PART_OF]->(Market)` 관계를 생성한다.
-  - `(Stock)-[:BELONGS_TO]->(Sector)` 관계를 일괄 생성한다.
-
-- **Pass 2 (엣지 배치 생성):**
-  - `(ETF)-[:HOLDS {date, weight, shares}]->(Stock)` 엣지를 MERGE한다.
-  - 50개 ETF 단위로 배치 커밋하여 트랜잭션 크기를 제한한다.
-
-**저장:** AGE — `Stock`, `Market`, `Sector` 노드, `HOLDS`, `BELONGS_TO`, `PART_OF` 관계
-
-#### 5. collect_prices
-
-XCom의 KRX 데이터를 사용하여 **모든 ETF**(유니버스 필터 무관)의 일별 시세를 AGE Price 노드로 저장한다.
-
-- 각 krx_data item의 `date` 필드를 그대로 사용하여 멀티 날짜를 자연스럽게 지원한다.
-- 유니버스에 포함되지 않은 ETF도 ETF 노드를 MERGE하여 자동 생성한다.
-- AGE 버그를 우회하기 위해 MERGE와 SET을 분리하여 실행한다.
-  - 1단계: `(ETF)-[:HAS_PRICE]->(Price {date})` MERGE
-  - 2단계: Price 노드에 `open, high, low, close, volume, nav, market_cap, net_assets, trade_value` SET
-- 200건 단위로 배치 커밋한다.
-
-**저장:** AGE — `Price` 노드, `(ETF)-[:HAS_PRICE]->(Price)` 관계
-
-#### 6. collect_stock_prices
-
-그래프에 등록된 개별 주식(is_etf=false인 Stock)의 일별 시세를 pykrx에서 수집하여 AGE에 저장한다.
-
-- AGE에서 `is_etf = false`인 Stock 코드 목록을 조회한다.
-- XCom의 `trading_dates` 리스트를 사용하여 각 거래일별로 처리한다.
-- `pykrx.stock.get_market_ohlcv_by_ticker`로 전 종목 OHLCV를 일괄 조회한 뒤, 그래프에 등록된 종목만 필터링하여 저장한다.
-- AGE 버그 우회로 MERGE + SET 분리 실행:
-  - 1단계: `(Stock)-[:HAS_PRICE]->(Price {date})` MERGE
-  - 2단계: Price 노드에 `open, high, low, close, volume, change_rate` SET
-- 날짜별로 커밋한다.
-
-**저장:** AGE — `Price` 노드, `(Stock)-[:HAS_PRICE]->(Price)` 관계
-
-#### 7. detect_portfolio_changes
-
-유니버스 ETF의 전일 대비 구성종목 변동을 감지하여 그래프에 기록한다.
-
-- 각 ETF에 대해 오늘/어제의 HOLDS 관계를 AGE에서 조회하여 비교한다.
-- 감지 기준:
-  - **신규 편입 (added):** 오늘 보유하지만 어제는 없던 종목
-  - **완전 편출 (removed):** 어제 보유했지만 오늘은 없는 종목
-  - **비중 변동 (increased/decreased):** 비중 차이가 5%p 이상인 종목
-- 변동이 감지되면 `Change` 노드를 CREATE하고 `(ETF)-[:HAS_CHANGE]->(Change)` 관계를 생성한다.
-- Change 노드 속성: `id`(UUID), `stock_code`, `stock_name`, `change_type`, `before_weight`, `after_weight`, `weight_change`, `detected_at`.
-- ETF별로 커밋하며, 실패 시 해당 ETF만 rollback하고 다음으로 진행한다.
-
-**저장:** AGE — `Change` 노드, `(ETF)-[:HAS_CHANGE]->(Change)` 관계
-
-#### 8. tag_new_etfs
-
-TAGGED 관계가 없는 미분류 ETF에 GPT-4.1-mini를 사용하여 태그를 자동 부여한다.
-
-- AGE에서 전체 ETF 목록을 조회하고, 이미 `(ETF)-[:TAGGED]->(Tag)` 관계가 있는 ETF를 제외한다.
-- 미분류 ETF별로 보유종목(HOLDS) TOP 10의 종목명을 조회한다.
-- ETF 이름 + 보유종목 정보를 10개씩 묶어 LLM에 배치 호출한다.
-- LLM은 `ETFTagBatchResult` (Pydantic structured output)로 ETF당 1~3개 태그를 반환한다.
-  - 태그 카테고리: 산업(반도체, 2차전지 등), 테마(AI, 로봇 등), 스타일(배당, 대형주 등), 지수(시장지수)
-- Tag 노드를 MERGE하고 `(ETF)-[:TAGGED]->(Tag)` 관계를 MERGE한다.
-- 배치별로 커밋하며, 실패 시 해당 배치만 rollback하고 다음으로 진행한다.
-
-**저장:** AGE — `Tag` 노드, `(ETF)-[:TAGGED]->(Tag)` 관계
+신규 편입 ETF에 룰 기반 태그(`코스피`, `코스닥`)만 부여한다 (`INDEX_TAG_PATTERNS`). LLM 태깅은 `age_tagging`에서 수행한다.
 
 ---
 
-## 2. etf_rdb_etl (RDB)
+## 공용 수집 함수 (age_utils)
 
-KRX API에서 ETF 메타데이터를 수집하여 RDB `etfs` 테이블에 동기화한다.
+### collect_universe_and_prices(dates)
 
-- **DAG ID**: `etf_rdb_etl`
-- **스케줄**: `0 7 * * 1-5` (평일 07:00 KST)
+- pykrx `ETF_전종목기본종목`에서 전종목 보수율(`ETF_TOT_FEE`)을 일괄 조회하고 소수점 2째자리 올림 처리한다 (KRX 스크래핑, `KRX_ID`/`KRX_PW` 필요. 실패 시 보수율 없이 진행).
+- 날짜별로 KRX Open API(`KRXApiClient.get_etf_daily_trading`)를 호출한다. 해당 날짜에 데이터가 없으면 최대 7일 전까지 거슬러 올라가 실제 거래일을 찾고, 이미 처리한 거래일은 건너뛴다.
+- 유니버스 신규 편입 조건 (`check_new_universe_candidates`):
+  - 순자산 500억 이상
+  - 제외 키워드 미포함: 레버리지, 인버스, 합성/선물, 커버드콜, 채권, 금/원자재, 통화, 머니마켓, 리츠 등
+  - 해외 키워드 미포함: 미국, 중국, 글로벌, S&P, NASDAQ, MSCI, 해외 개별종목명 등
+- 한번 등록된 ETF는 이후 조건에 미달하더라도 유니버스에서 제거하지 않는다.
+- 신규 ETF: `ETF` 노드 MERGE → `name`, `expense_ratio` SET → 이름 prefix로 운용사를 추출해 `(ETF)-[:MANAGED_BY]->(Company)` 연결.
+- 유니버스 ETF의 Price 노드를 저장한다 (AGE MERGE+SET 버그 회피를 위해 "없으면 CREATE" / "있으면 SET" 2단계). 속성: `open, high, low, close, volume, nav, market_cap, net_assets, trade_value`. ETF 노드의 `net_assets`도 갱신한다.
+
+**저장:** AGE — `ETF`, `Company` 노드, `MANAGED_BY`, `Price`, `(ETF)-[:HAS_PRICE]->(Price)`
+
+### collect_holdings(etf_codes, bd)
+
+KIS Open API "ETF 구성종목시세"(`GET /uapi/etfetn/v1/quotations/inquire-component-stock-price`, tr_id `FHKST121600C0`, `airflow/dags/kis_api_client.py`)로 호출 시점의 구성종목을 조회해 `bd` 날짜의 HOLDS 엣지로 저장한다.
+
+- 같은 날짜의 HOLDS가 이미 있는 ETF는 건너뛴다 (재실행 대비).
+- 설정현금액(`010010`)과 AGE에 없는 코드(채권·현금·선물 등)를 제외한 뒤, 비중 기준 상위 30개만 저장한다.
+- 필드 매핑: `weight` ← `etf_cnfg_issu_rlim`(%), `shares` ← `etf_vltn_amt / stck_prpr` (API에 수량 필드가 없어 평가금액/현재가로 역산한 **추정치**).
+- Stock 노드를 MERGE하고 `name`, `is_etf`를 설정한다. 주식 이름은 KIS `hts_kor_isnm`, ETF는 AGE ETF 노드 이름을 우선 사용한다.
+- HOLDS는 50개 ETF 단위로 MERGE → SET 후 커밋한다.
+- 접근 토큰은 24시간 유효하고 발급이 1분 1회로 제한되어 `kis_tokens` 테이블에 캐시한다 (앱키 SHA-256 해시 키, 만료 10분 전 재발급). 호출 간 최소 0.06초 간격을 둔다.
+- `KIS_APP_KEY`/`KIS_APP_SECRET`이 없으면 경고 후 수집을 건너뛴다.
+
+**저장:** AGE — `Stock` 노드, `(ETF)-[:HOLDS {date, weight, shares}]->(Stock)`
+
+### collect_stock_prices_for_dates(dates)
+
+- AGE에서 `is_etf = false`인 Stock 코드 목록을 조회한다.
+- 날짜별로 이미 가격이 있는 종목은 건너뛰고, pykrx Naver 백엔드(`get_market_ohlcv_by_date`)로 종목별 OHLCV를 조회한다 (종목당 0.3초 딜레이).
+- MERGE+SET 분리 방식으로 `open, high, low, close, volume, change_rate`를 저장하고 날짜별로 커밋한다.
+
+**저장:** AGE — `Price` 노드, `(Stock)-[:HAS_PRICE]->(Price)`
+
+### update_etf_returns()
+
+ETF별 최근 45개 Price로 `close_price`, `return_1d`, `return_1w`, `return_1m`, `market_cap_change_1w`를 계산해 ETF 노드에 저장한다.
+
+---
+
+## 3. age_tagging (태그 재구축)
+
+전체 ETF의 태그를 룰 기반 + 키워드 + LLM으로 재구축한다.
+
+- **스케줄**: `0 3 * * 6` (토요일 03:00 KST), 수동 트리거 가능
+- **재시도**: 1회, 5분 간격
+- **태스크**: `tag_all_etfs` (타임아웃 30분)
+
+### 처리 순서
+
+1. **인덱스 태그**: 이름이 `INDEX_TAG_PATTERNS`에 매칭되면 `코스피`/`코스닥` 태그.
+2. **키워드 태그**: 이름에 키워드가 있으면 해당 태그 (예: 배터리 → 2차전지, 헬스케어 → 바이오).
+3. **LLM 태그**: 나머지 ETF는 최신 HOLDS 날짜의 보유종목 TOP 10 종목명과 함께 10개씩 묶어 LLM에 보낸다.
+   - openai SDK `client.chat.completions.parse(response_format=ETFTagBatchResult)` structured output, `temperature=0`.
+   - 허용 태그(`ALLOWED_TAGS`, 21개) Enum에서만 1~3개 선택.
+   - LiteLLM 프록시(`LLM_API_BASE`)의 `LLM_MODEL`(기본 `qwen38-27b`) 사용.
+4. 새 태그 쌍을 메모리에 모두 구축한 뒤, 기존 `TAGGED`/`Tag`를 삭제하고 일괄 재생성한다 (단일 트랜잭션 — LLM 실패 시에도 기존 태그 보존).
+
+`LLM_API_KEY`가 없으면 태깅을 건너뛴다.
+
+**저장:** AGE — `Tag` 노드, `(ETF)-[:TAGGED]->(Tag)`
+
+---
+
+## 4. rdb_sync_metadata (RDB)
+
+KRX Open API에서 전체 ETF 목록을 수집하여 RDB `etfs` 테이블에 code + name만 동기화한다 (포트폴리오의 비유니버스 ETF 이름 조회용).
+ETF 상세 메타데이터(순자산, 보수율, 운용사 등)는 AGE에서 관리한다.
+
+- **스케줄**: `30 8 * * 1-5` (평일 08:30 KST)
 - **재시도**: 3회, 5분 간격
-- **Catchup**: 비활성화
-- `etf_daily_etl`과 독립적으로 동작 (자체 KRX 수집, AGE 의존 없음)
-
-### 태스크 구조
 
 ```
 start → fetch_krx_data → sync_etfs_to_rdb → end
 ```
 
-### 태스크 상세
-
-#### 1. fetch_krx_data
-
-KRX Open API에서 ETF 일별매매정보를 수집한다. AGE 백필 로직 없이 최근 거래일 데이터만 조회한다.
-
-- `KRXApiClient.get_etf_daily_trading`을 호출하여 전종목 데이터를 가져온다.
-- 실행일(ds_nodash)부터 최대 7일 전까지 순회하며 데이터가 있는 최근 거래일을 탐색한다.
-- RDB sync에 필요한 최소 필드(code, name, net_assets)만 추출하여 XCom으로 전달한다.
-- `KRX_AUTH_KEY` 환경변수가 없으면 빈 리스트를 반환한다.
-
-#### 2. sync_etfs_to_rdb
-
-XCom으로 전달받은 KRX 데이터를 사용하여 **모든 ETF** 메타데이터를 RDB `etfs` 테이블에 동기화한다.
-
-- ETF 이름의 prefix(KODEX, TIGER, RISE 등)에서 운용사를 추출하여 `issuer` 컬럼에 저장한다.
-- `INSERT ... ON CONFLICT (code) DO UPDATE`로 UPSERT하여 기존 데이터를 갱신한다.
-- 갱신 대상 컬럼: `name`, `issuer`, `net_assets`, `updated_at`.
-- 개별 ETF 실패 시 해당 건만 skip하고 나머지는 계속 처리한다.
+- `fetch_krx_data`: 실행일부터 최대 7일 전까지 거슬러 올라가 데이터가 있는 최근 거래일의 전종목 code/name을 조회한다. `KRX_AUTH_KEY`가 없으면 빈 리스트.
+- `sync_etfs_to_rdb`: `INSERT ... ON CONFLICT (code) DO UPDATE`로 UPSERT한다.
 
 **저장:** RDB `etfs` — 프론트엔드 ETF 검색(pg_trgm 퍼지 매칭)과 포트폴리오 ETF 이름 조회에 사용
 
 ---
 
-## 3. portfolio_snapshot (RDB)
+## 5. rdb_realtime_prices (RDB)
 
-사용자 포트폴리오의 보유종목 현재가를 yfinance에서 조회하여 일별 평가금액 스냅샷을 저장한다.
+장중 10분마다 포트폴리오 보유 종목의 현재가를 `ticker_prices`에 업서트하고 포트폴리오 스냅샷을 갱신한다.
 
-- **DAG ID**: `portfolio_snapshot`
-- **스케줄**: `0 16 * * 1-5` (평일 16:00 KST, 장 마감 후)
-- **재시도**: 3회, 5분 간격
-- **Catchup**: 비활성화
-- `etf_daily_etl`과 독립적으로 동작 (유니버스 밖 종목도 처리)
-
-### 태스크 구조
+- **스케줄**: `*/10 9-15 * * 1-5`
+- **재시도**: 1회, 2분 간격
 
 ```
-snapshot_portfolios
+check_market_open → collect_prices → update_snapshots
 ```
 
-### 태스크 상세
+- `check_market_open` (ShortCircuit): pykrx로 오늘이 거래일인지 확인하고, 장 마감(15:30) 이후 이미 갱신된 경우 등 불필요한 실행을 건너뛴다.
+- `collect_prices`: `holdings`의 고유 티커(CASH 제외) 현재가를 yfinance로 조회한다. 최근 3개월치가 부족한 티커는 과거 종가도 백필한다.
+- `update_snapshots`: `snapshot_enabled = true`인 포트폴리오의 평가금액을 계산해 `portfolio_snapshots`에 저장한다 (금액 컬럼은 `ENCRYPTION_KEY`로 암호화).
 
-#### 1. snapshot_portfolios
+**저장:** RDB `ticker_prices`, `portfolio_snapshots`
 
-RDB의 포트폴리오 보유종목 정보를 기반으로 일별 평가금액을 계산하여 스냅샷을 저장한다.
+---
 
-- RDB `holdings` 테이블에서 보유종목이 있는 포트폴리오 ID를 조회한다.
-- 전체 고유 티커(CASH 제외)를 수집하고, yfinance로 최근 5거래일 종가를 일괄 조회한다 (`{ticker}.KS`).
-- 각 포트폴리오별로 평가금액을 계산한다:
-  - CASH 티커: price=1.0으로 고정, quantity가 곧 금액
-  - ETF/주식: 해당 날짜 이하에서 가장 최근 종가 × 보유수량
-- 스냅샷 이력이 없는 포트폴리오는 최근 3거래일을 백필(소급 생성)하고, 이력이 있으면 최신 거래일만 처리한다.
-- 전일 스냅샷과 비교하여 변동액(`change_amount`)과 변동률(`change_rate`)을 계산한다.
-- `INSERT ... ON CONFLICT (portfolio_id, date) DO UPDATE`로 UPSERT한다.
+## 6. rdb_backfill (RDB)
 
-**저장:** RDB `portfolio_snapshots` — 포트폴리오 대시보드 차트 및 수익률 표시에 사용
+수동 트리거 전용. `etfs` 테이블의 전체 ETF에 대해 2025-01-01부터 현재까지 일별 종가를 yfinance 배치 다운로드(20개씩)로 `ticker_prices`에 백필한다.
+
+---
+
+## 7. embed_code_examples (pgvector)
+
+수동 트리거 전용. `code_examples`에서 `status='active'`(승인됨, 미임베딩) 레코드를 찾아 질문을 LLM(`LLM_MODEL`)으로 일반화한 뒤, `EMBEDDING_MODEL`(기본 `embedding-gemma-300m`, 768차원)로 임베딩을 생성하고 `status='embedded'`로 전환한다.
 
 ---
 
@@ -230,38 +243,49 @@ RDB의 포트폴리오 보유종목 정보를 기반으로 일별 평가금액�
 
 ### RDB
 
-| 테이블 | DAG | 적재 태스크 | 키 | 용도 |
-|--------|-----|-------------|-----|------|
-| `etfs` | etf_rdb_etl | sync_etfs_to_rdb | code | pg_trgm 퍼지 검색, 포트폴리오 ETF 이름 조회 |
-| `portfolio_snapshots` | portfolio_snapshot | snapshot_portfolios | portfolio_id, date | 포트폴리오 일별 평가금액 이력 |
+| 테이블 | DAG | 적재 태스크 | 용도 |
+|--------|-----|-------------|------|
+| `etfs` | rdb_sync_metadata | sync_etfs_to_rdb | pg_trgm 퍼지 검색, 포트폴리오 ETF 이름 조회 |
+| `ticker_prices` | rdb_realtime_prices, rdb_backfill | collect_prices, backfill_prices | 티커별 일별 가격 캐시 |
+| `portfolio_snapshots` | rdb_realtime_prices | update_snapshots | 포트폴리오 일별 평가금액 이력 |
+| `collection_runs` | age_sync_universe | record_and_notify | 수집 완료 기록, 알림 트리거 |
+| `kis_tokens` | age_backfill, age_sync_universe | collect_current_holds, sync_holdings | KIS 접근 토큰 캐시 |
+| `code_examples` | embed_code_examples | embed_code_examples | 챗봇 few-shot 코드 예제 (vector(768)) |
 
 ### Apache AGE
 
-| 노드/관계 | DAG | 적재 태스크 | 용도 |
-|-----------|-----|-------------|------|
-| `ETF` | etf_daily_etl | filter_etf_list, collect_etf_metadata, collect_prices | 유니버스 관리, 메타데이터 |
-| `Company`, `MANAGED_BY` | etf_daily_etl | collect_etf_metadata | 운용사 |
-| `Stock`, `Market`, `Sector`, `HOLDS`, `BELONGS_TO`, `PART_OF` | etf_daily_etl | collect_holdings | 보유종목, 섹터 분류 |
-| `Price`, `(ETF)-[:HAS_PRICE]->` | etf_daily_etl | collect_prices | ETF 가격 시계열 |
-| `Price`, `(Stock)-[:HAS_PRICE]->` | etf_daily_etl | collect_stock_prices | 주식 가격 시계열 |
-| `Change`, `HAS_CHANGE` | etf_daily_etl | detect_portfolio_changes | 보유종목 변동 이력 |
-| `Tag`, `TAGGED` | etf_daily_etl | tag_new_etfs | ETF 테마 분류 |
+| 노드/관계 | 적재 함수 | 용도 |
+|-----------|-----------|------|
+| `ETF`, `Company`, `MANAGED_BY` | collect_universe_and_prices | 유니버스, 메타데이터, 운용사 |
+| `Price`, `(ETF)-[:HAS_PRICE]->` | collect_universe_and_prices | ETF 가격 시계열 |
+| `Stock`, `HOLDS` | collect_holdings (KIS) | 보유종목 (수집일 기준 스냅샷) |
+| `Price`, `(Stock)-[:HAS_PRICE]->` | collect_stock_prices_for_dates | 주식 가격 시계열 |
+| ETF 수익률 속성 | update_etf_returns | 1D/1W/1M 수익률 |
+| `Tag`, `TAGGED` | age_tagging, tag_new_etfs | ETF 테마 분류 |
 
 ## 환경 변수
 
 | 변수 | 용도 |
 |------|------|
-| `DATABASE_URL` | PostgreSQL 연결 문자열 |
-| `KRX_AUTH_KEY` | KRX Open API 인증 키 |
-| `OPENAI_API_KEY` | GPT-4.1-mini (태그 분류용) |
+| `DATABASE_URL` | 앱 DB(`etf_atlas`) 연결 문자열 (Airflow 메타데이터는 별도 `airflow` DB) |
+| `KRX_AUTH_KEY` | KRX Open API 인증 키 (유니버스/ETF 가격) |
+| `KRX_ID`, `KRX_PW` | pykrx KRX 스크래핑 로그인 (보수율) |
+| `KIS_APP_KEY`, `KIS_APP_SECRET` | KIS Open API 앱키 (ETF 구성종목) |
+| `KIS_BASE_URL` | KIS 엔드포인트 (기본 `https://openapi.koreainvestment.com:9443`) |
+| `LLM_API_BASE`, `LLM_API_KEY` | LiteLLM 프록시 (기본 `http://localhost:4000`) |
+| `LLM_MODEL` | 태그 분류/질문 일반화 모델 (기본 `qwen38-27b`) |
+| `EMBEDDING_MODEL` | 임베딩 모델 (기본 `embedding-gemma-300m`, 768차원) |
+| `ENCRYPTION_KEY` | 포트폴리오 금액 암호화 키 |
+| `DISCORD_WEBHOOK_URL` | (선택) 수집 완료 디스코드 알림 |
 
-## 의존성 (requirements.txt)
+## 의존성 (airflow/requirements.txt)
 
 ```
-pykrx==1.2.3
-psycopg2-binary>=2.9.9
-pandas>=2.0.0
-setuptools
-yfinance
-langchain-openai
+pykrx==1.2.9
+psycopg2-binary>=2.9.11
+pandas>=2.2,<3
+requests>=2.32
+yfinance>=1.1.0
+openai>=2.0.0
+cryptography>=46.0.0
 ```

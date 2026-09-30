@@ -68,24 +68,57 @@ def get_db_connection():
     )
 
 
+def _is_market_open(day) -> bool | None:
+    """개장일 여부. market_calendar 캐시 → 없으면 KIS 국내휴장일조회(1일 1회 권장) 후 저장."""
+    from age_utils import get_kis_client
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT is_open FROM market_calendar WHERE date = %s", (day,))
+        row = cur.fetchone()
+        if row is not None:
+            return row[0]
+
+        kis = get_kis_client()
+        if kis is None:
+            return None
+        try:
+            is_open = kis.is_market_open(day.strftime('%Y%m%d'))
+        except Exception as e:
+            log.warning(f"KIS holiday lookup failed: {e}")
+            return None
+        if is_open is not None:
+            cur.execute(
+                "INSERT INTO market_calendar (date, is_open) VALUES (%s, %s) "
+                "ON CONFLICT (date) DO UPDATE SET is_open = EXCLUDED.is_open, checked_at = NOW()",
+                (day, is_open),
+            )
+            conn.commit()
+        return is_open
+    finally:
+        cur.close()
+        conn.close()
+
+
 def check_market_open(**context):
     """오늘 가격 수집이 필요한지 확인.
-    1) 휴장일이면 → 스킵 (pykrx)
+    1) 휴장일이면 → 스킵 (KIS 국내휴장일조회, market_calendar에 하루 1회 캐시)
     2) 오늘 가격이 없으면 → 수집
     3) 장 마감(15:30) 후 이미 수집했으면 → 스킵
     4) 장중이면 → 수집 (10분마다 업데이트)
     """
-    from pykrx import stock as pykrx_stock
-
     now_kst = datetime.now(KST)
     today_str = now_kst.strftime('%Y%m%d')
     today_iso = now_kst.date().isoformat()
 
     # 1) 거래일 확인
-    trading_days = pykrx_stock.get_market_ohlcv(today_str, today_str, "005930")
-    if trading_days.empty:
+    is_open = _is_market_open(now_kst.date())
+    if is_open is False:
         log.info(f"{today_str} is not a trading day. Skipping.")
         return False
+    if is_open is None:
+        log.warning(f"Could not determine market status for {today_str}. Proceeding.")
 
     # 2) 오늘 최종 업데이트 시간 확인
     conn = get_db_connection()

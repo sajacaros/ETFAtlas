@@ -7,7 +7,7 @@
 | **Frontend** | React, TypeScript, Vite, shadcn/ui, Recharts |
 | **Backend** | FastAPI, Pydantic (Python 3.14) |
 | **Database** | PostgreSQL 18 + Apache AGE 1.8.0 (Graph) + pgvector 0.8.6 |
-| **Data Pipeline** | Airflow 3.3.2, KRX Open API, 한국투자증권 KIS Open API, pykrx |
+| **Data Pipeline** | Airflow 3.3.2, KRX Open API, 한국투자증권 KIS Open API, 네이버 증권(보수율), yfinance |
 | **AI** | pydantic-ai (tool-calling 에이전트) + LiteLLM 프록시 (OpenAI 호환) |
 | **Auth** | 아이디/비밀번호 (bcrypt) + JWT (PyJWT) |
 
@@ -100,14 +100,14 @@
 │  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐              │
 │  │  영업일     │     │  유니버스   │     │  구성종목   │              │
 │  │  조회       │────>│  + ETF 가격 │────>│  (HOLDS)    │              │
-│  │  (pykrx)    │     │ (KRX Open   │     │  (KIS Open  │              │
+│  │  (KIS 일봉) │     │ (KRX Open   │     │  (KIS Open  │              │
 │  │             │     │   API)      │     │   API)      │              │
 │  └─────────────┘     └──────┬──────┘     └──────┬──────┘              │
 │                              │                   │                      │
 │                              v                   v                      │
 │                       ┌─────────────┐     ┌─────────────┐              │
 │                       │ 수익률 계산 │     │ 주식 가격   │              │
-│                       │ 룰 기반 태그│     │ (pykrx)     │              │
+│                       │ 룰 기반 태그│     │ (KIS 일봉)  │              │
 │                       └─────────────┘     │ 수집 기록 + │              │
 │                                           │ 알림        │              │
 │                                           └─────────────┘              │
@@ -117,7 +117,10 @@
 데이터 소스:
 ├── KRX Open API (etf_bydd_trd)            # ETF 일별 시세/순자산 → 유니버스, ETF 가격
 ├── KIS Open API (ETF 구성종목시세)         # 호출 시점 구성종목 → 최근 거래일 HOLDS
-└── pykrx                                   # 영업일, 주식 OHLCV(Naver), 보수율(KRX 스크래핑)
+├── KIS Open API (국내주식기간별시세)       # 주식 일봉, 영업일(기준 ETF 069500 일봉)
+├── KIS Open API (국내휴장일조회)           # 장중 현재가 DAG의 개장일 판정 (market_calendar 캐시)
+├── 네이버 증권 모바일 API (비공식)         # 신규 ETF 보수율
+└── yfinance                                # 포트폴리오 티커 현재가, ETF 종가 이력 백필 (RDB)
 
 구성종목 변화:
 └── 별도 Change 노드 없이, 두 날짜의 HOLDS 스냅샷을 조회 시점에 비교
@@ -181,7 +184,7 @@ CREATE TABLE users (
 -- 역할: roles(admin, member) + user_roles
 -- 포트폴리오: portfolios, target_allocations, holdings, portfolio_snapshots
 -- 가격 캐시: ticker_prices (ticker, date)
--- 수집 기록: collection_runs, KIS 토큰 캐시: kis_tokens
+-- 수집 기록: collection_runs, KIS 토큰 캐시: kis_tokens, 개장일 캐시: market_calendar
 -- 챗봇: chat_logs, code_examples (embedding vector(768))
 ```
 
@@ -289,7 +292,7 @@ ETFAtlas/
 │   └── requirements.txt
 │
 ├── airflow/
-│   ├── dags/                      # age_*, rdb_*, embed_code_examples, age_utils.py, krx/kis_api_client.py
+│   ├── dags/                      # age_*, rdb_*, embed_code_examples, age_utils.py, krx/kis_api_client.py, naver_client.py
 │   └── requirements.txt
 │
 ├── docker/
@@ -352,7 +355,7 @@ init 스크립트는 빈 볼륨으로 처음 기동할 때만 실행된다 (별�
 |--------|--------|
 | backend | `python:3.14-slim` |
 | frontend | `node:24-alpine` 빌드 → `nginx:alpine` |
-| airflow | `apache/airflow:3.3.2-python3.14` + `airflow/requirements.txt` |
+| airflow | `apache/airflow:3.3.2-python3.14` + `airflow/requirements.txt` (공식 constraints-3.3.2/constraints-3.14.txt 적용) |
 
 ---
 
@@ -409,9 +412,7 @@ AIRFLOW_JWT_SECRET=
 
 # 데이터 소스
 KRX_AUTH_KEY=               # KRX Open API — 유니버스/ETF 가격
-KRX_ID=                     # pykrx KRX 스크래핑(보수율) 로그인
-KRX_PW=
-KIS_APP_KEY=                # 한국투자증권 KIS Open API — ETF 구성종목
+KIS_APP_KEY=                # 한국투자증권 KIS Open API — 구성종목, 주식 일봉, 영업일, 휴장일
 KIS_APP_SECRET=
 KIS_BASE_URL=               # 기본값 https://openapi.koreainvestment.com:9443
 

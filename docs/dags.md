@@ -19,9 +19,9 @@ AGE 수집 공용 로직은 `airflow/dags/age_utils.py`에 모여 있다.
 | 소스 | 용도 | 인증 |
 |------|------|------|
 | KRX Open API (`etf_bydd_trd`) | ETF 일별 시세, 시가총액, 순자산 → 유니버스/ETF 가격 | `KRX_AUTH_KEY` |
-| 한국투자증권 KIS Open API (ETF 구성종목시세) | ETF 현재 구성종목(HOLDS), 종목명 | `KIS_APP_KEY`, `KIS_APP_SECRET` (`KIS_BASE_URL` 선택) |
-| pykrx 1.2.9 | 영업일 목록, 주식 OHLCV(Naver 백엔드), 장 개장 여부, 보수율(KRX 스크래핑) | 보수율 스크래핑에 `KRX_ID`, `KRX_PW` |
-| yfinance | 포트폴리오 보유 티커 현재가/종가 (RDB) | 불필요 |
+| 한국투자증권 KIS Open API | ETF 현재 구성종목(HOLDS)·종목명, 주식 일봉, 영업일(기준 ETF 일봉), 휴장일 | `KIS_APP_KEY`, `KIS_APP_SECRET` (`KIS_BASE_URL` 선택) |
+| 네이버 증권 모바일 API (비공식) | 신규 ETF 보수율(`totalFee`) | 불필요 |
+| yfinance | 포트폴리오 보유 티커 현재가, `rdb_backfill` ETF 종가 이력 (RDB) | 불필요 |
 | LiteLLM 프록시 (OpenAI 호환) | ETF 태그 분류·질문 일반화(`LLM_MODEL`), 코드 예제 임베딩(`EMBEDDING_MODEL`) | `LLM_API_BASE`/`LLM_API_KEY`, `EMBEDDING_API_BASE`/`EMBEDDING_API_KEY` |
 
 ---
@@ -44,7 +44,7 @@ get_dates → backfill_universe_and_prices → collect_current_holds → backfil
 
 #### 1. get_dates
 
-`get_business_days(BACKFILL_START, today)`로 pykrx 영업일 목록(YYYYMMDD)을 XCom으로 전달한다.
+`get_business_days(BACKFILL_START, today)`로 영업일 목록(YYYYMMDD)을 XCom으로 전달한다. 영업일은 기준 ETF(`BUSINESS_DAY_REFERENCE_CODE = '069500'`, KODEX 200)의 KIS 일봉 날짜로 판정한다 (KIS 키가 없거나 실패하면 빈 리스트).
 
 #### 2. backfill_universe_and_prices
 
@@ -125,7 +125,6 @@ AGE가 비어 있으면 경고 후 빈 리스트를 반환한다 (먼저 `age_ba
 
 ### collect_universe_and_prices(dates)
 
-- pykrx `ETF_전종목기본종목`에서 전종목 보수율(`ETF_TOT_FEE`)을 일괄 조회하고 소수점 2째자리 올림 처리한다 (KRX 스크래핑, `KRX_ID`/`KRX_PW` 필요. 실패 시 보수율 없이 진행).
 - 날짜별로 KRX Open API(`KRXApiClient.get_etf_daily_trading`)를 호출한다. 해당 날짜에 데이터가 없으면 최대 7일 전까지 거슬러 올라가 실제 거래일을 찾고, 이미 처리한 거래일은 건너뛴다.
 - 유니버스 신규 편입 조건 (`check_new_universe_candidates`):
   - 순자산 500억 이상
@@ -133,6 +132,7 @@ AGE가 비어 있으면 경고 후 빈 리스트를 반환한다 (먼저 `age_ba
   - 해외 키워드 미포함: 미국, 중국, 글로벌, S&P, NASDAQ, MSCI, 해외 개별종목명 등
 - 한번 등록된 ETF는 이후 조건에 미달하더라도 유니버스에서 제거하지 않는다.
 - 신규 ETF: `ETF` 노드 MERGE → `name`, `expense_ratio` SET → 이름 prefix로 운용사를 추출해 `(ETF)-[:MANAGED_BY]->(Company)` 연결.
+  - 보수율은 신규 편입 후보만 네이버 증권 모바일 API(`naver_client.fetch_expense_ratios`, `https://m.stock.naver.com/api/stock/{code}/etfAnalysis`의 `totalFee`)로 조회하고 소수점 2째자리 올림 처리한다. 비공식 API라 실패하면 `expense_ratio`만 비워 두고 진행한다.
 - 유니버스 ETF의 Price 노드를 저장한다 (AGE MERGE+SET 버그 회피를 위해 "없으면 CREATE" / "있으면 SET" 2단계). 속성: `open, high, low, close, volume, nav, market_cap, net_assets, trade_value`. ETF 노드의 `net_assets`도 갱신한다.
 
 **저장:** AGE — `ETF`, `Company` 노드, `MANAGED_BY`, `Price`, `(ETF)-[:HAS_PRICE]->(Price)`
@@ -142,7 +142,7 @@ AGE가 비어 있으면 경고 후 빈 리스트를 반환한다 (먼저 `age_ba
 KIS Open API "ETF 구성종목시세"(`GET /uapi/etfetn/v1/quotations/inquire-component-stock-price`, tr_id `FHKST121600C0`, `airflow/dags/kis_api_client.py`)로 호출 시점의 구성종목을 조회해 `bd` 날짜의 HOLDS 엣지로 저장한다.
 
 - 같은 날짜의 HOLDS가 이미 있는 ETF는 건너뛴다 (재실행 대비).
-- 설정현금액(`010010`)과 AGE에 없는 코드(채권·현금·선물 등)를 제외한 뒤, 비중 기준 상위 30개만 저장한다.
+- `is_listed_security_code()`로 KRX 상장 단축코드(`^[0-9][0-9A-Z]{5}$`)만 남기고 설정현금액(`010010`)·채권·선물 등을 제외한 뒤, 비중 기준 상위 30개만 저장한다.
 - 필드 매핑: `weight` ← `etf_cnfg_issu_rlim`(%), `shares` ← `etf_vltn_amt / stck_prpr` (API에 수량 필드가 없어 평가금액/현재가로 역산한 **추정치**).
 - Stock 노드를 MERGE하고 `name`, `is_etf`를 설정한다. 주식 이름은 KIS `hts_kor_isnm`, ETF는 AGE ETF 노드 이름을 우선 사용한다.
 - HOLDS는 50개 ETF 단위로 MERGE → SET 후 커밋한다.
@@ -153,9 +153,11 @@ KIS Open API "ETF 구성종목시세"(`GET /uapi/etfetn/v1/quotations/inquire-co
 
 ### collect_stock_prices_for_dates(dates)
 
-- AGE에서 `is_etf = false`인 Stock 코드 목록을 조회한다.
-- 날짜별로 이미 가격이 있는 종목은 건너뛰고, pykrx Naver 백엔드(`get_market_ohlcv_by_date`)로 종목별 OHLCV를 조회한다 (종목당 0.3초 딜레이).
-- MERGE+SET 분리 방식으로 `open, high, low, close, volume, change_rate`를 저장하고 날짜별로 커밋한다.
+- AGE에서 `is_etf = false`인 Stock 코드 목록과, 대상 기간에 이미 저장된 (종목, 날짜) 쌍을 조회한다.
+- 누락이 있는 종목마다 KIS 국내주식기간별시세(`KISApiClient.get_daily_bars(code, min(dates), max(dates))`)를 한 번 호출해 기간 전체 일봉을 받는다 (호출당 최대 100건, 100일 단위 페이지네이션). 종목×날짜 단위 호출은 하지 않는다.
+- 이미 저장된 (종목, 날짜)와 대상 날짜 밖의 일봉은 건너뛴다.
+- `change_rate`는 `prdy_vrss`(전일 대비)와 `prdy_vrss_sign`(부호)으로 계산한다.
+- MERGE+SET 분리 방식으로 `open, high, low, close, volume, change_rate`를 저장하고 50종목마다 커밋한다.
 
 **저장:** AGE — `Price` 노드, `(Stock)-[:HAS_PRICE]->(Price)`
 
@@ -219,7 +221,7 @@ start → fetch_krx_data → sync_etfs_to_rdb → end
 check_market_open → collect_prices → update_snapshots
 ```
 
-- `check_market_open` (ShortCircuit): pykrx로 오늘이 거래일인지 확인하고, 장 마감(15:30) 이후 이미 갱신된 경우 등 불필요한 실행을 건너뛴다.
+- `check_market_open` (ShortCircuit): KIS 국내휴장일조회(`CTCA0903R`, `opnd_yn`)로 오늘이 개장일인지 확인한다. KIS 요청에 따라 결과를 `market_calendar` 테이블에 하루 1회 캐시한다. 판정할 수 없으면(키 없음·오류) 수집을 진행한다. 장 마감(15:30) 이후 이미 갱신된 경우도 건너뛴다.
 - `collect_prices`: `holdings`의 고유 티커(CASH 제외) 현재가를 yfinance로 조회한다. 최근 3개월치가 부족한 티커는 과거 종가도 백필한다.
 - `update_snapshots`: `snapshot_enabled = true`인 포트폴리오의 평가금액을 계산해 `portfolio_snapshots`에 저장한다 (금액 컬럼은 `ENCRYPTION_KEY`로 암호화).
 
@@ -249,7 +251,8 @@ check_market_open → collect_prices → update_snapshots
 | `ticker_prices` | rdb_realtime_prices, rdb_backfill | collect_prices, backfill_prices | 티커별 일별 가격 캐시 |
 | `portfolio_snapshots` | rdb_realtime_prices | update_snapshots | 포트폴리오 일별 평가금액 이력 |
 | `collection_runs` | age_sync_universe | record_and_notify | 수집 완료 기록, 알림 트리거 |
-| `kis_tokens` | age_backfill, age_sync_universe | collect_current_holds, sync_holdings | KIS 접근 토큰 캐시 |
+| `kis_tokens` | KIS를 호출하는 모든 DAG | - | KIS 접근 토큰 캐시 |
+| `market_calendar` | rdb_realtime_prices | check_market_open | 개장일 여부 캐시 (하루 1회) |
 | `code_examples` | embed_code_examples | embed_code_examples | 챗봇 few-shot 코드 예제 (vector(768)) |
 
 ### Apache AGE
@@ -259,7 +262,7 @@ check_market_open → collect_prices → update_snapshots
 | `ETF`, `Company`, `MANAGED_BY` | collect_universe_and_prices | 유니버스, 메타데이터, 운용사 |
 | `Price`, `(ETF)-[:HAS_PRICE]->` | collect_universe_and_prices | ETF 가격 시계열 |
 | `Stock`, `HOLDS` | collect_holdings (KIS) | 보유종목 (수집일 기준 스냅샷) |
-| `Price`, `(Stock)-[:HAS_PRICE]->` | collect_stock_prices_for_dates | 주식 가격 시계열 |
+| `Price`, `(Stock)-[:HAS_PRICE]->` | collect_stock_prices_for_dates (KIS 일봉) | 주식 가격 시계열 |
 | ETF 수익률 속성 | update_etf_returns | 1D/1W/1M 수익률 |
 | `Tag`, `TAGGED` | age_tagging, tag_new_etfs | ETF 테마 분류 |
 
@@ -269,8 +272,7 @@ check_market_open → collect_prices → update_snapshots
 |------|------|
 | `DATABASE_URL` | 앱 DB(`etf_atlas`) 연결 문자열 (Airflow 메타데이터는 별도 `airflow` DB) |
 | `KRX_AUTH_KEY` | KRX Open API 인증 키 (유니버스/ETF 가격) |
-| `KRX_ID`, `KRX_PW` | pykrx KRX 스크래핑 로그인 (보수율) |
-| `KIS_APP_KEY`, `KIS_APP_SECRET` | KIS Open API 앱키 (ETF 구성종목) |
+| `KIS_APP_KEY`, `KIS_APP_SECRET` | KIS Open API 앱키 (구성종목, 주식 일봉, 영업일, 휴장일) |
 | `KIS_BASE_URL` | KIS 엔드포인트 (기본 `https://openapi.koreainvestment.com:9443`) |
 | `LLM_API_BASE`, `LLM_API_KEY` | LiteLLM 프록시 (기본 `http://localhost:4000`) |
 | `LLM_MODEL` | 태그 분류/질문 일반화 모델 (기본 `qwen38-27b`) |
@@ -281,10 +283,11 @@ check_market_open → collect_prices → update_snapshots
 
 ## 의존성 (airflow/requirements.txt)
 
+Airflow 공식 constraints(`constraints-3.3.2/constraints-3.14.txt`)를 적용해 이미지 빌드 시 설치한다 (`docker/airflow/Dockerfile`).
+
 ```
-pykrx==1.2.9
 psycopg2-binary>=2.9.11
-pandas>=2.2,<3
+pandas>=2.2
 requests>=2.32
 yfinance>=1.1.0
 openai>=2.0.0

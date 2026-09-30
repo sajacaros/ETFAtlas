@@ -1,11 +1,12 @@
 """
-한국투자증권(KIS) Open API Client
+한국투자증권(KIS) Open API Client (시세 조회 전용)
 
-ETF 구성종목시세[국내주식-073] API로 ETF의 현재 구성종목(PDF)을 조회합니다.
-Endpoint: GET /uapi/etfetn/v1/quotations/inquire-component-stock-price (tr_id FHKST121600C0)
+- ETF 구성종목시세[국내주식-073] (FHKST121600C0): ETF 현재 구성종목(PDF)
+  날짜 지정 파라미터가 없어 "호출 시점"의 구성종목만 조회 가능 (과거 백필 불가)
+- 국내주식기간별시세[v1_국내주식-016] (FHKST03010100): 종목/ETF 일봉 (호출당 최대 100건)
+- 국내휴장일조회 (CTCA0903R): 개장일 여부 (KIS 요청: 가급적 1일 1회 호출)
 
-- 날짜 지정 파라미터가 없어 "호출 시점"의 구성종목만 조회 가능 (과거 백필 불가)
-- 접근 토큰은 24시간 유효, 발급은 1분 1회 제한 → 토큰 캐시(kis_tokens 테이블) 사용
+접근 토큰은 24시간 유효, 발급은 1분 1회 제한 → 토큰 캐시(kis_tokens 테이블) 사용
 """
 
 import hashlib
@@ -36,6 +37,18 @@ class ETFComponent:
     def shares(self) -> int:
         """구성 수량 추정치 (평가금액 / 현재가). API에 수량 필드가 없어 역산."""
         return round(self.value / self.price) if self.price > 0 else 0
+
+
+@dataclass
+class DailyBar:
+    """일봉 데이터 (output2 한 행)"""
+    date: str           # 영업일자 YYYYMMDD (stck_bsop_date)
+    open: int           # 시가 (stck_oprc)
+    high: int           # 고가 (stck_hgpr)
+    low: int            # 저가 (stck_lwpr)
+    close: int          # 종가 (stck_clpr)
+    volume: int         # 누적 거래량 (acml_vol)
+    change_rate: float  # 전일 대비율 % (prdy_vrss로 계산)
 
 
 class TokenCache(Protocol):
@@ -231,6 +244,72 @@ class KISApiClient:
                 price=self._parse_int(item.get("stck_prpr")),
             ))
         return components
+
+    def get_daily_bars(self, code: str, start: str, end: str) -> list[DailyBar]:
+        """기간별 일봉 조회 (수정주가). start~end(YYYYMMDD) 전체를 100건씩 나눠 조회.
+
+        Returns:
+            날짜 오름차순 DailyBar 리스트
+        """
+        bars: dict[str, DailyBar] = {}
+        cursor_end = end
+        while cursor_end >= start:
+            data = self._get(
+                "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+                tr_id="FHKST03010100",
+                params={
+                    "FID_COND_MRKT_DIV_CODE": "J",
+                    "FID_INPUT_ISCD": code,
+                    "FID_INPUT_DATE_1": start,
+                    "FID_INPUT_DATE_2": cursor_end,
+                    "FID_PERIOD_DIV_CODE": "D",
+                    "FID_ORG_ADJ_PRC": "0",
+                },
+            )
+            rows = [r for r in (data.get("output2") or []) if r.get("stck_bsop_date")]
+            if not rows:
+                break
+            for r in rows:
+                bar = self._parse_bar(r)
+                if start <= bar.date <= end:
+                    bars[bar.date] = bar
+            oldest = min(r["stck_bsop_date"] for r in rows)
+            if len(rows) < 100 or oldest <= start:
+                break
+            cursor_end = (datetime.strptime(oldest, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
+        return [bars[d] for d in sorted(bars)]
+
+    def _parse_bar(self, r: dict) -> DailyBar:
+        close = self._parse_int(r.get("stck_clpr"))
+        diff = self._parse_int(r.get("prdy_vrss"))
+        # 부호 코드 4(하한)/5(하락)인데 값이 양수로 오면 음수로 보정
+        if r.get("prdy_vrss_sign") in ("4", "5") and diff > 0:
+            diff = -diff
+        prev = close - diff
+        return DailyBar(
+            date=r["stck_bsop_date"],
+            open=self._parse_int(r.get("stck_oprc")),
+            high=self._parse_int(r.get("stck_hgpr")),
+            low=self._parse_int(r.get("stck_lwpr")),
+            close=close,
+            volume=self._parse_int(r.get("acml_vol")),
+            change_rate=round(diff / prev * 100, 2) if prev > 0 else 0.0,
+        )
+
+    def is_market_open(self, date: str) -> Optional[bool]:
+        """국내휴장일조회로 date(YYYYMMDD)의 개장일 여부 반환. 응답에 해당 날짜가 없으면 None.
+
+        KIS 요청에 따라 호출 측에서 하루 1회로 캐시해 사용할 것.
+        """
+        data = self._get(
+            "/uapi/domestic-stock/v1/quotations/chk-holiday",
+            tr_id="CTCA0903R",
+            params={"BASS_DT": date, "CTX_AREA_NK": "", "CTX_AREA_FK": ""},
+        )
+        for item in data.get("output") or []:
+            if item.get("bass_dt") == date:
+                return item.get("opnd_yn") == "Y"
+        return None
 
     @staticmethod
     def _parse_int(value) -> int:

@@ -9,7 +9,6 @@ dependencies = [
     "psycopg2-binary>=2.9.11",
     "pyvis>=0.3.2",
     "networkx>=3.0",
-    "pandas>=2.2,<3",
-    "pykrx==1.2.9",
+    "pandas>=2.2",
     "yfinance>=1.1.0",
 ]

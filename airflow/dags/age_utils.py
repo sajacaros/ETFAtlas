@@ -5,6 +5,7 @@ age_backfill / age_sync_universe / age_tagging DAG에서 공통으로 사용하�
 """
 
 import logging
+import re
 import os
 
 log = logging.getLogger(__name__)
@@ -245,36 +246,13 @@ def _get_krx_data_for_exact_date(date: str) -> list:
 # 유니버스 필터링
 # ──────────────────────────────────────────────
 
-def get_valid_ticker_set(date: str) -> set:
-    """KOSPI + KOSDAQ + ETF 상장종목 코드 집합 반환 (채권/파생/현금 등 제외용)
+LISTED_CODE_RE = re.compile(r'^[0-9][0-9A-Z]{5}$')  # KRX 상장 단축코드 (예: 005930, 0131V0)
+CASH_CODES = {'010010'}  # 설정현금액
 
-    AGE 그래프의 ETF+Stock 코드를 primary로 사용하고,
-    pykrx KRX 스크래핑은 fallback으로만 시도한다.
-    """
-    # Primary: AGE 그래프에서 조회
-    etf_codes = get_etf_codes_from_age()
-    stock_codes = get_stock_codes_from_age()
-    valid = etf_codes | stock_codes
 
-    if valid:
-        log.info(f"Valid tickers from AGE: ETF={len(etf_codes)}, "
-                 f"Stock={len(stock_codes)}, total={len(valid)}")
-        return valid
-
-    # Fallback: pykrx KRX 스크래핑 (AGE가 비어있을 때만)
-    log.warning("AGE returned no tickers, falling back to pykrx KRX scraping")
-    from pykrx import stock
-    try:
-        kospi = set(stock.get_market_ticker_list(date, market='KOSPI'))
-        kosdaq = set(stock.get_market_ticker_list(date, market='KOSDAQ'))
-        etfs = set(stock.get_etf_ticker_list(date))
-        valid = kospi | kosdaq | etfs
-        log.info(f"Valid tickers (pykrx fallback): KOSPI={len(kospi)}, "
-                 f"KOSDAQ={len(kosdaq)}, ETF={len(etfs)}, total={len(valid)}")
-    except Exception as e:
-        log.warning(f"pykrx fallback also failed: {e}")
-        valid = set()
-    return valid
+def is_listed_security_code(code: str) -> bool:
+    """KRX 상장 주식/ETF 단축코드 여부 (채권·선물·현금 등 구성요소 제외용)."""
+    return bool(LISTED_CODE_RE.match(code)) and code not in CASH_CODES
 
 
 def check_new_universe_candidates(krx_data_dicts: list, existing_codes: set) -> list:
@@ -351,18 +329,19 @@ def _parse_age_value(raw):
     return raw.strip('"')
 
 
-def get_business_days(from_date: str, to_date: str) -> list[str]:
-    """pykrx로 영업일 목록 조회. YYYYMMDD 리스트 반환.
+BUSINESS_DAY_REFERENCE_CODE = '069500'  # KODEX 200 — 모든 거래일에 거래됨
 
-    pykrx 내부 KRX 스크래핑 API가 불안정하므로,
-    공개 API(get_market_ohlcv_by_date)로 영업일을 추출한다.
-    """
-    from pykrx import stock
+
+def get_business_days(from_date: str, to_date: str) -> list[str]:
+    """KIS 일봉(기준 ETF)으로 영업일 목록 조회. YYYYMMDD 리스트 반환."""
+    kis = get_kis_client()
+    if kis is None:
+        return []
     try:
-        df = stock.get_market_ohlcv_by_date(from_date, to_date, '005930')
-        return [d.strftime('%Y%m%d') for d in df.index]
+        bars = kis.get_daily_bars(BUSINESS_DAY_REFERENCE_CODE, from_date, to_date)
+        return [b.date for b in bars]
     except Exception as e:
-        log.warning(f"Failed to get business days via OHLCV: {e}")
+        log.warning(f"Failed to get business days via KIS daily bars: {e}")
         return []
 
 
@@ -488,12 +467,12 @@ def get_etf_names_from_age() -> dict[str, str]:
 
 def collect_universe_and_prices(dates: list[str]) -> tuple[set[str], list[dict], list[str]]:
     """날짜별 KRX 데이터 → ETF 노드 + 메타데이터(보수율/운용사) + Price 노드 생성.
+    보수율은 신규 ETF에 대해서만 네이버 증권에서 조회한다.
 
     Returns:
         (universe_codes, new_etfs_list, actual_dates)
     """
-    from pykrx.website.krx.etx.core import ETF_전종목기본종목
-    from math import ceil
+    from naver_client import fetch_expense_ratios
 
     if not dates:
         return get_etf_codes_from_age(), [], []
@@ -501,21 +480,6 @@ def collect_universe_and_prices(dates: list[str]) -> tuple[set[str], list[dict],
     existing_codes = get_etf_codes_from_age()
     all_new_etfs = []
     actual_dates = []  # KRX API가 반환한 실제 거래일
-
-    # 보수율 일괄 조회
-    fee_map = {}
-    try:
-        fee_df = ETF_전종목기본종목().fetch()
-        for _, row in fee_df.iterrows():
-            code = row['ISU_SRT_CD']
-            try:
-                raw = float(row['ETF_TOT_FEE'])
-                fee_map[code] = ceil(raw * 100) / 100
-            except (ValueError, TypeError):
-                pass
-        log.info(f"Loaded expense ratio for {len(fee_map)} ETFs")
-    except Exception as e:
-        log.warning(f"Failed to fetch ETF fee data (pykrx KRX scraping may be broken): {e}")
 
     conn = get_db_connection()
     cur = init_age(conn)
@@ -547,7 +511,8 @@ def collect_universe_and_prices(dates: list[str]) -> tuple[set[str], list[dict],
                     MERGE (e:ETF {code: item.code}) RETURN e
                 """, items)
 
-                # name + expense_ratio
+                # name + expense_ratio (보수율은 KIS/KRX에 없어 네이버 증권에서 조회)
+                fee_map = fetch_expense_ratios([c['code'] for c in new_candidates])
                 with_fee = [{'code': c['code'], 'name': c['name'],
                              'expense_ratio': fee_map[c['code']]}
                             for c in new_candidates if c['code'] in fee_map]
@@ -715,8 +680,6 @@ def collect_holdings(etf_codes: list[str], bd: str):
         log.info(f"[{bd}] Skipping {len(existing_holds)} ETFs with existing HOLDS, "
                  f"fetching {len(remaining_etfs)}")
 
-    valid_tickers = get_valid_ticker_set(bd)
-
     all_holds = []
     stock_names = {}  # stock_code -> KIS 종목명
     failed = 0
@@ -725,8 +688,7 @@ def collect_holdings(etf_codes: list[str], bd: str):
         try:
             components = [
                 c for c in kis.get_etf_components(ticker)
-                if c.stock_code != '010010'            # 설정현금액 제외
-                and c.stock_code in valid_tickers      # 주식/ETF만 (채권·현금·선물 제외)
+                if is_listed_security_code(c.stock_code)  # 주식/ETF만 (채권·현금·선물 제외)
             ]
             components.sort(key=lambda c: c.weight, reverse=True)
             for c in components[:30]:
@@ -822,19 +784,20 @@ def collect_holdings(etf_codes: list[str], bd: str):
 
 
 def collect_stock_prices_for_dates(dates: list[str]):
-    """날짜별 Stock 가격 배치 저장.
+    """Stock(is_etf=false) 일봉을 KIS 기간별시세로 조회해 날짜별 Price 노드로 저장.
 
-    pykrx Naver 백엔드(get_market_ohlcv_by_date)를 사용하여
-    종목별로 가격을 조회한다. KRX 스크래핑 API(get_market_ohlcv_by_ticker)가
-    깨져있으므로 이 방식을 사용.
+    종목당 기간 전체를 한 번(100일 단위)에 조회하고, 이미 저장된 (종목, 날짜)는 건너뛴다.
     """
-    from pykrx import stock as pykrx_stock
-    import time
-
     if not dates:
         return
 
-    # is_etf=false Stock 코드 조회
+    kis = get_kis_client()
+    if kis is None:
+        log.warning("Skipping stock prices (KIS credentials missing)")
+        return
+
+    date_strs = {f"{d[:4]}-{d[4:6]}-{d[6:8]}" for d in dates}
+
     conn = get_db_connection()
     cur = init_age(conn)
     try:
@@ -847,6 +810,19 @@ def collect_stock_prices_for_dates(dates: list[str]):
                 code = _parse_age_value(row[0])
                 if code:
                     stock_codes.add(code)
+
+        # 이미 저장된 (종목, 날짜)
+        existing = set()
+        results = execute_cypher(cur, """
+            MATCH (s:Stock)-[:HAS_PRICE]->(p:Price)
+            WHERE s.is_etf = false AND p.date >= $from_date AND p.date <= $to_date
+            RETURN s.code + '|' + p.date
+        """, {'from_date': min(date_strs), 'to_date': max(date_strs)})
+        for row in results:
+            key = _parse_age_value(row[0]) if row[0] else ''
+            if '|' in key:
+                code, date_str = key.split('|', 1)
+                existing.add((code, date_str))
     finally:
         cur.close()
         conn.close()
@@ -855,70 +831,22 @@ def collect_stock_prices_for_dates(dates: list[str]):
         log.warning("No Stock nodes for price collection")
         return
 
-    log.info(f"Collecting prices for {len(stock_codes)} stocks "
-             f"across {len(dates)} dates (via Naver backend)")
-    total_success = 0
+    targets = sorted(c for c in stock_codes
+                     if any((c, d) not in existing for d in date_strs))
+    log.info(f"Collecting prices for {len(targets)}/{len(stock_codes)} stocks "
+             f"across {len(dates)} dates (via KIS daily bars)")
 
-    for bd in dates:
+    total_success = 0
+    error_count = 0
+    COMMIT_EVERY = 50
+    pending_items = []
+
+    def flush(items):
+        if not items:
+            return
         conn = get_db_connection()
         cur = init_age(conn)
         try:
-            date_str = f"{bd[:4]}-{bd[4:6]}-{bd[6:8]}"
-
-            # AGE에서 이미 가격이 있는 종목 스킵
-            existing_prices = set()
-            try:
-                results = execute_cypher(cur, """
-                    MATCH (s:Stock)-[:HAS_PRICE]->(p:Price {date: $date})
-                    RETURN s.code
-                """, {'date': date_str})
-                for row in results:
-                    if row[0]:
-                        code = _parse_age_value(row[0])
-                        if code:
-                            existing_prices.add(code)
-            except Exception:
-                pass
-
-            remaining = stock_codes - existing_prices
-            if not remaining:
-                log.info(f"[{bd}] All {len(stock_codes)} stock prices already collected, skipping")
-                continue
-            if existing_prices:
-                log.info(f"[{bd}] Skipping {len(existing_prices)} stocks with existing prices, "
-                         f"fetching {len(remaining)}")
-
-            # 종목별 Naver 백엔드로 가격 조회
-            items = []
-            error_count = 0
-            for code in sorted(remaining):
-                try:
-                    df = pykrx_stock.get_market_ohlcv_by_date(bd, bd, code)
-                    if df is not None and not df.empty:
-                        row = df.iloc[0]
-                        items.append({
-                            'code': code, 'date': date_str,
-                            'open': float(row.get('시가', 0)),
-                            'high': float(row.get('고가', 0)),
-                            'low': float(row.get('저가', 0)),
-                            'close': float(row.get('종가', 0)),
-                            'volume': int(row.get('거래량', 0)),
-                            'change_rate': float(row.get('등락률', 0)),
-                        })
-                except Exception as e:
-                    error_count += 1
-                    if error_count <= 5:
-                        log.warning(f"Failed price for {code} on {bd}: {e}")
-                    elif error_count == 6:
-                        log.warning(f"Suppressing further per-stock errors for {bd}...")
-                time.sleep(0.3)
-
-            if error_count > 5:
-                log.warning(f"[{bd}] {error_count} total stock price errors")
-
-            if not items:
-                continue
-
             # Step 1: 없으면 생성
             execute_cypher_batch(cur, """
                 MATCH (s:Stock {code: item.code})
@@ -927,7 +855,7 @@ def collect_stock_prices_for_dates(dates: list[str]):
                 CREATE (s)-[:HAS_PRICE]->(:Price {date: item.date})
                 RETURN s
             """, items)
-            # Step 2: 있으면 업데이트
+            # Step 2: 값 갱신
             execute_cypher_batch(cur, """
                 MATCH (s:Stock {code: item.code})-[:HAS_PRICE]->(p:Price {date: item.date})
                 SET p.open = item.open, p.high = item.high, p.low = item.low,
@@ -935,16 +863,40 @@ def collect_stock_prices_for_dates(dates: list[str]):
                     p.change_rate = item.change_rate
                 RETURN p
             """, items)
-
             conn.commit()
-            total_success += len(items)
-            log.info(f"[{bd}] {len(items)} stock prices saved")
-        except Exception as e:
-            log.warning(f"Failed stock prices for {bd}: {e}")
         finally:
             cur.close()
             conn.close()
 
+    for i, code in enumerate(targets, 1):
+        try:
+            for bar in kis.get_daily_bars(code, min(dates), max(dates)):
+                date_str = f"{bar.date[:4]}-{bar.date[4:6]}-{bar.date[6:8]}"
+                if date_str not in date_strs or (code, date_str) in existing:
+                    continue
+                pending_items.append({
+                    'code': code, 'date': date_str,
+                    'open': float(bar.open), 'high': float(bar.high),
+                    'low': float(bar.low), 'close': float(bar.close),
+                    'volume': bar.volume, 'change_rate': bar.change_rate,
+                })
+        except Exception as e:
+            error_count += 1
+            if error_count <= 5:
+                log.warning(f"Failed KIS daily bars for {code}: {e}")
+            elif error_count == 6:
+                log.warning("Suppressing further per-stock errors...")
+
+        if i % COMMIT_EVERY == 0 or i == len(targets):
+            try:
+                flush(pending_items)
+                total_success += len(pending_items)
+            except Exception as e:
+                log.warning(f"Failed stock price batch at {i}: {e}")
+            pending_items = []
+
+    if error_count:
+        log.warning(f"{error_count} stocks failed")
     log.info(f"Stock prices complete: {total_success} records")
 
 

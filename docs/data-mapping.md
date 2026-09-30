@@ -7,11 +7,12 @@
 | 데이터 | 소스 | 저장 위치 |
 |--------|------|-----------|
 | ETF 목록/일별 시세/순자산 | KRX Open API (`etf_bydd_trd`) | AGE `ETF`, `Price` |
-| ETF 보수율 | pykrx `ETF_전종목기본종목` (KRX 스크래핑) | AGE `ETF.expense_ratio` |
+| ETF 보수율 | 네이버 증권 모바일 API (비공식, `etfAnalysis.totalFee`) | AGE `ETF.expense_ratio` |
 | ETF 구성종목 | 한국투자증권 KIS Open API (ETF 구성종목시세) | AGE `Stock`, `HOLDS` |
-| 주식 일별 시세 | pykrx `get_market_ohlcv_by_date` (Naver 백엔드) | AGE `Price` |
-| 영업일 | pykrx | - |
-| 포트폴리오 티커 현재가/종가 | yfinance | RDB `ticker_prices` |
+| 주식 일별 시세 | KIS Open API (국내주식기간별시세) | AGE `Price` |
+| 영업일 | KIS Open API (기준 ETF 069500 일봉) | - |
+| 개장일(휴장일) | KIS Open API (국내휴장일조회) | RDB `market_calendar` |
+| 포트폴리오 티커 현재가, ETF 종가 이력 백필 | yfinance | RDB `ticker_prices` |
 
 수집 흐름과 DAG 구조는 [dags.md](dags.md) 참고.
 
@@ -91,7 +92,7 @@ GET https://data-dbg.krx.co.kr/svc/apis/etp/etf_bydd_trd?basDd=YYYYMMDD
 
 | 속성 | 소스 | 비고 |
 |------|------|------|
-| expense_ratio | pykrx `ETF_전종목기본종목().fetch()`의 `ETF_TOT_FEE` | 소수점 2째자리 올림. pykrx 1.2.9는 KRX 로그인(`KRX_ID`/`KRX_PW`) 필요, 실패 시 생략 |
+| expense_ratio | 네이버 증권 `GET https://m.stock.naver.com/api/stock/{code}/etfAnalysis`의 `totalFee` (`airflow/dags/naver_client.py`) | 신규 편입 후보만 조회. 소수점 2째자리 올림. 비공식 API라 실패 시 `expense_ratio` 미설정 |
 | 운용사 | ETF 이름 prefix (KODEX, TIGER, RISE 등) → `ETF_COMPANY_MAP` | `(ETF)-[:MANAGED_BY]->(Company)` |
 
 RDB `etfs` 테이블에는 `rdb_sync_metadata` DAG이 같은 KRX API로 전체 ETF의 code/name만 동기화한다.
@@ -142,13 +143,15 @@ params: FID_COND_MRKT_DIV_CODE=J, FID_INPUT_ISCD={ETF코드}, FID_COND_SCR_DIV_C
 for ticker in remaining_etfs:              # 같은 날짜 HOLDS가 이미 있는 ETF는 제외
     components = [
         c for c in kis.get_etf_components(ticker)
-        if c.stock_code != '010010'        # 설정현금액 제외
-        and c.stock_code in valid_tickers  # 주식/ETF만 (채권·현금·선물 제외)
+        if is_listed_security_code(c.stock_code)  # 주식/ETF만 (채권·현금·선물 제외)
     ]
     components.sort(key=lambda c: c.weight, reverse=True)
     for c in components[:30]:              # 비중 상위 30개
         all_holds.append({'etf_code': ticker, 'stock_code': c.stock_code,
                           'date': date_str, 'weight': c.weight, 'shares': c.shares})
+
+# is_listed_security_code: KRX 상장 단축코드 ^[0-9][0-9A-Z]{5}$ 이면서 설정현금액(010010)이 아닌 코드
+# (AGE에 이미 있는 코드로 거르지 않으므로 ETF 노드만 있는 빈 DB에서도 주식 구성종목이 저장된다)
 
 # 1) Stock MERGE → name, is_etf SET
 # 2) HOLDS MERGE {date} → weight, shares SET (50개 ETF 단위 커밋)
@@ -156,27 +159,41 @@ for ticker in remaining_etfs:              # 같은 날짜 HOLDS가 이미 있�
 
 ---
 
-## 3. 주식 가격 데이터 수집 (pykrx)
+## 3. 주식 가격 / 영업일 / 휴장일 (KIS Open API)
 
-### pykrx 함수
+### 국내주식기간별시세 (일봉)
 
-```python
-from pykrx import stock
-
-# 종목별 조회 (Naver 백엔드) — KRX 스크래핑 기반 get_market_ohlcv_by_ticker 대신 사용
-df = stock.get_market_ohlcv_by_date("20260102", "20260102", "005930")
+```
+GET {KIS_BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice
+tr_id: FHKST03010100
+params: FID_COND_MRKT_DIV_CODE=J, FID_INPUT_ISCD={종목코드}, FID_INPUT_DATE_1={시작}, FID_INPUT_DATE_2={종료},
+        FID_PERIOD_DIV_CODE=D, FID_ORG_ADJ_PRC=0
 ```
 
-### DB 매핑 (Apache AGE - Price 노드)
+`KISApiClient.get_daily_bars(code, start, end)`. 호출당 최대 100건이라 가장 오래된 날짜 이전으로 종료일을 옮겨 가며 페이지네이션한다.
 
-| pykrx 컬럼 | DB 필드 | 비고 |
-|------------|---------|------|
-| (파라미터) | date | `YYYY-MM-DD` |
-| 시가 / 고가 / 저가 / 종가 | open / high / low / close | float |
-| 거래량 | volume | int |
-| 등락률 | change_rate | float |
+| KIS 필드 | DB 필드 (Price) | 비고 |
+|----------|-----------------|------|
+| stck_bsop_date | date | `YYYY-MM-DD` |
+| stck_oprc / stck_hgpr / stck_lwpr / stck_clpr | open / high / low / close | float |
+| acml_vol | volume | int |
+| prdy_vrss, prdy_vrss_sign | change_rate | `prdy_vrss / (종가 - prdy_vrss) × 100`. 부호 코드 4(하한)/5(하락)이면 음수로 보정 |
 
-`is_etf = false`인 Stock만 대상이며 `(Stock)-[:HAS_PRICE]->(Price)`로 연결한다. 종목당 0.3초 딜레이.
+`collect_stock_prices_for_dates(dates)`는 `is_etf = false`인 Stock마다 `get_daily_bars(code, min(dates), max(dates))`를 한 번 호출하고(종목×날짜 호출 없음), AGE에 이미 있는 (종목, 날짜)는 건너뛰며, 50종목마다 커밋한다. `(Stock)-[:HAS_PRICE]->(Price)`로 연결한다.
+
+### 영업일
+
+`get_business_days(from_date, to_date)`는 기준 ETF `069500`(KODEX 200, `BUSINESS_DAY_REFERENCE_CODE`)의 일봉을 같은 API로 받아 그 날짜 목록을 영업일로 사용한다.
+
+### 국내휴장일조회
+
+```
+GET {KIS_BASE_URL}/uapi/domestic-stock/v1/quotations/chk-holiday
+tr_id: CTCA0903R
+params: BASS_DT={YYYYMMDD}
+```
+
+응답의 `opnd_yn == 'Y'`면 개장일. KIS 요청에 따라 가급적 1일 1회만 호출하도록 `rdb_realtime_prices`가 결과를 `market_calendar(date PK, is_open, checked_at)`에 캐시한다. 판정할 수 없으면(키 없음·오류) 수집을 진행한다.
 
 ---
 
@@ -211,9 +228,8 @@ for code in set(current) | set(previous):
 | 소스 | 제한 | 대응 |
 |------|------|------|
 | KRX Open API | 휴장일 응답 없음 | 최대 7일 전까지 거래일 탐색, 이미 수집한 거래일 skip |
-| KIS Open API | 날짜 지정 불가, 토큰 발급 1분 1회, 초당 20건 | 최근 거래일로 기록, `kis_tokens` 캐시, 0.06초 간격 + 재시도 |
-| pykrx (KRX 스크래핑) | 1.2.9부터 KRX 로그인 필요, 스크래핑 API가 자주 깨짐 | 보수율 조회 실패 시 생략, 주식 시세는 Naver 백엔드 사용 |
-| pykrx (Naver 백엔드) | 종목별 개별 호출 | 0.3초 딜레이, 이미 수집한 종목 skip |
+| KIS Open API | 구성종목 날짜 지정 불가, 토큰 발급 1분 1회, 초당 20건, 일봉 호출당 100건, 휴장일조회 1일 1회 권장 | 최근 거래일로 기록, `kis_tokens` 캐시, 0.06초 간격 + 재시도, 100일 단위 페이지네이션, `market_calendar` 캐시 |
+| 네이버 증권 모바일 API | 비공식 API (사전 공지 없이 변경 가능) | 신규 ETF만 조회, 0.1초 간격, 실패 시 보수율 생략 |
 
 ### 에러 처리
 
@@ -223,7 +239,8 @@ for code in set(current) | set(previous):
 | `KIS_APP_KEY`/`KIS_APP_SECRET` 없음 | 구성종목 수집 skip, 경고 로그 |
 | 개별 ETF 구성종목 조회 실패 | 해당 ETF만 skip, 실패 건수 로그 |
 | HOLDS 배치 저장 실패 | 해당 배치 rollback 후 다음 배치 진행 |
-| 개별 종목 시세 실패 | 해당 종목만 skip (날짜당 5건까지 상세 로그) |
+| 개별 종목 시세 실패 | 해당 종목만 skip (5건까지 상세 로그) |
+| KIS 키 없음 (영업일/휴장일) | 영업일 빈 리스트 → 수집 없음, 휴장일 판정 불가 → 수집 진행 |
 
 ---
 

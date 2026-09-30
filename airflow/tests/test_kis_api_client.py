@@ -120,3 +120,41 @@ def test_api_error_raised():
     with pytest.raises(KISApiError) as exc:
         client.get_etf_components("999999")
     assert exc.value.msg_cd == "OPSQ0002"
+
+
+def _bar(date, close, diff, sign="2"):
+    return {"stck_bsop_date": date, "stck_oprc": "100", "stck_hgpr": "110", "stck_lwpr": "90",
+            "stck_clpr": str(close), "acml_vol": "1000", "prdy_vrss": str(diff), "prdy_vrss_sign": sign}
+
+
+def test_get_daily_bars_paginates_and_sorts():
+    recent = [(datetime(2026, 9, 30) - timedelta(days=i)).strftime("%Y%m%d") for i in range(100)]
+    first = {"rt_cd": "0", "output2": [_bar(d, 100, 0) for d in recent]}  # 최신순 100건
+    oldest = min(r["stck_bsop_date"] for r in first["output2"])
+    second = {"rt_cd": "0", "output2": [_bar("20260102", 100, 0)]}
+    client = make_client([first, second])
+    bars = client.get_daily_bars("005930", "20260101", "20260930")
+
+    assert bars[0].date == "20260102"
+    assert [b.date for b in bars] == sorted(b.date for b in bars)
+    assert len(client.session.get_calls) == 2
+    # 두 번째 호출은 첫 페이지의 가장 오래된 날짜 전날까지
+    assert client.session.get_calls[1][2]["FID_INPUT_DATE_2"] < oldest
+    assert client.session.get_calls[0][1]["tr_id"] == "FHKST03010100"
+
+
+def test_daily_bar_change_rate_sign():
+    client = make_client([{"rt_cd": "0", "output2": [
+        _bar("20260929", 105, 5, "2"), _bar("20260930", 95, 10, "5")]}])
+    up, down = client.get_daily_bars("005930", "20260929", "20260930")
+    assert up.change_rate == 5.0          # 5 / 100
+    assert down.change_rate == -9.52      # -10 / 105
+
+
+def test_is_market_open():
+    client = make_client([{"rt_cd": "0", "output": [
+        {"bass_dt": "20261003", "opnd_yn": "N"}, {"bass_dt": "20261005", "opnd_yn": "Y"}]}] * 3)
+    assert client.is_market_open("20261003") is False
+    assert client.is_market_open("20261005") is True
+    assert client.is_market_open("20261004") is None
+    assert client.session.get_calls[0][1]["tr_id"] == "CTCA0903R"

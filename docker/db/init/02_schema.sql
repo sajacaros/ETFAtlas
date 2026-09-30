@@ -119,6 +119,13 @@ CREATE TABLE IF NOT EXISTS kis_tokens (
     updated_at   TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 개장일 캐시 (KIS 국내휴장일조회는 1일 1회 호출 권장)
+CREATE TABLE IF NOT EXISTS market_calendar (
+    date       DATE      PRIMARY KEY,
+    is_open    BOOLEAN   NOT NULL,
+    checked_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Chat logs (챗봇 피드백 루프)
 CREATE TABLE IF NOT EXISTS chat_logs (
     id SERIAL PRIMARY KEY,

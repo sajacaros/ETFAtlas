@@ -438,7 +438,7 @@ agent.run_stream_events(prompt, usage_limits=UsageLimits(request_limit=15))
 | 최대 모델 요청 | 15 | 무한 루프 방지 (`UsageLimitExceeded` 시 폴백) |
 | 대화 히스토리 | 최근 10개 | 프롬프트에 "참고용" 텍스트로 포함 |
 | 관찰 결과 제한 | 2,000자 | UI 성능 보호 |
-| few-shot 예제 | 유사 해결 절차 최대 3개 | `code_examples` pgvector 검색 (`EMBEDDING_MODEL`, 768차원) |
+| few-shot 예제 | 유사 해결 절차 최대 3개 | `code_examples` pgvector 검색 (`EMBEDDING_MODEL`, 768차원, `EMBEDDING_API_KEY`) |
 
 ### 해결 절차 예시(few-shot)와 피드백 루프
 

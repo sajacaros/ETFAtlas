@@ -17,6 +17,7 @@ class EmbeddingService:
         self.db = db
         settings = get_settings()
         self._client = OpenAI(base_url=settings.llm_api_base, api_key=settings.llm_api_key)
+        self._embed_client = OpenAI(base_url=settings.embedding_api_base, api_key=settings.embedding_api_key)
         self._llm_model = settings.llm_model
         self._embedding_model = settings.embedding_model  # 768차원 (code_examples.embedding)
 
@@ -40,7 +41,7 @@ class EmbeddingService:
 
     def get_embedding(self, text_input: str) -> List[float]:
         """단일 텍스트 임베딩 생성."""
-        resp = self._client.embeddings.create(
+        resp = self._embed_client.embeddings.create(
             model=self._embedding_model,
             input=text_input,
         )
@@ -48,7 +49,7 @@ class EmbeddingService:
 
     def get_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
         """배치 임베딩 생성 (최대 2048개)."""
-        resp = self._client.embeddings.create(
+        resp = self._embed_client.embeddings.create(
             model=self._embedding_model,
             input=texts,
         )

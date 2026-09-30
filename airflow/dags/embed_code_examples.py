@@ -18,6 +18,7 @@ log = logging.getLogger(__name__)
 
 LLM_API_BASE = os.environ.get("LLM_API_BASE", "http://localhost:4000")
 LLM_MODEL = os.environ.get("LLM_MODEL", "qwen38-27b")
+EMBEDDING_API_BASE = os.environ.get("EMBEDDING_API_BASE", "http://localhost:4000")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "embedding-gemma-300m")  # 768차원
 BATCH_SIZE = 50
 
@@ -87,10 +88,12 @@ def embed_and_load():
         log.info("Found %d unembedded examples to process.", len(rows))
 
         api_key = os.environ.get("LLM_API_KEY")
-        if not api_key:
-            raise RuntimeError("LLM_API_KEY is not set")
+        embedding_api_key = os.environ.get("EMBEDDING_API_KEY")
+        if not api_key or not embedding_api_key:
+            raise RuntimeError("LLM_API_KEY / EMBEDDING_API_KEY is not set")
 
-        client = OpenAI(base_url=LLM_API_BASE, api_key=api_key)
+        client = OpenAI(base_url=LLM_API_BASE, api_key=api_key)  # 질문 일반화
+        embed_client = OpenAI(base_url=EMBEDDING_API_BASE, api_key=embedding_api_key)
 
         # question_generalized가 없는 레코드는 LLM으로 생성
         needs_generalization = [r for r in rows if not r[2]]
@@ -117,7 +120,7 @@ def embed_and_load():
             ids = [r[0] for r in batch]
             embed_inputs = [r[2] or r[1] for r in batch]
 
-            resp = client.embeddings.create(
+            resp = embed_client.embeddings.create(
                 model=EMBEDDING_MODEL, input=embed_inputs
             )
             embeddings = [item.embedding for item in resp.data]

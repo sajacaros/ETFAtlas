@@ -140,7 +140,7 @@ ORDER BY embedding <=> :emb::vector
 LIMIT :top_k
 ```
 
-임베딩은 LiteLLM 프록시(`LLM_API_BASE`)의 `EMBEDDING_MODEL`(기본 `embedding-gemma-300m`)로 생성한다.
+임베딩은 LiteLLM 프록시(`EMBEDDING_API_BASE`, `EMBEDDING_API_KEY`)의 `EMBEDDING_MODEL`(기본 `embedding-gemma-300m`)로 생성한다.
 
 ## 3. pg_trgm (Trigram Extension)
 

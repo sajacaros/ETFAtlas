@@ -394,8 +394,10 @@ ENCRYPTION_KEY=             # 32-byte hex (AES-256-GCM), 한 번 정하면 변�
 
 # AI (LiteLLM 프록시, OpenAI 호환 API)
 LLM_API_BASE=http://localhost:4000
-LLM_API_KEY=
+LLM_API_KEY=                           # 채팅 모델 키
 LLM_MODEL=qwen38-27b
+EMBEDDING_API_BASE=http://localhost:4000
+EMBEDDING_API_KEY=                     # 임베딩 키 (채팅 모델과 다름)
 EMBEDDING_MODEL=embedding-gemma-300m   # 768차원
 
 # Airflow

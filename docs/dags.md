@@ -22,7 +22,7 @@ AGE 수집 공용 로직은 `airflow/dags/age_utils.py`에 모여 있다.
 | 한국투자증권 KIS Open API (ETF 구성종목시세) | ETF 현재 구성종목(HOLDS), 종목명 | `KIS_APP_KEY`, `KIS_APP_SECRET` (`KIS_BASE_URL` 선택) |
 | pykrx 1.2.9 | 영업일 목록, 주식 OHLCV(Naver 백엔드), 장 개장 여부, 보수율(KRX 스크래핑) | 보수율 스크래핑에 `KRX_ID`, `KRX_PW` |
 | yfinance | 포트폴리오 보유 티커 현재가/종가 (RDB) | 불필요 |
-| LiteLLM 프록시 (OpenAI 호환) | ETF 태그 분류(`LLM_MODEL`), 코드 예제 임베딩(`EMBEDDING_MODEL`) | `LLM_API_BASE`, `LLM_API_KEY` |
+| LiteLLM 프록시 (OpenAI 호환) | ETF 태그 분류·질문 일반화(`LLM_MODEL`), 코드 예제 임베딩(`EMBEDDING_MODEL`) | `LLM_API_BASE`/`LLM_API_KEY`, `EMBEDDING_API_BASE`/`EMBEDDING_API_KEY` |
 
 ---
 
@@ -274,6 +274,7 @@ check_market_open → collect_prices → update_snapshots
 | `KIS_BASE_URL` | KIS 엔드포인트 (기본 `https://openapi.koreainvestment.com:9443`) |
 | `LLM_API_BASE`, `LLM_API_KEY` | LiteLLM 프록시 (기본 `http://localhost:4000`) |
 | `LLM_MODEL` | 태그 분류/질문 일반화 모델 (기본 `qwen38-27b`) |
+| `EMBEDDING_API_BASE`, `EMBEDDING_API_KEY` | 임베딩용 LiteLLM 프록시 (채팅 모델과 키가 다름) |
 | `EMBEDDING_MODEL` | 임베딩 모델 (기본 `embedding-gemma-300m`, 768차원) |
 | `ENCRYPTION_KEY` | 포트폴리오 금액 암호화 키 |
 | `DISCORD_WEBHOOK_URL` | (선택) 수집 완료 디스코드 알림 |

@@ -70,7 +70,8 @@ cp .env.example .env
 |------|------|------|
 | `JWT_SECRET` | JWT 서명 키 (`python -c "import secrets; print(secrets.token_hex(32))"`) | O |
 | `ENCRYPTION_KEY` | 포트폴리오 금액 암호화 키 (32바이트 hex, 위와 같은 방법). **한 번 정하면 변경 금지** | O |
-| `LLM_API_KEY` | LiteLLM 프록시 키 (`LLM_API_BASE`, `LLM_MODEL`, `EMBEDDING_MODEL`로 변경 가능) | O |
+| `LLM_API_KEY` | LiteLLM 프록시 채팅 모델 키 — 챗봇, ETF 태깅 (`LLM_API_BASE`, `LLM_MODEL`로 변경 가능) | O |
+| `EMBEDDING_API_KEY` | LiteLLM 프록시 임베딩 키 — 챗봇 예시 검색 (`EMBEDDING_API_BASE`, `EMBEDDING_MODEL`로 변경 가능) | O |
 | `KRX_AUTH_KEY` | KRX Open API 인증키 ([발급](https://openapi.krx.co.kr)) — 유니버스/ETF 가격 | O |
 | `KIS_APP_KEY` / `KIS_APP_SECRET` | 한국투자증권 Open API 앱키 ([발급](https://apiportal.koreainvestment.com)) — 구성종목 | O |
 | `KRX_ID` / `KRX_PW` | KRX 데이터 마켓플레이스 계정 — pykrx의 보수율 조회 | - |

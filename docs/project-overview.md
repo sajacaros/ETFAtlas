@@ -47,9 +47,11 @@
 
 | 설정 | 기본값 | 사용처 |
 |---|---|---|
-| `LLM_API_BASE` | `http://localhost:4000` | 전체 |
+| `LLM_API_BASE` / `EMBEDDING_API_BASE` | `http://localhost:4000` | 채팅 / 임베딩 |
 | `LLM_MODEL` | `qwen38-27b` (추론 모델) | 챗봇, 질문 일반화, ETF 태깅 |
 | `EMBEDDING_MODEL` | `embedding-gemma-300m` (768차원) | 코드 예시 임베딩/검색 |
+
+키는 채팅 모델(`LLM_API_KEY`)과 임베딩(`EMBEDDING_API_KEY`)이 다르다. 엔드포인트도 `LLM_API_BASE` / `EMBEDDING_API_BASE`로 따로 지정할 수 있다(기본값 동일).
 
 - `qwen38-27b`는 reasoning 토큰을 먼저 소비하므로 `max_tokens`를 넉넉히(2048+) 줘야 `content`가 비지 않는다
 - structured output(`response_format=json_schema`)이 프록시에서 동작함을 확인

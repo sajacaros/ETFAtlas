@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Optional
 from decimal import Decimal
 
@@ -40,8 +40,7 @@ class PortfolioResponse(BaseModel):
     investment_return_rate: Optional[float] = None
     snapshot_enabled: bool = False
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # --- Target Allocation ---
@@ -60,8 +59,7 @@ class TargetAllocationResponse(BaseModel):
     ticker: str
     target_weight: Decimal
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # --- Holding ---
@@ -83,8 +81,7 @@ class HoldingResponse(BaseModel):
     quantity: Decimal
     avg_price: Optional[Decimal] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # --- Calculation ---
@@ -128,8 +125,7 @@ class PortfolioDetailResponse(BaseModel):
     target_allocations: list[TargetAllocationResponse] = []
     holdings: list[HoldingResponse] = []
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # --- Dashboard ---

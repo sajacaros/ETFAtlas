@@ -1,6 +1,6 @@
 from sqlalchemy import Column, String, Date, Numeric, DateTime, PrimaryKeyConstraint
-from datetime import datetime
 from ..database import Base
+from ..utils.time import utcnow
 
 
 class TickerPrice(Base):
@@ -10,4 +10,4 @@ class TickerPrice(Base):
     ticker = Column(String(20), nullable=False)
     date = Column(Date, nullable=False)
     price = Column(Numeric(18, 2), nullable=False)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=utcnow)

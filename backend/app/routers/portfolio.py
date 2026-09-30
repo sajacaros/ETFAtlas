@@ -27,6 +27,7 @@ from ..domain.portfolio_calculation import (
     calculate_portfolio, TargetInput, HoldingInput,
 )
 from ..services.price_service import PriceService
+from ..utils.time import utcnow
 
 router = APIRouter()
 
@@ -238,7 +239,7 @@ def _try_create_immediate_snapshot(db: Session, portfolio: Portfolio):
 
     if existing:
         existing.total_value = total_value
-        existing.updated_at = datetime.utcnow()
+        existing.updated_at = utcnow()
     else:
         prev_snapshot = db.query(PortfolioSnapshot).filter(
             PortfolioSnapshot.portfolio_id == portfolio.id,

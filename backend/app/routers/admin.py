@@ -1,5 +1,4 @@
 import logging
-from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -10,6 +9,7 @@ from ..services.embedding_service import EmbeddingService
 from ..services.auth_service import is_admin
 from ..models.chat import ChatLog, ChatLogStatus
 from ..models.code_example import CodeExample
+from ..utils.time import utcnow
 from ..schemas.chat import (
     CodeExampleCreate,
     CodeExampleUpdate,
@@ -154,7 +154,7 @@ async def update_code_example(
     if body.description is not None:
         example.description = body.description
 
-    example.updated_at = datetime.utcnow()
+    example.updated_at = utcnow()
 
     # Re-embed if question changed
     if question_changed:
@@ -198,7 +198,7 @@ async def archive_code_example(
         raise HTTPException(status_code=404, detail="Code example not found")
     db.execute(
         text("UPDATE code_examples SET embedding = NULL, status = 'active', updated_at = :now WHERE id = :id"),
-        {"now": datetime.utcnow(), "id": example.id},
+        {"now": utcnow(), "id": example.id},
     )
     db.commit()
     return {"id": example.id, "status": "active", "has_embedding": False}
@@ -360,7 +360,7 @@ async def withdraw_embedding(
     if example:
         db.execute(
             text("UPDATE code_examples SET embedding = NULL, status = 'active', updated_at = :now WHERE id = :id"),
-            {"now": datetime.utcnow(), "id": example.id},
+            {"now": utcnow(), "id": example.id},
         )
 
     chat_log.status = ChatLogStatus.APPROVED.value

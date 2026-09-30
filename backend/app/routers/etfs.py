@@ -79,7 +79,7 @@ async def get_latest_date(db: Session = Depends(get_db)):
 @router.get("/top", response_model=List[UniverseETFResponse])
 async def get_top_etfs(
     limit: int = Query(20, ge=1, le=100),
-    sort: str = Query("market_cap", regex="^(market_cap|market_cap_change_1w|return_1d|return_1w)$"),
+    sort: str = Query("market_cap", pattern="^(market_cap|market_cap_change_1w|return_1d|return_1w)$"),
     db: Session = Depends(get_db),
 ):
     """ETF 목록 (정렬: market_cap, market_cap_change_1w, return_1w)"""
@@ -131,7 +131,7 @@ async def get_etf_holdings(
 @router.get("/{code}/changes", response_model=List[HoldingChangeResponse])
 async def get_holdings_changes(
     code: str,
-    period: str = Query("1d", regex="^(1d|1w|1m)$"),
+    period: str = Query("1d", pattern="^(1d|1w|1m)$"),
     db: Session = Depends(get_db)
 ):
     graph_service = GraphService(db)

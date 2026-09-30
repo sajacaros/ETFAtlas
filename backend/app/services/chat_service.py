@@ -607,8 +607,9 @@ class ChatService:
     def _init_agent(self):
         """ReAct용 CodeAgent를 초기화한다."""
         model = LiteLLMModel(
-            model_id="gpt-4.1-mini",
-            api_key=self._settings.openai_api_key,
+            model_id=f"openai/{self._settings.llm_model}",
+            api_base=self._settings.llm_api_base,
+            api_key=self._settings.llm_api_key,
         )
         self.agent = CodeAgent(
             tools=list(self._tools.values()),

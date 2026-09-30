@@ -2,7 +2,7 @@
 ETF 태그 전체 재구축 DAG (Apache AGE)
 
 기존 TAGGED 관계 삭제 후, 룰 기반 + 키워드 + LLM 태깅으로 전체 재구축.
-OPENAI_API_KEY 필요. 수동 트리거 또는 주간 스케줄.
+LLM_API_KEY 필요 (LiteLLM 프록시). 수동 트리거 또는 주간 스케줄.
 """
 
 from datetime import datetime, timedelta
@@ -57,9 +57,9 @@ def tag_all_etfs(**context):
 
     allowed_set = set(ALLOWED_TAGS)
 
-    api_key = os.environ.get('OPENAI_API_KEY', '')
+    api_key = os.environ.get('LLM_API_KEY', '')
     if not api_key:
-        log.warning("OPENAI_API_KEY not set, skipping ETF tagging")
+        log.warning("LLM_API_KEY not set, skipping ETF tagging")
         return
 
     conn = get_db_connection()
@@ -198,7 +198,12 @@ def tag_all_etfs(**context):
         class ETFTagBatchResult(BaseModel):
             results: list[ETFTagResult]
 
-        llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0, api_key=api_key)
+        llm = ChatOpenAI(
+            model=os.environ.get('LLM_MODEL', 'qwen38-27b'),
+            base_url=os.environ.get('LLM_API_BASE', 'http://localhost:4000'),
+            api_key=api_key,
+            temperature=0,
+        )
         structured_llm = llm.with_structured_output(ETFTagBatchResult)
 
         tags_str = ", ".join(ALLOWED_TAGS)

@@ -83,7 +83,7 @@ async def notification_stream(
         cur.execute("LISTEN new_collection;")
 
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             while True:
                 # select를 executor에서 실행하여 async 블로킹 방지 (5초 타임아웃)
                 ready = await loop.run_in_executor(

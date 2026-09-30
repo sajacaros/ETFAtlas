@@ -1,7 +1,7 @@
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey
-from datetime import datetime
 
 from ..database import Base
+from ..utils.time import utcnow
 
 
 class CodeExample(Base):
@@ -16,5 +16,5 @@ class CodeExample(Base):
     status = Column(String(20), default="active")
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     source_chat_log_id = Column(Integer, ForeignKey("chat_logs.id"), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)

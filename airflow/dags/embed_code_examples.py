@@ -16,8 +16,9 @@ from age_utils import get_db_connection
 
 log = logging.getLogger(__name__)
 
-EMBEDDING_MODEL = "text-embedding-3-small"
-EMBEDDING_DIM = 768  # code_examples.embedding vector(768)
+LLM_API_BASE = os.environ.get("LLM_API_BASE", "http://localhost:4000")
+LLM_MODEL = os.environ.get("LLM_MODEL", "qwen38-27b")
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "embedding-gemma-300m")  # 768차원
 BATCH_SIZE = 50
 
 default_args = {
@@ -48,15 +49,16 @@ def _generalize_questions(client, questions):
     for q in questions:
         try:
             resp = client.chat.completions.create(
-                model="gpt-4.1-mini",
+                model=LLM_MODEL,
                 messages=[
                     {"role": "system", "content": GENERALIZE_SYSTEM_PROMPT},
                     {"role": "user", "content": q},
                 ],
                 temperature=0,
-                max_tokens=200,
+                max_tokens=2048,  # 추론 모델: reasoning 토큰 포함
             )
-            results.append(resp.choices[0].message.content.strip())
+            content = resp.choices[0].message.content
+            results.append(content.strip() if content else q)
         except Exception as e:
             log.warning("Generalization failed for '%s': %s", q, e)
             results.append(q)
@@ -84,11 +86,11 @@ def embed_and_load():
 
         log.info("Found %d unembedded examples to process.", len(rows))
 
-        api_key = os.environ.get("OPENAI_API_KEY")
+        api_key = os.environ.get("LLM_API_KEY")
         if not api_key:
-            raise RuntimeError("OPENAI_API_KEY is not set")
+            raise RuntimeError("LLM_API_KEY is not set")
 
-        client = OpenAI(api_key=api_key)
+        client = OpenAI(base_url=LLM_API_BASE, api_key=api_key)
 
         # question_generalized가 없는 레코드는 LLM으로 생성
         needs_generalization = [r for r in rows if not r[2]]
@@ -116,7 +118,7 @@ def embed_and_load():
             embed_inputs = [r[2] or r[1] for r in batch]
 
             resp = client.embeddings.create(
-                model=EMBEDDING_MODEL, input=embed_inputs, dimensions=EMBEDDING_DIM
+                model=EMBEDDING_MODEL, input=embed_inputs
             )
             embeddings = [item.embedding for item in resp.data]
 

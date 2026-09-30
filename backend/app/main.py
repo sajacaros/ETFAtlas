@@ -1,4 +1,5 @@
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,7 +10,21 @@ logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    from .utils.encryption import _get_key
+    try:
+        _get_key()
+        logger.info("ENCRYPTION_KEY validated successfully")
+    except RuntimeError as e:
+        logger.error(f"Startup check failed: {e}")
+        raise
+    yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="ETF Atlas API",
     description="ETF 정보 관리 및 인사이트 제공 서비스",
     version="1.0.0",
@@ -36,17 +51,6 @@ app.include_router(tags.router, prefix="/api/tags", tags=["Tags"])
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
 app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
-
-
-@app.on_event("startup")
-async def _validate_encryption_key():
-    from .utils.encryption import _get_key
-    try:
-        _get_key()
-        logger.info("ENCRYPTION_KEY validated successfully")
-    except RuntimeError as e:
-        logger.error(f"Startup check failed: {e}")
-        raise
 
 
 @app.get("/")

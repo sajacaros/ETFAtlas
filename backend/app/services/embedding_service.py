@@ -10,29 +10,30 @@ from .generalize_prompt import GENERALIZE_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
-EMBEDDING_MODEL = "text-embedding-3-small"
-EMBEDDING_DIM = 768  # code_examples.embedding vector(768)
 
 
 class EmbeddingService:
     def __init__(self, db: Session):
         self.db = db
         settings = get_settings()
-        self._client = OpenAI(api_key=settings.openai_api_key)
+        self._client = OpenAI(base_url=settings.llm_api_base, api_key=settings.llm_api_key)
+        self._llm_model = settings.llm_model
+        self._embedding_model = settings.embedding_model  # 768차원 (code_examples.embedding)
 
     def generalize_question(self, question: str) -> str:
         """LLM으로 질문에서 특정 ETF/종목명을 제거하고 패턴만 남긴 일반화 질문 생성."""
         try:
             resp = self._client.chat.completions.create(
-                model="gpt-4.1-mini",
+                model=self._llm_model,
                 messages=[
                     {"role": "system", "content": GENERALIZE_SYSTEM_PROMPT},
                     {"role": "user", "content": question},
                 ],
                 temperature=0,
-                max_tokens=200,
+                max_tokens=2048,  # 추론 모델: reasoning 토큰 포함
             )
-            return resp.choices[0].message.content.strip()
+            content = resp.choices[0].message.content
+            return content.strip() if content else question
         except Exception as e:
             logger.warning(f"Question generalization failed: {e}")
             return question
@@ -40,18 +41,16 @@ class EmbeddingService:
     def get_embedding(self, text_input: str) -> List[float]:
         """단일 텍스트 임베딩 생성."""
         resp = self._client.embeddings.create(
-            model=EMBEDDING_MODEL,
+            model=self._embedding_model,
             input=text_input,
-            dimensions=EMBEDDING_DIM,
         )
         return resp.data[0].embedding
 
     def get_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
         """배치 임베딩 생성 (최대 2048개)."""
         resp = self._client.embeddings.create(
-            model=EMBEDDING_MODEL,
+            model=self._embedding_model,
             input=texts,
-            dimensions=EMBEDDING_DIM,
         )
         return [item.embedding for item in resp.data]
 

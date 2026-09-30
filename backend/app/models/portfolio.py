@@ -1,10 +1,10 @@
 from sqlalchemy import Column, Integer, String, DateTime, Date, ForeignKey, Numeric, Boolean, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import relationship
-from datetime import datetime
 import uuid
 from ..database import Base
 from ..utils.encryption import EncryptedDecimal, EncryptedFloat
+from ..utils.time import utcnow
 
 
 class Portfolio(Base):
@@ -19,8 +19,8 @@ class Portfolio(Base):
     is_shared = Column(Boolean, nullable=False, default=False)
     share_token = Column(PG_UUID(as_uuid=True), unique=True, nullable=True)
     snapshot_enabled = Column(Boolean, nullable=False, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     user = relationship("User", back_populates="portfolios")
     target_allocations = relationship("TargetAllocation", back_populates="portfolio", cascade="all, delete-orphan")
@@ -36,8 +36,8 @@ class TargetAllocation(Base):
     portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=False)
     ticker = Column(String(20), nullable=False)
     target_weight = Column(Numeric(7, 4), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     portfolio = relationship("Portfolio", back_populates="target_allocations")
 
@@ -51,8 +51,8 @@ class Holding(Base):
     ticker = Column(String(20), nullable=False)
     quantity = Column(EncryptedDecimal, nullable=False, default=0)
     avg_price = Column(EncryptedDecimal, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     portfolio = relationship("Portfolio", back_populates="holdings")
 
@@ -67,8 +67,8 @@ class PortfolioSnapshot(Base):
     prev_value = Column(EncryptedDecimal, nullable=True)
     change_amount = Column(EncryptedDecimal, nullable=True)
     change_rate = Column(EncryptedFloat, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     __table_args__ = (UniqueConstraint('portfolio_id', 'date', name='uq_portfolio_snapshot_date'),)
 

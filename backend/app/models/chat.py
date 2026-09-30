@@ -1,9 +1,9 @@
 from enum import Enum
 
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey
-from datetime import datetime
 
 from ..database import Base
+from ..utils.time import utcnow
 
 
 class ChatLogStatus(str, Enum):
@@ -24,4 +24,4 @@ class ChatLog(Base):
     answer = Column(Text, nullable=False)
     generated_code = Column(Text, nullable=True)
     status = Column(String(20), default=ChatLogStatus.PENDING.value, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)

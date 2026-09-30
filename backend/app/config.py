@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
 
@@ -14,16 +14,16 @@ class Settings(BaseSettings):
     # Encryption
     encryption_key: str = ""  # 32-byte hex key for AES-256-GCM
 
-    # AI
-    anthropic_api_key: str = ""
-    openai_api_key: str = ""
+    # AI (LiteLLM 프록시, OpenAI 호환)
+    llm_api_base: str = "http://localhost:4000"
+    llm_api_key: str = ""
+    llm_model: str = "qwen38-27b"
+    embedding_model: str = "embedding-gemma-300m"  # 768차원
 
     # Frontend
     frontend_url: str = "http://localhost:9600"
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
 
 
 @lru_cache()

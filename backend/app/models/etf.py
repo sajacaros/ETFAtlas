@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime
-from datetime import datetime
 from ..database import Base
+from ..utils.time import utcnow
 
 
 class ETF(Base):
@@ -9,5 +9,5 @@ class ETF(Base):
     id = Column(Integer, primary_key=True, index=True)
     code = Column(String(20), unique=True, nullable=False, index=True)
     name = Column(String(255), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)

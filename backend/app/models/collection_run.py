@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, Date, DateTime
-from datetime import datetime
 from ..database import Base
+from ..utils.time import utcnow
 
 
 class CollectionRun(Base):
@@ -8,4 +8,4 @@ class CollectionRun(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     collected_at = Column(Date, nullable=False, unique=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)

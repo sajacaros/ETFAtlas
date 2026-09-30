@@ -1,9 +1,9 @@
-pykrx==1.2.3
-psycopg2-binary>=2.9.9
-pandas>=2.0.0
-setuptools
-yfinance>=0.2.0
-openai>=1.0.0
-langchain==1.2.9
-langchain-openai==1.1.8
-cryptography>=42.0.0
+# Airflow 이미지(apache/airflow:3.3.2-python3.14) 위에 추가 설치.
+# pykrx가 pandas<3을 요구하므로 Airflow constraints 없이 설치한다 (docker/airflow/Dockerfile 참고).
+pykrx==1.2.9
+psycopg2-binary>=2.9.11
+pandas>=2.2,<3
+requests>=2.32
+yfinance>=1.1.0
+openai>=2.0.0
+cryptography>=46.0.0

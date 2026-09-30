@@ -9,8 +9,8 @@ import logging
 import os
 from datetime import datetime, timedelta
 
-from airflow import DAG
-from airflow.operators.python import PythonOperator
+from airflow.sdk import DAG
+from airflow.providers.standard.operators.python import PythonOperator
 
 from age_utils import get_db_connection
 
@@ -34,7 +34,7 @@ dag = DAG(
     "embed_code_examples",
     default_args=default_args,
     description="승인된 코드 예제 중 미임베딩 건 임베딩 (수동 트리거)",
-    schedule_interval=None,
+    schedule=None,
     catchup=False,
     tags=["embedding", "manual"],
 )

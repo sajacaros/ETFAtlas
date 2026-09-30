@@ -7,9 +7,9 @@ ETF 상세 메타데이터(net_assets, expense_ratio, issuer 등)는 AGE에서 �
 """
 
 from datetime import datetime, timedelta
-from airflow import DAG
-from airflow.operators.python import PythonOperator
-from airflow.operators.empty import EmptyOperator
+from airflow.sdk import DAG
+from airflow.providers.standard.operators.python import PythonOperator
+from airflow.providers.standard.operators.empty import EmptyOperator
 import logging
 
 log = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ dag = DAG(
     'rdb_sync_metadata',
     default_args=default_args,
     description='ETF 코드/이름 RDB 동기화 (포트폴리오용)',
-    schedule_interval='30 8 * * 1-5',  # 평일 08:30 KST
+    schedule='30 8 * * 1-5',  # 평일 08:30 KST
     catchup=False,
     tags=['etf', 'daily', 'rdb'],
 )
@@ -77,7 +77,9 @@ def fetch_krx_data(**context):
     import os
     from krx_api_client import KRXApiClient
 
-    date = context['ds_nodash']
+    # Airflow 3: 수동 실행 시 logical_date가 없을 수 있음 → 현재 시각 기준 (아래에서 최근 거래일로 역추적)
+    logical_date = context.get('logical_date') or datetime.now()
+    date = logical_date.strftime('%Y%m%d')
 
     auth_key = os.environ.get('KRX_AUTH_KEY', '')
     if not auth_key:

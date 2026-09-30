@@ -653,172 +653,172 @@ def collect_universe_and_prices(dates: list[str]) -> tuple[set[str], list[dict],
         conn.close()
 
 
-def collect_holdings_for_dates(etf_codes: list[str], dates: list[str]):
-    """날짜별 HOLDS 엣지 + Stock 노드(이름/is_etf 포함) 배치 생성."""
-    from pykrx import stock as pykrx_stock
-    import pandas as pd
-    import time
+def get_kis_client():
+    """환경변수 기반 KIS 클라이언트 (토큰은 kis_tokens 테이블에 캐시). 키가 없으면 None."""
+    import os
+    from kis_api_client import KISApiClient, PostgresTokenCache, DEFAULT_BASE_URL
+
+    app_key = os.environ.get('KIS_APP_KEY', '')
+    app_secret = os.environ.get('KIS_APP_SECRET', '')
+    if not app_key or not app_secret:
+        log.warning("KIS_APP_KEY/KIS_APP_SECRET not set")
+        return None
+    return KISApiClient(
+        app_key, app_secret,
+        base_url=os.environ.get('KIS_BASE_URL') or DEFAULT_BASE_URL,
+        token_cache=PostgresTokenCache(get_db_connection),
+    )
+
+
+def collect_holdings(etf_codes: list[str], bd: str):
+    """KIS ETF 구성종목시세로 현재 구성종목을 조회해 bd(YYYYMMDD) 날짜의 HOLDS 엣지로 저장.
+
+    KIS API는 날짜 지정이 불가능(호출 시점 스냅샷)하므로 과거 날짜 백필은 지원하지 않는다.
+    bd에는 최근 거래일을 넘긴다. Stock 노드(이름/is_etf 포함)도 함께 생성.
+    """
     from itertools import groupby
 
-    if not etf_codes or not dates:
+    if not etf_codes or not bd:
         return
 
-    known_stocks = set()  # 이름 조회 완료된 Stock 코드 추적
-    total_holds = 0
+    kis = get_kis_client()
+    if kis is None:
+        log.warning("Skipping holdings collection (KIS credentials missing)")
+        return
 
-    for bd in dates:
-        date_str = f"{bd[:4]}-{bd[4:6]}-{bd[6:8]}"
+    date_str = f"{bd[:4]}-{bd[4:6]}-{bd[6:8]}"
 
-        # AGE에서 이미 HOLDS 엣지가 있는 ETF 스킵
-        conn_chk = get_db_connection()
-        cur_chk = init_age(conn_chk)
+    # AGE에서 이미 HOLDS 엣지가 있는 ETF 스킵 (같은 날 재실행 대비)
+    conn_chk = get_db_connection()
+    cur_chk = init_age(conn_chk)
+    try:
+        results = execute_cypher(cur_chk, """
+            MATCH (e:ETF)-[h:HOLDS {date: $date}]->(:Stock)
+            WITH DISTINCT e.code AS code
+            RETURN code
+        """, {'date': date_str})
+        existing_holds = set()
+        for row in results:
+            if row[0]:
+                code = _parse_age_value(row[0])
+                if code:
+                    existing_holds.add(code)
+    finally:
+        cur_chk.close()
+        conn_chk.close()
+
+    remaining_etfs = [c for c in etf_codes if c not in existing_holds]
+    if not remaining_etfs:
+        log.info(f"[{bd}] All {len(etf_codes)} ETFs already have HOLDS, skipping")
+        return
+    if existing_holds:
+        log.info(f"[{bd}] Skipping {len(existing_holds)} ETFs with existing HOLDS, "
+                 f"fetching {len(remaining_etfs)}")
+
+    valid_tickers = get_valid_ticker_set(bd)
+
+    all_holds = []
+    stock_names = {}  # stock_code -> KIS 종목명
+    failed = 0
+
+    for ticker in remaining_etfs:
         try:
-            results = execute_cypher(cur_chk, """
-                MATCH (e:ETF)-[h:HOLDS {date: $date}]->(:Stock)
-                WITH DISTINCT e.code AS code
-                RETURN code
-            """, {'date': date_str})
-            existing_holds = set()
-            for row in results:
-                if row[0]:
-                    code = _parse_age_value(row[0])
-                    if code:
-                        existing_holds.add(code)
-        finally:
-            cur_chk.close()
-            conn_chk.close()
+            components = [
+                c for c in kis.get_etf_components(ticker)
+                if c.stock_code != '010010'            # 설정현금액 제외
+                and c.stock_code in valid_tickers      # 주식/ETF만 (채권·현금·선물 제외)
+            ]
+            components.sort(key=lambda c: c.weight, reverse=True)
+            for c in components[:30]:
+                all_holds.append({
+                    'etf_code': ticker, 'stock_code': c.stock_code,
+                    'date': date_str, 'weight': c.weight, 'shares': c.shares,
+                })
+                if c.stock_name:
+                    stock_names.setdefault(c.stock_code, c.stock_name)
+        except Exception as e:
+            failed += 1
+            log.warning(f"Failed KIS components for {ticker}: {e}")
 
-        remaining_etfs = [c for c in etf_codes if c not in existing_holds]
-        if not remaining_etfs:
-            log.info(f"[{bd}] All {len(etf_codes)} ETFs already have HOLDS, skipping")
-            continue
-        if existing_holds:
-            log.info(f"[{bd}] Skipping {len(existing_holds)} ETFs with existing HOLDS, "
-                     f"fetching {len(remaining_etfs)}")
+    if failed:
+        log.warning(f"[{bd}] KIS component fetch failed for {failed}/{len(remaining_etfs)} ETFs")
+    if not all_holds:
+        log.warning(f"[{bd}] No holdings data from KIS. Skipping.")
+        return
 
-        valid_tickers = get_valid_ticker_set(bd)
+    all_stock_codes = {h['stock_code'] for h in all_holds}
 
-        all_holds = []
-        all_stock_codes = set()
+    conn = get_db_connection()
+    cur = init_age(conn)
 
-        for ticker in remaining_etfs:
-            try:
-                df = pykrx_stock.get_etf_portfolio_deposit_file(ticker, bd)
-                if df is not None and not df.empty:
-                    df = df[~df.index.astype(str).isin(['010010'])]  # 설정현금액 제외
-                    df = df[df.index.astype(str).isin(valid_tickers)]
-                    if '비중' in df.columns:
-                        df = df.sort_values('비중', ascending=False).head(30)
-                    else:
-                        df = df.head(30)
+    try:
+        # Stock 노드 MERGE
+        if all_stock_codes:
+            stock_items = [{'code': c} for c in all_stock_codes]
+            execute_cypher_batch(cur, """
+                MERGE (s:Stock {code: item.code}) RETURN s
+            """, stock_items)
 
-                    for idx, row in df.iterrows():
-                        stock_code = str(idx)
-                        if not stock_code:
-                            continue
-                        weight = float(row.get('비중', 0))
-                        shares_val = row.get('계약수', row.get('주수', 0))
-                        shares = int(shares_val) if shares_val and not pd.isna(shares_val) else 0
-                        all_holds.append({
-                            'etf_code': ticker, 'stock_code': stock_code,
-                            'date': date_str, 'weight': weight, 'shares': shares,
-                        })
-                        all_stock_codes.add(stock_code)
+            # Stock 이름/is_etf 갱신 (ETF는 AGE 이름 우선, 주식은 KIS 종목명)
+            new_stocks = all_stock_codes
+            if new_stocks:
+                etf_tickers = get_etf_codes_from_age()
+                etf_name_map = get_etf_names_from_age()
+                name_items = []
+                for code in new_stocks:
+                    is_etf = code in etf_tickers
+                    name = (etf_name_map.get(code) if is_etf else None) or stock_names.get(code) or code
+                    name_items.append({'code': code, 'name': name, 'is_etf': is_etf})
 
-                time.sleep(0.1)
-            except Exception as e:
-                log.warning(f"Failed PDF for {ticker} on {bd}: {e}")
-
-        if not all_holds:
-            log.warning(f"[{bd}] No holdings data — pykrx get_etf_portfolio_deposit_file "
-                        f"may be broken (KRX scraping API issue). Skipping.")
-            continue
-
-        conn = get_db_connection()
-        cur = init_age(conn)
-
-        try:
-            # Stock 노드 MERGE
-            if all_stock_codes:
-                stock_items = [{'code': c} for c in all_stock_codes]
-                execute_cypher_batch(cur, """
-                    MERGE (s:Stock {code: item.code}) RETURN s
-                """, stock_items)
-
-                # 신규 Stock만 이름 조회 + is_etf 설정
-                new_stocks = all_stock_codes - known_stocks
-                if new_stocks:
-                    # AGE 기반 ETF 코드/이름 매핑 (pykrx KRX 스크래핑 대체)
-                    etf_tickers = get_etf_codes_from_age()
-                    etf_name_map = get_etf_names_from_age()
-                    name_items = []
-                    for code in new_stocks:
-                        try:
-                            is_etf = code in etf_tickers
-                            if is_etf:
-                                name = etf_name_map.get(code) or str(pykrx_stock.get_etf_ticker_name(code))
-                            else:
-                                name = str(pykrx_stock.get_market_ticker_name(code))
-                            if not name or isinstance(name, pd.DataFrame):
-                                name = code
-                        except Exception:
-                            name = code
-                            is_etf = code in etf_tickers
-                        name_items.append({'code': code, 'name': name, 'is_etf': is_etf})
-
-                    execute_cypher_batch(cur, """
-                        MATCH (s:Stock {code: item.code})
-                        SET s.name = item.name, s.is_etf = item.is_etf
-                        RETURN s
-                    """, name_items)
-                    known_stocks.update(new_stocks)
-
-                # is_etf IS NULL safety net (기존 Stock)
                 execute_cypher_batch(cur, """
                     MATCH (s:Stock {code: item.code})
-                    WHERE s.is_etf IS NULL
-                    SET s.is_etf = false
+                    SET s.name = item.name, s.is_etf = item.is_etf
                     RETURN s
-                """, stock_items)
+                """, name_items)
+
+            # is_etf IS NULL safety net (기존 Stock)
+            execute_cypher_batch(cur, """
+                MATCH (s:Stock {code: item.code})
+                WHERE s.is_etf IS NULL
+                SET s.is_etf = false
+                RETURN s
+            """, stock_items)
+            conn.commit()
+
+        # HOLDS 배치
+        holds_sorted = sorted(all_holds, key=lambda x: x['etf_code'])
+        COMMIT_EVERY = 50
+        etf_groups = []
+        for etf_code, group in groupby(holds_sorted, key=lambda x: x['etf_code']):
+            etf_groups.append((etf_code, list(group)))
+
+        for i in range(0, len(etf_groups), COMMIT_EVERY):
+            batch_groups = etf_groups[i:i + COMMIT_EVERY]
+            batch_items = [item for _, items in batch_groups for item in items]
+            try:
+                execute_cypher_batch(cur, """
+                    MATCH (e:ETF {code: item.etf_code})
+                    MATCH (s:Stock {code: item.stock_code})
+                    MERGE (e)-[h:HOLDS {date: item.date}]->(s)
+                    RETURN h
+                """, batch_items)
+                execute_cypher_batch(cur, """
+                    MATCH (e:ETF {code: item.etf_code})-[h:HOLDS {date: item.date}]->(s:Stock {code: item.stock_code})
+                    SET h.weight = item.weight, h.shares = item.shares
+                    RETURN h
+                """, batch_items)
                 conn.commit()
+            except Exception as e:
+                log.warning(f"Failed HOLDS batch for {bd} at group {i}: {e}")
+                conn.rollback()
+                cur = init_age(conn)
 
-            # HOLDS 배치
-            holds_sorted = sorted(all_holds, key=lambda x: x['etf_code'])
-            COMMIT_EVERY = 50
-            etf_groups = []
-            for etf_code, group in groupby(holds_sorted, key=lambda x: x['etf_code']):
-                etf_groups.append((etf_code, list(group)))
+        log.info(f"[{bd}] {len(all_holds)} HOLDS edges "
+                 f"({len(all_stock_codes)} stocks)")
 
-            for i in range(0, len(etf_groups), COMMIT_EVERY):
-                batch_groups = etf_groups[i:i + COMMIT_EVERY]
-                batch_items = [item for _, items in batch_groups for item in items]
-                try:
-                    execute_cypher_batch(cur, """
-                        MATCH (e:ETF {code: item.etf_code})
-                        MATCH (s:Stock {code: item.stock_code})
-                        MERGE (e)-[h:HOLDS {date: item.date}]->(s)
-                        RETURN h
-                    """, batch_items)
-                    execute_cypher_batch(cur, """
-                        MATCH (e:ETF {code: item.etf_code})-[h:HOLDS {date: item.date}]->(s:Stock {code: item.stock_code})
-                        SET h.weight = item.weight, h.shares = item.shares
-                        RETURN h
-                    """, batch_items)
-                    conn.commit()
-                except Exception as e:
-                    log.warning(f"Failed HOLDS batch for {bd} at group {i}: {e}")
-                    conn.rollback()
-                    cur = init_age(conn)
-
-            total_holds += len(all_holds)
-            log.info(f"[{bd}] {len(all_holds)} HOLDS edges "
-                     f"({len(all_stock_codes)} stocks)")
-
-        finally:
-            cur.close()
-            conn.close()
-
-    log.info(f"Holdings complete: {total_holds} edges across {len(dates)} dates")
+    finally:
+        cur.close()
+        conn.close()
 
 
 def collect_stock_prices_for_dates(dates: list[str]):

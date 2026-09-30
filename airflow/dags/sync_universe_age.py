@@ -8,15 +8,15 @@ ETF Universe Sync DAG (Apache AGE) — 일일 증분 수집
 """
 
 from datetime import datetime, timedelta
-from airflow import DAG
-from airflow.operators.python import PythonOperator
-from airflow.operators.empty import EmptyOperator
+from airflow.sdk import DAG
+from airflow.providers.standard.operators.python import PythonOperator
+from airflow.providers.standard.operators.empty import EmptyOperator
 import logging
 
 from age_utils import (
     get_db_connection, init_age, execute_cypher_batch,
     get_business_days, get_last_collected_date, get_etf_codes_from_age,
-    collect_universe_and_prices, collect_holdings_for_dates,
+    collect_universe_and_prices, collect_holdings,
     collect_stock_prices_for_dates,
     record_collection_run, send_discord_notification,
     update_etf_returns,
@@ -38,7 +38,7 @@ dag = DAG(
     'age_sync_universe',
     default_args=default_args,
     description='ETF 데이터 일일 증분 수집 (Apache AGE)',
-    schedule_interval='30 8 * * 2-6',  # 거래일 다음날 08:30 KST (화~토)
+    schedule='30 8 * * 2-6',  # 거래일 다음날 08:30 KST (화~토)
     catchup=False,
     tags=['etf', 'daily', 'age'],
 )
@@ -87,13 +87,13 @@ def sync_universe_and_prices(**context):
 
 
 def sync_holdings(**context):
-    """HOLDS 엣지 증분 수집."""
+    """현재 구성종목(KIS)을 최근 거래일 HOLDS로 저장. KIS는 과거 날짜 조회 불가."""
     ti = context['ti']
     dates = ti.xcom_pull(task_ids='sync_universe_and_prices', key='actual_dates')
     if not dates:
         return
     etf_codes = list(get_etf_codes_from_age())
-    collect_holdings_for_dates(etf_codes, dates)
+    collect_holdings(etf_codes, dates[-1])
 
 
 def sync_stock_prices(**context):

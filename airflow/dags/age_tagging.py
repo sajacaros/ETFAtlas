@@ -6,8 +6,8 @@ LLM_API_KEY 필요 (LiteLLM 프록시). 수동 트리거 또는 주간 스케줄
 """
 
 from datetime import datetime, timedelta
-from airflow import DAG
-from airflow.operators.python import PythonOperator
+from airflow.sdk import DAG
+from airflow.providers.standard.operators.python import PythonOperator
 import logging
 
 from age_utils import (
@@ -39,7 +39,7 @@ dag = DAG(
     'age_tagging',
     default_args=default_args,
     description='ETF 태그 전체 재구축 (룰 + LLM)',
-    schedule_interval='0 3 * * 6',  # 토요일 03:00 KST
+    schedule='0 3 * * 6',  # 토요일 03:00 KST
     catchup=False,
     tags=['etf', 'weekly', 'age', 'tagging'],
 )
@@ -184,8 +184,7 @@ def tag_all_etfs(**context):
             etf_holdings[code] = holdings
 
         # ── 2-3. LLM 태깅 ──
-        from langchain_openai import ChatOpenAI
-        from langchain_core.prompts import ChatPromptTemplate
+        from openai import OpenAI
         from pydantic import BaseModel
         from enum import Enum
 
@@ -198,13 +197,11 @@ def tag_all_etfs(**context):
         class ETFTagBatchResult(BaseModel):
             results: list[ETFTagResult]
 
-        llm = ChatOpenAI(
-            model=os.environ.get('LLM_MODEL', 'qwen38-27b'),
+        client = OpenAI(
             base_url=os.environ.get('LLM_API_BASE', 'http://localhost:4000'),
             api_key=api_key,
-            temperature=0,
         )
-        structured_llm = llm.with_structured_output(ETFTagBatchResult)
+        llm_model = os.environ.get('LLM_MODEL', 'qwen38-27b')
 
         tags_str = ", ".join(ALLOWED_TAGS)
         system_prompt = f"""한국 주식시장 ETF 분류 전문가입니다.
@@ -223,18 +220,29 @@ ETF 이름과 주요 보유종목을 보고, 아래 고정 태그 목록에서 �
 - [364690] TIGER 2차전지테마: LG에너지솔루션, 삼성SDI, 에코프로비엠, 포스코퓨처엠
 - [091170] KODEX 은행: KB금융, 신한지주, 하나금융지주, 우리금융지주, 기업은행"""
 
-        few_shot_output = """[069500] → 반도체
-[364690] → 2차전지, 소재
-[091170] → 금융"""
+        few_shot_output = json.dumps({"results": [
+            {"code": "069500", "tags": ["반도체"]},
+            {"code": "364690", "tags": ["2차전지", "소재"]},
+            {"code": "091170", "tags": ["금융"]},
+        ]}, ensure_ascii=False)
 
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            ("human", "다음 ETF들을 분류해주세요:\n\n" + few_shot_input),
-            ("ai", few_shot_output),
-            ("human", "다음 ETF들을 분류해주세요:\n\n{etf_list}"),
-        ])
-
-        chain = prompt | structured_llm
+        def classify(etf_list: str) -> ETFTagBatchResult:
+            completion = client.chat.completions.parse(
+                model=llm_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": "다음 ETF들을 분류해주세요:\n\n" + few_shot_input},
+                    {"role": "assistant", "content": few_shot_output},
+                    {"role": "user", "content": "다음 ETF들을 분류해주세요:\n\n" + etf_list},
+                ],
+                response_format=ETFTagBatchResult,
+                temperature=0,
+                max_tokens=8192,  # 추론 모델: reasoning 토큰 포함
+            )
+            parsed = completion.choices[0].message.parsed
+            if parsed is None:
+                raise ValueError("LLM returned no parsable result")
+            return parsed
         untagged_list = list(llm_etfs.items())
         batch_size = 10
         llm_tagged = 0
@@ -249,7 +257,7 @@ ETF 이름과 주요 보유종목을 보고, 아래 고정 태그 목록에서 �
                 etf_texts.append(f"- [{code}] {name}: {holdings_str}")
 
             try:
-                result = chain.invoke({"etf_list": "\n".join(etf_texts)})
+                result = classify("\n".join(etf_texts))
                 for etf_tag in result.results:
                     tag_values = [t.value for t in etf_tag.tags
                                   if t.value in allowed_set]

@@ -7,8 +7,8 @@ Realtime Price Collection DAG
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from airflow import DAG
-from airflow.operators.python import PythonOperator, ShortCircuitOperator
+from airflow.sdk import DAG
+from airflow.providers.standard.operators.python import PythonOperator, ShortCircuitOperator
 import logging
 
 log = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ dag = DAG(
     'rdb_realtime_prices',
     default_args=default_args,
     description='장중 10분 주기 현재가 수집 + 스냅샷 갱신',
-    schedule_interval='*/10 9-15 * * 1-5',
+    schedule='*/10 9-15 * * 1-5',
     catchup=False,
     tags=['portfolio', 'realtime', 'prices'],
 )
@@ -209,11 +209,7 @@ def collect_prices(**context):
 
 def update_snapshots(**context):
     """ticker_prices 기반으로 포트폴리오 스냅샷 갱신."""
-    import sys, os
-    # Add backend to path for encryption utility
-    backend_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'backend')
-    if backend_path not in sys.path:
-        sys.path.insert(0, backend_path)
+    # backend 암호화 유틸 (컨테이너 PYTHONPATH=/opt/backend)
     from app.utils.encryption import encrypt_value, decrypt_value
 
     conn = get_db_connection()

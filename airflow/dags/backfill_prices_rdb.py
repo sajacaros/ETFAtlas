@@ -1,14 +1,14 @@
 """
 RDB Backfill DAG
 - etfs 테이블의 전체 ETF에 대해 2025-01-01부터 현재까지 일별 종가를 ticker_prices에 백필
-- 수동 트리거 전용 (schedule_interval=None)
+- 수동 트리거 전용 (schedule=None)
 - yfinance 배치 다운로드 사용, 20개씩 배치 처리
 """
 
 from datetime import datetime, timedelta, date, timezone
 from decimal import Decimal
-from airflow import DAG
-from airflow.operators.python import PythonOperator
+from airflow.sdk import DAG
+from airflow.providers.standard.operators.python import PythonOperator
 import logging
 import time
 
@@ -30,7 +30,7 @@ dag = DAG(
     'rdb_backfill',
     default_args=default_args,
     description='ETF 과거 가격 백필 (수동 트리거)',
-    schedule_interval=None,
+    schedule=None,
     catchup=False,
     tags=['portfolio', 'backfill', 'prices'],
 )

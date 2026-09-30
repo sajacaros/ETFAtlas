@@ -1,4 +1,46 @@
-version: '3.8'
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: docker/airflow/Dockerfile
+  image: etf-atlas-airflow:3.3.2
+  environment: &airflow-common-env
+    TZ: Asia/Seoul
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__DEFAULT_TIMEZONE: Asia/Seoul
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-}
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
+    # 메타데이터 DB는 앱 DB(etf_atlas)와 분리된 airflow DB 사용
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/airflow
+    AIRFLOW__API__SECRET_KEY: ${AIRFLOW_SECRET_KEY:-change-me-airflow-secret}
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:-change-me-airflow-jwt-secret}
+    # Simple auth manager: "사용자:역할" 목록. 비밀번호 파일은 airflow-init이 .env 값으로 생성
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: ${AIRFLOW_USER:-admin}:admin
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE: /opt/airflow/auth/passwords.json
+    # DAG에서 사용하는 앱 설정
+    DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-etf_atlas}
+    ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+    KRX_AUTH_KEY: ${KRX_AUTH_KEY:-}
+    KRX_ID: ${KRX_ID:-}
+    KRX_PW: ${KRX_PW:-}
+    KIS_APP_KEY: ${KIS_APP_KEY:-}
+    KIS_APP_SECRET: ${KIS_APP_SECRET:-}
+    KIS_BASE_URL: ${KIS_BASE_URL:-}
+    LLM_API_BASE: ${LLM_API_BASE:-http://localhost:4000}
+    LLM_API_KEY: ${LLM_API_KEY:-}
+    LLM_MODEL: ${LLM_MODEL:-qwen38-27b}
+    EMBEDDING_MODEL: ${EMBEDDING_MODEL:-embedding-gemma-300m}
+    DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - ./backend:/opt/backend:ro
+    - airflow_logs:/opt/airflow/logs
+    - airflow_auth:/opt/airflow/auth
+  networks:
+    - etf-network
+  depends_on: &airflow-common-depends-on
+    db:
+      condition: service_healthy
 
 services:
   db:
@@ -13,9 +55,10 @@ services:
     ports:
       - "${DB_PORT:-5432}:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # PostgreSQL 18 이미지는 /var/lib/postgresql/18/docker 에 데이터를 둔다
+      - postgres_data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -30,11 +73,11 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-etf_atlas}
       JWT_SECRET: ${JWT_SECRET:-your-secret-key-change-in-production}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      LLM_API_BASE: ${LLM_API_BASE:-http://localhost:4000}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-qwen38-27b}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-embedding-gemma-300m}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:9600}
     ports:
       - "${BACKEND_PORT:-9601}:8000"
@@ -49,8 +92,6 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-      args:
-        VITE_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
     container_name: etf-atlas-frontend
     ports:
       - "${FRONTEND_PORT:-9600}:80"
@@ -60,56 +101,62 @@ services:
       - etf-network
     restart: unless-stopped
 
-  airflow-webserver:
-    image: apache/airflow:2.10.4-python3.12
-    container_name: etf-atlas-airflow
-    user: root
-    environment:
-      TZ: Asia/Seoul
-      PIP_ROOT_USER_ACTION: ignore
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__CORE__DEFAULT_TIMEZONE: Asia/Seoul
-      AIRFLOW__WEBSERVER__DEFAULT_UI_TIMEZONE: Asia/Seoul
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-etf_atlas}
-      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-}
-      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
-      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:-your-airflow-secret}
-      _AIRFLOW_DB_MIGRATE: 'true'
-      _AIRFLOW_WWW_USER_CREATE: 'true'
-      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_USER:-admin}
-      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_PASSWORD:-admin}
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-etf_atlas}
-      KRX_AUTH_KEY: ${KRX_AUTH_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
-    ports:
-      - "${AIRFLOW_PORT:-8080}:8080"
-    volumes:
-      - ./airflow/dags:/opt/airflow/dags
-      - ./airflow/requirements.txt:/opt/airflow/requirements.txt
-      - ./backend/app/data:/opt/airflow/data
-      - ./backend:/opt/backend
-      - airflow_logs:/opt/airflow/logs
-    depends_on:
-      db:
-        condition: service_healthy
-    networks:
-      - etf-network
-    command: >
-      bash -c "
-        ln -snf /usr/share/zoneinfo/Asia/Seoul /etc/localtime &&
-        echo 'Asia/Seoul' > /etc/timezone &&
-        python -m pip install --no-cache-dir -r /opt/airflow/requirements.txt &&
+  airflow-init:
+    <<: *airflow-common
+    container_name: etf-atlas-airflow-init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
         airflow db migrate &&
-        airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com || true &&
-        airflow scheduler &
-        airflow webserver
-      "
+        echo '{"${AIRFLOW_USER:-admin}": "${AIRFLOW_PASSWORD:-admin}"}' > /opt/airflow/auth/passwords.json &&
+        chown -R 50000:0 /opt/airflow/auth /opt/airflow/logs &&
+        echo "airflow init done"
+    user: "0:0"
+    restart: "no"
+
+  airflow-apiserver:
+    <<: *airflow-common
+    container_name: etf-atlas-airflow
+    command: api-server
+    ports:
+      - "${AIRFLOW_PORT:-9603}:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: etf-atlas-airflow-scheduler
+    command: scheduler
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    container_name: etf-atlas-airflow-dag-processor
+    command: dag-processor
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
     restart: unless-stopped
 
 volumes:
   postgres_data:
   airflow_logs:
+  airflow_auth:
 
 networks:
   etf-network:

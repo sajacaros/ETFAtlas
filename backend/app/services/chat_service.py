@@ -1,8 +1,18 @@
+import asyncio
 import json
 import logging
-from typing import List, Dict
+from typing import Any, AsyncIterator, Dict, List
+
+from pydantic_ai import (
+    Agent, AgentRunResultEvent, FunctionToolCallEvent, FunctionToolResultEvent, Tool as AgentTool,
+)
+from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.messages import RetryPromptPart
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.usage import UsageLimits
 from sqlalchemy.orm import Session
-from smolagents import Tool, CodeAgent, OpenAIModel
+
 from ..config import get_settings
 from .graph_service import GraphService
 from .embedding_service import EmbeddingService
@@ -61,7 +71,43 @@ def _format_percent_fields(data: dict) -> dict:
     return data
 
 
-class ETFSearchTool(Tool):
+# ---------------------------------------------------------------------------
+# Tools — name/description/inputs(JSON 스키마 속성) + forward()
+# ---------------------------------------------------------------------------
+
+class ChatTool:
+    """챗봇 도구 베이스. inputs는 JSON 스키마 properties 형식, nullable=True면 선택 인자."""
+    name: str = ""
+    description: str = ""
+    inputs: Dict[str, Dict[str, Any]] = {}
+
+    def __init__(self):
+        pass
+
+    def forward(self, **kwargs) -> str:
+        raise NotImplementedError
+
+    def json_schema(self) -> Dict[str, Any]:
+        properties = {
+            k: {kk: vv for kk, vv in v.items() if kk != "nullable"}
+            for k, v in self.inputs.items()
+        }
+        required = [k for k, v in self.inputs.items() if not v.get("nullable")]
+        return {"type": "object", "properties": properties, "required": required}
+
+    def as_agent_tool(self) -> AgentTool:
+        def run(**kwargs) -> str:
+            # 선택 인자에 null이 오면 forward 기본값 사용
+            return self.forward(**{k: v for k, v in kwargs.items() if v is not None})
+
+        # 도구들이 하나의 DB 세션을 공유하므로 병렬 실행하지 않는다
+        return AgentTool.from_schema(
+            run, name=self.name, description=self.description,
+            json_schema=self.json_schema(), sequential=True,
+        )
+
+
+class ETFSearchTool(ChatTool):
     name = "etf_search"
     description = """ETF를 이름이나 코드로 검색합니다. ETF(KODEX, TIGER, ARIRANG 등 상장지수펀드) 전용이며, 주식 종목(삼성전자 등) 검색은 stock_search를 사용하세요.
 예: 'KODEX' 검색 → KODEX가 포함된 ETF 목록 (code, name, expense_ratio)
@@ -77,7 +123,6 @@ class ETFSearchTool(Tool):
             "nullable": True,
         }
     }
-    output_type = "string"
 
     def __init__(self, db: Session):
         super().__init__()
@@ -101,7 +146,7 @@ class ETFSearchTool(Tool):
         return json.dumps(results, ensure_ascii=False, default=str)
 
 
-class StockSearchTool(Tool):
+class StockSearchTool(ChatTool):
     name = "stock_search"
     description = """주식 종목(삼성전자, SK하이닉스 등 개별 주식)을 이름이나 코드로 검색합니다. ETF 검색은 etf_search를 사용하세요.
 예: '삼성전자' 검색 → code: '005930'. 찾은 코드를 get_stock_prices 등에서 사용하세요.
@@ -117,7 +162,6 @@ class StockSearchTool(Tool):
             "nullable": True,
         }
     }
-    output_type = "string"
 
     def __init__(self, db: Session):
         super().__init__()
@@ -140,12 +184,11 @@ class StockSearchTool(Tool):
         return json.dumps(results, ensure_ascii=False, default=str)
 
 
-class ListTagsTool(Tool):
+class ListTagsTool(ChatTool):
     name = "list_tags"
     description = """그래프 DB에 등록된 모든 태그(테마) 목록과 각 태그에 속한 ETF 수를 조회합니다.
 사용자가 특정 테마/섹터의 ETF를 질문할 때, 먼저 이 도구로 정확한 태그명을 확인하세요."""
     inputs = {}
-    output_type = "string"
 
     def __init__(self, db: Session):
         super().__init__()
@@ -159,7 +202,7 @@ class ListTagsTool(Tool):
         return json.dumps(tags, ensure_ascii=False, default=str)
 
 
-class FindSimilarETFsTool(Tool):
+class FindSimilarETFsTool(ChatTool):
     name = "find_similar_etfs"
     description = """특정 ETF와 보유종목이 유사한 ETF를 찾습니다. 보유종목 비중 겹침(overlap) 기반 유사도로 계산합니다.
 etf_search로 ETF 코드를 먼저 확인한 후 사용하세요.
@@ -170,7 +213,6 @@ etf_search로 ETF 코드를 먼저 확인한 후 사용하세요.
             "description": "ETF 종목코드 (예: '069500')"
         }
     }
-    output_type = "string"
 
     def __init__(self, db: Session):
         super().__init__()
@@ -185,7 +227,7 @@ etf_search로 ETF 코드를 먼저 확인한 후 사용하세요.
         return json.dumps(results, ensure_ascii=False, default=str)
 
 
-class GetETFInfoTool(Tool):
+class GetETFInfoTool(ChatTool):
     name = "get_etf_info"
     description = """ETF의 메타 정보를 종합 조회합니다. 기본 정보(코드, 이름, 보수율), 운용사, 태그, 상위 보유종목 10개, 최근 수익률(1주/1개월/3개월)을 한번에 반환합니다.
 보수율 비교, ETF 상세 정보 확인 시 이 도구를 사용하세요.
@@ -196,7 +238,6 @@ etf_search로 ETF 코드를 먼저 확인한 후 사용하세요."""
             "description": "ETF 종목코드 (예: '069500')"
         }
     }
-    output_type = "string"
 
     def __init__(self, db: Session):
         super().__init__()
@@ -251,7 +292,7 @@ etf_search로 ETF 코드를 먼저 확인한 후 사용하세요."""
         return json.dumps(info, ensure_ascii=False, default=str)
 
 
-class GetHoldingsChangesTool(Tool):
+class GetHoldingsChangesTool(ChatTool):
     name = "get_holdings_changes"
     description = """ETF의 보유종목 비중 변화를 조회합니다. 전거래일/1주/1개월 전 대비 변동을 확인합니다.
 내부적으로 두 시점의 보유종목을 비교하여 added(신규편입), removed(제외), increased(비중증가), decreased(비중감소)를 계산합니다.
@@ -267,7 +308,6 @@ etf_search로 ETF 코드를 먼저 확인한 후 사용하세요."""
             "nullable": True,
         }
     }
-    output_type = "string"
 
     def __init__(self, db: Session):
         super().__init__()
@@ -283,7 +323,7 @@ etf_search로 ETF 코드를 먼저 확인한 후 사용하세요."""
         return json.dumps(filtered, ensure_ascii=False, default=str)
 
 
-class GetETFPricesTool(Tool):
+class GetETFPricesTool(ChatTool):
     name = "get_etf_prices"
     description = """ETF의 과거 가격 데이터를 조회합니다. 주식 종목이 아닌 ETF 전용입니다. 기간별 종가, 거래량, 수익률, 시가총액, 순자산총액을 확인할 수 있습니다.
 etf_search로 ETF 코드를 먼저 확인한 후 사용하세요. 주식 종목 가격은 get_stock_prices를 사용하세요.
@@ -299,7 +339,6 @@ etf_search로 ETF 코드를 먼저 확인한 후 사용하세요. 주식 종목 
             "nullable": True,
         }
     }
-    output_type = "string"
 
     PERIOD_DAYS = {
         "1w": 7,
@@ -355,7 +394,7 @@ etf_search로 ETF 코드를 먼저 확인한 후 사용하세요. 주식 종목 
         return json.dumps({"summary": summary, "daily": daily}, ensure_ascii=False, default=str)
 
 
-class GetStockPricesTool(Tool):
+class GetStockPricesTool(ChatTool):
     name = "get_stock_prices"
     description = """주식 종목(삼성전자, SK하이닉스 등 개별 주식)의 과거 가격 데이터를 조회합니다. ETF가 아닌 주식 전용입니다. 기간별 OHLCV(시/고/저/종/거래량), 등락률을 확인할 수 있습니다.
 stock_search로 종목 코드를 먼저 확인한 후 사용하세요. ETF 가격은 get_etf_prices를 사용하세요.
@@ -371,7 +410,6 @@ stock_search로 종목 코드를 먼저 확인한 후 사용하세요. ETF 가�
             "nullable": True,
         }
     }
-    output_type = "string"
 
     PERIOD_DAYS = {
         "1w": 7,
@@ -425,7 +463,7 @@ stock_search로 종목 코드를 먼저 확인한 후 사용하세요. ETF 가�
         return json.dumps({"summary": summary, "daily": daily}, ensure_ascii=False, default=str)
 
 
-class CompareETFsTool(Tool):
+class CompareETFsTool(ChatTool):
     name = "compare_etfs"
     description = """2~3개 ETF를 한번에 비교합니다. 비교 항목: 기본정보(보수율, 순자산), 태그, 최근 1개월 수익률, 상위 보유종목 5개.
 etf_search로 ETF 코드를 먼저 확인한 후 사용하세요."""
@@ -435,7 +473,6 @@ etf_search로 ETF 코드를 먼저 확인한 후 사용하세요."""
             "description": "비교할 ETF 코드들 (쉼표 구분, 예: '069500,102110,229200')"
         }
     }
-    output_type = "string"
 
     def __init__(self, db: Session):
         super().__init__()
@@ -498,7 +535,7 @@ etf_search로 ETF 코드를 먼저 확인한 후 사용하세요."""
         return json.dumps(results, ensure_ascii=False, default=str)
 
 
-class GraphQueryTool(Tool):
+class GraphQueryTool(ChatTool):
     name = "graph_query"
     description = """그래프 DB에 Cypher 쿼리를 직접 실행합니다. 다른 전용 도구로 해결할 수 없는 그래프 관계 질문에 사용하세요.
 예: '삼성전자를 가장 많이 보유한 ETF', '반도체 태그 ETF 중 보수율 낮은 순', '삼성자산운용의 ETF 목록' 등
@@ -543,7 +580,6 @@ RETURN {code: e.code, name: e.name, company: c.name}"""
             "description": "실행할 Cypher 쿼리 (MATCH로 시작, RETURN은 단일 맵으로 감싸기)"
         }
     }
-    output_type = "string"
 
     FORBIDDEN = ("CREATE", "MERGE", "DELETE", "SET ", "REMOVE", "DROP")
 
@@ -570,6 +606,16 @@ RETURN {code: e.code, name: e.name, company: c.name}"""
 # ChatService
 # ---------------------------------------------------------------------------
 
+MAX_MODEL_REQUESTS = 15
+FALLBACK_ANSWER = "죄송합니다. 답변 생성에 실패했습니다. 다시 질문해 주세요."
+
+
+def format_tool_call(name: str, args: Dict[str, Any]) -> str:
+    """도구 호출을 `name(key="value", ...)` 표기로 직렬화 (few-shot 예시/로그 공용 포맷)."""
+    params = ", ".join(f"{k}={json.dumps(v, ensure_ascii=False)}" for k, v in args.items())
+    return f"{name}({params})"
+
+
 class ChatService:
     def __init__(self, db: Session):
         self.db = db
@@ -588,7 +634,7 @@ class ChatService:
         except Exception:
             return []
 
-    def _create_tools(self) -> Dict[str, Tool]:
+    def _create_tools(self) -> Dict[str, ChatTool]:
         """도구 인스턴스를 생성하고 이름→도구 딕셔너리로 반환한다."""
         tools = [
             ETFSearchTool(db=self.db),
@@ -605,36 +651,36 @@ class ChatService:
         return {t.name: t for t in tools}
 
     def _init_agent(self):
-        """ReAct용 CodeAgent를 초기화한다."""
-        # LiteLLM 프록시는 OpenAI 호환 API이므로 openai SDK 기반 모델로 직접 호출
-        model = OpenAIModel(
-            model_id=self._settings.llm_model,
-            api_base=self._settings.llm_api_base,
-            api_key=self._settings.llm_api_key,
+        """tool-calling 에이전트 초기화 (LiteLLM 프록시, OpenAI 호환 API)."""
+        model = OpenAIChatModel(
+            self._settings.llm_model,
+            provider=OpenAIProvider(
+                base_url=self._settings.llm_api_base,
+                api_key=self._settings.llm_api_key,
+            ),
         )
-        self.agent = CodeAgent(
-            tools=list(self._tools.values()),
-            model=model,
-            additional_authorized_imports=["json", "datetime"],
-            max_steps=15,
+        self.agent = Agent(
+            model,
+            instructions=self._instructions(),
+            tools=[t.as_agent_tool() for t in self._tools.values()],
         )
 
-    # ------------------------------------------------------------------
-    # ReAct 경로
-    # ------------------------------------------------------------------
+    def _instructions(self) -> str:
+        parts = [SYSTEM_PROMPT]
+        if self._tag_names:
+            parts.append(f"## 사용 가능한 태그 목록\n{', '.join(self._tag_names)}")
+        return "\n\n".join(parts)
 
     def _build_prompt(self, message: str, history: List[Dict[str, str]]) -> tuple:
-        """프롬프트를 구성하고, 매칭된 코드 예제도 함께 반환한다."""
-        parts = [SYSTEM_PROMPT, ""]
-        if self._tag_names:
-            parts.append(f"## 사용 가능한 태그 목록\n{', '.join(self._tag_names)}\n")
-        # few-shot Python 코드 예제 주입
+        """사용자 프롬프트(참고 예시 + 이전 대화 + 현재 질문)와 매칭된 예시를 반환한다."""
+        parts = []
         code_examples = self._embedding_service.find_similar_code_examples(message, top_k=3)
         if code_examples:
-            parts.append("## 참고 Python 코드 예시")
-            parts.append("아래 예시를 참고하여 여러 도구를 조합하는 복잡한 질문에 답변하세요:")
+            parts.append("## 참고 해결 절차 예시")
+            parts.append("비슷한 질문을 해결한 도구 호출 순서입니다(의사코드). "
+                         "코드를 실행할 수는 없으니 같은 흐름으로 도구를 호출하세요:")
             for ex in code_examples:
-                parts.append(f"Q: {ex['question']}\n```python\n{ex['code']}\n```")
+                parts.append(f"Q: {ex['question']}\n```\n{ex['code']}\n```")
             parts.append("")
         if history:
             parts.append("## 이전 대화 (참고용)")
@@ -647,99 +693,69 @@ class ChatService:
         parts.append(f"## 현재 질문 (이 질문의 조건만 따르세요):\n{message}")
         return "\n".join(parts), code_examples
 
-    def _react(self, message: str, history: List[Dict[str, str]]) -> Dict:
-        """CodeAgent ReAct로 질의를 처리한다."""
-        prompt, matched_examples = self._build_prompt(message, history)
-        try:
-            result = self.agent.run(prompt)
-        except Exception:
-            result = None
-        steps = self._extract_steps()
-        if result is None:
-            last_obs = ""
-            for s in reversed(steps):
-                if s.get("observations"):
-                    last_obs = s["observations"]
-                    break
-            answer = last_obs if last_obs else "죄송합니다. 답변 생성에 실패했습니다. 다시 질문해 주세요."
-        else:
-            answer = str(result)
-        return {"answer": answer, "steps": steps, "matched_examples": matched_examples}
-
-    def _react_stream(self, message: str, history: List[Dict[str, str]]):
-        """CodeAgent ReAct 스트리밍으로 질의를 처리한다."""
-        from smolagents.memory import ActionStep
-        from smolagents.agents import FinalAnswerStep
-
-        prompt, matched_examples = self._build_prompt(message, history)
-        if matched_examples:
-            yield {
-                "type": "matched_examples",
-                "data": {"examples": matched_examples},
-            }
-        got_final_answer = False
-        last_observations = ""
-        for event in self.agent.run(prompt, stream=True):
-            if isinstance(event, ActionStep):
-                tool_calls = []
-                if event.tool_calls:
-                    for tc in event.tool_calls:
-                        tool_calls.append({"name": tc.name, "arguments": str(tc.arguments)})
-                if event.observations:
-                    last_observations = event.observations
-                yield {
-                    "type": "step",
-                    "data": {
-                        "step_number": event.step_number,
-                        "code": event.code_action or "",
-                        "observations": (event.observations or "")[:2000],
-                        "tool_calls": tool_calls,
-                        "error": str(event.error) if event.error else None,
-                    },
-                }
-            elif isinstance(event, FinalAnswerStep):
-                got_final_answer = True
-                yield {
-                    "type": "answer",
-                    "data": {"answer": str(event.output)},
-                }
-        if not got_final_answer:
-            fallback = last_observations[:2000] if last_observations else "죄송합니다. 답변 생성에 실패했습니다. 다시 질문해 주세요."
-            yield {
-                "type": "answer",
-                "data": {"answer": fallback},
-            }
-
-
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def chat(self, message: str, history: List[Dict[str, str]]) -> Dict:
-        return self._react(message, history)
+    async def chat(self, message: str, history: List[Dict[str, str]]) -> Dict:
+        answer = FALLBACK_ANSWER
+        steps: List[Dict] = []
+        matched_examples: List[Dict] = []
+        async for event in self.chat_stream(message, history):
+            if event["type"] == "step":
+                steps.append(event["data"])
+            elif event["type"] == "answer":
+                answer = event["data"]["answer"]
+            elif event["type"] == "matched_examples":
+                matched_examples = event["data"]["examples"]
+        return {"answer": answer, "steps": steps, "matched_examples": matched_examples}
 
-    def chat_stream(self, message: str, history: List[Dict[str, str]]):
-        yield from self._react_stream(message, history)
+    async def chat_stream(self, message: str, history: List[Dict[str, str]]) -> AsyncIterator[Dict]:
+        """도구 호출/결과를 step 이벤트로, 최종 응답을 answer 이벤트로 스트리밍한다.
 
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
+        step: {step_number, code(도구 호출 표기), observations, tool_calls, error}
+        """
+        # 임베딩 검색(동기 HTTP/DB)은 이벤트 루프를 막지 않도록 스레드에서 실행
+        prompt, matched_examples = await asyncio.to_thread(self._build_prompt, message, history)
+        if matched_examples:
+            yield {"type": "matched_examples", "data": {"examples": matched_examples}}
 
-    def _extract_steps(self) -> List[Dict]:
-        from smolagents.memory import ActionStep
-        steps = []
-        for step in self.agent.memory.steps:
-            if not isinstance(step, ActionStep):
-                continue
-            tool_calls = []
-            if step.tool_calls:
-                for tc in step.tool_calls:
-                    tool_calls.append({"name": tc.name, "arguments": str(tc.arguments)})
-            steps.append({
-                "step_number": step.step_number,
-                "code": step.code_action or "",
-                "observations": (step.observations or "")[:2000],
-                "tool_calls": tool_calls,
-                "error": str(step.error) if step.error else None,
-            })
-        return steps
+        pending: Dict[str, Dict[str, Any]] = {}
+        step_number = 0
+        last_observations = ""
+        answer = None
+        try:
+            async with self.agent.run_stream_events(
+                prompt, usage_limits=UsageLimits(request_limit=MAX_MODEL_REQUESTS),
+            ) as stream:
+                async for event in stream:
+                    if isinstance(event, FunctionToolCallEvent):
+                        part = event.part
+                        pending[part.tool_call_id] = {"name": part.tool_name, "args": part.args_as_dict()}
+                    elif isinstance(event, FunctionToolResultEvent):
+                        call = pending.pop(event.tool_call_id, None) or {"name": "unknown", "args": {}}
+                        is_error = isinstance(event.part, RetryPromptPart)
+                        content = event.part.model_response() if is_error else str(event.part.content)
+                        if not is_error:
+                            last_observations = content
+                        step_number += 1
+                        yield {
+                            "type": "step",
+                            "data": {
+                                "step_number": step_number,
+                                "code": format_tool_call(call["name"], call["args"]),
+                                "observations": content[:2000],
+                                "tool_calls": [{"name": call["name"], "arguments": json.dumps(call["args"], ensure_ascii=False)}],
+                                "error": content[:500] if is_error else None,
+                            },
+                        }
+                    elif isinstance(event, AgentRunResultEvent):
+                        answer = str(event.result.output).strip()
+        except UsageLimitExceeded:
+            logger.warning("Chat agent hit request limit (%d)", MAX_MODEL_REQUESTS)
+        except Exception:
+            logger.exception("Chat agent failed")
+
+        if not answer:
+            answer = last_observations[:2000] if last_observations else FALLBACK_ANSWER
+        yield {"type": "answer", "data": {"answer": answer}}

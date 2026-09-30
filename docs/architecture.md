@@ -8,7 +8,7 @@
 | **Backend** | FastAPI, Pydantic (Python 3.14) |
 | **Database** | PostgreSQL 18 + Apache AGE 1.8.0 (Graph) + pgvector 0.8.6 |
 | **Data Pipeline** | Airflow 3.3.2, KRX Open API, 한국투자증권 KIS Open API, pykrx |
-| **AI** | smolagents (`OpenAIModel`) + LiteLLM 프록시 (OpenAI 호환) |
+| **AI** | pydantic-ai (tool-calling 에이전트) + LiteLLM 프록시 (OpenAI 호환) |
 | **Auth** | 아이디/비밀번호 (bcrypt) + JWT (PyJWT) |
 
 ---
@@ -41,7 +41,7 @@
 │                              ^                                          │
 │                              │                                          │
 │                     ┌────────┴───────┐     ┌────────────────┐          │
-│                     │   smolagents   │────>│ LiteLLM 프록시 │          │
+│                     │   pydantic-ai  │────>│ LiteLLM 프록시 │          │
 │                     │   (AI Agent)   │     │ (LLM/임베딩)   │          │
 │                     └────────────────┘     └────────────────┘          │
 │                                                                         │

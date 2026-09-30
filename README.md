@@ -24,8 +24,8 @@
 - 관심종목 구성종목 비중 변화 알림 (3%p 이상)
 
 ### AI 챗봇
-- ETF 관련 질문 응답 (smolagents CodeAgent — 도구를 조합하는 Python 코드를 생성·실행)
-- 유사 질문의 코드 예시를 pgvector로 검색해 few-shot 주입, 관리자 승인 기반 예시 축적
+- ETF 관련 질문 응답 (pydantic-ai tool-calling 에이전트, 도구 10개)
+- 유사 질문의 해결 절차(도구 호출 순서)를 pgvector로 검색해 few-shot 주입, 관리자 승인 기반 예시 축적
 - 스트리밍 응답 지원
 
 ### 알림
@@ -48,7 +48,7 @@
 | Database | PostgreSQL 18 + Apache AGE 1.8 (그래프) + pgvector 0.8 + pg_trgm |
 | Pipeline | Apache Airflow 3.3 (Python 3.14) |
 | Auth | ID/비밀번호 (bcrypt) + JWT |
-| AI | LiteLLM 프록시(OpenAI 호환) — `qwen38-27b`, `embedding-gemma-300m`(768d), smolagents |
+| AI | LiteLLM 프록시(OpenAI 호환) — `qwen38-27b`, `embedding-gemma-300m`(768d), pydantic-ai |
 | 외부 데이터 | KRX Open API, 한국투자증권 KIS Open API, pykrx, yfinance |
 
 ## 실행 방법

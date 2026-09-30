@@ -39,7 +39,7 @@
 - 인증: ID/비밀번호 + JWT(PyJWT, 7일). 비밀번호는 bcrypt. 보호 라우트는 모두 `utils/jwt.get_current_user_id` 하나에 의존, 관리자 판정은 `services/auth_service.is_admin`
   - 최초 실행 시 사용자가 0명이면 프론트가 `/setup`으로 보내고, 거기서 만든 계정이 admin
   - 이후 `/login`의 회원가입 탭으로 member 가입
-- 챗봇(`services/chat_service.py`): smolagents `CodeAgent` + 도구 10개(ETF/종목 검색, 가격, 비교, Cypher 직접 실행 등). 질문과 유사한 Python 코드 예시를 pgvector로 찾아 few-shot으로 주입. 관리자가 채팅 로그를 승인하면 예시로 임베딩되는 피드백 루프(`routers/admin.py`)
+- 챗봇(`services/chat_service.py`): pydantic-ai tool-calling 에이전트 + 도구 10개(ETF/종목 검색, 가격, 비교, Cypher 직접 실행 등). 질문과 유사한 해결 절차(도구 호출 순서) 예시를 pgvector로 찾아 few-shot으로 주입. 관리자가 채팅 로그를 승인하면 예시로 임베딩되는 피드백 루프(`routers/admin.py`). 상세: `chatbot_tools.md`
 - 알림: Airflow 수집 완료 시 `pg_notify('new_collection')` → 백엔드 LISTEN → SSE(`/api/notifications/stream`)
 
 ### AI 연동
@@ -54,13 +54,13 @@
 - `qwen38-27b`는 reasoning 토큰을 먼저 소비하므로 `max_tokens`를 넉넉히(2048+) 줘야 `content`가 비지 않는다
 - structured output(`response_format=json_schema`)이 프록시에서 동작함을 확인
 
-#### smolagents를 유지하는 이유 (2026-09 검토)
-- 피드백 루프 전체가 "LLM이 작성한 Python 코드"를 단위로 동작한다: `code_examples`의 36개 시드와 승인 예시, `chat_logs.generated_code`, 관리자 페이지의 코드 리뷰, 챗 UI의 단계별 코드 표시
-- CodeAgent는 한 스텝에서 여러 도구를 루프·정렬·조합하므로 "반도체 ETF 3개 수익률 비교" 같은 질문을 적은 왕복으로 처리한다
-- qwen38-27b + 프록시 조합에서 도구 3회 호출·정렬·표 출력·`final_answer`까지 정상 동작 확인(약 13초)
-- 네이티브 tool-calling으로 바꾸면 위 자산(예시 포맷, 관리 UI, 로그 스키마)을 전부 다시 만들어야 해서 지금은 이득이 적다
-- 대신 모델 어댑터를 `LiteLLMModel` → `OpenAIModel`로 바꿔 `litellm` 패키지 의존성을 제거했다(프록시가 이미 LiteLLM)
-- 주의: smolagents의 `LocalPythonExecutor`는 보안 샌드박스가 아니다. 허용 import는 `json`, `datetime`로 제한되어 있다
+#### 에이전트 프레임워크: smolagents CodeAgent → pydantic-ai (2026-09)
+- 후보: smolagents 유지(`OpenAIModel`), LangChain deepagents, pydantic-ai
+- deepagents는 계획(todo)·가상 파일시스템·서브에이전트 등 장기 작업용 기능이 중심이라, 도구 10개로 1~5단계에 끝나는 이 챗봇에는 과함(추론 모델이라 왕복 증가 비용이 큼, langchain 의존성 재도입)
+- pydantic-ai 선택: 가볍고 OpenAI 호환 엔드포인트를 그대로 사용, 도구 인자 스키마 검증, LLM 생성 코드 실행 제거
+- 프록시의 qwen38-27b가 병렬 tool calling을 지원함을 확인. 같은 질문 기준 CodeAgent 약 13초 → 약 7초
+- SSE 이벤트 형식(`step`/`answer`/`matched_examples`)은 유지해 프론트엔드 변경 없음. step의 `code`는 도구 호출 표기(`etf_search(query="KODEX")`)
+- few-shot 예시(`code_examples`)는 "도구 호출 순서 의사코드"로 의미를 바꿨다. 기존 Python 시드 36개는 참고 절차로 그대로 사용
 
 ## 4. 데이터 파이프라인 (Airflow)
 
@@ -96,7 +96,7 @@
 | Airflow | 2.10.4, 단일 컨테이너(webserver+scheduler), 기동 시 pip install | 3.3.2 커스텀 이미지, api-server/scheduler/dag-processor 분리, 메타DB 분리 |
 | DB | PG17 + AGE 1.7.0 + pgvector 0.8.0, init SQL + 수동 마이그레이션 | PG18 + AGE 1.8.0 + pgvector 0.8.6, 깨끗한 init SQL 4개 |
 | 인증 | Google OAuth | ID/비밀번호, 최초 setup 페이지에서 admin 생성 |
-| AI | OpenAI 직접 호출(gpt-4.1-mini, text-embedding-3-small 1536d), langchain, litellm | LiteLLM 프록시(qwen38-27b, embedding-gemma-300m 768d), openai SDK만 사용 |
+| AI | OpenAI 직접 호출(gpt-4.1-mini, text-embedding-3-small 1536d), smolagents CodeAgent, langchain, litellm | LiteLLM 프록시(qwen38-27b, embedding-gemma-300m 768d), pydantic-ai tool-calling, openai SDK |
 | 구성종목 | pykrx KRX 스크래핑(날짜별) | KIS Open API(현재 스냅샷), 과거 백필 제거 |
 | 기타 | python-jose, passlib | PyJWT, bcrypt, 인증/KIS 단위 테스트 추가 |
 
@@ -109,5 +109,5 @@
 - **테스트 부족**: 인증(`backend/tests`)과 KIS 클라이언트(`airflow/tests`)만 있다. `domain/portfolio_calculation.py` 단위 테스트가 다음 우선순위
 - **대형 파일**: `routers/portfolio.py`, `frontend/src/app/PortfolioPage.tsx`(1000줄+), `airflow/dags/age_utils.py`(1200줄+) 분리 필요
 - **프론트 lint 미동작**: `npm run lint`가 ESLint 설정 파일이 없어 실패(기존부터). ESLint 9 flat config로 새로 구성 필요
-- **CodeAgent 실행 격리**: LLM 생성 코드가 백엔드 프로세스에서 실행된다. 외부 공개 전 샌드박스(E2B/Docker executor 등) 검토
+- **few-shot 시드 정리**: `03_seed_code_examples.sql`의 36개 예시는 CodeAgent용 Python 형태다. 도구 호출 순서 표기(`name(key="value")` 줄 단위)로 다시 쓰면 채팅 로그에서 승인된 예시와 형식이 통일된다
 - **KIS 첫 호출 검증**: 실제 앱키로 `python airflow/dags/kis_api_client.py 069500`을 실행해 `output2` 필드(특히 비중 단위, 평가금액 기준)를 확인할 것

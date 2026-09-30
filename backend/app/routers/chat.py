@@ -46,12 +46,9 @@ class ChatResponse(BaseModel):
 
 
 def _extract_generated_code(steps: List[dict]) -> Optional[str]:
-    """Extract the last successful code block from steps."""
-    last_code = None
-    for step in steps:
-        if step.get("code") and not step.get("error"):
-            last_code = step["code"]
-    return last_code
+    """성공한 도구 호출 순서를 한 줄씩 이어 붙인다 (승인 시 few-shot 예시로 사용)."""
+    calls = [step["code"] for step in steps if step.get("code") and not step.get("error")]
+    return "\n".join(calls) or None
 
 
 def _save_chat_log(
@@ -84,7 +81,7 @@ async def send_message(
     try:
         chat_service = ChatService(db)
         history = [{"role": m.role, "content": m.content} for m in request.history]
-        result = chat_service.chat(request.message, history)
+        result = await chat_service.chat(request.message, history)
         generated_code = _extract_generated_code(result.get("steps", []))
         chat_log_id = _save_chat_log(
             db, user_id, request.message, result["answer"], generated_code
@@ -107,13 +104,13 @@ async def stream_message(
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
 ):
-    def event_generator():
+    async def event_generator():
         answer = ""
         steps = []
         try:
             chat_service = ChatService(db)
             history = [{"role": m.role, "content": m.content} for m in request.history]
-            for event in chat_service.chat_stream(request.message, history):
+            async for event in chat_service.chat_stream(request.message, history):
                 if event.get("type") == "step":
                     steps.append(event["data"])
                 elif event.get("type") == "answer":

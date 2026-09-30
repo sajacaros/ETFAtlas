@@ -2,7 +2,7 @@
 
 ## 개요
 
-ETF Atlas 챗봇은 **smolagents**의 `CodeAgent`를 사용하며, 총 **10개의 커스텀 도구**를 제공합니다.
+ETF Atlas 챗봇은 **pydantic-ai** tool-calling 에이전트를 사용하며, 총 **10개의 커스텀 도구**를 제공합니다.
 모든 도구는 `backend/app/services/chat_service.py`에 정의되어 있습니다.
 
 ---
@@ -276,20 +276,19 @@ ORDER BY e.name LIMIT 10
 **그래프 스키마**
 ```
 노드:
-  - ETF(code, name, expense_ratio, updated_at)
+  - ETF(code, name, expense_ratio, net_assets, close_price, return_1d, return_1w, return_1m, market_cap_change_1w, updated_at)
   - Stock(code, name, is_etf)
   - Company(name)
-  - Sector(name)
-  - Market(name)
   - Tag(name)
+  - Price(date, open, high, low, close, volume, nav, market_cap, net_assets, trade_value, change_rate)
+  - User(user_id)
 
 관계:
   - (ETF)-[:HOLDS {date, weight, shares}]->(Stock)
   - (ETF)-[:MANAGED_BY]->(Company)
-  - (Stock)-[:BELONGS_TO]->(Sector)
-  - (Stock)-[:PART_OF]->(Market)
   - (ETF)-[:TAGGED]->(Tag)
-  - (ETF)-[:HAS_CHANGE {date, change_type}]->(Stock)
+  - (ETF)-[:HAS_PRICE]->(Price), (Stock)-[:HAS_PRICE]->(Price)
+  - (User)-[:WATCHES {added_at}]->(ETF)
 ```
 
 **Cypher 작성 규칙**
@@ -350,7 +349,7 @@ RETURN {etf_code: e.code, etf_name: e.name, weight_samsung: lh1.weight, weight_t
 
 ---
 
-## CodeAgent의 도구 활용 방식
+## 에이전트의 도구 활용 방식
 
 ### 아키텍처
 
@@ -359,110 +358,61 @@ RETURN {etf_code: e.code, etf_name: e.name, weight_samsung: lh1.weight, weight_t
     ↓
 FastAPI POST /api/chat/message (또는 /message/stream)
     ↓
-ChatService._build_prompt()  ← 시스템 프롬프트 + 최근 10개 대화 + 현재 질문
+ChatService._build_prompt()  ← 유사 해결 절차 예시(pgvector) + 최근 10개 대화 + 현재 질문
     ↓
-CodeAgent.run(prompt)  ← ReAct 루프 시작
+agent.run_stream_events(prompt)  ← instructions = 시스템 프롬프트 + 태그 목록
     ↓
 ┌─────────────────────────────────────────────────┐
-│  ReAct Loop (최대 10 스텝)                        │
+│  tool-calling 루프 (모델 요청 최대 15회)             │
 │                                                   │
-│  1. Thought: LLM이 무엇을 해야 하는지 추론         │
-│  2. Action:  LLM이 Python 코드를 생성              │
-│  3. Observation: 코드 실행 결과를 관찰              │
-│  4. 반복 또는 final_answer() 호출                  │
+│  1. LLM이 도구 호출(JSON 인자)을 반환 — 여러 개 병렬 가능 │
+│  2. 도구 실행 → 결과를 LLM에 전달                    │
+│  3. 반복하다가 도구 호출 없이 텍스트를 반환하면 종료     │
 └─────────────────────────────────────────────────┘
     ↓
-final_answer("최종 답변 텍스트")
-    ↓
-사용자에게 응답 반환
+최종 답변 텍스트 → 사용자에게 응답
 ```
 
-### CodeAgent가 특별한 이유
+### CodeAgent(smolagents)에서 바꾼 이유 (2026-09)
 
-일반적인 에이전트 프레임워크(LangChain 등)에서는 LLM이 **JSON**으로 도구 호출을 정의합니다:
-```json
-{"tool": "etf_search", "arguments": {"query": "KODEX"}}
-```
+이전에는 smolagents `CodeAgent`가 LLM이 생성한 **Python 코드**를 백엔드 프로세스에서 실행했다. 지금은 LLM이 **JSON 인자**로 도구를 호출하고, 코드는 실행하지 않는다.
 
-하지만 CodeAgent는 LLM이 **Python 코드**를 직접 생성하고 실행합니다:
-```python
-# 에이전트가 생성한 코드 예시
-results = etf_search(query="KODEX")
-import json
-data = json.loads(results)
-codes = [item["code"] for item in data]
-info = get_etf_info(etf_code=codes[0])
-final_answer(f"KODEX 200의 정보: {info}")
-```
+- **보안**: LLM 생성 코드 실행 제거 (`LocalPythonExecutor`는 샌드박스가 아니었음)
+- **타입 검증**: 도구 인자를 JSON 스키마로 검증, 잘못된 인자는 재시도 프롬프트(`RetryPromptPart`)로 LLM에 되돌림 → step의 `error`로 표시
+- **병렬 호출**: 독립적인 조회는 한 번의 모델 응답에서 여러 도구를 호출 (같은 질문 기준 CodeAgent 약 13초 → 약 7초)
+- 도구는 하나의 DB 세션을 공유하므로 `sequential=True`로 등록해 실제 실행은 순차로 한다
+- 정렬·필터링은 LLM이 결과를 보고 직접 하거나, 대상이 많으면 `graph_query`의 ORDER BY/LIMIT을 쓰도록 프롬프트로 안내
 
-이 방식의 장점:
-- **도구 체이닝**: 변수에 결과를 저장하고 다음 도구의 입력으로 사용
-- **데이터 가공**: Python의 리스트/딕셔너리 조작으로 결과를 자유롭게 변환
-- **조건 분기**: if/else로 결과에 따라 다른 도구 호출 가능
-- **반복 처리**: for 루프로 여러 항목을 순회하며 도구 호출 가능
+### 도구 등록 방식
+
+각 도구는 `ChatTool` 서브클래스로 `name`, `description`, `inputs`(JSON 스키마 properties, `nullable: True`면 선택 인자), `forward()`를 정의한다.
+`ChatTool.as_agent_tool()`이 `pydantic_ai.Tool.from_schema(...)`로 변환한다. 선택 인자에 `null`이 오면 `forward()` 기본값을 쓴다.
 
 ### 실제 질의 흐름 예시
 
 #### 예시 1: "삼성전자를 가장 많이 보유한 ETF는?"
 
 ```
-[Step 1] Thought: 먼저 삼성전자의 종목 코드를 확인해야 합니다.
-         Code: result = stock_search(query="삼성전자")
-         Observation: [{"code": "005930", "name": "삼성전자"}]
-
-[Step 2] Thought: 종목 코드 005930을 보유한 ETF를 그래프에서 조회합니다.
-         Code: result = graph_query(cypher="""
-             MATCH (e:ETF)-[h:HOLDS]->(s:Stock {code: '005930'})
-             WITH e, h ORDER BY h.date DESC
-             WITH e, head(collect(h)) as latest
-             RETURN {etf_code: e.code, etf_name: e.name, weight: latest.weight}
-             ORDER BY latest.weight DESC LIMIT 5
-         """)
-         Observation: [{"etf_code": "069500", "etf_name": "KODEX 200", "weight": 30.5}, ...]
-
-[Step 3] Thought: 결과를 정리하여 답변합니다.
-         Code: final_answer("삼성전자(005930)를 가장 많이 보유한 ETF는 ...\n1. KODEX 200: 30.5%\n...")
+[Step 1] stock_search(query="삼성전자")
+         → [{"code": "005930", "name": "삼성전자"}]
+[Step 2] graph_query(cypher="MATCH (e:ETF)-[h:HOLDS]->(s:Stock {code: '005930'}) WITH e, h ORDER BY h.date DESC WITH e, head(collect(h)) as latest RETURN {etf_code: e.code, etf_name: e.name, weight: latest.weight} ORDER BY latest.weight DESC LIMIT 5")
+         → [{"etf_code": "069500", "etf_name": "KODEX 200", "weight": "30.50%"}, ...]
+[답변]   | ETF | 코드 | 비중 | ... 마크다운 표
 ```
 
 #### 예시 2: "KODEX 200과 TIGER 200 비교해줘"
 
 ```
-[Step 1] Thought: 두 ETF의 코드를 먼저 확인합니다.
-         Code:
-           kodex = etf_search(query="KODEX 200")
-           tiger = etf_search(query="TIGER 200")
-
-[Step 2] Thought: 확인된 코드로 비교 도구를 호출합니다.
-         Code: result = compare_etfs(etf_codes="069500,102110")
-         Observation: [{"code": "069500", ...}, {"code": "102110", ...}]
-
-[Step 3] Thought: 비교 결과를 표 형태로 정리합니다.
-         Code: final_answer("## KODEX 200 vs TIGER 200 비교\n| 항목 | KODEX 200 | TIGER 200 |\n...")
-```
-
-#### 예시 3: "반도체 관련 ETF 보수율 낮은 순으로"
-
-```
-[Step 1] Thought: 먼저 반도체 관련 태그명을 확인합니다.
-         Code: tags = list_tags()
-         Observation: [{"name": "반도체", "count": 15}, ...]
-
-[Step 2] Thought: 반도체 태그가 있으므로 그래프 쿼리로 조회합니다.
-         Code: result = graph_query(cypher="""
-             MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '반도체'})
-             RETURN {code: e.code, name: e.name, expense_ratio: e.expense_ratio}
-             ORDER BY e.expense_ratio ASC
-         """)
-
-[Step 3] Code: final_answer("반도체 ETF (보수율 낮은 순):\n1. ...")
+[Step 1] etf_search(query="KODEX 200")     ┐ 한 번의 모델 응답에서
+[Step 2] etf_search(query="TIGER 200")     ┘ 병렬 호출
+[Step 3] compare_etfs(etf_codes="069500,102110")
+[답변]   비교 표
 ```
 
 ### 도구 사용 순서 가이드라인 (시스템 프롬프트)
 
-에이전트에게 주어진 도구 사용 순서 규칙:
-
 1. **종목명** 등장 → `stock_search`로 코드 먼저 확인
-2. **태그/테마** 등장 → `list_tags`로 정확한 태그명 확인
+2. **태그/테마** 등장 → instructions의 태그 목록에서 정확한 태그명 확인
 3. **ETF명** 등장 → `etf_search`로 코드 먼저 확인
 4. 확인된 코드/태그명으로 → **전용 도구** 실행
 5. ETF 비교 → `compare_etfs` 사용
@@ -471,33 +421,34 @@ final_answer(f"KODEX 200의 정보: {info}")
 ### 에이전트 설정
 
 ```python
-# LiteLLM 프록시는 OpenAI 호환 API이므로 smolagents OpenAIModel(openai SDK)로 직접 호출
-model = OpenAIModel(
-    model_id=settings.llm_model,        # LLM_MODEL (기본 qwen38-27b)
-    api_base=settings.llm_api_base,     # LLM_API_BASE (기본 http://localhost:4000)
-    api_key=settings.llm_api_key,       # LLM_API_KEY
+model = OpenAIChatModel(
+    settings.llm_model,                 # LLM_MODEL (기본 qwen38-27b)
+    provider=OpenAIProvider(
+        base_url=settings.llm_api_base, # LLM_API_BASE (기본 http://localhost:4000)
+        api_key=settings.llm_api_key,   # LLM_API_KEY
+    ),
 )
-CodeAgent(
-    tools=[...10개 도구...],
-    model=model,
-    additional_authorized_imports=["json", "datetime"],  # 허용 임포트
-    max_steps=15,                                        # 최대 추론 스텝
-)
+agent = Agent(model, instructions=..., tools=[t.as_agent_tool() for t in tools])
+agent.run_stream_events(prompt, usage_limits=UsageLimits(request_limit=15))
 ```
 
 | 설정 | 값 | 설명 |
 |------|-----|------|
-| LLM | `LLM_MODEL` (기본 qwen38-27b) | LiteLLM 프록시(OpenAI 호환)를 smolagents `OpenAIModel`로 호출 (`litellm` 패키지 미사용) |
-| 최대 스텝 | 15 | 무한 루프 방지 |
-| 허용 임포트 | json, datetime | 보안상 최소 임포트만 허용 |
-| 대화 히스토리 | 최근 10개 | 토큰 비용 최적화 |
+| LLM | `LLM_MODEL` (기본 qwen38-27b) | LiteLLM 프록시(OpenAI 호환), `pydantic-ai-slim[openai]` |
+| 최대 모델 요청 | 15 | 무한 루프 방지 (`UsageLimitExceeded` 시 폴백) |
+| 대화 히스토리 | 최근 10개 | 프롬프트에 "참고용" 텍스트로 포함 |
 | 관찰 결과 제한 | 2,000자 | UI 성능 보호 |
-| few-shot 예제 | 유사 코드 예제 최대 3개 | `code_examples` pgvector 검색 (`EMBEDDING_MODEL`, 768차원) |
+| few-shot 예제 | 유사 해결 절차 최대 3개 | `code_examples` pgvector 검색 (`EMBEDDING_MODEL`, 768차원) |
 
-### 에러 처리 (3단계 폴백)
+### 해결 절차 예시(few-shot)와 피드백 루프
 
-1. `agent.run()` 성공 → 결과 + 스텝 반환
-2. `agent.run()` 실패, 관찰 결과 있음 → 마지막 관찰 결과를 답변으로 사용
+- `code_examples.code`에는 도구 호출 순서를 의사코드로 저장한다. 시드 36개는 CodeAgent 시절의 Python 형태 그대로이며, 프롬프트에 "실행할 수 없는 참고 절차"로 들어간다
+- 채팅 로그의 `generated_code`는 성공한 도구 호출을 `name(key="value")` 한 줄씩 이어 붙인 것 → 관리자가 승인해 임베딩하면 새 예시가 된다
+
+### 에러 처리 (폴백)
+
+1. 정상 종료 → 최종 텍스트 반환
+2. 요청 한도 초과/예외, 도구 결과 있음 → 마지막 도구 결과를 답변으로 사용
 3. 모두 실패 → `"죄송합니다. 답변 생성에 실패했습니다. 다시 질문해 주세요."`
 
 ### 스트리밍 동작
@@ -505,11 +456,14 @@ CodeAgent(
 `POST /api/chat/message/stream` 엔드포인트는 SSE(Server-Sent Events)로 실시간 전달:
 
 ```json
-// 추론 단계마다
-{"type": "step", "data": {"step_number": 1, "code": "...", "observations": "...", "tool_calls": [...], "error": null}}
+// 유사 예시가 있으면 먼저
+{"type": "matched_examples", "data": {"examples": [...]}}
+
+// 도구 호출 1건마다 (code = 도구 호출 표기)
+{"type": "step", "data": {"step_number": 1, "code": "etf_search(query=\"KODEX\")", "observations": "...", "tool_calls": [...], "error": null}}
 
 // 최종 답변
 {"type": "answer", "data": {"answer": "최종 답변 텍스트"}}
 ```
 
-프론트엔드에서 각 스텝을 접이식 UI로 표시하여 에이전트의 사고 과정을 실시간으로 확인 가능합니다.
+프론트엔드에서 각 스텝을 접이식 UI로 표시하여 에이전트의 도구 호출 과정을 실시간으로 확인 가능합니다.

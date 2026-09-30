@@ -2,7 +2,7 @@ import json
 import logging
 from typing import List, Dict
 from sqlalchemy.orm import Session
-from smolagents import Tool, CodeAgent, LiteLLMModel
+from smolagents import Tool, CodeAgent, OpenAIModel
 from ..config import get_settings
 from .graph_service import GraphService
 from .embedding_service import EmbeddingService
@@ -606,8 +606,9 @@ class ChatService:
 
     def _init_agent(self):
         """ReAct용 CodeAgent를 초기화한다."""
-        model = LiteLLMModel(
-            model_id=f"openai/{self._settings.llm_model}",
+        # LiteLLM 프록시는 OpenAI 호환 API이므로 openai SDK 기반 모델로 직접 호출
+        model = OpenAIModel(
+            model_id=self._settings.llm_model,
             api_base=self._settings.llm_api_base,
             api_key=self._settings.llm_api_key,
         )

@@ -18,7 +18,7 @@ from age_utils import (
 log = logging.getLogger(__name__)
 
 ALLOWED_TAGS = [
-    '반도체', 'AI',
+    '반도체', 'AI', 'IT',
     '2차전지', '자동차', '로봇', '방산', '우주항공',
     '조선', '전력', '재생에너지', '원전', '소부장',
     '금융', '바이오',
@@ -93,6 +93,7 @@ def tag_all_etfs(**context):
         KEYWORD_TAG_RULES = [
             (['반도체'], '반도체'),
             (['AI', '인공지능'], 'AI'),
+            (['IT', '소프트웨어', '인터넷', '플랫폼', '메타버스'], 'IT'),
             (['2차전지', '배터리'], '2차전지'),
             (['자동차', '모빌리티'], '자동차'),
             (['로봇'], '로봇'),
@@ -110,8 +111,8 @@ def tag_all_etfs(**context):
             (['엔터', 'KPOP', 'K-POP', '미디어'], '엔터'),
             (['뷰티', '화장품'], '뷰티'),
             (['배당'], '고배당'),
-            (['주주환원', '자사주'], '주주환원'),
-            (['그룹'], '그룹주'),
+            (['주주환원', '자사주', '밸류업'], '주주환원'),
+            (['그룹', '지주'], '그룹주'),
         ]
 
         index_etfs = {}
@@ -212,21 +213,23 @@ ETF 이름과 주요 보유종목을 보고, 아래 고정 태그 목록에서 �
 
 규칙:
 - 반드시 위 목록에 있는 태그만 사용 (새로운 태그 생성 금지)
-- 1~3개 태그를 선택
+- 0~3개 태그를 선택
 - 가장 핵심적인 테마/산업 태그를 우선 선택
-- 해당되는 태그가 없으면 가장 가까운 태그를 선택"""
+- 시장 전체를 담는 ETF(대형주, 우량주, ESG 등)처럼 맞는 태그가 없으면 빈 목록을 반환"""
 
-        few_shot_input = """- [069500] KODEX 반도체: 삼성전자, SK하이닉스, 한미반도체, 리노공업, ISC
+        few_shot_input = """- [091160] KODEX 반도체: 삼성전자, SK하이닉스, 한미반도체, 리노공업, ISC
 - [364690] TIGER 2차전지테마: LG에너지솔루션, 삼성SDI, 에코프로비엠, 포스코퓨처엠
-- [091170] KODEX 은행: KB금융, 신한지주, 하나금융지주, 우리금융지주, 기업은행"""
+- [091170] KODEX 은행: KB금융, 신한지주, 하나금융지주, 우리금융지주, 기업은행
+- [102780] KODEX 삼성그룹: 삼성전자, 삼성바이오로직스, 삼성물산, 삼성생명, 삼성SDI"""
 
         few_shot_output = json.dumps({"results": [
-            {"code": "069500", "tags": ["반도체"]},
-            {"code": "364690", "tags": ["2차전지", "소재"]},
+            {"code": "091160", "tags": ["반도체"]},
+            {"code": "364690", "tags": ["2차전지", "소부장"]},
             {"code": "091170", "tags": ["금융"]},
+            {"code": "102780", "tags": ["그룹주"]},
         ]}, ensure_ascii=False)
 
-        def classify(etf_list: str) -> ETFTagBatchResult:
+        def classify(etf_list: str, thinking: bool = True) -> ETFTagBatchResult:
             completion = client.chat.completions.parse(
                 model=llm_model,
                 messages=[
@@ -238,13 +241,15 @@ ETF 이름과 주요 보유종목을 보고, 아래 고정 태그 목록에서 �
                 response_format=ETFTagBatchResult,
                 temperature=0,
                 max_tokens=8192,  # 추론 모델: reasoning 토큰 포함
+                extra_body=None if thinking else {
+                    'chat_template_kwargs': {'enable_thinking': False}},
             )
             parsed = completion.choices[0].message.parsed
             if parsed is None:
                 raise ValueError("LLM returned no parsable result")
             return parsed
         untagged_list = list(llm_etfs.items())
-        batch_size = 10
+        batch_size = 5
         llm_tagged = 0
 
         for i in range(0, len(untagged_list), batch_size):
@@ -257,7 +262,12 @@ ETF 이름과 주요 보유종목을 보고, 아래 고정 태그 목록에서 �
                 etf_texts.append(f"- [{code}] {name}: {holdings_str}")
 
             try:
-                result = classify("\n".join(etf_texts))
+                try:
+                    result = classify("\n".join(etf_texts))
+                except Exception as e:
+                    # 추론이 토큰 한도를 다 쓰는 경우가 있어 추론 없이 한 번 더
+                    log.warning(f"LLM batch {i // batch_size + 1} failed ({e}); retrying without thinking")
+                    result = classify("\n".join(etf_texts), thinking=False)
                 for etf_tag in result.results:
                     tag_values = [t.value for t in etf_tag.tags
                                   if t.value in allowed_set]

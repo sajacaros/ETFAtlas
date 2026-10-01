@@ -2,6 +2,7 @@
 ETF 태그 전체 재구축 DAG (Apache AGE)
 
 기존 TAGGED 관계 삭제 후, 룰 기반 + 키워드 + LLM 태깅으로 전체 재구축.
+관리자가 수동 지정한 ETF(ETF.manual_tags)는 규칙/LLM을 건너뛰고 지정한 태그를 그대로 쓴다.
 LLM_API_KEY 필요 (LiteLLM 프록시). 수동 트리거 또는 주간 스케줄.
 """
 
@@ -70,6 +71,7 @@ def tag_all_etfs(**context):
         # 1. 전체 ETF 목록
         all_etfs_result = execute_cypher(cur, "MATCH (e:ETF) RETURN e")
         all_etfs = {}
+        manual_etfs = {}  # code → 관리자 지정 태그 (빈 리스트면 태그 없음)
         for row in all_etfs_result:
             if row[0]:
                 raw = _parse_age_value(row[0])
@@ -81,14 +83,18 @@ def tag_all_etfs(**context):
                     props = data.get('properties', data)
                     code = props.get('code', '')
                     name = props.get('name', '')
-                    if code:
+                    if not code:
+                        continue
+                    if props.get('manual_tags') is not None:
+                        manual_etfs[code] = props['manual_tags']
+                    else:
                         all_etfs[code] = name
 
-        if not all_etfs:
+        if not all_etfs and not manual_etfs:
             log.info("No ETFs found")
             return
 
-        log.info(f"Re-tagging all {len(all_etfs)} ETFs")
+        log.info(f"Re-tagging {len(all_etfs)} ETFs (manual: {len(manual_etfs)} kept)")
 
         # 2. 인덱스 / 키워드 / LLM 분류
         KEYWORD_TAG_RULES = [
@@ -141,8 +147,11 @@ def tag_all_etfs(**context):
             else:
                 llm_etfs[code] = name
 
-        # ── 2-1. 인덱스 + 키워드 태그 쌍 수집 (메모리) ──
-        all_tag_pairs = []
+        # ── 2-1. 수동 + 인덱스 + 키워드 태그 쌍 수집 (메모리) ──
+        all_tag_pairs = [
+            {'code': c, 'tag_name': t}
+            for c, tags in manual_etfs.items() for t in tags
+        ]
 
         if index_etfs:
             all_tag_pairs.extend(
@@ -310,6 +319,7 @@ ETF 이름과 주요 보유종목을 보고, 아래 고정 태그 목록에서 �
         conn.commit()
         total_tagged = len(index_etfs) + len(keyword_etfs) + llm_tagged
         log.info(f"Tagging complete: {total_tagged}/{len(all_etfs)} "
+                 f"+ manual {len(manual_etfs)} "
                  f"(index: {len(index_etfs)}, keyword: {len(keyword_etfs)}, "
                  f"llm: {llm_tagged})")
 

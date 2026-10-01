@@ -54,10 +54,10 @@ RDB JOIN으로도 가능하지만, 그래프는 관계 탐색이 직관적이고
 
 | 라벨 | 속성 | 생성 주체 | 설명 |
 |------|------|-----------|------|
-| ETF | code, name, expense_ratio, net_assets, close_price, return_1d, return_1w, return_1m, market_cap_change_1w, updated_at | DAG: collect_universe_and_prices, update_etf_returns | ETF 종목 |
+| ETF | code, name, expense_ratio, net_assets, close_price, return_1d, return_1w, return_1m, market_cap_change_1w, updated_at, manual_tags | DAG: collect_universe_and_prices, update_etf_returns. manual_tags는 관리자 페이지 | ETF 종목. manual_tags(태그 이름 리스트)가 있으면 age_tagging이 자동 태깅 대신 그 값을 쓴다 (빈 리스트 = 태그 없음 고정) |
 | Stock | code, name, is_etf | DAG: collect_holdings | 보유 종목 (ETF인 경우 is_etf=true). 주식 이름은 KIS `hts_kor_isnm` |
 | Company | name | DAG: collect_universe_and_prices | 운용사 (삼성자산운용 등) |
-| Tag | name | DAG: age_tagging | 테마/분류 태그 (반도체, AI 등) |
+| Tag | name | DAG: age_tagging | 테마/분류 태그 (반도체, AI 등). ETF별 태그는 관리자 페이지에서 수동 지정 가능 |
 | Price | date, open, high, low, close, volume, nav, market_cap, net_assets, trade_value, change_rate | DAG: collect_universe_and_prices, collect_stock_prices_for_dates | 일별 가격 데이터. OHLCV·거래대금은 KIS 일봉, ETF의 nav/net_assets/market_cap은 KIS 현재가 스냅샷이라 수집 시점의 최근 거래일에만 값이 있다 (이전 날짜는 null). change_rate는 Stock만 |
 | User | user_id | Backend: graph_service | 사용자 (즐겨찾기용. 역할은 RDB `user_roles`) |
 

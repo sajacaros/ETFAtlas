@@ -7,6 +7,7 @@ from ..database import get_db
 from ..utils.jwt import get_current_user_id
 from ..services.embedding_service import EmbeddingService
 from ..services.auth_service import is_admin
+from ..services.graph_service import GraphService
 from ..models.chat import ChatLog, ChatLogStatus
 from ..models.code_example import CodeExample
 from ..utils.time import utcnow
@@ -15,6 +16,7 @@ from ..schemas.chat import (
     CodeExampleUpdate,
     ReviewRequest,
     EmbedRequest,
+    ETFTagsUpdate,
 )
 
 logger = logging.getLogger(__name__)
@@ -367,3 +369,35 @@ async def withdraw_embedding(
     db.commit()
 
     return {"chat_log_id": chat_log.id, "status": chat_log.status}
+
+
+# === ETF Tags ===
+
+@router.get("/etf-tags")
+async def list_etf_tags(
+    db: Session = Depends(get_db),
+    admin_id: int = Depends(get_admin_user_id),
+):
+    """전체 ETF와 태그, 선택 가능한 태그 목록."""
+    graph = GraphService(db)
+    return {"items": graph.get_etf_tag_overview(), "tags": graph.get_tag_names()}
+
+
+@router.put("/etf-tags/{etf_code}")
+async def update_etf_tags(
+    etf_code: str,
+    body: ETFTagsUpdate,
+    db: Session = Depends(get_db),
+    admin_id: int = Depends(get_admin_user_id),
+):
+    """ETF 태그 수동 지정(tags 리스트) 또는 해제(tags=null)."""
+    graph = GraphService(db)
+    if not graph.get_etf_tag_overview(etf_code):
+        raise HTTPException(status_code=404, detail="ETF not found")
+    if body.tags is not None:
+        unknown = set(body.tags) - set(graph.get_tag_names())
+        if unknown:
+            raise HTTPException(status_code=400, detail=f"Unknown tags: {sorted(unknown)}")
+        body.tags = list(dict.fromkeys(body.tags))
+    graph.set_manual_tags(etf_code, body.tags)
+    return graph.get_etf_tag_overview(etf_code)[0]

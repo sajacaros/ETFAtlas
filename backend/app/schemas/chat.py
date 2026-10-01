@@ -56,6 +56,10 @@ class CodeExampleUpdate(BaseModel):
     description: Optional[str] = None
 
 
+class ETFTagsUpdate(BaseModel):
+    tags: Optional[list[str]] = None  # None: 수동 지정 해제, []: 태그 없음으로 고정
+
+
 # --- Admin Chat Log Review ---
 class ReviewRequest(BaseModel):
     action: str  # "approve" or "reject"

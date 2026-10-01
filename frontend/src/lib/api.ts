@@ -23,6 +23,8 @@ import type {
   ChatResponse,
   AdminCodeExampleList,
   AdminChatLogList,
+  AdminETFTag,
+  AdminETFTagList,
   SharedPortfolioListItem,
   SharedPortfolioDetail,
   SharedReturnsResponse,
@@ -384,6 +386,15 @@ export const adminApi = {
   },
   withdrawChatLog: async (id: number) => {
     const { data } = await api.post(`/admin/chat-logs/${id}/withdraw`)
+    return data
+  },
+  listETFTags: async () => {
+    const { data } = await api.get<AdminETFTagList>('/admin/etf-tags')
+    return data
+  },
+  // tags=null: 수동 지정 해제 (다음 태깅 때 자동으로 다시 계산)
+  updateETFTags: async (code: string, tags: string[] | null) => {
+    const { data } = await api.put<AdminETFTag>(`/admin/etf-tags/${code}`, { tags })
     return data
   },
 }

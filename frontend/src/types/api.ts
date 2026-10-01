@@ -45,6 +45,19 @@ export interface AdminChatLogList {
   total: number
 }
 
+export interface AdminETFTag {
+  code: string
+  name: string
+  net_assets: number | null
+  tags: string[]
+  manual: boolean
+}
+
+export interface AdminETFTagList {
+  items: AdminETFTag[]
+  tags: string[]
+}
+
 export interface ETF {
   code: string
   name: string

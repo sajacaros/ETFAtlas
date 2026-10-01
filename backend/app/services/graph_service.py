@@ -11,7 +11,7 @@ class GraphService:
     def __init__(self, db: Session):
         self.db = db
 
-    def execute_cypher(self, query: str, params: Dict[str, Any] = None) -> List[Dict]:
+    def execute_cypher(self, query: str, params: Dict[str, Any] = None, raise_errors: bool = False) -> List[Dict]:
         set_path = "SET search_path = ag_catalog, \"$user\", public;"
         load_age = "LOAD 'age';"
 
@@ -43,6 +43,8 @@ class GraphService:
         except Exception as e:
             print(f"Cypher query error: {e}")
             self.db.rollback()
+            if raise_errors:
+                raise
             return []
 
     @staticmethod
@@ -270,6 +272,50 @@ class GraphService:
         """
         rows = self.execute_cypher(query, {"etf_code": etf_code})
         return [self.parse_agtype(row["result"])["name"] for row in rows]
+
+    # ── 태그 관리 (관리자) ──
+    # ETF.manual_tags가 있으면 age_tagging DAG가 규칙/LLM 대신 그 값을 쓴다. 빈 리스트는 "태그 없음"으로 고정.
+
+    def get_tag_names(self) -> List[str]:
+        rows = self.execute_cypher("MATCH (t:Tag) RETURN t.name ORDER BY t.name")
+        return [self.parse_agtype(row["result"]) for row in rows]
+
+    def get_etf_tag_overview(self, etf_code: str | None = None) -> List[Dict]:
+        """ETF와 현재 태그, 수동 지정 여부 (순자산순). etf_code를 주면 그 ETF만."""
+        match = "MATCH (e:ETF {code: $etf_code})" if etf_code else "MATCH (e:ETF)"
+        query = match + """
+        OPTIONAL MATCH (e)-[:TAGGED]->(t:Tag)
+        WITH e, collect(t.name) AS tags
+        RETURN {code: e.code, name: e.name, net_assets: e.net_assets, tags: tags, manual_tags: e.manual_tags}
+        ORDER BY e.net_assets DESC
+        """
+        items = []
+        for row in self.execute_cypher(query, {"etf_code": etf_code} if etf_code else None):
+            item = self.parse_agtype(row["result"])
+            item["manual"] = item.pop("manual_tags", None) is not None
+            items.append(item)
+        return items
+
+    def set_manual_tags(self, etf_code: str, tags: List[str] | None) -> None:
+        """ETF 태그를 수동 지정하고 TAGGED를 즉시 교체한다. None이면 수동 지정 해제(태그는 다음 태깅 때 다시 계산)."""
+        code = {"etf_code": etf_code}
+        if tags is None:
+            self.execute_cypher("MATCH (e:ETF {code: $etf_code}) REMOVE e.manual_tags RETURN e.code",
+                                code, raise_errors=True)
+            self.db.commit()
+            return
+        # 태그 이름은 호출 전에 Tag 노드 목록으로 검증된 값만 들어온다
+        tag_list = "[" + ", ".join(json.dumps(t, ensure_ascii=False).replace('"', "'") for t in tags) + "]"
+        self.execute_cypher(f"MATCH (e:ETF {{code: $etf_code}}) SET e.manual_tags = {tag_list} RETURN e.code",
+                            code, raise_errors=True)
+        self.execute_cypher("MATCH (e:ETF {code: $etf_code})-[r:TAGGED]->(:Tag) DELETE r RETURN 1",
+                            code, raise_errors=True)
+        for tag in tags:
+            self.execute_cypher("""
+                MATCH (e:ETF {code: $etf_code}), (t:Tag {name: $tag})
+                CREATE (e)-[:TAGGED]->(t) RETURN 1
+            """, {**code, "tag": tag}, raise_errors=True)
+        self.db.commit()
 
     def get_etf_holdings_full(self, etf_code: str) -> List[Dict]:
         """ETF 전체 보유종목 (최신 날짜 기준)"""

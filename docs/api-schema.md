@@ -560,6 +560,33 @@ Authorization: Bearer {access_token}
 
 ---
 
+## 관리자 ETF 태그 API (관리자 권한 필요)
+
+### GET /api/admin/etf-tags
+
+전체 ETF(순자산순)와 현재 태그, 선택 가능한 태그 목록.
+
+```json
+{
+  "items": [{"code": "069500", "name": "KODEX 200", "net_assets": 25188200000000, "tags": ["코스피"], "manual": false}],
+  "tags": ["2차전지", "AI", "..."]
+}
+```
+
+### PUT /api/admin/etf-tags/{etf_code}
+
+ETF 태그를 수동 지정한다. 지정한 ETF는 `age_tagging`의 규칙/LLM 태깅에서 제외된다.
+
+| body | 동작 |
+|------|------|
+| `{"tags": ["전력", "원전"]}` | 해당 태그로 고정 (`TAGGED` 즉시 교체) |
+| `{"tags": []}` | 태그 없음으로 고정 |
+| `{"tags": null}` | 수동 지정 해제. 현재 태그는 다음 태깅 때 자동으로 다시 계산 |
+
+응답은 `items`의 원소 하나. 없는 태그는 400, 없는 ETF는 404.
+
+---
+
 ## TypeScript 타입 정의 (프론트엔드용)
 
 ```typescript

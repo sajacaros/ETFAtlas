@@ -545,7 +545,7 @@ class GraphQueryTool(ChatTool):
 관계: (ETF)-[:HOLDS {date, weight, shares}]->(Stock), (ETF)-[:MANAGED_BY]->(Company), (ETF)-[:TAGGED]->(Tag), (ETF)-[:HAS_PRICE]->(Price), (Stock)-[:HAS_PRICE]->(Price), (User)-[:WATCHES {added_at}]->(ETF)
 
 ## Cypher 작성 규칙
-1. MATCH로 시작하는 읽기 전용 쿼리만 가능 (CREATE/MERGE/DELETE/SET 불가)
+1. MATCH로 시작하는 읽기 전용 쿼리만 가능 (CREATE/MERGE/DELETE/SET 불가, '$$'와 ';' 사용 불가)
 2. RETURN은 반드시 단일 맵으로 감싸세요: RETURN {key1: val1, key2: val2}
 3. 문자열 값은 작은따옴표: {code: '005930'}
 4. 집계 함수와 ORDER BY를 함께 쓸 때 WITH 절로 분리하세요
@@ -581,19 +581,23 @@ RETURN {code: e.code, name: e.name, company: c.name}"""
         }
     }
 
-    FORBIDDEN = ("CREATE", "MERGE", "DELETE", "SET ", "REMOVE", "DROP")
-
     def __init__(self, db: Session):
         super().__init__()
         self.db = db
 
     def forward(self, cypher: str) -> str:
-        upper = cypher.strip().upper()
-        for kw in self.FORBIDDEN:
-            if kw in upper:
-                return f"오류: 읽기 전용 쿼리만 허용됩니다 ({kw} 사용 불가)"
-        graph_service = GraphService(self.db)
-        rows = graph_service.execute_cypher(cypher)
+        # 쓰기 차단은 읽기 전용 트랜잭션이 맡는다 (키워드 필터는 우회 가능해서 쓰지 않는다)
+        try:
+            rows = GraphService(self.db).execute_cypher_readonly(cypher)
+        except ValueError as e:
+            return f"오류: {e}"
+        except Exception as e:
+            cause = getattr(e, "pgerror", None) or str(e)
+            if "read-only transaction" in cause:
+                return "오류: 읽기 전용 쿼리만 허용됩니다 (MATCH ... RETURN 형태로 작성하세요)"
+            if "statement timeout" in cause:
+                return "오류: 쿼리 실행 시간(10초)을 넘었습니다. 조건을 좁히거나 LIMIT을 쓰세요"
+            return "쿼리 오류: " + cause.strip().splitlines()[0][:300]
         if not rows:
             return "조회 결과 없음"
         results = _format_expense_ratio([GraphService.parse_agtype(row["result"]) for row in rows])

@@ -264,7 +264,7 @@ ORDER BY e.name LIMIT 10
 | **클래스** | `GraphQueryTool` |
 | **용도** | Apache AGE에 Cypher 쿼리 직접 실행 (다른 도구로 해결 안 되는 복잡한 관계 질문용) |
 | **데이터 소스** | Apache AGE (Cypher 직접 실행) |
-| **보안** | 읽기 전용 (CREATE, MERGE, DELETE, SET, REMOVE, DROP 금지) |
+| **보안** | 별도 연결의 읽기 전용 트랜잭션(`SET TRANSACTION READ ONLY`) + `statement_timeout` 10초로 실행. 쓰기는 DB가 거부한다. 쿼리가 SQL의 `$$` 안에 들어가므로 `$$`·`;`가 있으면 실행 전에 거부(모든 `execute_cypher` 호출도 `$$`를 거부). 문법 오류는 오류 메시지를 LLM에 돌려준다 |
 
 **입력**
 | 파라미터 | 타입 | 필수 | 설명 |

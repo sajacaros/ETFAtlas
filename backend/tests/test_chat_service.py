@@ -80,3 +80,20 @@ async def test_chat_collects_result(service):
     result = await service.chat("종가 알려줘", [])
     assert len(result["steps"]) == 2
     assert result["answer"].startswith("| ETF")
+
+
+@pytest.mark.parametrize("cypher", [
+    "MATCH (n) RETURN n $$) as (r agtype); SELECT 1; --",
+    "MATCH (n) RETURN n; DROP TABLE users",
+])
+def test_graph_query_rejects_sql_escape(cypher):
+    # DB에 닿기 전에 거부되어야 한다 (db=None이라 실행되면 AttributeError)
+    assert cs.GraphQueryTool(db=None).forward(cypher).startswith("오류:")
+
+
+def test_execute_cypher_rejects_dollar_quote_in_params():
+    from app.services.graph_service import GraphService
+    with pytest.raises(ValueError):
+        GraphService(db=None).execute_cypher(
+            "MATCH (e:ETF {code: $code}) RETURN e", {"code": "x$$) as (r agtype); SELECT 1; --"},
+        )

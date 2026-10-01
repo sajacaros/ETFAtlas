@@ -25,6 +25,10 @@ class GraphService:
                 elif isinstance(value, (int, float)):
                     cypher = cypher.replace(f"${key}", str(value))
 
+        # 쿼리는 $$ 사이에 들어가므로 $$가 섞이면 Cypher 밖의 SQL로 빠져나간다
+        if "$$" in cypher:
+            raise ValueError("Cypher query must not contain '$$'")
+
         cypher_query = f"""
         SELECT * FROM cypher('etf_graph', $$
             {cypher}
@@ -46,6 +50,27 @@ class GraphService:
             if raise_errors:
                 raise
             return []
+
+    def execute_cypher_readonly(self, query: str, timeout_ms: int = 10_000) -> List[Dict]:
+        """외부(LLM)가 작성한 Cypher 실행. 별도 연결의 읽기 전용 트랜잭션 + 시간 제한 안에서 돌린다.
+
+        쓰기·탈출 시도와 문법 오류는 예외로 올린다(호출 측이 메시지를 LLM에 돌려준다).
+        """
+        if "$$" in query or ";" in query:
+            raise ValueError("쿼리에 '$$'나 ';'를 쓸 수 없습니다")
+        raw = self.db.get_bind().raw_connection()
+        try:
+            cur = raw.cursor()
+            # 인자 없이 execute하므로 psycopg2가 %를 치환하지 않는다
+            cur.execute("SET TRANSACTION READ ONLY")
+            cur.execute(f"SET LOCAL statement_timeout = {int(timeout_ms)}")
+            cur.execute("LOAD 'age'")
+            cur.execute('SET LOCAL search_path = ag_catalog, "$user", public')
+            cur.execute(f"SELECT * FROM cypher('etf_graph', $$ {query} $$) as (result agtype)")
+            return [{"result": row[0]} for row in cur.fetchall()]
+        finally:
+            raw.rollback()
+            raw.close()
 
     @staticmethod
     def parse_agtype(value: str) -> Any:

@@ -61,7 +61,7 @@ SELECT create_graph('etf_graph');  -- 그래프 생성
 | 관계 | 속성 | 설명 |
 |------|------|------|
 | `(ETF)-[:MANAGED_BY]->(Company)` | - | 운용사 |
-| `(ETF)-[:HOLDS]->(Stock)` | date, weight, shares | 보유종목 (KIS 수집일 기준 스냅샷, shares는 추정치) |
+| `(ETF)-[:HOLDS]->(Stock)` | date, weight, shares | 보유종목 (KIS 수집일 기준 스냅샷, shares는 추정치, 비중 상위 30개까지) |
 | `(ETF)-[:TAGGED]->(Tag)` | - | 태그 |
 | `(ETF\|Stock)-[:HAS_PRICE]->(Price)` | - | 가격 |
 | `(User)-[:WATCHES]->(ETF)` | added_at | 즐겨찾기 |

@@ -66,7 +66,7 @@ RDB JOIN으로도 가능하지만, 그래프는 관계 탐색이 직관적이고
 | 관계 | 방향 | 속성 | 설명 |
 |------|------|------|------|
 | MANAGED_BY | ETF → Company | - | 운용사 관계 |
-| HOLDS | ETF → Stock | date, weight, shares | 보유종목 (날짜별 스냅샷). KIS API 호출 시점 구성종목을 최근 거래일 날짜로 저장, shares는 평가금액/현재가 추정치 |
+| HOLDS | ETF → Stock | date, weight, shares | 보유종목 (날짜별 스냅샷). KIS API 호출 시점 구성종목을 최근 거래일 날짜로 저장, shares는 평가금액/현재가 추정치. KIS 제약으로 ETF당 비중 상위 30개까지만 |
 | TAGGED | ETF → Tag | - | 테마/분류 태그 |
 | HAS_PRICE | ETF/Stock → Price | - | 일별 가격 연결 |
 | WATCHES | User → ETF | added_at | 즐겨찾기 |

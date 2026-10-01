@@ -149,6 +149,7 @@ params: FID_COND_MRKT_DIV_CODE=J, FID_INPUT_ISCD={ETF코드}, FID_COND_SCR_DIV_C
 `airflow/dags/kis_api_client.py`의 `KISApiClient.get_etf_components(etf_code)`. 기본 `KIS_BASE_URL`은 실전투자 `https://openapi.koreainvestment.com:9443`.
 
 - **날짜 파라미터가 없다.** 항상 호출 시점의 구성종목을 반환하므로, 수집한 스냅샷을 최근 거래일 날짜의 HOLDS로 저장한다. 과거 구성종목 백필은 불가능하다.
+- **비중 상위 30개만 반환한다.** 연속 조회(`tr_cont`)를 지원하지 않아 다음 페이지를 요청해도 같은 30개가 온다. 구성종목이 많은 지수형 ETF는 비중 합이 100%에 못 미친다(KODEX 200: 202종목 중 30개, 합 약 85%). HOLDS는 "XX·YY 비중이 큰 ETF" 같은 챗봇 질의에 쓰는 것이라 상위 종목만으로 충분하다고 보고 그대로 둔다.
 - 접근 토큰(`/oauth2/tokenP`)은 24시간 유효, 발급은 1분 1회 제한 → `kis_tokens` 테이블에 캐시.
 - 초당 호출 제한(실전 20건/s) 대비 호출 간 최소 0.06초 간격, 제한 초과(`EGW00201`) 시 재시도.
 

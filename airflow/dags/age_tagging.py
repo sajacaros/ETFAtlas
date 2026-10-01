@@ -1,13 +1,15 @@
 """
-ETF 태그 전체 재구축 DAG (Apache AGE)
+ETF 태깅 DAG (Apache AGE)
 
-기존 TAGGED 관계 삭제 후, 룰 기반 + 키워드 + LLM 태깅으로 전체 재구축.
+아직 자동 태깅되지 않은 ETF(ETF.tagged_at 없음, 즉 신규 편입)만 룰 기반 + 키워드 + LLM으로 태깅한다.
+이미 태깅된 ETF는 매주 다시 LLM에 돌리지 않는다 — LLM 결과가 실행마다 달라 태그가 흔들리기 때문.
+규칙이나 태그 목록을 바꿨으면 params.full_rebuild=true로 수동 실행해 전체를 다시 태깅한다.
 관리자가 수동 지정한 ETF(ETF.manual_tags)는 규칙/LLM을 건너뛰고 지정한 태그를 그대로 쓴다.
 LLM_API_KEY 필요 (LiteLLM 프록시). 수동 트리거 또는 주간 스케줄.
 """
 
 from datetime import datetime, timedelta
-from airflow.sdk import DAG
+from airflow.sdk import DAG, Param
 from airflow.providers.standard.operators.python import PythonOperator
 import logging
 
@@ -44,18 +46,20 @@ default_args = {
 dag = DAG(
     'age_tagging',
     default_args=default_args,
-    description='ETF 태그 전체 재구축 (룰 + LLM)',
+    description='신규 ETF 태깅 (룰 + LLM), full_rebuild로 전체 재태깅',
     schedule='0 3 * * 6',  # 토요일 03:00 KST
     catchup=False,
+    params={'full_rebuild': Param(False, type='boolean',
+                                  description='이미 태깅된 ETF까지 전체 다시 태깅')},
     tags=['etf', 'weekly', 'age', 'tagging'],
 )
 
 
 def tag_all_etfs(**context):
-    """전체 ETF 태그 재구축: 룰 기반 + 키워드 + LLM
+    """대상 ETF 태깅: 룰 기반 + 키워드 + LLM. 대상은 신규 ETF(전체 재태깅이면 수동 지정 외 전부).
 
-    안전한 교체 방식: 새 태그를 먼저 구축한 뒤 기존 TAGGED 관계를 삭제하고 교체.
-    LLM 실패 시에도 기존 태그가 보존됨.
+    새 태그를 메모리에 모두 구한 뒤 대상 ETF의 TAGGED만 교체한다.
+    LLM이 실패한 ETF는 기존 태그를 그대로 두고 tagged_at도 남기지 않아 다음 실행에서 다시 시도한다.
     """
     import os
     import json
@@ -74,8 +78,10 @@ def tag_all_etfs(**context):
     try:
         # 1. 전체 ETF 목록
         all_etfs_result = execute_cypher(cur, "MATCH (e:ETF) RETURN e")
-        all_etfs = {}
+        full_rebuild = bool(context['params'].get('full_rebuild'))
+        all_etfs = {}  # 태깅 대상: code → name
         manual_etfs = {}  # code → 관리자 지정 태그 (빈 리스트면 태그 없음)
+        skipped = 0
         for row in all_etfs_result:
             if row[0]:
                 raw = _parse_age_value(row[0])
@@ -91,14 +97,17 @@ def tag_all_etfs(**context):
                         continue
                     if props.get('manual_tags') is not None:
                         manual_etfs[code] = props['manual_tags']
-                    else:
+                    elif full_rebuild or not props.get('tagged_at'):
                         all_etfs[code] = name
+                    else:
+                        skipped += 1
 
         if not all_etfs and not manual_etfs:
             log.info("No ETFs found")
             return
 
-        log.info(f"Re-tagging {len(all_etfs)} ETFs (manual: {len(manual_etfs)} kept)")
+        log.info(f"Tagging {len(all_etfs)} ETFs (full_rebuild={full_rebuild}, "
+                 f"already tagged: {skipped}, manual: {len(manual_etfs)})")
 
         # 2. 인덱스 / 키워드 / LLM 분류
         KEYWORD_TAG_RULES = [
@@ -170,28 +179,15 @@ def tag_all_etfs(**context):
             )
             log.info(f"Keyword ETFs matched: {len(keyword_etfs)}")
 
-        # ── 2-2. LLM 태깅용 보유종목 조회 (최신 날짜만) ──
-        # 최신 HOLDS 날짜 조회
-        latest_holds_result = execute_cypher(cur, """
-            MATCH ()-[h:HOLDS]->()
-            WITH DISTINCT h.date AS d
-            RETURN d ORDER BY d DESC LIMIT 1
-        """)
-        latest_holds_date = None
-        if latest_holds_result and latest_holds_result[0][0]:
-            latest_holds_date = _parse_age_value(latest_holds_result[0][0])
-
+        # ── 2-2. LLM 태깅용 현재 보유종목 조회 ──
         etf_holdings = {}
         for code in llm_etfs:
-            if latest_holds_date:
-                holdings_result = execute_cypher(cur, """
-                    MATCH (e:ETF {code: $code})-[h:HOLDS {date: $date}]->(s:Stock)
-                    RETURN s.name
-                    ORDER BY h.weight DESC
-                    LIMIT 10
-                """, {'code': code, 'date': latest_holds_date})
-            else:
-                holdings_result = []
+            holdings_result = execute_cypher(cur, """
+                MATCH (e:ETF {code: $code})-[h:CURRENT_HOLDS]->(s:Stock)
+                RETURN s.name
+                ORDER BY h.weight DESC
+                LIMIT 10
+            """, {'code': code})
             holdings = []
             for row in holdings_result:
                 if row[0]:
@@ -267,6 +263,7 @@ ETF 이름과 주요 보유종목을 보고, 아래 고정 태그 목록에서 �
         untagged_list = list(llm_etfs.items())
         batch_size = 5
         llm_tagged = 0
+        llm_failed = set()  # 이번에 태깅하지 못한 ETF — 기존 태그 유지, 다음 실행에서 재시도
 
         for i in range(0, len(untagged_list), batch_size):
             batch = untagged_list[i:i + batch_size]
@@ -284,7 +281,10 @@ ETF 이름과 주요 보유종목을 보고, 아래 고정 태그 목록에서 �
                     # 추론이 토큰 한도를 다 쓰는 경우가 있어 추론 없이 한 번 더
                     log.warning(f"LLM batch {i // batch_size + 1} failed ({e}); retrying without thinking")
                     result = classify("\n".join(etf_texts), thinking=False)
+                batch_codes = {code for code, _ in batch}
                 for etf_tag in result.results:
+                    if etf_tag.code not in batch_codes:  # LLM이 지어낸 코드
+                        continue
                     tag_values = [t.value for t in etf_tag.tags
                                   if t.value in allowed_set]
                     if not tag_values:
@@ -297,22 +297,26 @@ ETF 이름과 주요 보유종목을 보고, 아래 고정 태그 목록에서 �
                 log.info(f"LLM batch {i // batch_size + 1}: {len(batch)} ETFs")
             except Exception as e:
                 log.warning(f"Failed LLM batch {i // batch_size + 1}: {e}")
+                llm_failed.update(code for code, _ in batch)
 
-        # ── 3. 기존 태그 삭제 → 새 태그 일괄 적용 (단일 트랜잭션) ──
-        execute_cypher(cur, """
-            MATCH (e:ETF)-[r:TAGGED]->(t:Tag)
-            DELETE r RETURN r
-        """)
-        execute_cypher(cur, """
-            MATCH (t:Tag) DETACH DELETE t RETURN t
-        """)
-
+        # ── 3. 대상 ETF의 TAGGED만 교체 (단일 트랜잭션) ──
         all_tags = ALLOWED_TAGS + RULE_ONLY_TAGS + MANUAL_ONLY_TAGS
-        tag_init_items = [{'name': t} for t in all_tags]
         execute_cypher_batch(cur, """
             MERGE (t:Tag {name: item.name}) RETURN t
-        """, tag_init_items)
+        """, [{'name': t} for t in all_tags])
+        # 목록에서 빠진 태그 정리
+        execute_cypher(cur, f"""
+            MATCH (t:Tag) WHERE NOT t.name IN {json.dumps(all_tags, ensure_ascii=False)}
+            DETACH DELETE t RETURN 1
+        """)
 
+        tagged_codes = [c for c in all_etfs if c not in llm_failed]
+        replace_items = [{'code': c} for c in tagged_codes + list(manual_etfs)]
+        execute_cypher_batch(cur, """
+            MATCH (e:ETF {code: item.code})-[r:TAGGED]->(:Tag)
+            DELETE r RETURN 1
+        """, replace_items)
+        all_tag_pairs = [p for p in all_tag_pairs if p['code'] not in llm_failed]
         if all_tag_pairs:
             execute_cypher_batch(cur, """
                 MATCH (e:ETF {code: item.code})
@@ -320,12 +324,18 @@ ETF 이름과 주요 보유종목을 보고, 아래 고정 태그 목록에서 �
                 MERGE (e)-[:TAGGED]->(t) RETURN 1
             """, all_tag_pairs)
 
+        today = datetime.now().strftime('%Y-%m-%d')
+        execute_cypher_batch(cur, f"""
+            MATCH (e:ETF {{code: item.code}})
+            SET e.tagged_at = '{today}' RETURN 1
+        """, [{'code': c} for c in tagged_codes])
+
         conn.commit()
         total_tagged = len(index_etfs) + len(keyword_etfs) + llm_tagged
         log.info(f"Tagging complete: {total_tagged}/{len(all_etfs)} "
                  f"+ manual {len(manual_etfs)} "
                  f"(index: {len(index_etfs)}, keyword: {len(keyword_etfs)}, "
-                 f"llm: {llm_tagged})")
+                 f"llm: {llm_tagged}, llm failed: {len(llm_failed)})")
 
     finally:
         cur.close()

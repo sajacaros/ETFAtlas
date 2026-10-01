@@ -1,6 +1,7 @@
 """챗봇 few-shot 예시 원본 (질문 유형 → 도구 호출 순서).
 
 `code`는 도구 호출을 한 줄에 하나씩 적은 것이다. 챗봇 로그 승인 시 저장되는 형식과 같다.
+현재 구성종목은 CURRENT_HOLDS, 날짜별 이력 비교만 HOLDS를 쓴다.
 고유명사는 <종목명>, <ETF명>, <운용사> 같은 자리표시자로 두고, 앞 호출 결과를 쓰는 자리는
 <…의 code>처럼 적는다. 태그 이름은 고정 목록이라 그대로 쓴다.
 
@@ -72,34 +73,34 @@ graph_query(cypher="MATCH (e:ETF)-[:TAGGED]->(:Tag {name: '반도체'}) RETURN {
         "question": "금융 ETF 3개의 보유종목 상위 5개를 한눈에 비교해줘",
         "description": "태그 상위 N개 ETF의 최신 보유종목 상위 M개 (ETF별 collect)",
         "code": """\
-graph_query(cypher="MATCH (e:ETF)-[:TAGGED]->(:Tag {name: '금융'}) WITH e ORDER BY e.net_assets DESC LIMIT 3 MATCH (e)-[h:HOLDS]->(s:Stock) WITH e, s, h ORDER BY h.date DESC WITH e, s, head(collect(h)) AS latest WITH e, s, latest ORDER BY latest.weight DESC WITH e, collect({stock: s.name, weight: latest.weight}) AS holdings RETURN {code: e.code, name: e.name, top5: holdings[0..5]}")""",
+graph_query(cypher="MATCH (e:ETF)-[:TAGGED]->(:Tag {name: '금융'}) WITH e ORDER BY e.net_assets DESC LIMIT 3 MATCH (e)-[h:CURRENT_HOLDS]->(s:Stock) WITH e, s, h ORDER BY h.weight DESC WITH e, collect({stock: s.name, weight: h.weight}) AS holdings RETURN {code: e.code, name: e.name, top5: holdings[0..5]}")""",
     },
-    # ── 종목 → ETF (HOLDS) ──
+    # ── 종목 → ETF (현재 구성종목: CURRENT_HOLDS) ──
     {
         "question": "삼성전자를 보유한 ETF 중 보수율이 낮은 3개의 상세 정보를 알려줘",
-        "description": "종목 이름으로 보유 ETF(최신 HOLDS) → 보수율순 → 상세",
+        "description": "종목 이름으로 보유 ETF(CURRENT_HOLDS) → 보수율순 → 상세",
         "code": """\
-graph_query(cypher="MATCH (e:ETF)-[h:HOLDS]->(s:Stock {name: '<종목명>'}) WITH e, h ORDER BY h.date DESC WITH e, head(collect(h)) AS latest RETURN {code: e.code, name: e.name, weight: latest.weight, expense_ratio: e.expense_ratio} ORDER BY e.expense_ratio ASC LIMIT 3")
+graph_query(cypher="MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock {name: '<종목명>'}) RETURN {code: e.code, name: e.name, weight: h.weight, expense_ratio: e.expense_ratio} ORDER BY e.expense_ratio ASC LIMIT 3")
 # 결과 ETF마다
 get_etf_info(etf_code="<ETF의 code>")""",
     },
     {
         "question": "삼성전자를 가장 많이 담은 ETF를 알려줘",
-        "description": "종목 이름으로 보유 ETF(최신 HOLDS) → 비중순",
+        "description": "종목 이름으로 보유 ETF(CURRENT_HOLDS) → 비중순",
         "code": """\
-graph_query(cypher="MATCH (e:ETF)-[h:HOLDS]->(s:Stock {name: '<종목명>'}) WITH e, h ORDER BY h.date DESC WITH e, head(collect(h)) AS latest RETURN {code: e.code, name: e.name, weight: latest.weight, expense_ratio: e.expense_ratio} ORDER BY latest.weight DESC LIMIT 10")""",
+graph_query(cypher="MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock {name: '<종목명>'}) RETURN {code: e.code, name: e.name, weight: h.weight, expense_ratio: e.expense_ratio} ORDER BY h.weight DESC LIMIT 10")""",
     },
     {
         "question": "삼성전자와 SK하이닉스가 많이 들어있는 ETF를 수수료순으로 정렬해줘",
         "description": "여러 종목을 모두 보유한 ETF → 합산 비중 → 보수율순",
         "code": """\
-graph_query(cypher="MATCH (e:ETF)-[h:HOLDS]->(s:Stock) WHERE s.name IN ['<종목명1>', '<종목명2>'] WITH e, s, h ORDER BY h.date DESC WITH e, s, head(collect(h)) AS latest WITH e, count(s) AS matched, sum(latest.weight) AS weight_sum WHERE matched = 2 RETURN {code: e.code, name: e.name, weight_sum: weight_sum, expense_ratio: e.expense_ratio} ORDER BY e.expense_ratio ASC, weight_sum DESC LIMIT 10")""",
+graph_query(cypher="MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock) WHERE s.name IN ['<종목명1>', '<종목명2>'] WITH e, count(s) AS matched, sum(h.weight) AS weight_sum WHERE matched = 2 RETURN {code: e.code, name: e.name, weight_sum: weight_sum, expense_ratio: e.expense_ratio} ORDER BY e.expense_ratio ASC, weight_sum DESC LIMIT 10")""",
     },
     {
         "question": "삼성전자와 SK하이닉스를 동시에 보유한 ETF 중 보수율이 가장 낮은 3개 상세 정보",
         "description": "여러 종목 동시 보유(matched = 종목 수) → 보수율순 → 상세",
         "code": """\
-graph_query(cypher="MATCH (e:ETF)-[h:HOLDS]->(s:Stock) WHERE s.name IN ['<종목명1>', '<종목명2>'] WITH e, s, h ORDER BY h.date DESC WITH e, s, head(collect(h)) AS latest WITH e, count(s) AS matched, sum(latest.weight) AS weight_sum WHERE matched = 2 RETURN {code: e.code, name: e.name, weight_sum: weight_sum, expense_ratio: e.expense_ratio} ORDER BY e.expense_ratio ASC LIMIT 3")
+graph_query(cypher="MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock) WHERE s.name IN ['<종목명1>', '<종목명2>'] WITH e, count(s) AS matched, sum(h.weight) AS weight_sum WHERE matched = 2 RETURN {code: e.code, name: e.name, weight_sum: weight_sum, expense_ratio: e.expense_ratio} ORDER BY e.expense_ratio ASC LIMIT 3")
 # 결과 ETF마다
 get_etf_info(etf_code="<ETF의 code>")""",
     },
@@ -107,19 +108,19 @@ get_etf_info(etf_code="<ETF의 code>")""",
         "question": "반도체 3대장 합산 비중이 높은 ETF를 알려줘",
         "description": "여러 종목 합산 비중순 (일부만 보유해도 포함)",
         "code": """\
-graph_query(cypher="MATCH (e:ETF)-[h:HOLDS]->(s:Stock) WHERE s.name IN ['<종목명1>', '<종목명2>', '<종목명3>'] WITH e, s, h ORDER BY h.date DESC WITH e, s, head(collect(h)) AS latest WITH e, sum(latest.weight) AS weight_sum, collect(s.name) AS stocks RETURN {code: e.code, name: e.name, weight_sum: weight_sum, stocks: stocks} ORDER BY weight_sum DESC LIMIT 10")""",
+graph_query(cypher="MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock) WHERE s.name IN ['<종목명1>', '<종목명2>', '<종목명3>'] WITH e, sum(h.weight) AS weight_sum, collect(s.name) AS stocks RETURN {code: e.code, name: e.name, weight_sum: weight_sum, stocks: stocks} ORDER BY weight_sum DESC LIMIT 10")""",
     },
     {
         "question": "삼성전자를 10% 이상 보유한 ETF들의 최근 수익률을 비교해줘",
         "description": "종목 비중 조건(WHERE latest.weight >= N) → 수익률",
         "code": """\
-graph_query(cypher="MATCH (e:ETF)-[h:HOLDS]->(s:Stock {name: '<종목명>'}) WITH e, h ORDER BY h.date DESC WITH e, head(collect(h)) AS latest WHERE latest.weight >= 10 RETURN {code: e.code, name: e.name, weight: latest.weight, return_1w: e.return_1w, return_1m: e.return_1m} ORDER BY e.return_1m DESC")""",
+graph_query(cypher="MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock {name: '<종목명>'}) WHERE h.weight >= 10 RETURN {code: e.code, name: e.name, weight: h.weight, return_1w: e.return_1w, return_1m: e.return_1m} ORDER BY e.return_1m DESC")""",
     },
     {
         "question": "SK하이닉스를 보유한 ETF 중 수익률이 좋은 3개의 가격 추이를 보여줘",
         "description": "종목 보유 ETF → 수익률순 → ETF별 가격",
         "code": """\
-graph_query(cypher="MATCH (e:ETF)-[h:HOLDS]->(s:Stock {name: '<종목명>'}) WHERE e.return_1m IS NOT NULL WITH e, h ORDER BY h.date DESC WITH e, head(collect(h)) AS latest RETURN {code: e.code, name: e.name, weight: latest.weight, return_1m: e.return_1m} ORDER BY e.return_1m DESC LIMIT 3")
+graph_query(cypher="MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock {name: '<종목명>'}) WHERE e.return_1m IS NOT NULL RETURN {code: e.code, name: e.name, weight: h.weight, return_1m: e.return_1m} ORDER BY e.return_1m DESC LIMIT 3")
 # 결과 ETF마다
 get_etf_prices(etf_code="<ETF의 code>", period="1m")""",
     },
@@ -127,7 +128,7 @@ get_etf_prices(etf_code="<ETF의 code>", period="1m")""",
         "question": "삼성전자 주가와 삼성전자를 가장 많이 보유한 ETF 3개의 가격을 비교해줘",
         "description": "종목 코드 확인 → 종목 가격 + 보유 비중 상위 ETF 가격",
         "code": """\
-graph_query(cypher="MATCH (e:ETF)-[h:HOLDS]->(s:Stock {name: '<종목명>'}) WITH e, s, h ORDER BY h.date DESC WITH e, s, head(collect(h)) AS latest RETURN {stock_code: s.code, code: e.code, name: e.name, weight: latest.weight} ORDER BY latest.weight DESC LIMIT 3")
+graph_query(cypher="MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock {name: '<종목명>'}) RETURN {stock_code: s.code, code: e.code, name: e.name, weight: h.weight} ORDER BY h.weight DESC LIMIT 3")
 get_stock_prices(stock_code="<결과의 stock_code>", period="1m")
 # 결과 ETF마다
 get_etf_prices(etf_code="<ETF의 code>", period="1m")""",
@@ -144,20 +145,20 @@ graph_query(cypher="MATCH (e:ETF)-[:TAGGED]->(:Tag {name: '반도체'}) RETURN {
         "question": "삼성전자가 많이 포함된 테마(태그)는 뭐야? 각 태그별 대표 ETF도 알려줘",
         "description": "종목 보유 ETF의 태그 분포(태그별 ETF 수, 평균 비중) + 태그별 비중 1위 ETF",
         "code": """\
-graph_query(cypher="MATCH (t:Tag)<-[:TAGGED]-(e:ETF)-[h:HOLDS]->(s:Stock {name: '<종목명>'}) WITH t, e, h ORDER BY h.date DESC WITH t, e, head(collect(h)) AS latest WITH t, e, latest ORDER BY latest.weight DESC WITH t, count(e) AS etf_count, avg(latest.weight) AS avg_weight, head(collect(e.name)) AS top_etf RETURN {tag: t.name, etf_count: etf_count, avg_weight: avg_weight, top_etf: top_etf} ORDER BY etf_count DESC")""",
+graph_query(cypher="MATCH (t:Tag)<-[:TAGGED]-(e:ETF)-[h:CURRENT_HOLDS]->(s:Stock {name: '<종목명>'}) WITH t, e, h ORDER BY h.weight DESC WITH t, count(e) AS etf_count, avg(h.weight) AS avg_weight, head(collect(e.name)) AS top_etf RETURN {tag: t.name, etf_count: etf_count, avg_weight: avg_weight, top_etf: top_etf} ORDER BY etf_count DESC")""",
     },
     # ── ETF → 보유종목 / 유사 ETF ──
     {
         "question": "KODEX 200의 보유종목 상위 10개를 알려줘",
         "description": "ETF 이름으로 최신 보유종목 비중순",
         "code": """\
-graph_query(cypher="MATCH (e:ETF {name: '<ETF명>'})-[h:HOLDS]->(s:Stock) WITH s, h ORDER BY h.date DESC WITH s, head(collect(h)) AS latest RETURN {stock_code: s.code, stock_name: s.name, weight: latest.weight} ORDER BY latest.weight DESC LIMIT 10")""",
+graph_query(cypher="MATCH (e:ETF {name: '<ETF명>'})-[h:CURRENT_HOLDS]->(s:Stock) RETURN {stock_code: s.code, stock_name: s.name, weight: h.weight} ORDER BY h.weight DESC LIMIT 10")""",
     },
     {
         "question": "KODEX 200과 TIGER 200의 공통 보유종목 비중을 비교해줘",
         "description": "두 ETF가 함께 보유한 종목과 각각의 비중",
         "code": """\
-graph_query(cypher="MATCH (a:ETF {name: '<ETF명1>'})-[ha:HOLDS]->(s:Stock)<-[hb:HOLDS]-(b:ETF {name: '<ETF명2>'}) WITH s, ha, hb ORDER BY ha.date DESC, hb.date DESC WITH s, head(collect(ha)) AS la, head(collect(hb)) AS lb RETURN {stock: s.name, weight_a: la.weight, weight_b: lb.weight} ORDER BY la.weight DESC")""",
+graph_query(cypher="MATCH (a:ETF {name: '<ETF명1>'})-[ha:CURRENT_HOLDS]->(s:Stock)<-[hb:CURRENT_HOLDS]-(b:ETF {name: '<ETF명2>'}) RETURN {stock: s.name, weight_a: ha.weight, weight_b: hb.weight} ORDER BY ha.weight DESC")""",
     },
     {
         "question": "KODEX 200과 유사한 ETF 5개의 상세 정보를 비교해줘",
@@ -176,12 +177,12 @@ graph_query(cypher="MATCH (e:ETF) WHERE e.return_1w IS NOT NULL RETURN {code: e.
 get_etf_info(etf_code="<ETF의 code>")
 find_similar_etfs(etf_code="<ETF의 code>")""",
     },
-    # ── 보유종목 변동 (HOLDS 날짜 비교) ──
+    # ── 보유종목 변동 (날짜별 이력: HOLDS) ──
     {
         "question": "최근 신규 편입된 종목이 있는 ETF를 알려줘",
-        "description": "기준 ETF(069500)로 최근 두 수집일 확인 → 최신 날짜에만 있는 보유 관계",
+        "description": "기준 ETF(069500)로 최근 두 수집일 확인 → 현재 구성종목 중 직전 수집일 HOLDS에 없던 종목",
         "code": """\
-graph_query(cypher="MATCH (e:ETF {code: '069500'})-[h:HOLDS]->() WITH DISTINCT h.date AS d ORDER BY d DESC LIMIT 2 WITH collect(d) AS ds WHERE size(ds) = 2 MATCH (e:ETF)-[h:HOLDS]->(s:Stock) WHERE h.date = ds[0] AND NOT EXISTS((e)-[:HOLDS {date: ds[1]}]->(s)) RETURN {code: e.code, name: e.name, stock: s.name, weight: h.weight} ORDER BY h.weight DESC LIMIT 20")""",
+graph_query(cypher="MATCH (e:ETF {code: '069500'})-[h:HOLDS]->() WITH DISTINCT h.date AS d ORDER BY d DESC LIMIT 2 WITH collect(d) AS ds WHERE size(ds) = 2 MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock) WHERE h.date = ds[0] AND NOT EXISTS((e)-[:HOLDS {date: ds[1]}]->(s)) RETURN {code: e.code, name: e.name, stock: s.name, weight: h.weight} ORDER BY h.weight DESC LIMIT 20")""",
     },
     {
         "question": "삼성전자 비중이 늘어난 ETF를 알려줘",

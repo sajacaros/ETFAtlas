@@ -263,11 +263,9 @@ etf_search로 ETF 코드를 먼저 확인한 후 사용하세요."""
         info["tags"] = [GraphService.parse_agtype(t["result"])["tag"] for t in tags] if tags else []
         # 상위 보유종목
         holdings = graph_service.execute_cypher(
-            "MATCH (e:ETF {code: $etf_code})-[h:HOLDS]->(s:Stock) "
-            "WITH s, h ORDER BY h.date DESC "
-            "WITH s, head(collect(h)) as latest "
-            "RETURN {stock_code: s.code, stock_name: s.name, weight: latest.weight} "
-            "ORDER BY latest.weight DESC LIMIT 10",
+            "MATCH (e:ETF {code: $etf_code})-[h:CURRENT_HOLDS]->(s:Stock) "
+            "RETURN {stock_code: s.code, stock_name: s.name, weight: h.weight} "
+            "ORDER BY h.weight DESC LIMIT 10",
             {"etf_code": etf_code},
         )
         info["top_holdings"] = [_format_percent_fields(GraphService.parse_agtype(h["result"])) for h in holdings] if holdings else []
@@ -511,11 +509,9 @@ etf_search로 ETF 코드를 먼저 확인한 후 사용하세요."""
 
             # 상위 보유종목 5개
             holdings = graph_service.execute_cypher(
-                "MATCH (e:ETF {code: $etf_code})-[h:HOLDS]->(s:Stock) "
-                "WITH s, h ORDER BY h.date DESC "
-                "WITH s, head(collect(h)) as latest "
-                "RETURN {stock_code: s.code, stock_name: s.name, weight: latest.weight} "
-                "ORDER BY latest.weight DESC LIMIT 5",
+                "MATCH (e:ETF {code: $etf_code})-[h:CURRENT_HOLDS]->(s:Stock) "
+                "RETURN {stock_code: s.code, stock_name: s.name, weight: h.weight} "
+                "ORDER BY h.weight DESC LIMIT 5",
                 {"etf_code": code},
             )
             etf_data["top_holdings"] = [_format_percent_fields(GraphService.parse_agtype(h["result"])) for h in holdings] if holdings else []
@@ -542,29 +538,30 @@ class GraphQueryTool(ChatTool):
 
 ## 그래프 스키마
 노드: ETF(code, name, expense_ratio, net_assets, close_price, return_1d, return_1w, return_1m, market_cap_change_1w, updated_at), Stock(code, name, is_etf), Company(name), Tag(name), Price(date, open, high, low, close, volume, nav, market_cap, net_assets, trade_value, change_rate), User(user_id)
-관계: (ETF)-[:HOLDS {date, weight, shares}]->(Stock), (ETF)-[:MANAGED_BY]->(Company), (ETF)-[:TAGGED]->(Tag), (ETF)-[:HAS_PRICE]->(Price), (Stock)-[:HAS_PRICE]->(Price), (User)-[:WATCHES {added_at}]->(ETF)
+관계: (ETF)-[:CURRENT_HOLDS {date, weight, shares}]->(Stock) = 현재 구성종목(ETF당 비중 상위 30개), (ETF)-[:HOLDS {date, weight, shares}]->(Stock) = 날짜별 구성종목 이력(비중 변화 비교에만 사용), (ETF)-[:MANAGED_BY]->(Company), (ETF)-[:TAGGED]->(Tag), (ETF)-[:HAS_PRICE]->(Price), (Stock)-[:HAS_PRICE]->(Price), (User)-[:WATCHES {added_at}]->(ETF)
 
 ## Cypher 작성 규칙
 1. MATCH로 시작하는 읽기 전용 쿼리만 가능 (CREATE/MERGE/DELETE/SET 불가, '$$'와 ';' 사용 불가)
 2. RETURN은 반드시 단일 맵으로 감싸세요: RETURN {key1: val1, key2: val2}
 3. 문자열 값은 작은따옴표: {code: '005930'}
 4. 집계 함수와 ORDER BY를 함께 쓸 때 WITH 절로 분리하세요
+5. weight, expense_ratio, return_*, net_assets는 숫자로 저장되어 있습니다(비중·보수율·수익률은 % 단위, 순자산은 원). 결과에 '%'나 '억원'이 붙어 보이는 건 표시용 서식이니, 조건은 숫자로 쓰세요 (예: h.weight >= 10, e.expense_ratio <= 0.1)
 
 ## 쿼리 패턴 예시
 
-ETF의 최신 보유종목 (반드시 이 패턴 사용):
-MATCH (e:ETF {code: '069500'})-[h:HOLDS]->(s:Stock)
-WITH s, h ORDER BY h.date DESC
-WITH s, head(collect(h)) as latest
-RETURN {stock_code: s.code, stock_name: s.name, weight: latest.weight}
-ORDER BY latest.weight DESC LIMIT 10
+ETF의 현재 보유종목 (현재 구성종목은 항상 CURRENT_HOLDS 사용):
+MATCH (e:ETF {code: '069500'})-[h:CURRENT_HOLDS]->(s:Stock)
+RETURN {stock_code: s.code, stock_name: s.name, weight: h.weight}
+ORDER BY h.weight DESC LIMIT 10
 
 특정 종목을 보유한 ETF:
-MATCH (e:ETF)-[h:HOLDS]->(s:Stock {code: '005930'})
-WITH e, h ORDER BY h.date DESC
-WITH e, head(collect(h)) as latest
-RETURN {etf_code: e.code, etf_name: e.name, weight: latest.weight}
-ORDER BY latest.weight DESC
+MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock {name: '삼성전자'})
+RETURN {etf_code: e.code, etf_name: e.name, weight: h.weight}
+ORDER BY h.weight DESC
+
+특정 종목의 ETF 내 비중 이력 (HOLDS는 이력 비교에만):
+MATCH (e:ETF {code: '069500'})-[h:HOLDS]->(s:Stock {name: '삼성전자'})
+RETURN {date: h.date, weight: h.weight} ORDER BY h.date
 
 태그별 ETF 조회:
 MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '반도체'})

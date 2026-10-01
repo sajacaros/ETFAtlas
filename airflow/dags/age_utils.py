@@ -200,10 +200,6 @@ def execute_cypher_batch(cur, cypher_template: str, items: list[dict],
 
 
 # ──────────────────────────────────────────────
-# KRX 데이터 조회
-# ──────────────────────────────────────────────
-
-# ──────────────────────────────────────────────
 # 유니버스 필터링
 # ──────────────────────────────────────────────
 
@@ -669,6 +665,7 @@ def collect_holdings(etf_codes: list[str], bd: str):
     remaining_etfs = [c for c in etf_codes if c not in existing_holds]
     if not remaining_etfs:
         log.info(f"[{bd}] All {len(etf_codes)} ETFs already have HOLDS, skipping")
+        refresh_current_holds(date_str)
         return
     if existing_holds:
         log.info(f"[{bd}] Skipping {len(existing_holds)} ETFs with existing HOLDS, "
@@ -700,6 +697,7 @@ def collect_holdings(etf_codes: list[str], bd: str):
         log.warning(f"[{bd}] KIS component fetch failed for {failed}/{len(remaining_etfs)} ETFs")
     if not all_holds:
         log.warning(f"[{bd}] No holdings data from KIS. Skipping.")
+        refresh_current_holds(date_str)
         return
 
     all_stock_codes = {h['stock_code'] for h in all_holds}
@@ -772,6 +770,48 @@ def collect_holdings(etf_codes: list[str], bd: str):
         log.info(f"[{bd}] {len(all_holds)} HOLDS edges "
                  f"({len(all_stock_codes)} stocks)")
 
+    finally:
+        cur.close()
+        conn.close()
+
+    refresh_current_holds(date_str)
+
+
+def refresh_current_holds(date_str: str):
+    """date_str(YYYY-MM-DD) HOLDS를 ETF별 최신 구성종목(CURRENT_HOLDS)으로 갈아 끼운다.
+
+    HOLDS는 날짜별 이력이라 계속 늘어나므로, "현재 보유" 조회는 ETF당 최대 30개인 CURRENT_HOLDS만 읽게 한다.
+    그날 HOLDS가 있는 ETF만 바꾸므로 KIS 조회에 실패한 ETF는 이전 구성종목을 유지하고,
+    이미 더 최근 날짜로 갱신된 ETF는 건드리지 않는다. 같은 날짜로 다시 돌려도 결과가 같다.
+    """
+    conn = get_db_connection()
+    cur = init_age(conn)
+    try:
+        rows = execute_cypher(cur, """
+            MATCH (e:ETF)-[:HOLDS {date: $date}]->(:Stock)
+            WITH DISTINCT e
+            OPTIONAL MATCH (e)-[c:CURRENT_HOLDS]->(:Stock)
+            WITH e, max(c.date) AS current_date
+            WHERE current_date IS NULL OR current_date <= $date
+            RETURN e.code
+        """, {'date': date_str})
+        items = [{'code': _parse_age_value(r[0]), 'date': date_str} for r in rows if r[0]]
+        if not items:
+            return
+        execute_cypher_batch(cur, """
+            MATCH (e:ETF {code: item.code})-[c:CURRENT_HOLDS]->(:Stock)
+            DELETE c RETURN 1
+        """, items)
+        execute_cypher_batch(cur, """
+            MATCH (e:ETF {code: item.code})-[h:HOLDS {date: item.date}]->(s:Stock)
+            CREATE (e)-[:CURRENT_HOLDS {date: h.date, weight: h.weight, shares: h.shares}]->(s)
+            RETURN 1
+        """, items)
+        conn.commit()
+        log.info(f"[{date_str}] CURRENT_HOLDS refreshed for {len(items)} ETFs")
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         cur.close()
         conn.close()

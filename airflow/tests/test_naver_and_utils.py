@@ -84,3 +84,14 @@ def test_last_settled_day(now, expected):
     from datetime import datetime
     age_utils = pytest.importorskip("age_utils")
     assert age_utils.last_settled_day(datetime.strptime(now, "%Y-%m-%d %H:%M")) == expected
+
+
+@pytest.mark.parametrize("name, ok", [
+    ("1Q 은액티브", False),
+    ("TIGER 은액티브", False),
+    ("KODEX 은행", True),
+    ("TIGER 은행고배당플러스TOP10", True),
+])
+def test_universe_name_filter_excludes_silver(name, ok):
+    age_utils = pytest.importorskip("age_utils")
+    assert age_utils.passes_universe_name_filter(name) is ok

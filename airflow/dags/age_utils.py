@@ -230,6 +230,11 @@ EXCLUDE_KEYWORDS = [
     '리츠', 'REITs', 'REIT',
 ]
 
+# 부분 문자열로는 오탐이 나는 제외 대상 (예: '은'은 '은행'과 겹친다)
+EXCLUDE_PATTERNS = [
+    r'(?:^|\s)은(?!행)',  # 은 현물/액티브 (1Q 은액티브, TIGER 은액티브)
+]
+
 MIN_AUM = 500 * 100_000_000  # 500억
 
 
@@ -237,6 +242,8 @@ def passes_universe_name_filter(name: str) -> bool:
     """제외 키워드(레버리지/채권/원자재 등)·해외 키워드가 없으면 True. API 호출 전 1차 필터."""
     name_lower = name.lower()
     if any(kw.lower() in name_lower for kw in EXCLUDE_KEYWORDS):
+        return False
+    if any(re.search(p, name) for p in EXCLUDE_PATTERNS):
         return False
     if any(kw.lower() in name_lower or kw in name for kw in FOREIGN_NAME_KEYWORDS):
         return False

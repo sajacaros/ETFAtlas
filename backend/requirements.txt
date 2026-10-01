@@ -12,3 +12,4 @@ python-dotenv>=1.2.1
 pydantic-ai-slim[openai]>=2.52.0
 yfinance>=1.1.0
 openai>=2.0.0
+alembic>=1.16.0

@@ -25,7 +25,7 @@ RUN git clone --branch release/PG18/1.8.0 --depth 1 https://github.com/apache/ag
 
 ### 초기화 스크립트 (`docker/db/init/`)
 
-빈 볼륨으로 처음 기동할 때 순서대로 실행된다 (별도 마이그레이션 스크립트 없음 — 스키마 변경 시 DB 재생성).
+빈 볼륨으로 처음 기동할 때 순서대로 실행된다. `02_schema.sql`은 **스키마 기준선(baseline)으로 동결**되어 있고, 이후 RDB 스키마 변경은 Alembic 리비전으로만 한다 (아래 "스키마 마이그레이션" 참고).
 
 | 파일 | 내용 |
 |------|------|
@@ -61,7 +61,8 @@ SELECT create_graph('etf_graph');  -- 그래프 생성
 | 관계 | 속성 | 설명 |
 |------|------|------|
 | `(ETF)-[:MANAGED_BY]->(Company)` | - | 운용사 |
-| `(ETF)-[:HOLDS]->(Stock)` | date, weight, shares | 보유종목 (KIS 수집일 기준 스냅샷, shares는 추정치, 비중 상위 30개까지) |
+| `(ETF)-[:CURRENT_HOLDS]->(Stock)` | date, weight, shares | 현재 보유종목 (ETF별 최신 수집일 HOLDS 복사본, 비중 상위 30개까지) |
+| `(ETF)-[:HOLDS]->(Stock)` | date, weight, shares | 보유종목 이력 (KIS 수집일 기준 스냅샷, shares는 추정치, 비중 상위 30개까지). 변화 비교에만 사용 |
 | `(ETF)-[:TAGGED]->(Tag)` | - | 태그 |
 | `(ETF\|Stock)-[:HAS_PRICE]->(Price)` | - | 가격 |
 | `(User)-[:WATCHES]->(ETF)` | added_at | 즐겨찾기 |
@@ -74,7 +75,7 @@ SELECT create_graph('etf_graph');  -- 그래프 생성
 # Cypher 쿼리를 SQL 함수로 실행
 self.db.execute(text("""
     SELECT * FROM ag_catalog.cypher('etf_graph', $$
-        MATCH (e1:ETF {code: $etf_code})-[:HOLDS]->(s:Stock)<-[:HOLDS]-(e2:ETF)
+        MATCH (e1:ETF {code: $etf_code})-[:CURRENT_HOLDS]->(s:Stock)<-[:CURRENT_HOLDS]-(e2:ETF)
         WHERE e1 <> e2
         WITH e2, COUNT(s) as overlap
         WHERE overlap >= $min_overlap
@@ -268,3 +269,29 @@ engine = create_engine(
 | kis_tokens | KIS 접근 토큰 캐시 | PK app_key_hash |
 | chat_logs | 챗봇 대화 로그 | 피드백/검수 상태 |
 | code_examples | 챗봇 코드 예제 | pgvector 768차원, ivfflat |
+
+## 스키마 마이그레이션 (Alembic)
+
+RDB 스키마 변경은 `backend/migrations/versions/`의 Alembic 리비전으로 관리한다 (Flyway의 baseline + versioned migration과 같은 방식).
+
+- **기준선:** `0001_baseline`은 아무것도 하지 않는다. 새 DB는 init SQL(`02_schema.sql`)이 기준선 스키마를 만들고, 기존 DB는 이미 그 상태이므로 둘 다 `alembic upgrade head`로 같은 상태가 된다. `02_schema.sql`은 고치지 않는다.
+- **적용:** 백엔드 컨테이너가 시작할 때 `alembic upgrade head`를 실행한 뒤 서버를 띄운다 (`backend/Dockerfile`). 적용 이력은 `alembic_version` 테이블에 남는다.
+- **autogenerate 범위:** 모델(`backend/app/models`)에 있는 것만 비교한다. 모델에 없는 테이블·컬럼·인덱스(`kis_tokens`, `market_calendar`, pgvector 인덱스, AGE 스키마)는 삭제를 제안하지 않는다 (`migrations/env.py`의 `include_object`). 삭제가 필요하면 리비전에 직접 쓴다.
+- **AGE 그래프는 대상이 아니다.** 그래프 노드·관계 속성은 스키마가 없어 DAG/서비스 코드가 관리한다.
+
+| 리비전 | 내용 |
+|--------|------|
+| 0001 | 기준선 (`02_schema.sql`) |
+| 0002 | `portfolios.user_id`, `target_allocations/holdings/portfolio_snapshots.portfolio_id` NOT NULL |
+
+새 리비전 만들기 (모델을 고친 뒤, DB가 떠 있는 상태에서):
+
+```bash
+# backend 폴더를 마운트해 리비전 파일이 로컬 migrations/versions/에 생기게 한다
+docker compose run --rm --no-deps -v ./backend:/app -u "$(id -u):$(id -g)" backend \
+  alembic revision --autogenerate --rev-id 0003 -m "설명"
+# 생성된 파일을 검토한 뒤
+docker compose up -d --build backend   # 시작 시 upgrade head 적용
+docker compose exec backend alembic check   # 모델과 DB 차이 확인 (차이 없으면 "No new upgrade operations detected")
+```
+

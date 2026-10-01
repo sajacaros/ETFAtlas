@@ -118,6 +118,10 @@ Airflow UI에서 아래 DAG를 순서대로 수동 실행합니다:
 docker compose up -d --build backend
 ```
 
+### DB 스키마 변경
+
+RDB 스키마는 Alembic으로 관리합니다. 모델(`backend/app/models`)을 고친 뒤 `backend/migrations/versions/`에 리비전을 추가하면, 백엔드 컨테이너가 시작할 때 `alembic upgrade head`로 적용합니다. 자세한 절차는 [docs/postgresql.md](docs/postgresql.md#스키마-마이그레이션-alembic)를 참고하세요.
+
 ### 테스트
 
 ```bash

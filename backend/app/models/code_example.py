@@ -7,7 +7,7 @@ from ..utils.time import utcnow
 class CodeExample(Base):
     __tablename__ = "code_examples"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     question = Column(Text, nullable=False)
     question_generalized = Column(Text, nullable=True)
     code = Column(Text, nullable=False)

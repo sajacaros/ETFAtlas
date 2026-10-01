@@ -7,8 +7,8 @@ from ..utils.time import utcnow
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String(50), unique=True, nullable=False, index=True)
+    id = Column(Integer, primary_key=True)
+    username = Column(String(50), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
     name = Column(String(255))
     created_at = Column(DateTime, default=utcnow)

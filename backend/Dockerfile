@@ -14,6 +14,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY app/ ./app/
+COPY alembic.ini ./
+COPY migrations/ ./migrations/
 
 # Create non-root user
 RUN useradd -m appuser && chown -R appuser:appuser /app
@@ -23,4 +25,5 @@ ENV PYDANTIC_AI_NO_BANNER=1
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# 스키마 마이그레이션(Alembic)을 먼저 적용한 뒤 서버를 띄운다
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]

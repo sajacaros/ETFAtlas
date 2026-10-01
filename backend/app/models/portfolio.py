@@ -10,7 +10,7 @@ from ..utils.time import utcnow
 class Portfolio(Base):
     __tablename__ = "portfolios"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     name = Column(String(255), nullable=False, default="My Portfolio")
     calculation_base = Column(String(20), nullable=False, default="CURRENT_TOTAL")
@@ -32,7 +32,7 @@ class TargetAllocation(Base):
     __tablename__ = "target_allocations"
     __table_args__ = (UniqueConstraint("portfolio_id", "ticker"),)
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=False)
     ticker = Column(String(20), nullable=False)
     target_weight = Column(Numeric(7, 4), nullable=False)
@@ -46,7 +46,7 @@ class Holding(Base):
     __tablename__ = "holdings"
     __table_args__ = (UniqueConstraint("portfolio_id", "ticker"),)
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=False)
     ticker = Column(String(20), nullable=False)
     quantity = Column(EncryptedDecimal, nullable=False, default=0)
@@ -60,7 +60,7 @@ class Holding(Base):
 class PortfolioSnapshot(Base):
     __tablename__ = "portfolio_snapshots"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=False)
     date = Column(Date, nullable=False)
     total_value = Column(EncryptedDecimal, nullable=False)

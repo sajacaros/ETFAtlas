@@ -302,10 +302,13 @@ class GraphService:
         return items
 
     def set_manual_tags(self, etf_code: str, tags: List[str] | None) -> None:
-        """ETF 태그를 수동 지정하고 TAGGED를 즉시 교체한다. None이면 수동 지정 해제(태그는 다음 태깅 때 다시 계산)."""
+        """ETF 태그를 수동 지정하고 TAGGED를 즉시 교체한다. None이면 수동 지정 해제.
+
+        해제 시 tagged_at도 지워 다음 age_tagging 실행이 신규 ETF처럼 다시 태깅하게 한다(그때까지 현재 태그 유지).
+        """
         code = {"etf_code": etf_code}
         if tags is None:
-            self.execute_cypher("MATCH (e:ETF {code: $etf_code}) REMOVE e.manual_tags RETURN e.code",
+            self.execute_cypher("MATCH (e:ETF {code: $etf_code}) REMOVE e.manual_tags REMOVE e.tagged_at RETURN e.code",
                                 code, raise_errors=True)
             self.db.commit()
             return

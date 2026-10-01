@@ -10,7 +10,7 @@
 | ETF NAV/순자산/상장주수 (현재 시점) | KIS Open API (ETF/ETN 현재가) | AGE `ETF.net_assets`, 최근 거래일 `Price` |
 | ETF 일별 시세 | KIS Open API (국내주식기간별시세) | AGE `Price` |
 | ETF 보수율 | 네이버 증권 모바일 API (비공식, `etfAnalysis.totalFee`) | AGE `ETF.expense_ratio` |
-| ETF 구성종목 | 한국투자증권 KIS Open API (ETF 구성종목시세) | AGE `Stock`, `HOLDS` |
+| ETF 구성종목 | 한국투자증권 KIS Open API (ETF 구성종목시세) | AGE `Stock`, `HOLDS`, `CURRENT_HOLDS` |
 | 주식 일별 시세 | KIS Open API (국내주식기간별시세) | AGE `Price` |
 | 영업일 | KIS Open API (기준 ETF 069500 일봉) | - |
 | 개장일(휴장일) | KIS Open API (국내휴장일조회) | RDB `market_calendar` |
@@ -175,6 +175,8 @@ params: FID_COND_MRKT_DIV_CODE=J, FID_INPUT_ISCD={ETF코드}, FID_COND_SCR_DIV_C
 | etf_vltn_amt / stck_prpr | HOLDS.shares | int | API에 수량 필드가 없어 역산한 **추정치** |
 | (수집 기준 거래일) | HOLDS.date | string | `YYYY-MM-DD` |
 
+`CURRENT_HOLDS`는 같은 속성(date, weight, shares)을 HOLDS에서 그대로 복사한다.
+
 ### 저장 로직
 
 `age_utils.collect_holdings(etf_codes, bd)` (요약):
@@ -195,6 +197,8 @@ for ticker in remaining_etfs:              # 같은 날짜 HOLDS가 이미 있�
 
 # 1) Stock MERGE → name, is_etf SET
 # 2) HOLDS MERGE {date} → weight, shares SET (50개 ETF 단위 커밋)
+# 3) refresh_current_holds(date): 그날 HOLDS가 있는 ETF 중 CURRENT_HOLDS 날짜가 date 이하인 ETF만
+#    CURRENT_HOLDS 삭제 → 그날 HOLDS로 재생성 (KIS 실패 ETF는 이전 구성종목 유지, 재실행해도 결과 동일)
 ```
 
 ---

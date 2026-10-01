@@ -156,6 +156,7 @@ Nodes:
 
 Edges:
 ┌─────────────────────────────────────────────────────────┐
+│  (ETF)-[:CURRENT_HOLDS {date, weight, shares}]->(Stock) │
 │  (ETF)-[:HOLDS {date, weight, shares}]->(Stock)         │
 │  (ETF|Stock)-[:HAS_PRICE]->(Price)                      │
 │  (ETF)-[:MANAGED_BY]->(Company)                         │
@@ -245,7 +246,7 @@ GET /api/ai/recommendations     # 워치리스트 기반 종목 추천
 
 ```cypher
 -- 1. 종목 역추적: 삼성전자를 담은 ETF
-MATCH (e:ETF)-[h:HOLDS {date: $latest_date}]->(s:Stock {code: '005930'})
+MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock {code: '005930'})
 RETURN e.code, e.name, h.weight
 ORDER BY h.weight DESC;
 

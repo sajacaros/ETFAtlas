@@ -20,7 +20,7 @@
 
 **AGE 그래프 (`etf_graph`)** — 시장 데이터
 - 노드: `ETF`, `Stock`, `Company`(운용사), `Tag`, `Price`, `User`
-- 관계: `(ETF)-[:HOLDS {date, weight, shares}]->(Stock)`, `(ETF)-[:MANAGED_BY]->(Company)`, `(ETF)-[:TAGGED]->(Tag)`, `(ETF|Stock)-[:HAS_PRICE]->(Price)`, `(User)-[:WATCHES]->(ETF)`
+- 관계: `(ETF)-[:CURRENT_HOLDS {date, weight, shares}]->(Stock)`(현재 보유, ETF당 최대 30개), `(ETF)-[:HOLDS {date, weight, shares}]->(Stock)`(날짜별 이력, 변화 비교용), `(ETF)-[:MANAGED_BY]->(Company)`, `(ETF)-[:TAGGED]->(Tag)`, `(ETF|Stock)-[:HAS_PRICE]->(Price)`, `(User)-[:WATCHES]->(ETF)`
 - 날짜 키는 `'YYYY-MM-DD'` 문자열
 
 **관계형 테이블** (`docker/db/init/02_schema.sql`) — 사용자/시계열
@@ -71,15 +71,16 @@
 | `age_sync_universe` | 화~토 08:30 | 증분(첫 실행은 최근 거래일 하루): 유니버스·가격 → 구성종목(최근 거래일) → 주식 가격·수익률·신규 ETF 태그 | KIS, 네이버(보수율) |
 | `rdb_sync_metadata` | 평일 08:30 | ETF 코드/이름 → RDB `etfs` | KIS 종목 마스터 파일(인증 불필요) |
 | `rdb_realtime_prices` | 평일 9~15시 10분 간격 | 보유 티커 현재가 → `ticker_prices`, 스냅샷 갱신(`snapshot_enabled` 포트폴리오만) | yfinance, KIS(휴장일, `market_calendar`에 하루 1회 캐시) |
-| `age_tagging` | 토 03:00 | 룰 + LLM 기반 ETF 태그 재구성 | LLM 프록시 |
+| `age_tagging` | 토 03:00 | 룰 + LLM 기반 태깅. 미태깅(`tagged_at` 없음) ETF만, `full_rebuild=true` 수동 실행 시 전체 | LLM 프록시 |
 | `embed_code_examples` | 수동 | 코드 예시 질문 일반화 + 임베딩 | LLM 프록시 |
 
 **백필 없음 (2026-09 결정)**: 과거 이력 백필 DAG(`age_backfill`, `rdb_backfill`)와 실시간 DAG 안의 4개월 백필을 모두 제거했다. 첫 실행은 최근 거래일 하루만 수집하고 이후 매일 쌓인다. 1주/1개월 수익률, 포트폴리오 추이 차트, 리스크 분석은 데이터가 쌓인 만큼만 보인다. 필요해지면 그때 추가한다.
 
-### 구성종목(HOLDS) — KIS Open API
+### 구성종목(HOLDS / CURRENT_HOLDS) — KIS Open API
 - `airflow/dags/kis_api_client.py`: `ETF 구성종목시세[국내주식-073]` (`FHKST121600C0`)
 - **날짜 지정 불가(호출 시점 스냅샷)** → 과거 구성종목 백필은 지원하지 않는다. 매일 쌓이는 데이터로만 1주/1개월 비중 변화가 계산된다
 - 스냅샷은 DAG의 최근 거래일 날짜로 저장(08:30 실행 기준 직전 거래일)
+- 저장 후 그날 HOLDS가 있는 ETF의 `CURRENT_HOLDS`를 그날 HOLDS로 교체(`refresh_current_holds`). 현재 구성종목 조회는 `CURRENT_HOLDS`, 비중 변화·이력은 `HOLDS`를 읽는다. 조회 실패 ETF는 이전 구성종목 유지
 - `shares`는 API에 수량 필드가 없어 `평가금액(etf_vltn_amt) / 현재가(stck_prpr)`로 역산한 추정치
 - 토큰(24h 유효, 발급 1분 1회 제한)은 `kis_tokens`에 캐시, 호출 간 최소 간격 0.06s, `EGW00201`(초당 초과) 재시도, `EGW00123`(토큰 만료) 1회 재발급
 - 실전투자 앱키 필요(`KIS_APP_KEY`, `KIS_APP_SECRET`)

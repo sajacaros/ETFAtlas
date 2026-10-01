@@ -7,7 +7,7 @@ AGE 수집 공용 로직은 `airflow/dags/age_utils.py`에 모여 있다.
 | DAG ID | 파일 | 스케줄 | 저장소 | 역할 |
 |--------|------|--------|--------|------|
 | `age_sync_universe` | `sync_universe_age.py` | `30 8 * * 2-6` (화~토 08:30 KST) | AGE | 일일 증분 수집 |
-| `age_tagging` | `age_tagging.py` | `0 3 * * 6` (토 03:00 KST) | AGE | ETF 태그 전체 재구축 |
+| `age_tagging` | `age_tagging.py` | `0 3 * * 6` (토 03:00 KST) | AGE | 신규 ETF 태깅 (`full_rebuild`로 전체 재태깅) |
 | `rdb_sync_metadata` | `sync_metadata_rdb.py` | `30 8 * * 1-5` (평일 08:30 KST) | RDB | `etfs` 코드/이름 동기화 |
 | `rdb_realtime_prices` | `realtime_prices_rdb.py` | `*/10 9-15 * * 1-5` | RDB | 장중 현재가 + 포트폴리오 스냅샷 |
 | `embed_code_examples` | `embed_code_examples.py` | 수동 | RDB (pgvector) | 챗봇 코드 예제 임베딩 |
@@ -17,7 +17,7 @@ AGE 수집 공용 로직은 `airflow/dags/age_utils.py`에 모여 있다.
 | 소스 | 용도 | 인증 |
 |------|------|------|
 | KIS 종목 마스터 파일 (`kospi_code.mst.zip`) | 전체 ETF 코드/이름 목록 (그룹코드 `EF`) | 불필요 (공개 파일) |
-| 한국투자증권 KIS Open API | ETF 현재가(NAV·순자산·상장주수), ETF/주식 일봉, ETF 현재 구성종목(HOLDS)·종목명, 영업일(기준 ETF 일봉), 휴장일 | `KIS_APP_KEY`, `KIS_APP_SECRET` (`KIS_BASE_URL` 선택) |
+| 한국투자증권 KIS Open API | ETF 현재가(NAV·순자산·상장주수), ETF/주식 일봉, ETF 현재 구성종목(HOLDS/CURRENT_HOLDS)·종목명, 영업일(기준 ETF 일봉), 휴장일 | `KIS_APP_KEY`, `KIS_APP_SECRET` (`KIS_BASE_URL` 선택) |
 | 네이버 증권 모바일 API (비공식) | 신규 ETF 보수율(`totalFee`) | 불필요 |
 | yfinance | 포트폴리오 보유 티커 현재가 (RDB) | 불필요 |
 | LiteLLM 프록시 (OpenAI 호환) | ETF 태그 분류·질문 일반화(`LLM_MODEL`), 코드 예제 임베딩(`EMBEDDING_MODEL`) | `LLM_API_BASE`/`LLM_API_KEY`, `EMBEDDING_API_BASE`/`EMBEDDING_API_KEY` |
@@ -111,10 +111,11 @@ KIS Open API "ETF 구성종목시세"(`GET /uapi/etfetn/v1/quotations/inquire-co
 - 필드 매핑: `weight` ← `etf_cnfg_issu_rlim`(%), `shares` ← `etf_vltn_amt / stck_prpr` (API에 수량 필드가 없어 평가금액/현재가로 역산한 **추정치**).
 - Stock 노드를 MERGE하고 `name`, `is_etf`를 설정한다. 주식 이름은 KIS `hts_kor_isnm`, ETF는 AGE ETF 노드 이름을 우선 사용한다.
 - HOLDS는 50개 ETF 단위로 MERGE → SET 후 커밋한다.
+- 저장 후 `refresh_current_holds(date)`로 현재 보유종목을 갱신한다. 그날 HOLDS가 있는 ETF만 CURRENT_HOLDS를 지우고 그날 HOLDS로 다시 만든다. CURRENT_HOLDS 날짜가 이미 더 최근인 ETF는 건너뛰고, KIS 조회에 실패한 ETF는 이전 구성종목을 유지한다. 같은 날짜로 재실행해도 결과가 같다.
 - 접근 토큰은 24시간 유효하고 발급이 1분 1회로 제한되어 `kis_tokens` 테이블에 캐시한다 (앱키 SHA-256 해시 키, 만료 10분 전 재발급). 호출 간 최소 0.06초 간격을 둔다.
 - `KIS_APP_KEY`/`KIS_APP_SECRET`이 없으면 경고 후 수집을 건너뛴다.
 
-**저장:** AGE — `Stock` 노드, `(ETF)-[:HOLDS {date, weight, shares}]->(Stock)`
+**저장:** AGE — `Stock` 노드, `(ETF)-[:HOLDS {date, weight, shares}]->(Stock)` (날짜별 이력), `(ETF)-[:CURRENT_HOLDS {date, weight, shares}]->(Stock)` (현재 보유, ETF당 최대 30개)
 
 ### collect_stock_prices_for_dates(dates)
 
@@ -132,11 +133,12 @@ ETF별 최근 45개 Price로 `close_price`, `return_1d`, `return_1w`, `return_1m
 
 ---
 
-## 2. age_tagging (태그 재구축)
+## 2. age_tagging (ETF 태깅)
 
-전체 ETF의 태그를 룰 기반 + 키워드 + LLM으로 재구축한다.
+아직 자동 태깅되지 않은 ETF(`tagged_at` 없음, 즉 신규 편입)만 룰 기반 + 키워드 + LLM으로 태깅한다. 이미 태깅된 ETF는 매주 다시 LLM에 보내지 않는다 (LLM 결과가 실행마다 달라 태그가 흔들리기 때문).
 
 - **스케줄**: `0 3 * * 6` (토요일 03:00 KST), 수동 트리거 가능
+- **파라미터**: `full_rebuild`(기본 `false`). `true`로 수동 실행하면 수동 지정 ETF를 뺀 전체를 다시 태깅한다. 규칙이나 태그 목록을 바꾼 뒤 사용
 - **재시도**: 1회, 5분 간격
 - **태스크**: `tag_all_etfs` (타임아웃 30분)
 
@@ -145,16 +147,21 @@ ETF별 최근 45개 Price로 `close_price`, `return_1d`, `return_1w`, `return_1m
 0. **수동 지정**: `manual_tags` 속성이 있는 ETF(관리자 페이지 > ETF 태그에서 지정)는 아래 단계를 모두 건너뛰고 그 태그를 그대로 쓴다. `MANUAL_ONLY_TAGS`(`우량주` — 산업 테마 없이 선별 기준(시가총액 상위, 성장성, ESG 등)으로 대형주를 골라 담는 ETF)는 태그 노드만 만들고 수동 지정으로만 붙는다.
 1. **인덱스 태그**: 이름이 `INDEX_TAG_PATTERNS`에 매칭되면 `코스피`/`코스닥` 태그.
 2. **키워드 태그**: 이름에 키워드가 있으면 해당 태그 (예: 배터리 → 2차전지, 헬스케어 → 바이오).
-3. **LLM 태그**: 나머지 ETF는 최신 HOLDS 날짜의 보유종목 TOP 10 종목명과 함께 5개씩 묶어 LLM에 보낸다.
+3. **LLM 태그**: 나머지 ETF는 현재 보유종목(`CURRENT_HOLDS`) 비중 TOP 10 종목명과 함께 5개씩 묶어 LLM에 보낸다.
    - 추론이 토큰 한도(8192)를 다 써서 실패한 배치는 추론을 끄고(`enable_thinking: false`) 한 번 더 시도한다.
    - openai SDK `client.chat.completions.parse(response_format=ETFTagBatchResult)` structured output, `temperature=0`.
    - 허용 태그(`ALLOWED_TAGS`, 24개) Enum에서만 0~3개 선택. 시장 대표형(대형주·우량주·ESG 등)처럼 맞는 태그가 없으면 태그를 달지 않는다(필요하면 관리자가 `우량주` 등으로 수동 지정).
+   - 두 번 다 실패한 배치의 ETF는 태그와 `tagged_at`을 그대로 둬 다음 실행에서 다시 시도한다.
+   - LLM이 배치에 없던 코드를 돌려주면 무시한다.
    - LiteLLM 프록시(`LLM_API_BASE`)의 `LLM_MODEL`(기본 `qwen38-27b`) 사용.
-4. 새 태그 쌍을 메모리에 모두 구축한 뒤, 기존 `TAGGED`/`Tag`를 삭제하고 일괄 재생성한다 (단일 트랜잭션 — LLM 실패 시에도 기존 태그 보존).
+4. 새 태그 쌍을 메모리에 모두 구한 뒤 단일 트랜잭션으로 반영한다.
+   - `Tag`: `ALLOWED_TAGS` + `RULE_ONLY_TAGS` + `MANUAL_ONLY_TAGS`를 모두 MERGE하고, 목록에 없는 Tag 노드는 삭제한다.
+   - `TAGGED`: 이번 대상 ETF(LLM 실패 제외)와 수동 지정 ETF의 관계만 지우고 새로 만든다. 다른 ETF의 태그는 건드리지 않는다.
+   - 이번에 태깅한 ETF에 `tagged_at`(`YYYY-MM-DD`)을 기록한다.
 
 `LLM_API_KEY`가 없으면 태깅을 건너뛴다.
 
-**저장:** AGE — `Tag` 노드, `(ETF)-[:TAGGED]->(Tag)`
+**저장:** AGE — `Tag` 노드, `(ETF)-[:TAGGED]->(Tag)`, `ETF.tagged_at`
 
 ---
 
@@ -222,10 +229,11 @@ check_market_open → collect_prices → update_snapshots
 |-----------|-----------|------|
 | `ETF`, `Company`, `MANAGED_BY` | collect_universe_and_prices | 유니버스, 메타데이터, 운용사 |
 | `Price`, `(ETF)-[:HAS_PRICE]->` | collect_universe_and_prices (KIS 일봉 + 현재가) | ETF 가격 시계열 |
-| `Stock`, `HOLDS` | collect_holdings (KIS) | 보유종목 (수집일 기준 스냅샷) |
+| `Stock`, `HOLDS` | collect_holdings (KIS) | 보유종목 이력 (수집일 기준 스냅샷, 변화 비교용) |
+| `CURRENT_HOLDS` | collect_holdings → refresh_current_holds | 현재 보유종목 (ETF당 최대 30개) |
 | `Price`, `(Stock)-[:HAS_PRICE]->` | collect_stock_prices_for_dates (KIS 일봉) | 주식 가격 시계열 |
 | ETF 수익률 속성 | update_etf_returns | 1D/1W/1M 수익률 |
-| `Tag`, `TAGGED` | age_tagging, tag_new_etfs | ETF 테마 분류 |
+| `Tag`, `TAGGED`, `ETF.tagged_at` | age_tagging, tag_new_etfs | ETF 테마 분류 |
 
 ## 환경 변수
 

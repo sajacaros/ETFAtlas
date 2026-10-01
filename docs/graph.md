@@ -29,8 +29,8 @@ RDB JOIN으로도 가능하지만, 그래프는 관계 탐색이 직관적이고
                          │ MANAGED_BY
 ┌──────────┐        ┌────┴─────┐          ┌──────────┐
 │   User   │─WATCHES│   ETF    │──HOLDS──▶│  Stock   │
-│{user_id} │  ─────▶│{code,    │          │{code,    │
-│          │        │ name,    │          │ name,    │
+│{user_id} │  ─────▶│{code,    │─CURRENT_▶│{code,    │
+│          │        │ name,    │  HOLDS   │ name,    │
 └──────────┘        │ expense_ratio,│     │ is_etf}  │
                     │ net_assets,│         └────┬─────┘
                     │ close_price,│             │ HAS_PRICE
@@ -54,7 +54,7 @@ RDB JOIN으로도 가능하지만, 그래프는 관계 탐색이 직관적이고
 
 | 라벨 | 속성 | 생성 주체 | 설명 |
 |------|------|-----------|------|
-| ETF | code, name, expense_ratio, net_assets, close_price, return_1d, return_1w, return_1m, market_cap_change_1w, updated_at, manual_tags | DAG: collect_universe_and_prices, update_etf_returns. manual_tags는 관리자 페이지 | ETF 종목. manual_tags(태그 이름 리스트)가 있으면 age_tagging이 자동 태깅 대신 그 값을 쓴다 (빈 리스트 = 태그 없음 고정) |
+| ETF | code, name, expense_ratio, net_assets, close_price, return_1d, return_1w, return_1m, market_cap_change_1w, updated_at, manual_tags, tagged_at | DAG: collect_universe_and_prices, update_etf_returns. manual_tags는 관리자 페이지, tagged_at은 age_tagging | ETF 종목. manual_tags(태그 이름 리스트)가 있으면 age_tagging이 자동 태깅 대신 그 값을 쓴다 (빈 리스트 = 태그 없음 고정). tagged_at(`YYYY-MM-DD`)은 자동 태깅된 날짜로, 없으면 다음 age_tagging의 태깅 대상 |
 | Stock | code, name, is_etf | DAG: collect_holdings | 보유 종목 (ETF인 경우 is_etf=true). 주식 이름은 KIS `hts_kor_isnm` |
 | Company | name | DAG: collect_universe_and_prices | 운용사 (삼성자산운용 등) |
 | Tag | name | DAG: age_tagging | 테마/분류 태그 (반도체, AI 등). ETF별 태그는 관리자 페이지에서 수동 지정 가능 |
@@ -66,7 +66,8 @@ RDB JOIN으로도 가능하지만, 그래프는 관계 탐색이 직관적이고
 | 관계 | 방향 | 속성 | 설명 |
 |------|------|------|------|
 | MANAGED_BY | ETF → Company | - | 운용사 관계 |
-| HOLDS | ETF → Stock | date, weight, shares | 보유종목 (날짜별 스냅샷). KIS API 호출 시점 구성종목을 최근 거래일 날짜로 저장, shares는 평가금액/현재가 추정치. KIS 제약으로 ETF당 비중 상위 30개까지만 |
+| CURRENT_HOLDS | ETF → Stock | date, weight, shares | 현재 보유종목. ETF별로 가장 최근 수집일의 HOLDS를 복사한 것 (ETF당 최대 30개). 현재 구성종목 조회는 모두 이 관계를 쓴다 |
+| HOLDS | ETF → Stock | date, weight, shares | 보유종목 이력 (날짜별 스냅샷). KIS API 호출 시점 구성종목을 최근 거래일 날짜로 저장, shares는 평가금액/현재가 추정치. KIS 제약으로 ETF당 비중 상위 30개까지만. 보유종목 변화·비중 이력 비교에만 쓴다 |
 | TAGGED | ETF → Tag | - | 테마/분류 태그 |
 | HAS_PRICE | ETF/Stock → Price | - | 일별 가격 연결 |
 | WATCHES | User → ETF | added_at | 즐겨찾기 |
@@ -84,11 +85,9 @@ SET search_path = ag_catalog, "$user", public;
 
 -- Cypher 실행
 SELECT * FROM cypher('etf_graph', $$
-    MATCH (e:ETF {code: '069500'})-[h:HOLDS]->(s:Stock)
-    WITH s, h ORDER BY h.date DESC
-    WITH s, head(collect(h)) as latest
-    RETURN {stock_code: s.code, stock_name: s.name, weight: latest.weight}
-    ORDER BY latest.weight DESC LIMIT 10
+    MATCH (e:ETF {code: '069500'})-[h:CURRENT_HOLDS]->(s:Stock)
+    RETURN {stock_code: s.code, stock_name: s.name, weight: h.weight}
+    ORDER BY h.weight DESC LIMIT 10
 $$) AS (result agtype);
 ```
 
@@ -124,29 +123,23 @@ execute_cypher(cur, """
 
 ## 주요 쿼리 패턴
 
-### 1. ETF 최신 보유종목 (날짜별 HOLDS 엣지에서 최신만)
+### 1. ETF 현재 보유종목 (CURRENT_HOLDS)
 
 ```cypher
-MATCH (e:ETF {code: $etf_code})-[h:HOLDS]->(s:Stock)
-WITH s, h ORDER BY h.date DESC
-WITH s, head(collect(h)) as latest
-RETURN {stock_code: s.code, stock_name: s.name, weight: latest.weight}
-ORDER BY latest.weight DESC LIMIT 10
+MATCH (e:ETF {code: $etf_code})-[h:CURRENT_HOLDS]->(s:Stock)
+RETURN {stock_code: s.code, stock_name: s.name, weight: h.weight}
+ORDER BY h.weight DESC LIMIT 10
 ```
 
 ### 2. 유사 ETF 탐색
 
-보유종목 비중 겹침(min overlap)으로 유사도를 측정한다.
+각 ETF의 현재 보유종목(CURRENT_HOLDS) 비중 겹침(min overlap)으로 유사도를 측정한다.
 
 ```cypher
-MATCH (e1:ETF {code: $etf_code})-[h1:HOLDS]->(s:Stock)
-WITH e1, s, h1 ORDER BY h1.date DESC
-WITH e1, s, head(collect(h1)) as latest1
-MATCH (e2:ETF)-[h2:HOLDS]->(s) WHERE e1 <> e2
-WITH e2, s, latest1, h2 ORDER BY h2.date DESC
-WITH e2, s, latest1, head(collect(h2)) as latest2
+MATCH (e1:ETF {code: $etf_code})-[h1:CURRENT_HOLDS]->(s:Stock)<-[h2:CURRENT_HOLDS]-(e2:ETF)
+WHERE e1 <> e2
 WITH e2, COUNT(s) as overlap,
-     SUM(CASE WHEN latest1.weight < latest2.weight THEN latest1.weight ELSE latest2.weight END) as similarity
+     SUM(CASE WHEN h1.weight < h2.weight THEN h1.weight ELSE h2.weight END) as similarity
 WHERE overlap >= $min_overlap
 RETURN {etf_code: e2.code, name: e2.name, overlap: overlap, similarity: similarity}
 ORDER BY similarity DESC LIMIT 5
@@ -155,11 +148,9 @@ ORDER BY similarity DESC LIMIT 5
 ### 3. 종목 보유 ETF 조회 (역추적)
 
 ```cypher
-MATCH (e:ETF)-[h:HOLDS]->(s:Stock {code: $stock_code})
-WITH e, h ORDER BY h.date DESC
-WITH e, head(collect(h)) as latest
-RETURN {etf_code: e.code, etf_name: e.name, weight: latest.weight}
-ORDER BY latest.weight DESC
+MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock {code: $stock_code})
+RETURN {etf_code: e.code, etf_name: e.name, weight: h.weight}
+ORDER BY h.weight DESC
 ```
 
 ### 4. 태그별 ETF 조회
@@ -257,5 +248,5 @@ SET search_path = ag_catalog, "$user", public;
 3. **파라미터 치환**: Cypher `$param`과 SQLAlchemy `:param`이 충돌. 수동으로 `$param` 값을 쿼리 문자열에 삽입하여 처리.
 4. **단일 맵 반환**: `execute_cypher`는 `(result agtype)` 컬럼 하나만 반환. 다중 RETURN 값은 `RETURN {key1: val1, key2: val2}` 맵으로 감싸야 한다.
 5. **반환 타입**: 모든 Cypher 결과는 `agtype`으로 반환되어 `parse_agtype()` 파싱 필요.
-6. **날짜별 HOLDS 엣지**: 같은 ETF-Stock 쌍이라도 날짜마다 별도 엣지가 생성되어 시간에 따른 이력이 쌓인다. 최신 데이터 조회 시 `ORDER BY h.date DESC` + `head(collect(h))` 패턴 사용.
+6. **HOLDS vs CURRENT_HOLDS**: HOLDS는 같은 ETF-Stock 쌍이라도 날짜마다 별도 엣지가 생겨 이력이 계속 쌓인다. 현재 구성종목은 HOLDS에서 최신 날짜를 고르지 말고 ETF당 최대 30개인 `CURRENT_HOLDS`를 읽는다. `collect_holdings`가 HOLDS 저장 후 그날 HOLDS가 있는 ETF의 CURRENT_HOLDS를 교체한다 (KIS 조회 실패 ETF는 이전 구성종목 유지, 이미 더 최근 날짜인 ETF는 건너뜀).
 7. **HOLDS 이력 범위**: KIS API는 과거 날짜 구성종목을 조회할 수 없어 HOLDS 이력은 수집을 시작한 날부터만 쌓인다 (초기 적재 시 과거 HOLDS 백필 없음). 보유종목 변화는 Change 노드 없이 두 날짜의 HOLDS를 조회 시점에 비교해 계산한다.

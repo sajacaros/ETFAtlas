@@ -86,7 +86,7 @@ pg_trgm은 사용하지 않는다.
 Apache AGE 그래프에서 Cypher 쿼리로 보유종목 중복도를 계산한다:
 
 ```cypher
-MATCH (e1:ETF {code: $etf_code})-[:HOLDS]->(s:Stock)<-[:HOLDS]-(e2:ETF)
+MATCH (e1:ETF {code: $etf_code})-[:CURRENT_HOLDS]->(s:Stock)<-[:CURRENT_HOLDS]-(e2:ETF)
 WHERE e1 <> e2
 WITH e2, COUNT(s) as overlap
 WHERE overlap >= $min_overlap
@@ -95,7 +95,7 @@ ORDER BY overlap DESC
 LIMIT 10
 ```
 
-두 ETF가 공통으로 보유한 종목 수(overlap)가 `min_overlap`(기본 5) 이상인 ETF를 반환.
+각 ETF의 현재 보유종목(`CURRENT_HOLDS`) 기준으로, 두 ETF가 공통으로 보유한 종목 수(overlap)가 `min_overlap`(기본 5) 이상인 ETF를 반환.
 
 ## AI 추천 (ETFRecommenderAgent)
 

@@ -105,7 +105,7 @@ ORDER BY e.name LIMIT 10
 **내부 동작**: 4개의 하위 쿼리 실행
 1. 기본정보 + 운용사 (Cypher: `ETF → MANAGED_BY → Company`)
 2. 태그 (Cypher: `ETF → TAGGED → Tag`)
-3. 상위 보유종목 10개 (Cypher: `ETF → HOLDS → Stock`, 최신 날짜 기준)
+3. 상위 보유종목 10개 (Cypher: `ETF → CURRENT_HOLDS → Stock`, 비중순)
 4. 최근 수익률 1주/1개월/3개월 (`ETFService.get_etf_prices()`)
 
 ---
@@ -130,7 +130,7 @@ ORDER BY e.name LIMIT 10
 ]
 ```
 
-**유사도 계산**: 보유종목 비중(weight) 겹침 기반 overlap 방식
+**유사도 계산**: 각 ETF의 현재 보유종목(`CURRENT_HOLDS`) 비중(weight) 겹침 기반 overlap 방식
 
 ---
 
@@ -253,7 +253,7 @@ ORDER BY e.name LIMIT 10
 ]
 ```
 
-**비교 항목**: 기본정보(보수율, 순자산), 운용사, 태그, 상위 보유종목 5개, 최근 1개월 수익률
+**비교 항목**: 기본정보(보수율, 순자산), 운용사, 태그, 상위 보유종목 5개(`CURRENT_HOLDS`), 최근 1개월 수익률
 
 ---
 
@@ -284,7 +284,8 @@ ORDER BY e.name LIMIT 10
   - User(user_id)
 
 관계:
-  - (ETF)-[:HOLDS {date, weight, shares}]->(Stock)
+  - (ETF)-[:CURRENT_HOLDS {date, weight, shares}]->(Stock)  = 현재 구성종목 (ETF당 비중 상위 30개)
+  - (ETF)-[:HOLDS {date, weight, shares}]->(Stock)          = 날짜별 구성종목 이력 (비중 변화 비교에만 사용)
   - (ETF)-[:MANAGED_BY]->(Company)
   - (ETF)-[:TAGGED]->(Tag)
   - (ETF)-[:HAS_PRICE]->(Price), (Stock)-[:HAS_PRICE]->(Price)
@@ -296,15 +297,23 @@ ORDER BY e.name LIMIT 10
 2. RETURN은 반드시 단일 맵: `RETURN {key1: val1, key2: val2}`
 3. 문자열 값은 작은따옴표: `{code: '005930'}`
 4. 집계 함수 + ORDER BY는 WITH 절로 분리
+5. weight, expense_ratio, return_*, net_assets는 숫자로 저장된다(비중·보수율·수익률은 % 단위, 순자산은 원). 결과에 붙는 `%`·`억원`은 표시용 서식이므로 조건은 숫자로 쓴다 (예: `h.weight >= 10`, `e.expense_ratio <= 0.1`)
 
 **쿼리 예시**
 ```cypher
+-- ETF의 현재 보유종목 (현재 구성종목은 항상 CURRENT_HOLDS)
+MATCH (e:ETF {code: '069500'})-[h:CURRENT_HOLDS]->(s:Stock)
+RETURN {stock_code: s.code, stock_name: s.name, weight: h.weight}
+ORDER BY h.weight DESC LIMIT 10
+
 -- 특정 종목을 보유한 ETF (비중 내림차순)
-MATCH (e:ETF)-[h:HOLDS]->(s:Stock {code: '005930'})
-WITH e, h ORDER BY h.date DESC
-WITH e, head(collect(h)) as latest
-RETURN {etf_code: e.code, etf_name: e.name, weight: latest.weight}
-ORDER BY latest.weight DESC
+MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock {name: '삼성전자'})
+RETURN {etf_code: e.code, etf_name: e.name, weight: h.weight}
+ORDER BY h.weight DESC
+
+-- 특정 종목의 ETF 내 비중 이력 (HOLDS는 이력 비교에만)
+MATCH (e:ETF {code: '069500'})-[h:HOLDS]->(s:Stock {name: '삼성전자'})
+RETURN {date: h.date, weight: h.weight} ORDER BY h.date
 
 -- 태그별 ETF 조회
 MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: '반도체'})
@@ -316,16 +325,12 @@ WHERE c.name CONTAINS '삼성'
 RETURN {code: e.code, name: e.name, company: c.name}
 
 -- 두 종목을 동시에 보유한 ETF
-MATCH (e:ETF)-[h1:HOLDS]->(s1:Stock {code: '005930'})
-WITH e, h1 ORDER BY h1.date DESC
-WITH e, head(collect(h1)) as lh1
-MATCH (e)-[h2:HOLDS]->(s2:Stock {code: '095610'})
-WITH e, lh1, h2 ORDER BY h2.date DESC
-WITH e, lh1, head(collect(h2)) as lh2
-WITH e, lh1, lh2, lh1.weight + lh2.weight AS total_weight
+MATCH (e:ETF)-[h1:CURRENT_HOLDS]->(s1:Stock {code: '005930'})
+MATCH (e)-[h2:CURRENT_HOLDS]->(s2:Stock {code: '095610'})
+WITH e, h1, h2, h1.weight + h2.weight AS total_weight
 ORDER BY total_weight DESC
 LIMIT 5
-RETURN {etf_code: e.code, etf_name: e.name, weight_samsung: lh1.weight, weight_tes: lh2.weight, total_weight: total_weight}
+RETURN {etf_code: e.code, etf_name: e.name, weight_samsung: h1.weight, weight_tes: h2.weight, total_weight: total_weight}
 ```
 
 ---
@@ -395,7 +400,7 @@ agent.run_stream_events(prompt)  ← instructions = 시스템 프롬프트 + 태
 ```
 [Step 1] stock_search(query="삼성전자")
          → [{"code": "005930", "name": "삼성전자"}]
-[Step 2] graph_query(cypher="MATCH (e:ETF)-[h:HOLDS]->(s:Stock {code: '005930'}) WITH e, h ORDER BY h.date DESC WITH e, head(collect(h)) as latest RETURN {etf_code: e.code, etf_name: e.name, weight: latest.weight} ORDER BY latest.weight DESC LIMIT 5")
+[Step 2] graph_query(cypher="MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock {code: '005930'}) RETURN {etf_code: e.code, etf_name: e.name, weight: h.weight} ORDER BY h.weight DESC LIMIT 5")
          → [{"etf_code": "069500", "etf_name": "KODEX 200", "weight": "30.50%"}, ...]
 [답변]   | ETF | 코드 | 비중 | ... 마크다운 표
 ```

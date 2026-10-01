@@ -144,9 +144,10 @@ ETF별 최근 45개 Price로 `close_price`, `return_1d`, `return_1w`, `return_1m
 
 1. **인덱스 태그**: 이름이 `INDEX_TAG_PATTERNS`에 매칭되면 `코스피`/`코스닥` 태그.
 2. **키워드 태그**: 이름에 키워드가 있으면 해당 태그 (예: 배터리 → 2차전지, 헬스케어 → 바이오).
-3. **LLM 태그**: 나머지 ETF는 최신 HOLDS 날짜의 보유종목 TOP 10 종목명과 함께 10개씩 묶어 LLM에 보낸다.
+3. **LLM 태그**: 나머지 ETF는 최신 HOLDS 날짜의 보유종목 TOP 10 종목명과 함께 5개씩 묶어 LLM에 보낸다.
+   - 추론이 토큰 한도(8192)를 다 써서 실패한 배치는 추론을 끄고(`enable_thinking: false`) 한 번 더 시도한다.
    - openai SDK `client.chat.completions.parse(response_format=ETFTagBatchResult)` structured output, `temperature=0`.
-   - 허용 태그(`ALLOWED_TAGS`, 21개) Enum에서만 1~3개 선택.
+   - 허용 태그(`ALLOWED_TAGS`, 22개) Enum에서만 0~3개 선택. 시장 대표형(대형주·우량주·ESG 등)처럼 맞는 태그가 없으면 태그를 달지 않는다.
    - LiteLLM 프록시(`LLM_API_BASE`)의 `LLM_MODEL`(기본 `qwen38-27b`) 사용.
 4. 새 태그 쌍을 메모리에 모두 구축한 뒤, 기존 `TAGGED`/`Tag`를 삭제하고 일괄 재생성한다 (단일 트랜잭션 — LLM 실패 시에도 기존 태그 보존).
 

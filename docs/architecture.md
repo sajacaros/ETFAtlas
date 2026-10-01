@@ -365,12 +365,14 @@ init 스크립트는 빈 볼륨으로 처음 기동할 때만 실행된다 (별�
 
 ### 포트 할당
 
-| 서비스 | 외부 포트 | 내부 포트 | URL |
-|--------|----------|----------|-----|
-| Frontend | 9600 | 80 | http://localhost:9600 |
-| Backend | 9601 | 8000 | http://localhost:9601 |
-| PostgreSQL | 9602 | 5432 | localhost:9602 |
-| Airflow (api-server) | 9603 | 8080 | http://localhost:9603 |
+| 서비스 | 호스트 포트 | 내부 포트 | 바인딩 | URL |
+|--------|----------|----------|--------|-----|
+| Frontend | 9600 | 80 | 모든 인터페이스 | http://localhost:9600 |
+| Backend | 9601 | 8000 | 모든 인터페이스 | http://localhost:9601 |
+| PostgreSQL | 9602 | 5432 | `127.0.0.1`만 | localhost:9602 |
+| Airflow (api-server) | 9603 | 8080 | `127.0.0.1`만 | http://localhost:9603 |
+
+DB와 Airflow는 호스트 자신(`127.0.0.1`)에만 열려 외부에서 접속할 수 없다. 서버에 배포했을 때 Airflow UI는 SSH 터널(`ssh -L 9603:localhost:9603 <서버>`)로 연다. Docker가 연 포트는 `ufw` 등 방화벽 규칙을 우회할 수 있어 compose의 바인딩 주소로 막는다.
 
 ### 서비스 구성 (docker-compose.yml)
 

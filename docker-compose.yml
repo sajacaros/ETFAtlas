@@ -52,7 +52,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-etf_atlas}
     ports:
-      - "${DB_PORT:-5432}:5432"
+      # 서버 자신(127.0.0.1)에만 연다 — 외부에서는 접속 불가. 서버 안에서 psql로 접근
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
     volumes:
       # PostgreSQL 18 이미지는 /var/lib/postgresql/18/docker 에 데이터를 둔다
       - postgres_data:/var/lib/postgresql
@@ -119,7 +120,8 @@ services:
     container_name: etf-atlas-airflow
     command: api-server
     ports:
-      - "${AIRFLOW_PORT:-9603}:8080"
+      # 서버 자신(127.0.0.1)에만 연다 — 외부에서는 SSH 터널로 접근 (ssh -L 9603:localhost:9603 서버)
+      - "127.0.0.1:${AIRFLOW_PORT:-9603}:8080"
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
       interval: 30s

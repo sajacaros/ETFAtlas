@@ -96,7 +96,7 @@ docker compose up -d --build
 | Backend API Docs | http://localhost:9601/docs |
 | Airflow | http://localhost:9603 (`AIRFLOW_USER` / `AIRFLOW_PASSWORD`) |
 
-DB(9602)와 Airflow(9603)는 호스트 자신에만 열립니다. 서버에 배포했다면 Airflow UI는 SSH 터널로 접속하세요: `ssh -L 9603:localhost:9603 <서버>` 후 http://localhost:9603
+외부에는 Frontend(9600)만 열립니다. Backend(9601), DB(9602), Airflow(9603)는 호스트 자신에만 열리고, 브라우저의 API 요청은 Frontend가 `/api`로 받아 백엔드에 넘깁니다. 서버에 배포했다면 Airflow UI와 API 문서는 SSH 터널로 접속하세요: `ssh -L 9603:localhost:9603 -L 9601:localhost:9601 <서버>` 후 http://localhost:9603, http://localhost:9601/docs
 
 처음 접속하면 **초기 설정(/setup) 화면**이 나옵니다. 여기서 만든 계정이 관리자(admin)가 되고, 이후 사용자는 로그인 화면의 회원가입 탭으로 가입합니다.
 

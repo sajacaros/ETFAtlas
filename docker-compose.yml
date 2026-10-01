@@ -82,7 +82,8 @@ services:
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-embedding-gemma-300m}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:9600}
     ports:
-      - "${BACKEND_PORT:-9601}:8000"
+      # 서버 자신(127.0.0.1)에만 연다 — 외부 요청은 frontend nginx가 /api로 받아 내부망으로 넘긴다
+      - "127.0.0.1:${BACKEND_PORT:-9601}:8000"
     depends_on:
       db:
         condition: service_healthy

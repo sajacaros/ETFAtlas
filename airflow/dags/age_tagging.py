@@ -28,6 +28,10 @@ ALLOWED_TAGS = [
     '고배당', '주주환원', '그룹주',
 ]
 
+# LLM/키워드 규칙에는 쓰지 않고 관리자 수동 지정(manual_tags)으로만 붙이는 태그.
+# 우량주: 특정 테마 없이 대형 우량주를 소수만 골라 집중하는 ETF (지수를 폭넓게 따라가는 ETF는 코스피)
+MANUAL_ONLY_TAGS = ['우량주']
+
 default_args = {
     'owner': 'etf-atlas',
     'depends_on_past': False,
@@ -303,7 +307,7 @@ ETF 이름과 주요 보유종목을 보고, 아래 고정 태그 목록에서 �
             MATCH (t:Tag) DETACH DELETE t RETURN t
         """)
 
-        all_tags = ALLOWED_TAGS + RULE_ONLY_TAGS
+        all_tags = ALLOWED_TAGS + RULE_ONLY_TAGS + MANUAL_ONLY_TAGS
         tag_init_items = [{'name': t} for t in all_tags]
         execute_cypher_batch(cur, """
             MERGE (t:Tag {name: item.name}) RETURN t

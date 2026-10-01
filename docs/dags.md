@@ -90,7 +90,7 @@ KRX Open API 없이 KIS만으로 유니버스와 ETF 가격을 갱신한다. `KI
 3. **현재 스냅샷**: 대상마다 `KISApiClient.get_etf_snapshot(code)` — ETF/ETN 현재가(`FHPST02400000`, `/uapi/etfetn/v1/quotations/inquire-price`)로 현재가(`stck_prpr`), NAV(`nav`, 없으면 `prdy_last_nav`), 순자산총액(`etf_ntas_ttam`), 상장주수(`lstn_stcn`)를 조회한다. 순자산 값이 1억 미만이면 억원 단위로 보고 ×1억 한다 (응답 단위 미확인이라 둔 방어 로직).
 4. **유니버스 신규 편입 조건** (`check_new_universe_candidates`):
    - 순자산 500억 이상 (`MIN_AUM`)
-   - 제외 키워드 미포함 (`EXCLUDE_KEYWORDS`): 레버리지, 인버스, 합성/선물, 커버드콜, 채권, 금/원자재, 통화, 머니마켓, 리츠 등
+   - 제외 키워드 미포함 (`EXCLUDE_KEYWORDS`, `EXCLUDE_PATTERNS`): 레버리지, 인버스, 합성/선물, 커버드콜, 채권, 금·은/원자재, 통화, 머니마켓, 리츠 등
    - 해외 키워드 미포함 (`FOREIGN_NAME_KEYWORDS`): 미국, 중국, 글로벌, S&P, NASDAQ, MSCI, 해외 개별종목명 등
 - 한번 등록된 ETF는 이후 조건에 미달하더라도 유니버스에서 제거하지 않는다.
 - 신규 ETF: `ETF` 노드 MERGE → `name`, `expense_ratio` SET → 이름 prefix로 운용사를 추출해 `(ETF)-[:MANAGED_BY]->(Company)` 연결.

@@ -44,13 +44,15 @@
 
 ### 필터링 로직
 
-`airflow/dags/age_utils.py` (요약). `EXCLUDE_KEYWORDS`, `FOREIGN_NAME_KEYWORDS`, `MIN_AUM`은 모듈 상수다.
+`airflow/dags/age_utils.py` (요약). `EXCLUDE_KEYWORDS`, `EXCLUDE_PATTERNS`, `FOREIGN_NAME_KEYWORDS`, `MIN_AUM`은 모듈 상수다. `EXCLUDE_PATTERNS`는 부분 문자열로는 오탐이 나는 대상용 정규식이다(단어 첫머리의 `은` — `은행`은 제외).
 
 ```python
 MIN_AUM = 500 * 100_000_000  # 500억
 
 def passes_universe_name_filter(name):   # API 호출 전 1차 필터
     if any(kw.lower() in name_lower for kw in EXCLUDE_KEYWORDS):
+        return False
+    if any(re.search(p, name) for p in EXCLUDE_PATTERNS):
         return False
     if any(kw.lower() in name_lower or kw in name for kw in FOREIGN_NAME_KEYWORDS):
         return False

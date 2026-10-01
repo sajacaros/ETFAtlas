@@ -7,6 +7,7 @@ age_sync_universe / age_tagging / embed_code_examples DAG에서 공통으로 사
 import logging
 import re
 import os
+from datetime import datetime, time, timedelta
 
 log = logging.getLogger(__name__)
 
@@ -272,6 +273,17 @@ def _parse_age_value(raw):
 
 
 BUSINESS_DAY_REFERENCE_CODE = '069500'  # KODEX 200 — 모든 거래일에 거래됨
+MARKET_SETTLED_TIME = time(16, 0)  # 15:30 종가 확정 후 여유
+
+
+def last_settled_day(now: datetime) -> str:
+    """종가가 확정된 마지막 날짜(YYYYMMDD). 장 마감 전이면 전날.
+
+    KIS 일봉은 장중에도 당일 봉(미완성)을 돌려주므로 수집 범위 끝을 여기서 자른다.
+    휴장일 여부는 보지 않는다 — get_business_days가 거른다.
+    """
+    day = now if now.time() >= MARKET_SETTLED_TIME else now - timedelta(days=1)
+    return day.strftime('%Y%m%d')
 
 
 def get_business_days(from_date: str, to_date: str) -> list[str]:

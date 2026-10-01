@@ -71,3 +71,16 @@ def test_check_new_universe_candidates():
     ]
     result = age_utils.check_new_universe_candidates(items, {"069500"})
     assert [c["code"] for c in result] == ["091160"]
+
+
+@pytest.mark.parametrize("now, expected", [
+    ("2026-10-01 08:30", "20260930"),  # 스케줄 실행(장 시작 전)
+    ("2026-10-01 10:16", "20260930"),  # 장중
+    ("2026-10-01 15:59", "20260930"),
+    ("2026-10-01 16:00", "20261001"),  # 종가 확정 후
+    ("2026-10-01 23:00", "20261001"),
+])
+def test_last_settled_day(now, expected):
+    from datetime import datetime
+    age_utils = pytest.importorskip("age_utils")
+    assert age_utils.last_settled_day(datetime.strptime(now, "%Y-%m-%d %H:%M")) == expected

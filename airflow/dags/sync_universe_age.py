@@ -1,7 +1,7 @@
 """
 ETF Universe Sync DAG (Apache AGE) — 일일 증분 수집
 
-마지막 수집일 이후 ~ 오늘까지 누락된 영업일의 데이터를 자동 수집.
+마지막 수집일 이후 ~ 종가가 확정된 마지막 날까지 누락된 영업일의 데이터를 자동 수집.
 AGE가 비어 있으면(첫 실행) 최근 거래일 하루만 수집한다 — 과거 이력 백필은 하지 않는다.
 구성종목(HOLDS)은 KIS API가 날짜 지정을 지원하지 않아 항상 최근 거래일 스냅샷만 수집한다.
 수집 로직은 age_utils 공용 함수 사용. 태그는 age_tagging DAG에서 부여.
@@ -15,7 +15,7 @@ import logging
 
 from age_utils import (
     get_db_connection, init_age, execute_cypher_batch,
-    get_business_days, get_last_collected_date, get_etf_codes_from_age,
+    get_business_days, last_settled_day, get_last_collected_date, get_etf_codes_from_age,
     collect_universe_and_prices, collect_holdings,
     collect_stock_prices_for_dates,
     record_collection_run, send_discord_notification,
@@ -53,17 +53,17 @@ def fetch_trading_dates(**context):
 
     XCom return: 수집 대상 영업일 리스트 (YYYYMMDD)
     """
-    today = datetime.now().strftime('%Y%m%d')
+    end_date = last_settled_day(datetime.now())
 
     last = get_last_collected_date()
     if last:
         # 마지막 수집일 다음 날부터
         start = (datetime.strptime(last, '%Y%m%d') + timedelta(days=1)).strftime('%Y%m%d')
-        dates = get_business_days(start, today)
+        dates = get_business_days(start, end_date)
     else:
         # 첫 실행(빈 AGE): 백필 없이 최근 거래일 하루만 수집
         start = (datetime.now() - timedelta(days=10)).strftime('%Y%m%d')
-        dates = get_business_days(start, today)[-1:]
+        dates = get_business_days(start, end_date)[-1:]
         log.info(f"No previous data in AGE. First run collects latest trading day only: {dates}")
 
     if not dates:

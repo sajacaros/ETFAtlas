@@ -95,3 +95,19 @@ def test_last_settled_day(now, expected):
 def test_universe_name_filter_excludes_silver(name, ok):
     age_utils = pytest.importorskip("age_utils")
     assert age_utils.passes_universe_name_filter(name) is ok
+
+
+@pytest.mark.parametrize("name, company", [
+    ("KODEX 200", "삼성자산운용"),
+    ("IBK K-AI반도체코어테크", "IBK자산운용"),
+    ("아이엠에셋 200", "iM에셋자산운용"),
+    ("FOCUS 200", "브이아이자산운용"),
+    ("DS 코스닥액티브", "디에스자산운용"),
+    ("MIDAS 코스피액티브", "마이다스에셋자산운용"),
+    ("DAISHIN K200", "대신자산운용"),
+    ("DAISHIN343 K200", "대신자산운용"),
+    ("NEWBRAND 200", "기타"),
+])
+def test_get_company_from_etf_name(name, company):
+    age_utils = pytest.importorskip("age_utils")
+    assert age_utils.get_company_from_etf_name(name) == company

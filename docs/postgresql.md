@@ -32,7 +32,7 @@ RUN git clone --branch release/PG18/1.8.0 --depth 1 https://github.com/apache/ag
 | `00_airflow_db.sql` | Airflow 메타데이터 DB `airflow` 생성 (앱 DB `etf_atlas`와 분리) |
 | `01_extensions.sql` | `age`, `vector`, `pg_trgm` 확장 + `etf_graph` 생성 |
 | `02_schema.sql` | RDB 테이블/인덱스, 기본 역할(admin, member) |
-| `03_seed_code_examples.sql` | 챗봇 코드 예제 시드 (임베딩은 `embed_code_examples` DAG에서 생성) |
+| `03_seed_code_examples.sql` | 챗봇 해결 절차 예시 시드 — `docker/db/seed/code_examples.py`에서 생성 (임베딩은 `embed_code_examples` DAG에서 생성) |
 
 ### 초기화 (01_extensions.sql)
 

@@ -674,13 +674,17 @@ class ChatService:
     def _build_prompt(self, message: str, history: List[Dict[str, str]]) -> tuple:
         """사용자 프롬프트(참고 예시 + 이전 대화 + 현재 질문)와 매칭된 예시를 반환한다."""
         parts = []
-        code_examples = self._embedding_service.find_similar_code_examples(message, top_k=3)
+        # 예시는 일반화된 질문으로 임베딩되어 있으므로 검색 질의도 같은 방식으로 일반화한다
+        search_query = self._embedding_service.generalize_question(message)
+        code_examples = self._embedding_service.find_similar_code_examples(search_query, top_k=3)
         if code_examples:
             parts.append("## 참고 해결 절차 예시")
-            parts.append("비슷한 질문을 해결한 도구 호출 순서입니다(의사코드). "
-                         "코드를 실행할 수는 없으니 같은 흐름으로 도구를 호출하세요:")
+            parts.append("비슷한 유형의 질문을 해결한 도구 호출 순서입니다. "
+                         "<종목명>, <ETF명>, <운용사> 같은 자리표시자는 현재 질문의 값으로 바꾸고, "
+                         "<…의 code>는 앞 호출 결과의 값을 쓰세요. 쿼리 구조(특히 Cypher)는 그대로 따르세요:")
             for ex in code_examples:
-                parts.append(f"Q: {ex['question']}\n```\n{ex['code']}\n```")
+                question = ex.get("question_generalized") or ex["question"]
+                parts.append(f"Q: {question}\n```\n{ex['code']}\n```")
             parts.append("")
         if history:
             parts.append("## 이전 대화 (참고용)")

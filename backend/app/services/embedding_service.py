@@ -31,7 +31,9 @@ class EmbeddingService:
                     {"role": "user", "content": question},
                 ],
                 temperature=0,
-                max_tokens=2048,  # 추론 모델: reasoning 토큰 포함
+                max_tokens=512,
+                # 고유명사 치환이라 추론 없이도 결과가 같고, 채팅마다 호출되므로 빠른 쪽을 쓴다
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
             )
             content = resp.choices[0].message.content
             return content.strip() if content else question
@@ -59,7 +61,7 @@ class EmbeddingService:
         self, question: str, top_k: int = 3, max_distance: float = 0.35,
         similarity_gap: float = 0.05,
     ) -> List[Dict[str, Any]]:
-        """질문과 유사한 Python 코드 예제 검색.
+        """질문과 유사한 해결 절차 예시(도구 호출 순서) 검색.
 
         max_distance: 코사인 거리 임계값 (0.35 = 유사도 0.65 이상만 반환).
         similarity_gap: 1등과의 유사도 차이 허용 범위 (0.05 = 5%).

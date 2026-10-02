@@ -58,6 +58,13 @@ export interface AdminETFTagList {
   tags: string[]
 }
 
+export interface AdminDiscordSettings {
+  enabled: boolean
+  threshold: number
+  webhook_url_masked: string | null
+  configured: boolean  // false: 웹에서 저장한 적 없음 (DAG는 서버 환경변수 사용)
+}
+
 export interface ETF {
   code: string
   name: string

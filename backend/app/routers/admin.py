@@ -10,6 +10,7 @@ from ..services.auth_service import is_admin
 from ..services.graph_service import GraphService
 from ..models.chat import ChatLog, ChatLogStatus
 from ..models.code_example import CodeExample
+from ..models.discord_setting import DiscordSetting
 from ..utils.time import utcnow
 from ..schemas.chat import (
     CodeExampleCreate,
@@ -17,6 +18,7 @@ from ..schemas.chat import (
     ReviewRequest,
     EmbedRequest,
     ETFTagsUpdate,
+    DiscordSettingsUpdate,
 )
 
 logger = logging.getLogger(__name__)
@@ -401,3 +403,77 @@ async def update_etf_tags(
         body.tags = list(dict.fromkeys(body.tags))
     graph.set_manual_tags(etf_code, body.tags)
     return graph.get_etf_tag_overview(etf_code)[0]
+
+
+# === Discord 알림 설정 ===
+
+def _mask_webhook(url: str | None) -> str | None:
+    """웹훅 주소는 비밀값 — 응답에는 끝 4자리만 남긴다."""
+    if not url:
+        return None
+    return f"https://discord.com/api/webhooks/…{url[-4:]}"
+
+
+def _discord_settings_response(setting: DiscordSetting | None) -> dict:
+    if setting is None:
+        return {"enabled": True, "threshold": 3.0, "webhook_url_masked": None, "configured": False}
+    return {
+        "enabled": setting.enabled,
+        "threshold": setting.threshold,
+        "webhook_url_masked": _mask_webhook(setting.webhook_url),
+        "configured": True,
+    }
+
+
+@router.get("/settings/discord")
+async def get_discord_settings(
+    db: Session = Depends(get_db),
+    admin_id: int = Depends(get_admin_user_id),
+):
+    """디스코드 알림 설정. configured=false면 아직 웹에서 저장한 적 없음(DAG는 환경변수 사용)."""
+    return _discord_settings_response(db.get(DiscordSetting, 1))
+
+
+@router.put("/settings/discord")
+async def update_discord_settings(
+    body: DiscordSettingsUpdate,
+    db: Session = Depends(get_db),
+    admin_id: int = Depends(get_admin_user_id),
+):
+    setting = db.get(DiscordSetting, 1)
+    if setting is None:
+        setting = DiscordSetting(id=1)
+        db.add(setting)
+    setting.enabled = body.enabled
+    setting.threshold = body.threshold
+    if body.webhook_url is not None:
+        setting.webhook_url = body.webhook_url or None
+    db.commit()
+    db.refresh(setting)
+    return _discord_settings_response(setting)
+
+
+@router.post("/settings/discord/test")
+async def test_discord_webhook(
+    db: Session = Depends(get_db),
+    admin_id: int = Depends(get_admin_user_id),
+):
+    """저장된 웹훅 주소로 테스트 메시지를 보낸다."""
+    import httpx
+
+    setting = db.get(DiscordSetting, 1)
+    if setting is None or not setting.webhook_url:
+        raise HTTPException(status_code=400, detail="저장된 웹훅 주소가 없습니다")
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                setting.webhook_url,
+                json={"content": "✅ ETF Atlas 디스코드 알림 테스트 메시지입니다."},
+            )
+            resp.raise_for_status()
+    except httpx.HTTPError as e:
+        # 예외 메시지에 웹훅 주소(토큰 포함)가 들어가므로 종류만 남긴다
+        status = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else None
+        logger.warning(f"Discord test failed: {type(e).__name__} status={status}")
+        raise HTTPException(status_code=502, detail="디스코드 전송에 실패했습니다. 웹훅 주소를 확인하세요.")
+    return {"ok": True}

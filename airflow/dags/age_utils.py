@@ -980,20 +980,84 @@ def _query_holdings(cur, etf_code: str, date_str: str) -> dict:
     return holdings
 
 
+DISCORD_MAX_CONTENT = 2000  # 디스코드 메시지 content 최대 길이
+
+
+def _load_discord_settings(conn) -> dict:
+    """디스코드 알림 설정. 웹(관리자 페이지)에서 저장한 discord_settings가 우선,
+    저장 전이거나 주소가 비었으면 환경변수 DISCORD_WEBHOOK_URL을 쓴다."""
+    settings = {'enabled': True, 'webhook_url': None, 'threshold': 3.0}
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT enabled, webhook_url, threshold FROM discord_settings WHERE id = 1")
+        row = cur.fetchone()
+    finally:
+        cur.close()
+    if row:
+        settings.update(enabled=row[0], webhook_url=row[1], threshold=row[2])
+    if not settings['webhook_url']:
+        settings['webhook_url'] = os.environ.get('DISCORD_WEBHOOK_URL')
+    return settings
+
+
+def _split_discord_messages(header: str, blocks: list[str], limit: int = DISCORD_MAX_CONTENT) -> list[str]:
+    """헤더 + ETF별 블록을 limit 이하 메시지들로 나눈다.
+
+    블록은 쪼개지 않고 통째로 담고, 블록 하나가 limit을 넘을 때만 줄 단위로 나눈다
+    (이어지는 조각엔 ETF 제목에 '(계속)'을 붙인다). 둘째 메시지부터는 헤더에 (n/N)을 단다.
+    """
+    # 헤더 자리(+ " (10/10)\n\n")를 남긴 만큼이 본문에 쓸 수 있는 길이
+    room = limit - len(header) - 12
+    pieces = []
+    for block in blocks:
+        if len(block) <= room:
+            pieces.append(block)
+            continue
+        title, *lines = block.split("\n")
+        cur = title
+        for line in lines:
+            line = line[:room - len(title) - 10]  # 한 줄이 room을 넘는 극단적 경우 대비
+            if len(cur) + 1 + len(line) > room:
+                pieces.append(cur)
+                cur = f"{title} (계속)"
+            cur += "\n" + line
+        pieces.append(cur)
+
+    messages, cur = [], ""
+    for piece in pieces:
+        if cur and len(cur) + 2 + len(piece) > room:
+            messages.append(cur)
+            cur = piece
+        else:
+            cur = f"{cur}\n\n{piece}" if cur else piece
+    if cur:
+        messages.append(cur)
+
+    total = len(messages)
+    if total == 1:
+        return [f"{header}\n\n{messages[0]}"]
+    return [f"{header} ({i}/{total})\n\n{m}" for i, m in enumerate(messages, 1)]
+
+
 def send_discord_notification(date_str: str):
     """admin 유저의 즐겨찾기 기반 비중변화를 디스코드로 발송."""
     import httpx
     import json
 
-    webhook_url = os.environ.get('DISCORD_WEBHOOK_URL')
-    if not webhook_url:
-        log.info("DISCORD_WEBHOOK_URL not set — skipping Discord notification")
-        return
-
     conn = get_db_connection()
     cur = init_age(conn)
 
     try:
+        settings = _load_discord_settings(conn)
+        if not settings['enabled']:
+            log.info("Discord notification disabled — skipping")
+            return
+        webhook_url = settings['webhook_url']
+        if not webhook_url:
+            log.info("Discord webhook URL not set — skipping Discord notification")
+            return
+        threshold = settings['threshold']
+
         # RDB에서 admin user_id 조회
         rdb_cur = conn.cursor()
         rdb_cur.execute(
@@ -1069,7 +1133,7 @@ def send_discord_notification(date_str: str):
                 pw = prev['weight'] if prev else 0
                 diff = cw - pw
 
-                if abs(diff) <= 3:
+                if abs(diff) <= threshold:
                     continue
 
                 if curr and not prev:
@@ -1091,15 +1155,24 @@ def send_discord_notification(date_str: str):
             log.info("No significant changes — skipping Discord notification")
             return
 
-        # 디스코드 메시지 발송
-        message = f"📊 **ETF 비중 변화 알림** ({date_str})\n\n" + "\n\n".join(changes_summary)
+        # 디스코드 메시지 발송 — 2000자 제한에 맞춰 나눠 보낸다
+        messages = _split_discord_messages(f"📊 **ETF 비중 변화 알림** ({date_str})", changes_summary)
 
-        with httpx.Client() as client:
-            resp = client.post(webhook_url, json={"content": message})
-            resp.raise_for_status()
+        with httpx.Client(timeout=10) as client:
+            for message in messages:
+                resp = client.post(webhook_url, json={"content": message})
+                if resp.status_code == 429:  # rate limit — 안내된 만큼 기다렸다 한 번 재시도
+                    import time as _time
+                    _time.sleep(float(resp.json().get('retry_after', 1)))
+                    resp = client.post(webhook_url, json={"content": message})
+                resp.raise_for_status()
 
-        log.info(f"Discord notification sent: {len(changes_summary)} ETFs with changes")
+        log.info(f"Discord notification sent: {len(changes_summary)} ETFs with changes in {len(messages)} message(s)")
 
+    except httpx.HTTPError as e:
+        # httpx 예외 메시지엔 웹훅 주소(토큰 포함)가 들어가므로 종류·상태코드만 남긴다
+        status = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else None
+        log.warning(f"Discord notification failed: {type(e).__name__} status={status}")
     except Exception as e:
         log.warning(f"Discord notification failed: {e}")
     finally:

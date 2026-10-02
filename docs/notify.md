@@ -48,7 +48,7 @@ last_notification_checked_at TIMESTAMP
 | 채널 | 대상 | ETF 소스 | 트리거 | 임계값 |
 |------|------|----------|--------|--------|
 | 인앱 SSE | 로그인 유저 본인 | 본인 즐겨찾기 | pg_notify → SSE push | - |
-| 디스코드 | admin 유저만 | admin 즐겨찾기 | DAG 수집 완료 | 3%p 초과 (약 1주 전 HOLDS 대비) |
+| 디스코드 | admin 유저만 | admin 즐겨찾기 | DAG 수집 완료 | 기준값 초과 (기본 3%p, 약 1주 전 HOLDS 대비) |
 
 ## Backend API
 
@@ -59,6 +59,20 @@ last_notification_checked_at TIMESTAMP
 | `/api/notifications/stream` | GET | query param `token` | SSE 스트림. pg_notify LISTEN으로 즉시 수신 |
 
 SSE는 `EventSource`가 Authorization 헤더를 지원하지 않으므로 query param으로 토큰 전달.
+
+### 디스코드 알림 설정 (관리자)
+
+관리자 페이지 「알림」 탭에서 켜기/끄기, 웹훅 주소, 비중 변화 기준값(%p)을 바꾼다. RDB `discord_settings`(id=1 한 행)에 저장되고, DAG가 발송할 때마다 읽으므로 재시작 없이 다음 수집부터 반영된다.
+
+| 엔드포인트 | 메서드 | 설명 |
+|---|---|---|
+| `/api/admin/settings/discord` | GET | 설정 조회. 웹훅 주소는 끝 4자리만 보인다 (`webhook_url_masked`) |
+| `/api/admin/settings/discord` | PUT | `{enabled, threshold, webhook_url?}` 저장. `webhook_url` 생략 시 기존 주소 유지, `""`이면 삭제 |
+| `/api/admin/settings/discord/test` | POST | 저장된 주소로 테스트 메시지 발송 |
+
+- 웹훅 주소는 `https://discord.com/api/webhooks/`(또는 `discordapp.com`)로 시작해야 한다.
+- 웹에서 저장한 주소가 없으면 환경변수 `DISCORD_WEBHOOK_URL`을 쓴다.
+- 디스코드 메시지는 2,000자 제한이 있어 길면 ETF 단위로 나눠 여러 번 보낸다(헤더에 `(1/3)` 표시). ETF 하나가 2,000자를 넘으면 종목 줄 단위로 나누고 이어지는 조각에 `(계속)`을 붙인다. 429(rate limit)는 `retry_after`만큼 기다렸다 한 번 재시도한다.
 
 ## DAG 태스크
 
@@ -101,7 +115,7 @@ SSE는 `EventSource`가 Authorization 헤더를 지원하지 않으므로 query 
 
 | 변수 | 설명 | 필수 |
 |------|------|------|
-| `DISCORD_WEBHOOK_URL` | 디스코드 웹훅 URL | 선택 (미설정 시 디스코드 스킵) |
+| `DISCORD_WEBHOOK_URL` | 디스코드 웹훅 URL. 관리자 페이지에서 저장한 주소가 있으면 그것이 우선 | 선택 (둘 다 없으면 디스코드 스킵) |
 
 ## 변경된 파일
 

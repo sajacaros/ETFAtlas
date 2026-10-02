@@ -25,6 +25,7 @@ import type {
   AdminChatLogList,
   AdminETFTag,
   AdminETFTagList,
+  AdminDiscordSettings,
   SharedPortfolioListItem,
   SharedPortfolioDetail,
   SharedReturnsResponse,
@@ -395,6 +396,19 @@ export const adminApi = {
   // tags=null: 수동 지정 해제 (다음 태깅 때 자동으로 다시 계산)
   updateETFTags: async (code: string, tags: string[] | null) => {
     const { data } = await api.put<AdminETFTag>(`/admin/etf-tags/${code}`, { tags })
+    return data
+  },
+  getDiscordSettings: async () => {
+    const { data } = await api.get<AdminDiscordSettings>('/admin/settings/discord')
+    return data
+  },
+  // webhook_url: undefined면 기존 주소 유지, ''면 삭제
+  updateDiscordSettings: async (body: { enabled: boolean; threshold: number; webhook_url?: string }) => {
+    const { data } = await api.put<AdminDiscordSettings>('/admin/settings/discord', body)
+    return data
+  },
+  testDiscordWebhook: async () => {
+    const { data } = await api.post<{ ok: boolean }>('/admin/settings/discord/test')
     return data
   },
 }

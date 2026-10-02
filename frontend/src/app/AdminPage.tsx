@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/use-toast'
 import { adminApi } from '@/lib/api'
-import type { AdminCodeExample, AdminChatLog, AdminETFTag } from '@/types/api'
+import type { AdminCodeExample, AdminChatLog, AdminETFTag, AdminDiscordSettings } from '@/types/api'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -79,6 +79,7 @@ export default function AdminPage() {
           <TabsTrigger value="code-examples">코드 예제</TabsTrigger>
           <TabsTrigger value="chat-logs">채팅 로그</TabsTrigger>
           <TabsTrigger value="etf-tags">ETF 태그</TabsTrigger>
+          <TabsTrigger value="notifications">알림</TabsTrigger>
         </TabsList>
         <TabsContent value="code-examples">
           <CodeExamplesTab />
@@ -89,7 +90,137 @@ export default function AdminPage() {
         <TabsContent value="etf-tags">
           <ETFTagsTab />
         </TabsContent>
+        <TabsContent value="notifications">
+          <DiscordSettingsTab />
+        </TabsContent>
       </Tabs>
+    </div>
+  )
+}
+
+// ============ Discord Settings Tab ============
+
+function DiscordSettingsTab() {
+  const { toast } = useToast()
+  const [settings, setSettings] = useState<AdminDiscordSettings | null>(null)
+  const [enabled, setEnabled] = useState(true)
+  const [threshold, setThreshold] = useState('3')
+  const [webhookUrl, setWebhookUrl] = useState('')  // 비워 두면 기존 주소 유지
+  const [saving, setSaving] = useState(false)
+  const [testing, setTesting] = useState(false)
+
+  const apply = useCallback((s: AdminDiscordSettings) => {
+    setSettings(s)
+    setEnabled(s.enabled)
+    setThreshold(String(s.threshold))
+    setWebhookUrl('')
+  }, [])
+
+  useEffect(() => {
+    adminApi.getDiscordSettings()
+      .then(apply)
+      .catch(() => toast({ title: '알림 설정 조회 실패', variant: 'destructive' }))
+  }, [apply, toast])
+
+  const save = async (body: { webhook_url?: string } = {}) => {
+    const value = Number(threshold)
+    if (!(value > 0 && value <= 100)) {
+      toast({ title: '기준값은 0보다 크고 100 이하여야 합니다', variant: 'destructive' })
+      return
+    }
+    setSaving(true)
+    try {
+      const url = webhookUrl.trim()
+      apply(await adminApi.updateDiscordSettings({
+        enabled,
+        threshold: value,
+        ...(url ? { webhook_url: url } : {}),
+        ...body,
+      }))
+      toast({ title: '알림 설정을 저장했습니다' })
+    } catch (e: unknown) {
+      const detail = (e as { response?: { data?: { detail?: unknown } } }).response?.data?.detail
+      toast({
+        title: '알림 설정 저장 실패',
+        description: Array.isArray(detail) ? '디스코드 웹훅 주소(https://discord.com/api/webhooks/...)만 입력할 수 있습니다' : undefined,
+        variant: 'destructive',
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const test = async () => {
+    setTesting(true)
+    try {
+      await adminApi.testDiscordWebhook()
+      toast({ title: '테스트 메시지를 보냈습니다', description: '디스코드 채널을 확인하세요.' })
+    } catch {
+      toast({ title: '테스트 전송 실패', description: '저장된 웹훅 주소를 확인하세요.', variant: 'destructive' })
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  if (!settings) {
+    return <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin" /></div>
+  }
+
+  return (
+    <div className="max-w-xl space-y-6 py-2">
+      <p className="text-sm text-muted-foreground">
+        매일 수집이 끝나면 관리자가 즐겨찾기한 ETF 중 일주일 전보다 구성종목 비중이 기준값보다 크게 바뀐 종목을 디스코드로 보냅니다.
+        메시지가 2,000자를 넘으면 나눠서 보냅니다.
+      </p>
+
+      <div className="flex items-center gap-3">
+        <Switch id="discord-enabled" checked={enabled} onCheckedChange={setEnabled} />
+        <Label htmlFor="discord-enabled">디스코드 알림 보내기</Label>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="discord-webhook">웹훅 주소</Label>
+        <p className="text-sm text-muted-foreground">
+          현재: {settings.webhook_url_masked ?? (settings.configured ? '없음' : '없음 (서버 환경변수 DISCORD_WEBHOOK_URL이 있으면 그것을 씁니다)')}
+        </p>
+        <Input
+          id="discord-webhook"
+          type="password"
+          autoComplete="off"
+          value={webhookUrl}
+          onChange={(e) => setWebhookUrl(e.target.value)}
+          placeholder="새 주소 입력 — 비워 두면 기존 주소 유지"
+        />
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="discord-threshold">비중 변화 기준 (%p)</Label>
+        <Input
+          id="discord-threshold"
+          type="number"
+          min={0.1}
+          max={100}
+          step={0.5}
+          value={threshold}
+          onChange={(e) => setThreshold(e.target.value)}
+          className="w-32"
+        />
+        <p className="text-sm text-muted-foreground">이 값보다 크게 바뀐 종목만 알립니다.</p>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <Button onClick={() => save()} disabled={saving}>
+          {saving && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}저장
+        </Button>
+        <Button variant="outline" onClick={test} disabled={testing || !settings.webhook_url_masked}>
+          {testing && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}테스트 전송
+        </Button>
+        {settings.webhook_url_masked && (
+          <Button variant="ghost" onClick={() => save({ webhook_url: '' })} disabled={saving}>
+            주소 삭제
+          </Button>
+        )}
+      </div>
     </div>
   )
 }

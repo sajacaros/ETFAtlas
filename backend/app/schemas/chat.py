@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Optional
 from datetime import datetime
 
@@ -69,3 +69,27 @@ class EmbedRequest(BaseModel):
     question: Optional[str] = None  # override original question
     code: Optional[str] = None  # override original code
     description: Optional[str] = None
+
+
+# --- Admin Discord Settings ---
+DISCORD_WEBHOOK_PREFIXES = (
+    "https://discord.com/api/webhooks/",
+    "https://discordapp.com/api/webhooks/",
+)
+
+
+class DiscordSettingsUpdate(BaseModel):
+    enabled: bool
+    threshold: float = Field(gt=0, le=100)
+    # None: 기존 주소 유지, "": 주소 삭제
+    webhook_url: Optional[str] = None
+
+    @field_validator("webhook_url")
+    @classmethod
+    def check_webhook_url(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        v = v.strip()
+        if v and not v.startswith(DISCORD_WEBHOOK_PREFIXES):
+            raise ValueError("디스코드 웹훅 주소(https://discord.com/api/webhooks/...)만 입력할 수 있습니다")
+        return v

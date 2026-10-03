@@ -47,7 +47,7 @@ function InfoCard({ label, children }: { label: string; children: ReactNode }) {
 }
 
 /** ? 아이콘: 마우스를 올리거나 누르면 설명을 보여준다 */
-function HelpTip({ text }: { text: string }) {
+function HelpTip({ text, alignRight = false }: { text: string; alignRight?: boolean }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLSpanElement>(null)
 
@@ -77,7 +77,7 @@ function HelpTip({ text }: { text: string }) {
       {open && (
         <span
           role="tooltip"
-          className="absolute left-0 top-full z-20 mt-1 w-56 rounded-md border bg-popover p-2 text-xs font-normal leading-relaxed text-popover-foreground shadow-md"
+          className={`absolute ${alignRight ? 'left-0 md:left-auto md:right-0' : 'left-0'} top-full z-20 mt-1 w-56 rounded-md border bg-popover p-2 text-xs font-normal leading-relaxed text-popover-foreground shadow-md`}
         >
           {text}
         </span>
@@ -95,11 +95,11 @@ export interface MarketCapInfo {
   changeRate: number | null
 }
 
-function SizeLabel({ label, help }: { label: string; help: string }) {
+function SizeLabel({ label, help, alignRight }: { label: string; help: string; alignRight?: boolean }) {
   return (
     <p className="text-xs text-muted-foreground flex items-center gap-1">
       {label}
-      <HelpTip text={help} />
+      <HelpTip text={help} alignRight={alignRight} />
     </p>
   )
 }
@@ -124,16 +124,22 @@ export function ETFInfoCards({ etf, tags, marketCap }: { etf: ETF; tags: string[
         </div>
       </InfoCard>
       <Card className="py-3">
-        <CardContent className="pb-0 pt-0">
-          <SizeLabel label="순자산" help={NET_ASSETS_HELP} />
-          <p className="text-sm font-semibold mt-1">
-            {etf.net_assets ? formatKrwAmount(etf.net_assets) : '-'}
-          </p>
+        <CardContent className="pb-0 pt-0 flex flex-wrap gap-x-6 gap-y-2">
+          <div>
+            <SizeLabel label="순자산" help={NET_ASSETS_HELP} />
+            <p className="text-sm font-semibold mt-1">
+              {etf.net_assets ? formatKrwAmount(etf.net_assets) : '-'}
+            </p>
+          </div>
           {marketCap && (
-            <>
-              <div className="mt-2">
-                <SizeLabel label="시가총액" help={MARKET_CAP_HELP} />
-              </div>
+            <div>
+              <SizeLabel
+                label="시가총액"
+                help={marketCap.weekAgo != null
+                  ? `${MARKET_CAP_HELP} (1주 전 ${formatKrwAmount(marketCap.weekAgo)})`
+                  : MARKET_CAP_HELP}
+                alignRight
+              />
               <p className="text-sm font-semibold mt-1">
                 {formatKrwAmount(marketCap.latest)}
                 {marketCap.changeRate != null && (
@@ -142,10 +148,7 @@ export function ETFInfoCards({ etf, tags, marketCap }: { etf: ETF; tags: string[
                   </span>
                 )}
               </p>
-              {marketCap.weekAgo != null && (
-                <p className="text-[11px] text-muted-foreground mt-0.5">1W전 {formatKrwAmount(marketCap.weekAgo)}</p>
-              )}
-            </>
+            </div>
           )}
         </CardContent>
       </Card>

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { ETFLink } from '@/components/ETFInfo'
 import {
   Table,
   TableBody,
@@ -238,7 +239,13 @@ export default function PortfolioTable({
               <TableRow key={row.ticker}>
                 {/* 종목 (이름 + 코드) */}
                 <TableCell>
-                  <div className="text-sm truncate">{row.name}</div>
+                  {row.ticker === 'CASH' ? (
+                    <div className="text-sm truncate">{row.name}</div>
+                  ) : (
+                    <ETFLink code={row.ticker} name={row.name} className="block max-w-full text-sm truncate">
+                      {row.name}
+                    </ETFLink>
+                  )}
                   <div className="font-mono text-xs text-muted-foreground">{row.ticker}</div>
                 </TableCell>
                 {/* 비중 - 목표 */}

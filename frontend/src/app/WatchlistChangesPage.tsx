@@ -14,6 +14,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { watchlistApi } from '@/lib/api'
+import { ETFLink } from '@/components/ETFInfo'
 import { useAuth } from '@/hooks/useAuth'
 import { useNotification } from '@/hooks/useNotification'
 import type { WatchlistChange } from '@/types/api'
@@ -254,12 +255,9 @@ export default function WatchlistChangesPage() {
               {sortedChanges.map((c, i) => (
                 <TableRow key={`${c.etf_code}-${c.stock_code}-${i}`}>
                   <TableCell>
-                    <Link
-                      to={`/etf/${c.etf_code}`}
-                      className="text-sm font-medium hover:underline text-primary"
-                    >
+                    <ETFLink code={c.etf_code} name={c.etf_name} className="text-sm font-medium text-primary">
                       {c.etf_name}
-                    </Link>
+                    </ETFLink>
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">

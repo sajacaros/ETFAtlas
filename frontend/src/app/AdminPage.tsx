@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
+import { ETFLink } from '@/components/ETFInfo'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/use-toast'
 import { adminApi } from '@/lib/api'
@@ -652,7 +653,9 @@ function ETFTagsTab() {
               return (
                 <TableRow key={item.code}>
                   <TableCell className="font-mono text-sm">{item.code}</TableCell>
-                  <TableCell>{item.name}</TableCell>
+                  <TableCell>
+                    <ETFLink code={item.code} name={item.name}>{item.name}</ETFLink>
+                  </TableCell>
                   <TableCell>
                     <div className="flex flex-wrap items-center gap-1">
                       {item.tags.map((tag) => (

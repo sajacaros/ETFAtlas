@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { ETFLink } from '@/components/ETFInfo'
 import { useParams, Link } from 'react-router-dom'
 import { sharedApi } from '@/lib/api'
 import type { SharedPortfolioDetail, SharedReturnsResponse, SharedReturnsSummary } from '@/types/api'
@@ -227,7 +228,11 @@ export default function SharedPortfolioDetailPage() {
             <tbody>
               {detail.allocations.map((a) => (
                 <tr key={a.ticker} className="border-b">
-                  <td className="py-2">{a.name}</td>
+                  <td className="py-2">
+                    {a.ticker === 'CASH' ? a.name : (
+                      <ETFLink code={a.ticker} name={a.name}>{a.name}</ETFLink>
+                    )}
+                  </td>
                   <td className="py-2 text-muted-foreground">{a.ticker}</td>
                   <td className="py-2 text-right font-medium">{a.weight.toFixed(1)}%</td>
                 </tr>

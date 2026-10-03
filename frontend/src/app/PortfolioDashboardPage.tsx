@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { ETFLink } from '@/components/ETFInfo'
 import { useParams, Link } from 'react-router-dom'
 import { ArrowLeft, ChevronDown, ChevronUp, Download } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -455,7 +456,13 @@ export default function PortfolioDashboardPage() {
                   {totalHoldings.holdings.map((h) => (
                     <tr key={h.ticker} className="border-b last:border-0">
                       <td className="py-2">
-                        <div className="font-medium">{h.name}</div>
+                        {h.ticker === 'CASH' ? (
+                          <div className="font-medium">{h.name}</div>
+                        ) : (
+                          <ETFLink code={h.ticker} name={h.name} className="font-medium">
+                            {h.name}
+                          </ETFLink>
+                        )}
                         <div className="text-xs text-muted-foreground">{h.ticker}</div>
                       </td>
                       <td className="py-2 text-right font-mono">

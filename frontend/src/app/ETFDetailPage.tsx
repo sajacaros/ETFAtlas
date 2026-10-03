@@ -23,24 +23,11 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { etfsApi, watchlistApi } from '@/lib/api'
-import { Link } from 'react-router-dom'
+import { ETFInfoCards, ETFLink, dividendCycleLabel } from '@/components/ETFInfo'
 import { useAuth } from '@/hooks/useAuth'
 import { formatKrwAmount } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
 import type { ETF, Holding, HoldingChange, Price, SimilarETF } from '@/types/api'
-
-const DIVIDEND_CYCLE_LABELS: Record<number, string> = {
-  0: '분배 없음',
-  1: '월배당',
-  3: '분기배당',
-  6: '반기배당',
-  12: '연배당',
-}
-
-function dividendCycleLabel(cycle: number | null): string | null {
-  if (cycle == null) return null
-  return DIVIDEND_CYCLE_LABELS[cycle] ?? `${cycle}개월 주기 배당`
-}
 
 export default function ETFDetailPage() {
   const { code } = useParams<{ code: string }>()
@@ -255,57 +242,7 @@ export default function ETFDetailPage() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-        <Card className="py-3">
-          <CardContent className="pb-0 pt-0">
-            <p className="text-xs text-muted-foreground">운용사</p>
-            <p className="text-sm font-semibold mt-1">{etf.issuer || '-'}</p>
-          </CardContent>
-        </Card>
-        <Card className="py-3">
-          <CardContent className="pb-0 pt-0">
-            <p className="text-xs text-muted-foreground">카테고리</p>
-            <div className="flex flex-wrap gap-1 mt-1">
-              {tags.length > 0
-                ? tags.map((tag) => (
-                    <Badge key={tag} variant="secondary" className="text-xs">
-                      {tag}
-                    </Badge>
-                  ))
-                : <p className="text-sm font-semibold">-</p>
-              }
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="py-3">
-          <CardContent className="pb-0 pt-0">
-            <p className="text-xs text-muted-foreground">순자산</p>
-            <p className="text-sm font-semibold mt-1">
-              {etf.net_assets ? formatKrwAmount(etf.net_assets) : '-'}
-            </p>
-          </CardContent>
-        </Card>
-        <Card className="py-3">
-          <CardContent className="pb-0 pt-0">
-            <p className="text-xs text-muted-foreground">보수율</p>
-            <p className="text-sm font-semibold mt-1">
-              {etf.expense_ratio ? `${etf.expense_ratio}%` : '-'}
-            </p>
-          </CardContent>
-        </Card>
-        <Card className="py-3">
-          <CardContent className="pb-0 pt-0">
-            <p className="text-xs text-muted-foreground">기초지수</p>
-            <p className="text-sm font-semibold mt-1">{etf.base_index || '-'}</p>
-          </CardContent>
-        </Card>
-        <Card className="py-3">
-          <CardContent className="pb-0 pt-0">
-            <p className="text-xs text-muted-foreground">상장일</p>
-            <p className="text-sm font-semibold mt-1">{etf.listed_date || '-'}</p>
-          </CardContent>
-        </Card>
-      </div>
+      <ETFInfoCards etf={etf} tags={tags} />
 
       {etf.description && (
         <Card>
@@ -429,9 +366,9 @@ export default function ETFDetailPage() {
                   {similarEtfs.map((s) => (
                     <TableRow key={s.etf_code}>
                       <TableCell>
-                        <Link to={`/etf/${s.etf_code}`} className="text-blue-600 hover:underline font-medium">
+                        <ETFLink code={s.etf_code} name={s.name} className="text-blue-600 font-medium">
                           {s.name}
-                        </Link>
+                        </ETFLink>
                         <span className="text-xs text-muted-foreground ml-2">{s.etf_code}</span>
                       </TableCell>
                       <TableCell className="text-right">{s.overlap}개</TableCell>

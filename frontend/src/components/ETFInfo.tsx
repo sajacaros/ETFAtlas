@@ -20,7 +20,7 @@ import {
 } from '@/components/ui/table'
 import { etfsApi } from '@/lib/api'
 import { cn, formatKrwAmount } from '@/lib/utils'
-import type { ETF, Holding } from '@/types/api'
+import type { ETF, Holding, Price } from '@/types/api'
 
 const DIVIDEND_CYCLE_LABELS: Record<number, string> = {
   0: '분배 없음',
@@ -93,6 +93,29 @@ export interface MarketCapInfo {
   latest: number
   weekAgo: number | null
   changeRate: number | null
+}
+
+/** 가격 이력에서 최신 시가총액과 1주 전 대비 증감을 구한다 */
+export function computeMarketCap(prices: Price[]): MarketCapInfo | null {
+  const validPrices = prices.filter((p) => p.market_cap != null)
+  if (validPrices.length === 0) return null
+  const latest = validPrices[validPrices.length - 1]
+  const latestDate = new Date(latest.date)
+  const weekAgoTarget = new Date(latestDate)
+  weekAgoTarget.setDate(weekAgoTarget.getDate() - 7)
+  const weekAgoPrice = validPrices.reduce((closest, p) => {
+    const d = new Date(p.date)
+    if (d > latestDate) return closest
+    if (!closest) return p
+    return Math.abs(d.getTime() - weekAgoTarget.getTime()) < Math.abs(new Date(closest.date).getTime() - weekAgoTarget.getTime()) ? p : closest
+  }, null as typeof latest | null)
+  const latestCap = latest.market_cap!
+  const weekAgoCap = weekAgoPrice && weekAgoPrice.market_cap && weekAgoPrice.date !== latest.date
+    ? weekAgoPrice.market_cap : null
+  const changeRate = weekAgoCap
+    ? ((latestCap - weekAgoCap) / weekAgoCap) * 100
+    : null
+  return { latest: latestCap, weekAgo: weekAgoCap, changeRate }
 }
 
 function SizeLabel({ label, help, alignRight }: { label: string; help: string; alignRight?: boolean }) {
@@ -174,11 +197,12 @@ interface ETFInfoDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
-/** ETF 정보 카드 + 구성 종목 모달 (가격 정보 제외) */
+/** ETF 정보 카드(시가총액 포함) + 구성 종목 모달. 가격 추이는 상세 페이지에서만 */
 export function ETFInfoDialog({ code, name, open, onOpenChange }: ETFInfoDialogProps) {
   const [etf, setEtf] = useState<ETF | null>(null)
   const [tags, setTags] = useState<string[]>([])
   const [holdings, setHoldings] = useState<Holding[]>([])
+  const [marketCap, setMarketCap] = useState<MarketCapInfo | null>(null)
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
@@ -188,14 +212,17 @@ export function ETFInfoDialog({ code, name, open, onOpenChange }: ETFInfoDialogP
     setEtf(null)
     setTags([])
     setHoldings([])
-    Promise.allSettled([etfsApi.get(code), etfsApi.getTags(code), etfsApi.getHoldings(code)])
-      .then(([etfResult, tagsResult, holdingsResult]) => {
+    setMarketCap(null)
+    // 시가총액 1주 전 비교에는 최근 한 달이면 충분하다
+    Promise.allSettled([etfsApi.get(code), etfsApi.getTags(code), etfsApi.getHoldings(code), etfsApi.getPrices(code, 30)])
+      .then(([etfResult, tagsResult, holdingsResult, pricesResult]) => {
         if (cancelled) return
         if (etfResult.status === 'fulfilled') setEtf(etfResult.value)
         if (tagsResult.status === 'fulfilled') setTags(tagsResult.value)
         if (holdingsResult.status === 'fulfilled') {
           setHoldings([...holdingsResult.value].sort((a, b) => b.weight - a.weight))
         }
+        if (pricesResult.status === 'fulfilled') setMarketCap(computeMarketCap(pricesResult.value))
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -230,7 +257,7 @@ export function ETFInfoDialog({ code, name, open, onOpenChange }: ETFInfoDialogP
           <div className="text-center py-8 text-muted-foreground">ETF 정보가 없습니다</div>
         ) : (
           <div className="space-y-4 min-w-0">
-            <ETFInfoCards etf={etf} tags={tags} />
+            <ETFInfoCards etf={etf} tags={tags} marketCap={marketCap} />
             <div>
               <p className="text-sm font-semibold mb-2">구성 종목</p>
               {holdings.length === 0 ? (

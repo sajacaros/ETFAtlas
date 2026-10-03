@@ -81,6 +81,9 @@ export interface ETF {
   issuer: string | null
   net_assets: number | null
   expense_ratio: number | null
+  description: string | null
+  base_index: string | null
+  listed_date: string | null
 }
 
 export interface Holding {

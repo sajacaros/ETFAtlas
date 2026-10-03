@@ -45,6 +45,7 @@ export default function ETFDetailPage() {
   const [changePeriod, setChangePeriod] = useState<'1d' | '1w' | '1m'>('1d')
   const [priceChartOpen, setPriceChartOpen] = useState(false)
   const [similarOpen, setSimilarOpen] = useState(false)
+  const [descriptionOpen, setDescriptionOpen] = useState(false)
 
   type SortDir = 'asc' | 'desc'
   const [holdingSort, setHoldingSort] = useState<{ key: keyof Holding; dir: SortDir }>({ key: 'weight', dir: 'desc' })
@@ -238,7 +239,7 @@ export default function ETFDetailPage() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         <Card className="py-3">
           <CardContent className="pb-0 pt-0">
             <p className="text-xs text-muted-foreground">운용사</p>
@@ -276,7 +277,39 @@ export default function ETFDetailPage() {
             </p>
           </CardContent>
         </Card>
+        <Card className="py-3">
+          <CardContent className="pb-0 pt-0">
+            <p className="text-xs text-muted-foreground">기초지수</p>
+            <p className="text-sm font-semibold mt-1">{etf.base_index || '-'}</p>
+          </CardContent>
+        </Card>
+        <Card className="py-3">
+          <CardContent className="pb-0 pt-0">
+            <p className="text-xs text-muted-foreground">상장일</p>
+            <p className="text-sm font-semibold mt-1">{etf.listed_date || '-'}</p>
+          </CardContent>
+        </Card>
       </div>
+
+      {etf.description && (
+        <Card>
+          <CardHeader
+            className={`cursor-pointer select-none ${descriptionOpen ? '' : 'py-3'}`}
+            onClick={() => setDescriptionOpen(!descriptionOpen)}
+          >
+            <CardTitle className={`flex items-center gap-2 ${descriptionOpen ? '' : 'text-sm'}`}>
+              {descriptionOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+              ETF 설명
+            </CardTitle>
+          </CardHeader>
+          {descriptionOpen && (
+            <CardContent>
+              <p className="text-sm leading-relaxed whitespace-pre-line">{etf.description}</p>
+              <p className="text-xs text-muted-foreground mt-2">출처: 운용사 상품 설명 (네이버 증권)</p>
+            </CardContent>
+          )}
+        </Card>
+      )}
 
       {(() => {
         const validPrices = prices.filter((p) => p.market_cap != null)

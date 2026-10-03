@@ -165,6 +165,7 @@ def _escape_cypher_value(value):
             return 'null'
         return str(value)
     escaped = str(value).replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"')
+    escaped = escaped.replace('$$', '$ $')  # cypher()를 감싼 $$ 인용이 끊기지 않게
     return f"'{escaped}'"
 
 
@@ -431,6 +432,51 @@ def get_etf_names_from_age() -> dict[str, str]:
         conn.close()
 
 
+ETF_PROFILE_FIELDS = ('expense_ratio', 'description', 'base_index', 'listed_date')
+
+
+def set_etf_profiles(cur, profiles: dict[str, dict]):
+    """ETF 프로필 필드를 ETF 노드 속성으로 저장. 값이 없는 필드는 기존 값을 그대로 둔다."""
+    for field in ETF_PROFILE_FIELDS:
+        items = [{'code': code, 'value': p[field]}
+                 for code, p in profiles.items() if p.get(field) is not None]
+        execute_cypher_batch(cur, f"""
+            MATCH (e:ETF {{code: item.code}})
+            SET e.{field} = item.value
+            RETURN 1
+        """, items)
+
+
+def diff_etf_profiles(current: dict[str, dict], fetched: dict[str, dict]) -> dict[str, dict]:
+    """조회한 프로필 중 저장된 값과 다른 필드만 남긴다. 바뀐 필드가 없는 ETF는 빠진다."""
+    changed = {}
+    for code, profile in fetched.items():
+        old = current.get(code, {})
+        diff = {f: v for f, v in profile.items() if old.get(f) != v}
+        if diff:
+            changed[code] = diff
+    return changed
+
+
+def refresh_etf_profiles(cur, codes) -> int:
+    """네이버에서 ETF 프로필을 조회해 기존 값과 다른 필드만 SET. 갱신된 ETF 수 반환.
+
+    ETF당 값 하나(노드 속성)만 두며 이력은 남기지 않는다. 조회 실패·빈 필드는 기존 값 유지.
+    """
+    import json
+    from naver_client import fetch_etf_profiles
+
+    fields = ", ".join(f"{f}: e.{f}" for f in ETF_PROFILE_FIELDS)
+    current = {}
+    for row in execute_cypher(cur, f"MATCH (e:ETF) RETURN {{code: e.code, {fields}}}"):
+        if row[0]:
+            props = json.loads(_parse_age_value(row[0]))
+            current[props['code']] = props
+    changed = diff_etf_profiles(current, fetch_etf_profiles(sorted(codes)))
+    set_etf_profiles(cur, changed)
+    return len(changed)
+
+
 # ──────────────────────────────────────────────
 # 공용 수집 함수
 # ──────────────────────────────────────────────
@@ -441,7 +487,7 @@ def collect_universe_and_prices(dates: list[str]) -> tuple[set[str], list[dict],
     - 목록: KIS 종목 마스터 파일(ETF 그룹) — 인증 불필요
     - 신규 편입: 이름 필터 통과 후보만 ETF 현재가(순자산)를 조회해 500억 이상이면 추가
     - 가격: 날짜별 OHLCV·거래대금은 KIS 일봉, NAV/순자산/시가총액은 ETF 현재가(최근 거래일에만)
-    - 보수율: 신규 ETF만 네이버 증권에서 조회
+    - 보수율·설명·기초지수·상장일: 유니버스 전체를 네이버 증권에서 조회해 바뀐 필드만 갱신
 
     Args:
         dates: 수집할 영업일 목록 (YYYYMMDD, get_business_days 결과)
@@ -450,8 +496,6 @@ def collect_universe_and_prices(dates: list[str]) -> tuple[set[str], list[dict],
         (universe_codes, new_etfs_list, actual_dates)
     """
     from kis_api_client import fetch_etf_master
-    from naver_client import fetch_expense_ratios
-
     if not dates:
         return get_etf_codes_from_age(), [], []
 
@@ -493,26 +537,11 @@ def collect_universe_and_prices(dates: list[str]) -> tuple[set[str], list[dict],
                 MERGE (e:ETF {code: item.code}) RETURN e
             """, items)
 
-            # name + expense_ratio (보수율은 KIS/KRX에 없어 네이버 증권에서 조회)
-            fee_map = fetch_expense_ratios([c['code'] for c in new_candidates])
-            with_fee = [{'code': c['code'], 'name': c['name'],
-                         'expense_ratio': fee_map[c['code']]}
-                        for c in new_candidates if c['code'] in fee_map]
-            no_fee = [{'code': c['code'], 'name': c['name']}
-                      for c in new_candidates if c['code'] not in fee_map]
-
-            if with_fee:
-                execute_cypher_batch(cur, """
-                    MATCH (e:ETF {code: item.code})
-                    SET e.name = item.name, e.expense_ratio = item.expense_ratio
-                    RETURN e
-                """, with_fee)
-            if no_fee:
-                execute_cypher_batch(cur, """
-                    MATCH (e:ETF {code: item.code})
-                    SET e.name = item.name
-                    RETURN e
-                """, no_fee)
+            execute_cypher_batch(cur, """
+                MATCH (e:ETF {code: item.code})
+                SET e.name = item.name
+                RETURN e
+            """, [{'code': c['code'], 'name': c['name']} for c in new_candidates])
 
             # Company + MANAGED_BY
             seen_companies = set()
@@ -543,6 +572,11 @@ def collect_universe_and_prices(dates: list[str]) -> tuple[set[str], list[dict],
             all_new_etfs.extend([{'code': c['code'], 'name': c['name']}
                                  for c in new_candidates])
             log.info(f"[{latest}] Added {len(new_candidates)} new ETFs with metadata")
+
+        # ── 2-1. 프로필(보수율·설명·기초지수·상장일): 유니버스 전체 조회 후 바뀐 필드만 갱신 ──
+        changed = refresh_etf_profiles(cur, existing_codes)
+        conn.commit()
+        log.info(f"[{latest}] ETF profile changed: {changed} ETFs")
 
         # ── 3. Price 노드 (유니버스 ETF) ──
         price_items = []

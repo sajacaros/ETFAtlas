@@ -15,6 +15,9 @@ class ETFResponse(BaseModel):
     issuer: str | None = None
     net_assets: int | None = None
     expense_ratio: float | None = None
+    description: str | None = None
+    base_index: str | None = None
+    listed_date: str | None = None
 
 
 class HoldingResponse(BaseModel):

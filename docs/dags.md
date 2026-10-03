@@ -93,8 +93,10 @@ KRX Open API 없이 KIS만으로 유니버스와 ETF 가격을 갱신한다. `KI
    - 제외 키워드 미포함 (`EXCLUDE_KEYWORDS`, `EXCLUDE_PATTERNS`): 레버리지, 인버스, 합성/선물, 커버드콜, 채권, 금·은/원자재, 통화, 머니마켓, 리츠 등
    - 해외 키워드 미포함 (`FOREIGN_NAME_KEYWORDS`): 미국, 중국, 글로벌, S&P, NASDAQ, MSCI, 해외 개별종목명 등
 - 한번 등록된 ETF는 이후 조건에 미달하더라도 유니버스에서 제거하지 않는다.
-- 신규 ETF: `ETF` 노드 MERGE → `name`, `expense_ratio` SET → 이름 prefix로 운용사를 추출해 `(ETF)-[:MANAGED_BY]->(Company)` 연결.
-  - 보수율은 신규 편입 후보만 네이버 증권 모바일 API(`naver_client.fetch_expense_ratios`, `https://m.stock.naver.com/api/stock/{code}/etfAnalysis`의 `totalFee`)로 조회하고 소수점 2째자리 올림 처리한다. 비공식 API라 실패하면 `expense_ratio`만 비워 두고 진행한다.
+- 신규 ETF: `ETF` 노드 MERGE → `name` SET → 이름 prefix로 운용사를 추출해 `(ETF)-[:MANAGED_BY]->(Company)` 연결.
+- 프로필(`refresh_etf_profiles`): 매 실행마다 유니버스 전체(신규 포함)의 `expense_ratio`, `description`, `base_index`, `listed_date`를 조회해 저장된 값과 **다른 필드만** SET한다. ETF 노드 속성으로 ETF당 값 하나만 두고 이력은 남기지 않는다.
+  - 출처는 네이버 증권 모바일 API(`naver_client.fetch_etf_profiles`, `https://m.stock.naver.com/api/stock/{code}/etfAnalysis`)의 `totalFee`(소수점 2째자리 올림), `etfSummary`(HTML 정리한 원문), `etfBaseIndex`, `listedDate`(`YYYY-MM-DD`)다. 비공식 API라 실패하거나 값이 없는 필드는 비워 두고 진행한다 (`set_etf_profiles`는 값이 있는 필드만 SET).
+  - 첫 실행에서 기존 유니버스의 설명·기초지수·상장일이 백필되고, 이후에는 보수 인하·설명 수정 같은 변경분만 기록된다. 0.1초 간격 순차 호출이라 유니버스 200개 기준 20~40초 걸린다.
 - 유니버스 ETF마다 KIS 일봉(`get_daily_bars(code, dates[0], 최근 거래일)`, `FHKST03010100`)으로 Price 노드를 저장한다 (AGE MERGE+SET 버그 회피를 위해 "없으면 CREATE" / "있으면 SET" 2단계).
   - 모든 날짜: `open, high, low, close, volume`, `trade_value`(`acml_tr_pbmn`)
   - 최근 거래일만: `nav`, `net_assets`, `market_cap`(종가 × 상장주수). 현재가 API에 날짜 파라미터가 없어 그 이전 날짜는 null로 둔다.

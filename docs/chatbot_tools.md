@@ -79,7 +79,7 @@ ORDER BY e.name LIMIT 10
 | 항목 | 내용 |
 |------|------|
 | **클래스** | `GetETFInfoTool` |
-| **용도** | ETF의 기본정보, 운용사, 태그, 상위 보유종목 10개, 최근 수익률 종합 조회 |
+| **용도** | ETF의 기본정보(기초지수·상장일·운용사 설명 포함), 운용사, 태그, 상위 보유종목 10개, 최근 수익률 종합 조회 |
 | **데이터 소스** | Apache AGE (기본정보/태그/보유종목) + PostgreSQL (가격/수익률) |
 
 **입력**
@@ -276,7 +276,7 @@ ORDER BY e.name LIMIT 10
 **그래프 스키마**
 ```
 노드:
-  - ETF(code, name, expense_ratio, net_assets, close_price, return_1d, return_1w, return_1m, market_cap_change_1w, updated_at)
+  - ETF(code, name, expense_ratio, base_index, listed_date, description, net_assets, close_price, return_1d, return_1w, return_1m, market_cap_change_1w, updated_at)
   - Stock(code, name, is_etf)
   - Company(name)
   - Tag(name)

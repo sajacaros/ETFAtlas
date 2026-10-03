@@ -229,8 +229,8 @@ etf_search로 ETF 코드를 먼저 확인한 후 사용하세요.
 
 class GetETFInfoTool(ChatTool):
     name = "get_etf_info"
-    description = """ETF의 메타 정보를 종합 조회합니다. 기본 정보(코드, 이름, 보수율), 운용사, 태그, 상위 보유종목 10개, 최근 수익률(1주/1개월/3개월)을 한번에 반환합니다.
-보수율 비교, ETF 상세 정보 확인 시 이 도구를 사용하세요.
+    description = """ETF의 메타 정보를 종합 조회합니다. 기본 정보(코드, 이름, 보수율, 기초지수, 상장일, 운용사 설명), 운용사, 태그, 상위 보유종목 10개, 최근 수익률(1주/1개월/3개월)을 한번에 반환합니다.
+보수율 비교, ETF 상세 정보 확인, "이 ETF는 무엇에 투자하나" 같은 질문에 이 도구를 사용하세요.
 etf_search로 ETF 코드를 먼저 확인한 후 사용하세요."""
     inputs = {
         "etf_code": {
@@ -249,7 +249,8 @@ etf_search로 ETF 코드를 먼저 확인한 후 사용하세요."""
         basic = graph_service.execute_cypher(
             "MATCH (e:ETF {code: $etf_code}) "
             "OPTIONAL MATCH (e)-[:MANAGED_BY]->(c:Company) "
-            "RETURN {code: e.code, name: e.name, expense_ratio: e.expense_ratio, company: c.name}",
+            "RETURN {code: e.code, name: e.name, expense_ratio: e.expense_ratio, company: c.name, "
+            "base_index: e.base_index, listed_date: e.listed_date, description: e.description}",
             {"etf_code": etf_code},
         )
         if not basic:
@@ -537,7 +538,7 @@ class GraphQueryTool(ChatTool):
 예: '삼성전자를 가장 많이 보유한 ETF', '반도체 태그 ETF 중 보수율 낮은 순', '삼성자산운용의 ETF 목록' 등
 
 ## 그래프 스키마
-노드: ETF(code, name, expense_ratio, net_assets, close_price, return_1d, return_1w, return_1m, market_cap_change_1w, updated_at), Stock(code, name, is_etf), Company(name), Tag(name), Price(date, open, high, low, close, volume, nav, market_cap, net_assets, trade_value, change_rate), User(user_id)
+노드: ETF(code, name, expense_ratio, base_index, listed_date, description, net_assets, close_price, return_1d, return_1w, return_1m, market_cap_change_1w, updated_at), Stock(code, name, is_etf), Company(name), Tag(name), Price(date, open, high, low, close, volume, nav, market_cap, net_assets, trade_value, change_rate), User(user_id)
 관계: (ETF)-[:CURRENT_HOLDS {date, weight, shares}]->(Stock) = 현재 구성종목(ETF당 비중 상위 30개), (ETF)-[:HOLDS {date, weight, shares}]->(Stock) = 날짜별 구성종목 이력(비중 변화 비교에만 사용), (ETF)-[:MANAGED_BY]->(Company), (ETF)-[:TAGGED]->(Tag), (ETF)-[:HAS_PRICE]->(Price), (Stock)-[:HAS_PRICE]->(Price), (User)-[:WATCHES {added_at}]->(ETF)
 
 ## Cypher 작성 규칙

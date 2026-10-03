@@ -205,7 +205,9 @@ class GraphService:
         MATCH (e:ETF {code: $code})
         OPTIONAL MATCH (e)-[:MANAGED_BY]->(c:Company)
         RETURN {code: e.code, name: e.name, net_assets: e.net_assets,
-                expense_ratio: e.expense_ratio, issuer: c.name}
+                expense_ratio: e.expense_ratio, issuer: c.name,
+                description: e.description, base_index: e.base_index,
+                listed_date: e.listed_date}
         """
         rows = self.execute_cypher(query, {"code": code})
         if rows:

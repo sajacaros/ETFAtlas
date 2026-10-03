@@ -10,6 +10,7 @@
 | ETF NAV/순자산/상장주수 (현재 시점) | KIS Open API (ETF/ETN 현재가) | AGE `ETF.net_assets`, 최근 거래일 `Price` |
 | ETF 일별 시세 | KIS Open API (국내주식기간별시세) | AGE `Price` |
 | ETF 보수율 | 네이버 증권 모바일 API (비공식, `etfAnalysis.totalFee`) | AGE `ETF.expense_ratio` |
+| ETF 설명/기초지수/상장일 | 네이버 증권 모바일 API (비공식, `etfAnalysis.etfSummary`/`etfBaseIndex`/`listedDate`) | AGE `ETF.description`, `ETF.base_index`, `ETF.listed_date` |
 | ETF 구성종목 | 한국투자증권 KIS Open API (ETF 구성종목시세) | AGE `Stock`, `HOLDS`, `CURRENT_HOLDS` |
 | 주식 일별 시세 | KIS Open API (국내주식기간별시세) | AGE `Price` |
 | 영업일 | KIS Open API (기준 ETF 069500 일봉) | - |
@@ -131,7 +132,11 @@ params: FID_COND_MRKT_DIV_CODE=J, FID_INPUT_ISCD={ETF코드}
 
 | 속성 | 소스 | 비고 |
 |------|------|------|
-| expense_ratio | 네이버 증권 `GET https://m.stock.naver.com/api/stock/{code}/etfAnalysis`의 `totalFee` (`airflow/dags/naver_client.py`) | 신규 편입 후보만 조회. 소수점 2째자리 올림. 비공식 API라 실패 시 `expense_ratio` 미설정 |
+| expense_ratio | 네이버 증권 `GET https://m.stock.naver.com/api/stock/{code}/etfAnalysis`의 `totalFee` (`airflow/dags/naver_client.py`) | 소수점 2째자리 올림 |
+| description | 같은 응답의 `etfSummary` | 운용사 상품 설명 원문. `<br>` 등 HTML 태그·엔티티를 걷어내고 공백을 정리해 그대로 저장 (요약하지 않음). 운용사가 갱신하지 않아 바뀌기 전 지수명이 남은 경우가 있다 |
+| base_index | 같은 응답의 `etfBaseIndex` | 기초지수명 (예: `코스피 200`) |
+| listed_date | 같은 응답의 `listedDate` | `YYYY-MM-DD` |
+| 운용사 설명 공통 | `fetch_etf_profile` 한 번 호출로 네 필드를 함께 받는다 | 매 수집마다 유니버스 전체를 조회해 저장된 값과 다른 필드만 갱신 (ETF당 값 하나, 이력 없음). 비공식 API라 실패하거나 빈 필드는 기존 값 유지 |
 | 운용사 | ETF 이름 prefix (KODEX, TIGER, RISE 등) → `ETF_COMPANY_MAP` | `(ETF)-[:MANAGED_BY]->(Company)` |
 
 RDB `etfs` 테이블에는 `rdb_sync_metadata` DAG이 같은 마스터 파일로 전체 ETF의 code/name만 동기화한다.

@@ -30,14 +30,33 @@ class FakeSession:
         return FakeResp(self.payload, self.status)
 
 
-def test_fetch_expense_ratio_rounds_up():
-    assert naver_client.fetch_expense_ratio("069500", FakeSession({"totalFee": 0.1501})) == 0.16
-    assert naver_client.fetch_expense_ratio("069500", FakeSession({"totalFee": 0.15})) == 0.15
+def test_fetch_etf_profile_rounds_up_fee():
+    assert naver_client.fetch_etf_profile("069500", FakeSession({"totalFee": 0.1501})) == {"expense_ratio": 0.16}
+    assert naver_client.fetch_etf_profile("069500", FakeSession({"totalFee": 0.15})) == {"expense_ratio": 0.15}
 
 
-def test_fetch_expense_ratio_failure_returns_none():
-    assert naver_client.fetch_expense_ratio("069500", FakeSession({}, status=500)) is None
-    assert naver_client.fetch_expense_ratio("069500", FakeSession({})) is None
+def test_fetch_etf_profile_fields():
+    payload = {
+        "totalFee": 0.15,
+        "etfSummary": "기초지수를 추종합니다.<br>KOSPI200 &amp; 대형주<BR/>  구성 <b>200</b>종목",
+        "etfBaseIndex": " 코스피 200 ",
+        "listedDate": "20021014",
+    }
+    assert naver_client.fetch_etf_profile("069500", FakeSession(payload)) == {
+        "expense_ratio": 0.15,
+        "description": "기초지수를 추종합니다. KOSPI200 & 대형주 구성 200 종목",
+        "base_index": "코스피 200",
+        "listed_date": "2002-10-14",
+    }
+
+
+def test_fetch_etf_profile_skips_empty_fields():
+    payload = {"etfSummary": "<br>", "etfBaseIndex": "", "listedDate": "2002"}
+    assert naver_client.fetch_etf_profile("069500", FakeSession(payload)) == {}
+
+
+def test_fetch_etf_profile_failure_returns_none():
+    assert naver_client.fetch_etf_profile("069500", FakeSession({}, status=500)) is None
 
 
 @pytest.mark.parametrize("code,expected", [
@@ -111,3 +130,24 @@ def test_universe_name_filter_excludes_silver(name, ok):
 def test_get_company_from_etf_name(name, company):
     age_utils = pytest.importorskip("age_utils")
     assert age_utils.get_company_from_etf_name(name) == company
+
+
+def test_diff_etf_profiles_keeps_only_changed_fields():
+    age_utils = pytest.importorskip("age_utils")
+    current = {
+        "069500": {"code": "069500", "expense_ratio": 0.15, "description": "설명",
+                   "base_index": "코스피 200", "listed_date": "2002-10-14"},
+        "091160": {"code": "091160", "expense_ratio": 0.45, "description": None,
+                   "base_index": None, "listed_date": None},
+    }
+    fetched = {
+        "069500": {"expense_ratio": 0.15, "description": "설명",
+                   "base_index": "코스피 200", "listed_date": "2002-10-14"},  # 변화 없음
+        "091160": {"expense_ratio": 0.09, "description": "반도체",
+                   "listed_date": "2006-06-27"},                               # 보수 인하 + 백필
+        "0091P0": {"expense_ratio": 0.5},                                      # 신규
+    }
+    assert age_utils.diff_etf_profiles(current, fetched) == {
+        "091160": {"expense_ratio": 0.09, "description": "반도체", "listed_date": "2006-06-27"},
+        "0091P0": {"expense_ratio": 0.5},
+    }

@@ -897,7 +897,7 @@ export default function PortfolioPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <h1 className="text-3xl font-bold">포트폴리오</h1>
+          <h1 className="text-2xl font-bold">포트폴리오</h1>
           <Button variant="outline" size="sm" onClick={() => navigate('/portfolio/dashboard')}>
             <BarChart3 className="w-4 h-4 mr-1" />
             통합 대시보드

@@ -291,7 +291,7 @@ export default function ETFDetailPage() {
                   <Line
                     type="monotone"
                     dataKey="close"
-                    stroke="#2563eb"
+                    stroke="hsl(var(--chart-1))"
                     strokeWidth={2}
                     dot={false}
                   />

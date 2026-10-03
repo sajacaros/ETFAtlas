@@ -34,20 +34,19 @@ export default function SharedPortfoliosPage() {
       .finally(() => setLoading(false))
   }, [])
 
-  if (loading) return <div className="text-center py-12 text-muted-foreground">로딩 중...</div>
-
-  if (portfolios.length === 0) {
-    return (
-      <div className="text-center py-12 text-muted-foreground">
-        <Users className="w-12 h-12 mx-auto mb-4 opacity-50" />
-        <p>공유된 포트폴리오가 없습니다</p>
-      </div>
-    )
-  }
-
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">공유 포트폴리오</h1>
+      {loading ? (
+        <div className="text-center py-12 text-muted-foreground">로딩 중...</div>
+      ) : portfolios.length === 0 ? (
+        <Card>
+          <CardContent className="py-12 text-center text-muted-foreground">
+            <Users className="w-12 h-12 mx-auto mb-4 opacity-50" />
+            <p>공유된 포트폴리오가 없습니다</p>
+          </CardContent>
+        </Card>
+      ) : (
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {portfolios.map((p) => {
           const r = returnsMap[p.share_token]
@@ -90,6 +89,7 @@ export default function SharedPortfoliosPage() {
           )
         })}
       </div>
+      )}
     </div>
   )
 }

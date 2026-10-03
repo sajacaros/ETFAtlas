@@ -4,26 +4,33 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    --background: 220 20% 97.5%;
+    --foreground: 222 47% 11%;
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 222 47% 11%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 243 75% 59%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 14% 95%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 220 14% 95%;
+    --muted-foreground: 220 9% 46%;
+    --accent: 239 84% 97%;
+    --accent-foreground: 243 75% 50%;
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
-    --radius: 0.5rem;
+    --border: 220 13% 90%;
+    --input: 220 13% 88%;
+    --ring: 243 75% 59%;
+    --radius: 0.625rem;
+    --sidebar: 0 0% 100%;
+    --chart-1: 221 83% 53%;
+    --chart-2: 239 84% 67%;
+    --chart-up: 0 84% 60%;
+    --chart-down: 217 91% 60%;
+    --chart-label: 0 0% 53%;
+    --font-sans: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, system-ui, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
   }
 
   .dark {
@@ -46,6 +53,39 @@
     --border: 217.2 32.6% 17.5%;
     --input: 217.2 32.6% 17.5%;
     --ring: 212.7 26.8% 83.9%;
+    --sidebar: 222.2 84% 4.9%;
+  }
+
+  /* 게임보이(터미널) 테마: 검은 바탕에 네온 그린, 고정폭 글꼴, 각진 모서리 */
+  .theme-gameboy {
+    color-scheme: dark;
+    --background: 0 0% 4%;
+    --foreground: 130 85% 62%;
+    --card: 0 0% 7.5%;
+    --card-foreground: 130 85% 62%;
+    --popover: 0 0% 9%;
+    --popover-foreground: 130 85% 62%;
+    --primary: 135 100% 50%;
+    --primary-foreground: 0 0% 4%;
+    --secondary: 0 0% 12%;
+    --secondary-foreground: 130 85% 62%;
+    --muted: 0 0% 12%;
+    --muted-foreground: 115 14% 58%;
+    --accent: 135 70% 12%;
+    --accent-foreground: 135 100% 58%;
+    --destructive: 0 85% 58%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 17%;
+    --input: 0 0% 22%;
+    --ring: 135 100% 50%;
+    --radius: 0.25rem;
+    --sidebar: 0 0% 6%;
+    --chart-1: 135 100% 50%;
+    --chart-2: 135 100% 50%;
+    --chart-up: 0 100% 66%;
+    --chart-down: 210 100% 66%;
+    --chart-label: 115 14% 58%;
+    --font-sans: 'D2 coding', 'D2Coding', ui-monospace, 'Cascadia Mono', Consolas, monospace;
   }
 }
 
@@ -55,10 +95,16 @@
   }
   /* 페이지 길이가 달라져 스크롤바가 생기고 사라져도 레이아웃이 좌우로 밀리지 않게 자리를 비워 둔다 */
   html {
+    @apply bg-background;
     scrollbar-gutter: stable;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-sans);
+    font-feature-settings: 'tnum' 1;
+  }
+  h1, h2, h3 {
+    @apply tracking-tight;
   }
   /* 다이얼로그가 스크롤을 잠글 때 Radix가 스크롤바 폭만큼 margin을 넣는데, 위에서 자리를 이미 비워 두었으므로 막는다 */
   html body[data-scroll-locked] {
@@ -72,4 +118,53 @@
   input[type="number"] {
     -moz-appearance: textfield;
   }
+}
+
+/* 게임보이 테마에서 하드코딩된 색·효과를 어두운 바탕에 맞게 바꾼다 */
+@layer utilities {
+  .theme-gameboy body {
+    font-feature-settings: normal;
+  }
+  .theme-gameboy h1,
+  .theme-gameboy h2 {
+    text-shadow: 0 0 10px hsl(var(--primary) / 0.35);
+  }
+  .theme-gameboy .shadow-sm,
+  .theme-gameboy .shadow,
+  .theme-gameboy .shadow-md,
+  .theme-gameboy .shadow-lg {
+    box-shadow: none;
+  }
+  .theme-gameboy .text-red-500,
+  .theme-gameboy .text-red-600 { color: hsl(var(--chart-up)); }
+  .theme-gameboy .text-blue-500,
+  .theme-gameboy .text-blue-600 { color: hsl(var(--chart-down)); }
+  .theme-gameboy .text-green-500,
+  .theme-gameboy .text-green-600 { color: hsl(var(--primary)); }
+  .theme-gameboy .text-gray-500 { color: hsl(var(--muted-foreground)); }
+  .theme-gameboy .text-orange-600 { color: hsl(30 100% 60%); }
+  .theme-gameboy .bg-yellow-50 { background-color: hsl(45 100% 50% / 0.08); }
+  .theme-gameboy .border-yellow-200 { border-color: hsl(45 100% 50% / 0.35); }
+  .theme-gameboy .text-yellow-800 { color: hsl(45 100% 65%); }
+
+  .theme-gameboy .logo-mark {
+    background-image: none;
+    background-color: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
+  }
+  .theme-gameboy .rounded-xl,
+  .theme-gameboy .rounded-2xl { border-radius: var(--radius); }
+
+  /* recharts 기본 격자·축·툴팁 */
+  .theme-gameboy .recharts-cartesian-grid line { stroke: hsl(var(--border)); }
+  .theme-gameboy .recharts-cartesian-axis-line,
+  .theme-gameboy .recharts-cartesian-axis-tick-line { stroke: hsl(var(--input)); }
+  .theme-gameboy .recharts-cartesian-axis-tick-value { fill: hsl(var(--muted-foreground)); }
+  .theme-gameboy .recharts-tooltip-cursor { stroke: hsl(var(--input)); }
+  .theme-gameboy .recharts-default-tooltip {
+    background-color: hsl(var(--popover)) !important;
+    border-color: hsl(var(--border)) !important;
+    color: hsl(var(--popover-foreground));
+  }
+  .theme-gameboy .recharts-default-legend .recharts-legend-item-text { color: hsl(var(--muted-foreground)) !important; }
 }

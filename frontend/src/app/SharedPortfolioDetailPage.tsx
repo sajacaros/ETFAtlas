@@ -182,7 +182,7 @@ export default function SharedPortfolioDetailPage() {
                         <Line
                           type="linear"
                           dataKey="value"
-                          stroke="#2563eb"
+                          stroke="hsl(var(--chart-1))"
                           strokeWidth={2}
                           dot={false}
                         />

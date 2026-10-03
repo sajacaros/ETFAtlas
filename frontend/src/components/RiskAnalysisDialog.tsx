@@ -136,7 +136,7 @@ export default function RiskAnalysisDialog({
                     <Line
                       type="monotone"
                       dataKey="return_rate"
-                      stroke="#6366f1"
+                      stroke="hsl(var(--chart-2))"
                       strokeWidth={2}
                       dot={false}
                     />
@@ -168,8 +168,8 @@ export default function RiskAnalysisDialog({
                     <Area
                       type="monotone"
                       dataKey="drawdown"
-                      stroke="#ef4444"
-                      fill="#ef444420"
+                      stroke="hsl(var(--chart-up))"
+                      fill="hsl(var(--chart-up) / 0.12)"
                       strokeWidth={1.5}
                     />
                   </AreaChart>

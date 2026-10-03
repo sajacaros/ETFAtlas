@@ -4,6 +4,7 @@ import type { Location } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import AccountForm from '@/components/AccountForm'
+import { Globe2 } from 'lucide-react'
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -30,6 +31,9 @@ export default function LoginPage() {
     <div className="flex items-center justify-center min-h-[60vh]">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
+          <div className="mx-auto mb-2 flex h-11 w-11 items-center justify-center rounded-xl logo-mark bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-md shadow-indigo-500/30">
+            <Globe2 className="h-6 w-6" />
+          </div>
           <CardTitle className="text-2xl">ETF Atlas</CardTitle>
           <CardDescription>
             로그인 후 이용할 수 있습니다. 계정이 없으면 관리자에게 초대 링크를 요청하세요.

@@ -391,14 +391,14 @@ export default function PortfolioDashboardPage() {
                   yAxisId="rate"
                   tick={{ fontSize: 11 }}
                   tickFormatter={(v) => `${v.toFixed(1)}%`}
-                  label={{ value: '일별 수익률', angle: -90, position: 'insideLeft', style: { fontSize: 11, fill: '#888' } }}
+                  label={{ value: '일별 수익률', angle: -90, position: 'insideLeft', style: { fontSize: 11, fill: 'hsl(var(--chart-label))' } }}
                 />
                 <YAxis
                   yAxisId="value"
                   orientation="right"
                   tick={{ fontSize: 12 }}
                   tickFormatter={(v) => formatManwon(v)}
-                  label={{ value: '평가금액', angle: 90, position: 'insideRight', style: { fontSize: 11, fill: '#888' } }}
+                  label={{ value: '평가금액', angle: 90, position: 'insideRight', style: { fontSize: 11, fill: 'hsl(var(--chart-label))' } }}
                   domain={[
                     (dataMin: number) => Math.floor(dataMin * 0.95),
                     (dataMax: number) => Math.ceil(dataMax * 1.05),
@@ -416,7 +416,7 @@ export default function PortfolioDashboardPage() {
                   {chartDataWithChange.map((entry, index) => (
                     <Cell
                       key={`cell-${index}`}
-                      fill={entry.daily_rate >= 0 ? '#ef4444' : '#3b82f6'}
+                      fill={entry.daily_rate >= 0 ? 'hsl(var(--chart-up))' : 'hsl(var(--chart-down))'}
                     />
                   ))}
                 </Bar>
@@ -424,7 +424,7 @@ export default function PortfolioDashboardPage() {
                   yAxisId="value"
                   type="monotone"
                   dataKey="total_value"
-                  stroke="#6366f1"
+                  stroke="hsl(var(--chart-2))"
                   strokeWidth={2.5}
                   dot={false}
                 />

@@ -171,7 +171,7 @@ export default function ChatPage() {
   )
 
   return (
-    <div className="max-w-5xl mx-auto flex gap-4" style={{ height: 'calc(100vh - 7rem)' }}>
+    <div className="flex gap-4 h-[calc(100dvh-6.5rem)] lg:h-[calc(100dvh-4rem)]">
       {/* Sessions (desktop) */}
       <aside className="hidden md:flex w-60 shrink-0 flex-col border-r pr-3">{sessionList}</aside>
 

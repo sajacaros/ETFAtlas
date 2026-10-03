@@ -3,7 +3,8 @@ import type { ReactNode } from 'react'
 import { AuthProvider, useAuth } from './hooks/useAuth'
 import { NotificationProvider } from './hooks/useNotification'
 import { AmountVisibilityProvider } from './hooks/useAmountVisibility'
-import Header from './components/Header'
+import { ThemeProvider } from './hooks/useTheme'
+import AppLayout, { PublicLayout } from './components/AppLayout'
 import HomePage from './app/HomePage'
 import ETFDetailPage from './app/ETFDetailPage'
 import ChatPage from './app/ChatPage'
@@ -52,14 +53,23 @@ function AuthGuard({ children }: { children: ReactNode }) {
   return <>{children}</>
 }
 
+// 로그인 전이거나 공개 경로면 사이드바 없이 가운데 정렬한 화면으로 보여 준다
+function Shell({ children }: { children: ReactNode }) {
+  const { isAuthenticated, setupRequired } = useAuth()
+  const location = useLocation()
+  if (setupRequired || !isAuthenticated || isPublicPath(location.pathname)) {
+    return <PublicLayout>{children}</PublicLayout>
+  }
+  return <AppLayout>{children}</AppLayout>
+}
+
 function App() {
   return (
+    <ThemeProvider>
     <AuthProvider>
       <NotificationProvider>
       <AmountVisibilityProvider>
-      <div className="min-h-screen bg-background">
-        <Header />
-        <main className="container mx-auto py-6 px-4">
+      <Shell>
           <SetupGuard>
           <AuthGuard>
           <Routes>
@@ -80,12 +90,12 @@ function App() {
           </Routes>
           </AuthGuard>
           </SetupGuard>
-        </main>
-        <Toaster />
-      </div>
+      </Shell>
+      <Toaster />
       </AmountVisibilityProvider>
       </NotificationProvider>
     </AuthProvider>
+    </ThemeProvider>
   )
 }
 

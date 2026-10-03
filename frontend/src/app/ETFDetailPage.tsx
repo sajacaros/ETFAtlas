@@ -29,6 +29,19 @@ import { formatKrwAmount } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
 import type { ETF, Holding, HoldingChange, Price, SimilarETF } from '@/types/api'
 
+const DIVIDEND_CYCLE_LABELS: Record<number, string> = {
+  0: '분배 없음',
+  1: '월배당',
+  3: '분기배당',
+  6: '반기배당',
+  12: '연배당',
+}
+
+function dividendCycleLabel(cycle: number | null): string | null {
+  if (cycle == null) return null
+  return DIVIDEND_CYCLE_LABELS[cycle] ?? `${cycle}개월 주기 배당`
+}
+
 export default function ETFDetailPage() {
   const { code } = useParams<{ code: string }>()
   const { isAuthenticated } = useAuth()
@@ -225,7 +238,9 @@ export default function ETFDetailPage() {
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-3xl font-bold">{etf.name}</h1>
-          <p className="text-muted-foreground">{etf.code}</p>
+          <p className="text-muted-foreground">
+            {[etf.code, dividendCycleLabel(etf.dividend_cycle)].filter(Boolean).join(' · ')}
+          </p>
         </div>
         <Button
           variant="ghost"

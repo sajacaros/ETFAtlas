@@ -207,7 +207,7 @@ class GraphService:
         RETURN {code: e.code, name: e.name, net_assets: e.net_assets,
                 expense_ratio: e.expense_ratio, issuer: c.name,
                 description: e.description, base_index: e.base_index,
-                listed_date: e.listed_date}
+                listed_date: e.listed_date, dividend_cycle: e.dividend_cycle}
         """
         rows = self.execute_cypher(query, {"code": code})
         if rows:

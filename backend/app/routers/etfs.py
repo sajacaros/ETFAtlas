@@ -18,6 +18,7 @@ class ETFResponse(BaseModel):
     description: str | None = None
     base_index: str | None = None
     listed_date: str | None = None
+    dividend_cycle: int | None = None
 
 
 class HoldingResponse(BaseModel):

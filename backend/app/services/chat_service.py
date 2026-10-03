@@ -251,7 +251,8 @@ etf_search로 ETF 코드를 먼저 확인한 후 사용하세요."""
             "MATCH (e:ETF {code: $etf_code}) "
             "OPTIONAL MATCH (e)-[:MANAGED_BY]->(c:Company) "
             "RETURN {code: e.code, name: e.name, expense_ratio: e.expense_ratio, company: c.name, "
-            "base_index: e.base_index, listed_date: e.listed_date, description: e.description}",
+            "base_index: e.base_index, listed_date: e.listed_date, dividend_cycle: e.dividend_cycle, "
+            "description: e.description}",
             {"etf_code": etf_code},
         )
         if not basic:
@@ -539,7 +540,7 @@ class GraphQueryTool(ChatTool):
 예: '삼성전자를 가장 많이 보유한 ETF', '반도체 태그 ETF 중 보수율 낮은 순', '삼성자산운용의 ETF 목록' 등
 
 ## 그래프 스키마
-노드: ETF(code, name, expense_ratio, base_index, listed_date, description, net_assets, close_price, return_1d, return_1w, return_1m, market_cap_change_1w, updated_at), Stock(code, name, is_etf), Company(name), Tag(name), Price(date, open, high, low, close, volume, nav, market_cap, net_assets, trade_value, change_rate), User(user_id)
+노드: ETF(code, name, expense_ratio, base_index, listed_date, description, dividend_cycle, net_assets, close_price, return_1d, return_1w, return_1m, market_cap_change_1w, updated_at), Stock(code, name, is_etf), Company(name), Tag(name), Price(date, open, high, low, close, volume, nav, market_cap, net_assets, trade_value, change_rate), User(user_id)
 관계: (ETF)-[:CURRENT_HOLDS {date, weight, shares}]->(Stock) = 현재 구성종목(ETF당 비중 상위 30개), (ETF)-[:HOLDS {date, weight, shares}]->(Stock) = 날짜별 구성종목 이력(비중 변화 비교에만 사용), (ETF)-[:MANAGED_BY]->(Company), (ETF)-[:TAGGED]->(Tag), (ETF)-[:HAS_PRICE]->(Price), (Stock)-[:HAS_PRICE]->(Price), (User)-[:WATCHES {added_at}]->(ETF)
 
 ## Cypher 작성 규칙
@@ -548,6 +549,7 @@ class GraphQueryTool(ChatTool):
 3. 문자열 값은 작은따옴표: {code: '005930'}
 4. 집계 함수와 ORDER BY를 함께 쓸 때 WITH 절로 분리하세요
 5. weight, expense_ratio, return_*, net_assets는 숫자로 저장되어 있습니다(비중·보수율·수익률은 % 단위, 순자산은 원). 결과에 '%'나 '억원'이 붙어 보이는 건 표시용 서식이니, 조건은 숫자로 쓰세요 (예: h.weight >= 10, e.expense_ratio <= 0.1)
+6. dividend_cycle은 분배 주기 개월 수입니다 (1=월배당, 3=분기배당, 0=분배 없음(TR)). 월배당 ETF는 e.dividend_cycle = 1
 
 ## 쿼리 패턴 예시
 

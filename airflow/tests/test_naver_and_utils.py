@@ -116,6 +116,19 @@ def test_universe_name_filter_excludes_silver(name, ok):
     assert age_utils.passes_universe_name_filter(name) is ok
 
 
+@pytest.mark.parametrize("name, cycle, expected", [
+    ("KODEX 200", 3, 3),
+    ("TIGER 미국배당다우존스", 1, 1),
+    ("PLUS 200TR", 3, 0),
+    ("SOL 코리아밸류업TR", 3, 0),
+    ("KODEX TRF3070", 3, 3),
+    ("KODEX 200", None, None),
+])
+def test_resolve_dividend_cycle(name, cycle, expected):
+    age_utils = pytest.importorskip("age_utils")
+    assert age_utils.resolve_dividend_cycle(name, cycle) == expected
+
+
 @pytest.mark.parametrize("name, company", [
     ("KODEX 200", "삼성자산운용"),
     ("IBK K-AI반도체코어테크", "IBK자산운용"),

@@ -87,6 +87,7 @@ class ETFSnapshot:
     nav: float          # NAV (nav, 없으면 prdy_last_nav)
     net_assets: int     # 순자산총액 원 단위 (etf_ntas_ttam, 단위 정규화)
     listed_shares: int  # 상장주수 (lstn_stcn)
+    dividend_cycle: Optional[int] = None  # 분배 주기 개월 수 (etf_dvdn_cycl: 1=월, 3=분기), 미제공 None
 
     @property
     def market_cap(self) -> int:
@@ -360,6 +361,7 @@ class KISApiClient:
             nav=nav,
             net_assets=net_assets,
             listed_shares=self._parse_int(out.get("lstn_stcn")),
+            dividend_cycle=self._parse_int(out.get("etf_dvdn_cycl")) or None,
         )
 
     def is_market_open(self, date: str) -> Optional[bool]:

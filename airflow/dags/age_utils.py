@@ -8,6 +8,7 @@ import logging
 import re
 import os
 from datetime import datetime, time, timedelta
+from typing import Optional
 
 log = logging.getLogger(__name__)
 
@@ -258,6 +259,16 @@ def passes_universe_name_filter(name: str) -> bool:
     return True
 
 
+# TR(분배금 재투자형) ETF는 분배하지 않지만 KIS 분배 주기는 3(분기)으로 나온다.
+# 'TRF'(타깃리스크펀드) 같은 다른 약어와 구분하려고 뒤에 영문자가 오지 않는 TR만 잡는다.
+TOTAL_RETURN_PATTERN = re.compile(r'TR(?![A-Za-z])')
+
+
+def resolve_dividend_cycle(name: str, cycle: Optional[int]) -> Optional[int]:
+    """KIS 분배 주기(개월)를 저장값으로 정리. TR ETF는 0(분배 없음), 미제공은 None."""
+    return 0 if TOTAL_RETURN_PATTERN.search(name) else cycle
+
+
 def check_new_universe_candidates(etf_dicts: list, existing_codes: set) -> list:
     """새로운 유니버스 후보 ETF 확인 (기존 유니버스에 없음 + 이름 필터 통과 + 순자산 500억 이상)"""
     candidates = []
@@ -488,6 +499,7 @@ def collect_universe_and_prices(dates: list[str]) -> tuple[set[str], list[dict],
     - 신규 편입: 이름 필터 통과 후보만 ETF 현재가(순자산)를 조회해 500억 이상이면 추가
     - 가격: 날짜별 OHLCV·거래대금은 KIS 일봉, NAV/순자산/시가총액은 ETF 현재가(최근 거래일에만)
     - 보수율·설명·기초지수·상장일: 유니버스 전체를 네이버 증권에서 조회해 바뀐 필드만 갱신
+    - 분배 주기: ETF 현재가의 KIS 분배 주기(개월)를 매번 갱신, TR ETF는 0
 
     Args:
         dates: 수집할 영업일 목록 (YYYYMMDD, get_business_days 결과)
@@ -577,6 +589,16 @@ def collect_universe_and_prices(dates: list[str]) -> tuple[set[str], list[dict],
         changed = refresh_etf_profiles(cur, existing_codes)
         conn.commit()
         log.info(f"[{latest}] ETF profile changed: {changed} ETFs")
+
+        # ── 2-2. 분배 주기: 스냅샷의 KIS 분배 주기를 SET (이력 없음, 미제공이면 기존 값 유지) ──
+        cycle_items = [{'code': c, 'value': cycle} for c in sorted(existing_codes) if c in snapshots
+                       if (cycle := resolve_dividend_cycle(master[c], snapshots[c].dividend_cycle)) is not None]
+        execute_cypher_batch(cur, """
+            MATCH (e:ETF {code: item.code})
+            SET e.dividend_cycle = item.value
+            RETURN 1
+        """, cycle_items)
+        conn.commit()
 
         # ── 3. Price 노드 (유니버스 ETF) ──
         price_items = []

@@ -201,6 +201,13 @@ def test_get_etf_snapshot_normalizes_net_assets(raw, expected):
     assert client.session.get_calls[0][1]["tr_id"] == "FHPST02400000"
 
 
+@pytest.mark.parametrize("raw, expected", [("1", 1), ("3", 3), ("", None), (None, None)])
+def test_get_etf_snapshot_dividend_cycle(raw, expected):
+    client = make_client([{"rt_cd": "0", "output": {
+        "stck_prpr": "100", "nav": "100", "etf_ntas_ttam": "600", "lstn_stcn": "1", "etf_dvdn_cycl": raw}}])
+    assert client.get_etf_snapshot("069500").dividend_cycle == expected
+
+
 def test_get_etf_snapshot_nav_fallback():
     client = make_client([{"rt_cd": "0", "output": {
         "stck_prpr": "100", "nav": "0", "prdy_last_nav": "99.5", "etf_ntas_ttam": "600", "lstn_stcn": "1"}}])

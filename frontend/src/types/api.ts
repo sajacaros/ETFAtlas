@@ -97,6 +97,7 @@ export interface ETF {
   description: string | null
   base_index: string | null
   listed_date: string | null
+  dividend_cycle: number | null  // 분배 주기 개월 수 (1=월, 3=분기), 0=분배 없음(TR)
 }
 
 export interface Holding {

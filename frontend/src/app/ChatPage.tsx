@@ -193,14 +193,11 @@ export default function ChatPage() {
               </Button>
             </div>
           </div>
-          <p className="text-muted-foreground">
-            ETF에 대해 자유롭게 질문하세요. "그거", "두 번째 ETF"처럼 앞 대화를 가리켜도 이해합니다.
-          </p>
         </div>
 
         {/* Sessions (mobile) */}
         {showSessions && (
-          <div className="md:hidden absolute inset-x-0 top-20 z-10 max-h-[60%] flex flex-col rounded-md border bg-background p-2 shadow-lg">
+          <div className="md:hidden absolute inset-x-0 top-12 z-10 max-h-[60%] flex flex-col rounded-md border bg-background p-2 shadow-lg">
             {sessionList}
           </div>
         )}

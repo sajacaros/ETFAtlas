@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { etfsApi, tagsApi, watchlistApi } from '@/lib/api'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/use-toast'
+import { formatKrwAmount } from '@/lib/utils'
 import type { Tag, Holding } from '@/types/api'
 
 interface ETFCardItem {
@@ -20,14 +21,7 @@ interface ETFCardItem {
   market_cap_change_1w?: number | null
 }
 
-function formatAmount(value: number): string {
-  const abs = Math.abs(value)
-  const sign = value < 0 ? '-' : ''
-  if (abs >= 1_0000_0000) {
-    return `${sign}${Math.floor(abs / 1_0000_0000).toLocaleString()}억`
-  }
-  return `${sign}${Math.floor(abs / 1_0000).toLocaleString()}만`
-}
+const formatAmount = (value: number) => formatKrwAmount(value, '')
 
 function ReturnBadge({ label, value }: { label: string; value: number | null | undefined }) {
   const hasValue = value != null

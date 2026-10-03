@@ -729,12 +729,7 @@ export default function PortfolioPage() {
                     try {
                       const res = await portfolioApi.toggleShare(detail.id, !detail.is_shared)
                       setDetail({ ...detail, is_shared: res.is_shared, share_token: res.share_token })
-                      if (res.is_shared && res.share_token) {
-                        await navigator.clipboard.writeText(`${window.location.origin}/shared/${res.share_token}`)
-                        toast({ title: '공유 링크가 복사되었습니다' })
-                      } else {
-                        toast({ title: '공유가 해제되었습니다' })
-                      }
+                      toast({ title: res.is_shared ? '공유되었습니다' : '공유가 해제되었습니다' })
                     } catch {
                       toast({ title: '공유 설정 변경 실패', variant: 'destructive' })
                     }

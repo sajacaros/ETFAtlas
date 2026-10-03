@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     llm_api_base: str = "http://localhost:4000"
     llm_api_key: str = ""
     llm_model: str = "qwen38-27b"
+    # 챗봇 세션: 최근 N턴은 원문으로, 그 이전은 요약으로 기억
+    chat_history_window: int = 5
     embedding_api_base: str = "http://localhost:4000"
     embedding_api_key: str = ""
     embedding_model: str = "embedding-gemma-300m"  # 768차원

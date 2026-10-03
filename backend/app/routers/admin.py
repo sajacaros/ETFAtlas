@@ -234,6 +234,7 @@ async def list_chat_logs(
                 "id": item.id,
                 "user_id": item.user_id,
                 "question": item.question,
+                "refined_question": item.refined_question,
                 "answer": item.answer,
                 "generated_code": item.generated_code,
                 "status": item.status,
@@ -295,7 +296,8 @@ async def embed_chat_log(
             detail=f"Can only embed from APPROVED status, current: '{chat_log.status}'"
         )
 
-    question = body.question or chat_log.question
+    # 맥락에 기대는 원문("그거 보수율은?")보다 재작성된 독립 질문이 예시로 쓸모 있다
+    question = body.question or chat_log.refined_question or chat_log.question
     code = body.code or chat_log.generated_code
     if not code:
         raise HTTPException(status_code=400, detail="No code available to embed")

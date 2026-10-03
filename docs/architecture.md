@@ -188,7 +188,7 @@ CREATE TABLE users (
 -- 포트폴리오: portfolios, target_allocations, holdings, portfolio_snapshots
 -- 가격 캐시: ticker_prices (ticker, date)
 -- 수집 기록: collection_runs, KIS 토큰 캐시: kis_tokens, 개장일 캐시: market_calendar
--- 챗봇: chat_logs, code_examples (embedding vector(768))
+-- 챗봇: chat_sessions, chat_logs, code_examples (embedding vector(768))
 ```
 
 즐겨찾기(워치리스트)는 RDB 테이블이 아니라 AGE `(User)-[:WATCHES]->(ETF)` 관계로 저장한다.

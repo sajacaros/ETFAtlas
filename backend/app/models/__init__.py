@@ -3,7 +3,7 @@ from .etf import ETF
 from .portfolio import Portfolio, TargetAllocation, Holding
 from .ticker_price import TickerPrice
 from .collection_run import CollectionRun
-from .chat import ChatLog, ChatLogStatus
+from .chat import ChatLog, ChatLogStatus, ChatSession
 from .code_example import CodeExample
 from .role import Role, UserRole
 from .discord_setting import DiscordSetting
@@ -21,6 +21,7 @@ __all__ = [
     "CollectionRun",
     "ChatLog",
     "ChatLogStatus",
+    "ChatSession",
     "CodeExample",
     "Role",
     "UserRole",

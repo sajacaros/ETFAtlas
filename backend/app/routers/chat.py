@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -8,22 +9,21 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..services.chat_service import ChatService
 from ..utils.session import get_current_user_id
-from ..models.chat import ChatLog, ChatLogStatus
-from ..schemas.chat import FeedbackRequest
+from ..utils.time import utcnow
+from ..models.chat import ChatLog, ChatLogStatus, ChatSession
+from ..schemas.chat import FeedbackRequest, ChatSessionUpdate
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-class ChatMessageItem(BaseModel):
-    role: str
-    content: str
+SESSION_TITLE_LENGTH = 50
 
 
 class ChatRequest(BaseModel):
     message: str
-    history: List[ChatMessageItem] = []
+    session_id: Optional[int] = None  # 없으면 새 세션을 만든다
 
 
 class ToolCallItem(BaseModel):
@@ -41,8 +41,10 @@ class StepItem(BaseModel):
 
 class ChatResponse(BaseModel):
     answer: str
+    refined_question: Optional[str] = None
     steps: List[StepItem] = []
     chat_log_id: Optional[int] = None
+    session_id: Optional[int] = None
 
 
 def _extract_generated_code(steps: List[dict]) -> Optional[str]:
@@ -51,22 +53,47 @@ def _extract_generated_code(steps: List[dict]) -> Optional[str]:
     return "\n".join(calls) or None
 
 
+def _get_own_session(db: Session, user_id: int, session_id: int) -> ChatSession:
+    session = db.query(ChatSession).filter(ChatSession.id == session_id, ChatSession.user_id == user_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    return session
+
+
+def _resolve_session(db: Session, user_id: int, session_id: Optional[int], message: str) -> ChatSession:
+    """요청한 세션을 찾거나, 없으면 첫 질문을 제목으로 새 세션을 만든다."""
+    if session_id is not None:
+        return _get_own_session(db, user_id, session_id)
+    title = message.strip().replace("\n", " ")[:SESSION_TITLE_LENGTH] or "새 대화"
+    session = ChatSession(user_id=user_id, title=title)
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return session
+
+
 def _save_chat_log(
     db: Session,
     user_id: int,
+    session: ChatSession,
     question: str,
+    refined_question: Optional[str],
     answer: str,
-    generated_code: Optional[str],
+    steps: List[dict],
 ) -> int:
-    """Save chat log and return its id."""
+    """Save chat log into the session and return its id."""
     chat_log = ChatLog(
         user_id=user_id,
+        session_id=session.id,
         question=question,
+        refined_question=refined_question if refined_question != question else None,
         answer=answer,
-        generated_code=generated_code,
+        generated_code=_extract_generated_code(steps),
+        steps=steps or None,
         status=ChatLogStatus.PENDING.value,
     )
     db.add(chat_log)
+    session.updated_at = utcnow()
     db.commit()
     db.refresh(chat_log)
     return chat_log.id
@@ -78,23 +105,30 @@ async def send_message(
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
 ):
+    session = _resolve_session(db, user_id, request.session_id, request.message)
     try:
         chat_service = ChatService(db)
-        history = [{"role": m.role, "content": m.content} for m in request.history]
-        result = await chat_service.chat(request.message, history)
-        generated_code = _extract_generated_code(result.get("steps", []))
+        memory = chat_service.memory
+        await asyncio.to_thread(memory.update_summary, session)  # 지난 요약이 실패했으면 여기서 따라잡는다
+        context = memory.load_context(session)
+        result = await chat_service.chat(request.message, context)
         chat_log_id = _save_chat_log(
-            db, user_id, request.message, result["answer"], generated_code
+            db, user_id, session, request.message, result["refined_question"],
+            result["answer"], result.get("steps", []),
         )
+        await asyncio.to_thread(memory.update_summary, session)
         return ChatResponse(
             answer=result["answer"],
+            refined_question=result["refined_question"],
             steps=result["steps"],
             chat_log_id=chat_log_id,
+            session_id=session.id,
         )
     except Exception as e:
         logger.exception("Chat message error")
         return ChatResponse(
-            answer=f"죄송합니다. 요청을 처리하는 중 오류가 발생했습니다: {str(e)}"
+            answer=f"죄송합니다. 요청을 처리하는 중 오류가 발생했습니다: {str(e)}",
+            session_id=session.id,
         )
 
 
@@ -104,36 +138,128 @@ async def stream_message(
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
 ):
+    # 세션 확인(404)은 스트림을 열기 전에 한다
+    session = _resolve_session(db, user_id, request.session_id, request.message)
+
+    def sse(event: dict) -> str:
+        return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
     async def event_generator():
+        yield sse({"type": "session", "data": {"session_id": session.id, "title": session.title}})
         answer = ""
+        refined_question = None
         steps = []
+        memory = None
         try:
             chat_service = ChatService(db)
-            history = [{"role": m.role, "content": m.content} for m in request.history]
-            async for event in chat_service.chat_stream(request.message, history):
-                if event.get("type") == "step":
+            memory = chat_service.memory
+            await asyncio.to_thread(memory.update_summary, session)  # 지난 요약이 실패했으면 여기서 따라잡는다
+            context = memory.load_context(session)
+            async for event in chat_service.chat_stream(request.message, context):
+                if event.get("type") == "refined_question":
+                    refined_question = event["data"]["question"]
+                elif event.get("type") == "step":
                     steps.append(event["data"])
                 elif event.get("type") == "answer":
                     answer = event["data"]["answer"]
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                yield sse(event)
         except Exception as e:
-            error_event = {"type": "error", "data": {"message": str(e)}}
-            yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+            yield sse({"type": "error", "data": {"message": str(e)}})
 
         # Save chat log after stream completes
         try:
-            generated_code = _extract_generated_code(steps)
             chat_log_id = _save_chat_log(
-                db, user_id, request.message, answer or "", generated_code
+                db, user_id, session, request.message, refined_question, answer or "", steps
             )
-            chat_log_event = {"type": "chat_log_id", "data": {"chat_log_id": chat_log_id}}
-            yield f"data: {json.dumps(chat_log_event, ensure_ascii=False)}\n\n"
+            yield sse({"type": "chat_log_id", "data": {"chat_log_id": chat_log_id}})
         except Exception as e:
             logger.warning(f"Failed to save chat log: {e}")
+
+        # 답변을 보낸 뒤에 요약하므로 사용자는 기다리지 않는다
+        if memory is not None:
+            try:
+                await asyncio.to_thread(memory.update_summary, session)
+            except Exception as e:
+                logger.warning(f"Failed to update chat summary: {e}")
 
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+# --- Sessions ---
+
+@router.get("/sessions")
+async def list_sessions(
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    """내 대화 세션 목록 (최근 활동 순)."""
+    sessions = (
+        db.query(ChatSession)
+        .filter(ChatSession.user_id == user_id)
+        .order_by(ChatSession.updated_at.desc(), ChatSession.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {"id": s.id, "title": s.title, "created_at": s.created_at.isoformat(), "updated_at": s.updated_at.isoformat()}
+        for s in sessions
+    ]
+
+
+@router.get("/sessions/{session_id}")
+async def get_session(
+    session_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    """세션의 전체 대화 (요약된 오래된 턴도 화면 표시용으로 모두 돌려준다)."""
+    session = _get_own_session(db, user_id, session_id)
+    logs = db.query(ChatLog).filter(ChatLog.session_id == session.id).order_by(ChatLog.id).all()
+    return {
+        "id": session.id,
+        "title": session.title,
+        "summary": session.summary,
+        "messages": [
+            {
+                "id": log.id,
+                "question": log.question,
+                "refined_question": log.refined_question,
+                "answer": log.answer,
+                "steps": log.steps or [],
+                "status": log.status,
+                "created_at": log.created_at.isoformat(),
+            }
+            for log in logs
+        ],
+    }
+
+
+@router.patch("/sessions/{session_id}")
+async def rename_session(
+    session_id: int,
+    body: ChatSessionUpdate,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    session = _get_own_session(db, user_id, session_id)
+    session.title = body.title
+    db.commit()
+    return {"id": session.id, "title": session.title}
+
+
+@router.delete("/sessions/{session_id}", status_code=204)
+async def delete_session(
+    session_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    """세션을 지운다. 로그는 관리자 검수용으로 남고 session_id만 비워진다."""
+    session = _get_own_session(db, user_id, session_id)
+    db.delete(session)
+    db.commit()
 
 
 # --- User Feedback & History (Phase 4) ---
@@ -185,6 +311,7 @@ async def get_my_chat_logs(
             {
                 "id": item.id,
                 "question": item.question,
+                "refined_question": item.refined_question,
                 "answer": item.answer,
                 "generated_code": item.generated_code,
                 "status": item.status,
@@ -211,6 +338,7 @@ async def get_chat_log(
     return {
         "id": chat_log.id,
         "question": chat_log.question,
+        "refined_question": chat_log.refined_question,
         "answer": chat_log.answer,
         "generated_code": chat_log.generated_code,
         "status": chat_log.status,

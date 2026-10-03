@@ -361,9 +361,13 @@ RETURN {etf_code: e.code, etf_name: e.name, weight_samsung: h1.weight, weight_te
 ```
 사용자 질문 (React)
     ↓
-FastAPI POST /api/chat/message (또는 /message/stream)
+FastAPI POST /api/chat/message (또는 /message/stream)  ← {message, session_id}
     ↓
-ChatService._build_prompt()  ← 유사 해결 절차 예시(pgvector) + 최근 10개 대화 + 현재 질문
+ChatMemory.load_context()   ← 세션 요약(오래된 턴) + 최근 5턴 원문
+    ↓
+ChatMemory.refine()         ← 대명사·생략을 맥락으로 풀어 독립 질문으로 재작성 (맥락 없으면 생략)
+    ↓
+ChatService._build_prompt() ← 유사 해결 절차 예시(재작성 질문으로 검색) + 대화 맥락 + 재작성 질문
     ↓
 agent.run_stream_events(prompt)  ← instructions = 시스템 프롬프트 + 태그 목록
     ↓
@@ -376,7 +380,25 @@ agent.run_stream_events(prompt)  ← instructions = 시스템 프롬프트 + 태
 └─────────────────────────────────────────────────┘
     ↓
 최종 답변 텍스트 → 사용자에게 응답
+    ↓
+chat_logs 저장 (session_id, refined_question, steps) → ChatMemory.update_summary()
 ```
+
+### 세션과 대화 기억
+
+대화는 `chat_sessions` 단위로 서버에 저장된다. 첫 질문에서 `session_id` 없이 요청하면 서버가 세션을 만들고(제목 = 첫 질문 앞 50자) SSE `session` 이벤트로 알려 준다.
+
+- **최근 턴**: 세션의 마지막 `CHAT_HISTORY_WINDOW`(기본 5)개 턴은 `chat_logs` 원문 그대로 맥락에 넣는다. 질문은 재작성본이 있으면 그것을, 답변은 앞 1,500자만 쓴다.
+- **요약**: window 밖으로 밀려난 턴은 `chat_sessions.summary`에 누적 요약한다. 기존 요약 + 새로 밀려난 턴을 LLM이 다시 요약하고, 반영한 마지막 로그 id를 `summarized_until_log_id`에 기록한다. 답변을 보낸 뒤에 실행하므로 사용자는 기다리지 않는다. 실패하면 다음 질문 시작 때 다시 시도한다.
+- **질문 재작성(refine)**: 맥락이 있으면 에이전트 실행 전에 질문을 독립 질문으로 바꾼다 (`chat_memory_prompt.py`). 바뀌면 `chat_logs.refined_question`에 남기고 화면에 "→ 재작성 질문"으로 보여 준다.
+  - `그거랑 비슷한 ETF 3개는?` → `KODEX 200(069500)과 비슷한 ETF 3개는?`
+  - `두 번째 거 보수율은?` → `ACE 200(105190)의 보수율은?`
+  - `SK하이닉스는?` (직전: 삼성전자를 가장 많이 보유한 ETF 3개는?) → `SK하이닉스를 가장 많이 보유한 ETF 3개는?`
+  - 새 주제면 그대로 둔다. 빈 응답·여러 줄·지나치게 긴 출력은 버리고 원문을 쓴다.
+- 요약·재작성은 일반화와 같이 추론을 끄고 호출한다 (재작성 약 0.5~1초).
+- 재작성 질문은 few-shot 예시 검색에도 쓰고, 관리자가 로그를 예시로 임베딩할 때 기본 질문으로 채워진다 (`그거 보수율은?` 같은 원문은 예시로 쓸모가 없다).
+- 실행 과정(step 목록, SSE `step` 이벤트와 같은 형식)은 `chat_logs.steps`에 저장해 세션을 다시 열 때도 보여 준다. few-shot용 `generated_code`도 같은 목록에서 만든다.
+- 세션을 지워도 `chat_logs`는 관리자 검수용으로 남고 `session_id`만 `NULL`이 된다.
 
 ### CodeAgent(smolagents)에서 바꾼 이유 (2026-09)
 
@@ -441,7 +463,7 @@ agent.run_stream_events(prompt, usage_limits=UsageLimits(request_limit=15))
 |------|-----|------|
 | LLM | `LLM_MODEL` (기본 qwen38-27b) | LiteLLM 프록시(OpenAI 호환), `pydantic-ai-slim[openai]` |
 | 최대 모델 요청 | 15 | 무한 루프 방지 (`UsageLimitExceeded` 시 폴백) |
-| 대화 히스토리 | 최근 10개 | 프롬프트에 "참고용" 텍스트로 포함 |
+| 대화 히스토리 | 세션 요약 + 최근 5턴 | `CHAT_HISTORY_WINDOW`. 질문 재작성과 프롬프트 "참고용" 맥락에 사용 |
 | 관찰 결과 제한 | 2,000자 | UI 성능 보호 |
 | few-shot 예제 | 유사 해결 절차 최대 3개 | `code_examples` pgvector 검색 (`EMBEDDING_MODEL`, 768차원, `EMBEDDING_API_KEY`) |
 
@@ -464,7 +486,13 @@ agent.run_stream_events(prompt, usage_limits=UsageLimits(request_limit=15))
 `POST /api/chat/message/stream` 엔드포인트는 SSE(Server-Sent Events)로 실시간 전달:
 
 ```json
-// 유사 예시가 있으면 먼저
+// 맨 처음: 이 대화의 세션 (새로 만들었으면 새 id)
+{"type": "session", "data": {"session_id": 12, "title": "KODEX 200 정보 알려줘"}}
+
+// 질문을 맥락으로 재작성했으면
+{"type": "refined_question", "data": {"question": "KODEX 200(069500)의 보수율은?"}}
+
+// 유사 예시가 있으면
 {"type": "matched_examples", "data": {"examples": [...]}}
 
 // 도구 호출 1건마다 (code = 도구 호출 표기)
@@ -472,6 +500,11 @@ agent.run_stream_events(prompt, usage_limits=UsageLimits(request_limit=15))
 
 // 최종 답변
 {"type": "answer", "data": {"answer": "최종 답변 텍스트"}}
+
+// 로그 저장 후
+{"type": "chat_log_id", "data": {"chat_log_id": 345}}
 ```
+
+세션 API: `GET /api/chat/sessions`(최근 활동 순), `GET /api/chat/sessions/{id}`(전체 대화·실행 과정 + 요약), `PATCH /api/chat/sessions/{id}`(`{title}`), `DELETE /api/chat/sessions/{id}`. 다른 사용자의 세션은 `404`.
 
 프론트엔드에서 각 스텝을 접이식 UI로 표시하여 에이전트의 도구 호출 과정을 실시간으로 확인 가능합니다.

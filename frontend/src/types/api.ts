@@ -34,6 +34,7 @@ export interface AdminChatLog {
   id: number
   user_id: number | null
   question: string
+  refined_question: string | null
   answer: string
   generated_code: string | null
   status: string
@@ -271,8 +272,34 @@ export interface MatchedCodeExample {
 
 export interface ChatResponse {
   answer: string
+  refined_question: string | null
   steps: ChatStep[]
-  matched_examples: MatchedCodeExample[]
+  chat_log_id: number | null
+  session_id: number | null
+}
+
+export interface ChatSessionSummary {
+  id: number
+  title: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ChatSessionMessage {
+  id: number
+  question: string
+  refined_question: string | null
+  answer: string
+  steps: ChatStep[]
+  status: string
+  created_at: string
+}
+
+export interface ChatSessionDetail {
+  id: number
+  title: string
+  summary: string | null
+  messages: ChatSessionMessage[]
 }
 
 // Watchlist change types

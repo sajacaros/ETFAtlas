@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-from typing import Any, AsyncIterator, Dict, List
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from pydantic_ai import (
     Agent, AgentRunResultEvent, FunctionToolCallEvent, FunctionToolResultEvent, Tool as AgentTool,
@@ -17,6 +17,7 @@ from ..config import get_settings
 from .graph_service import GraphService
 from .embedding_service import EmbeddingService
 from .chat_prompt import SYSTEM_PROMPT
+from .chat_memory import ChatMemory, ConversationContext
 
 logger = logging.getLogger(__name__)
 
@@ -624,6 +625,7 @@ class ChatService:
         self._settings = get_settings()
         self._tag_names = self._load_tag_names()
         self._embedding_service = EmbeddingService(db)
+        self.memory = ChatMemory(db)
         self._tools = self._create_tools()
         self._init_agent()
 
@@ -673,11 +675,14 @@ class ChatService:
             parts.append(f"## 사용 가능한 태그 목록\n{', '.join(self._tag_names)}")
         return "\n\n".join(parts)
 
-    def _build_prompt(self, message: str, history: List[Dict[str, str]]) -> tuple:
-        """사용자 프롬프트(참고 예시 + 이전 대화 + 현재 질문)와 매칭된 예시를 반환한다."""
+    def _build_prompt(self, question: str, context: ConversationContext, original: str) -> tuple:
+        """사용자 프롬프트(참고 예시 + 대화 맥락 + 현재 질문)와 매칭된 예시를 반환한다.
+
+        question은 맥락으로 재작성된 독립 질문, original은 사용자가 입력한 원문.
+        """
         parts = []
         # 예시는 일반화된 질문으로 임베딩되어 있으므로 검색 질의도 같은 방식으로 일반화한다
-        search_query = self._embedding_service.generalize_question(message)
+        search_query = self._embedding_service.generalize_question(question)
         code_examples = self._embedding_service.find_similar_code_examples(search_query, top_k=3)
         if code_examples:
             parts.append("## 참고 해결 절차 예시")
@@ -688,41 +693,54 @@ class ChatService:
                 question = ex.get("question_generalized") or ex["question"]
                 parts.append(f"Q: {question}\n```\n{ex['code']}\n```")
             parts.append("")
-        if history:
+        if not context.is_empty():
             parts.append("## 이전 대화 (참고용)")
             parts.append("아래는 이전 대화 내용입니다. 맥락 파악에만 참고하세요.")
-            parts.append("이전 대화의 조건(개수, 필터 등)을 현재 질문에 적용하지 마세요.")
-            for msg in history[-10:]:
-                role = "사용자" if msg["role"] == "user" else "어시스턴트"
-                parts.append(f"{role}: {msg['content']}")
+            parts.append("현재 질문은 이미 맥락을 반영해 다시 쓴 것이니, 이전 대화의 조건(개수, 필터 등)을 덧붙이지 마세요.")
+            parts.append(context.render())
             parts.append("")
-        parts.append(f"## 현재 질문 (이 질문의 조건만 따르세요):\n{message}")
+        parts.append(f"## 현재 질문 (이 질문의 조건만 따르세요):\n{question}")
+        if question != original:
+            parts.append(f"(사용자 원문: {original})")
         return "\n".join(parts), code_examples
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    async def chat(self, message: str, history: List[Dict[str, str]]) -> Dict:
+    async def chat(self, message: str, context: Optional[ConversationContext] = None) -> Dict:
         answer = FALLBACK_ANSWER
+        refined_question = message
         steps: List[Dict] = []
         matched_examples: List[Dict] = []
-        async for event in self.chat_stream(message, history):
-            if event["type"] == "step":
+        async for event in self.chat_stream(message, context):
+            if event["type"] == "refined_question":
+                refined_question = event["data"]["question"]
+            elif event["type"] == "step":
                 steps.append(event["data"])
             elif event["type"] == "answer":
                 answer = event["data"]["answer"]
             elif event["type"] == "matched_examples":
                 matched_examples = event["data"]["examples"]
-        return {"answer": answer, "steps": steps, "matched_examples": matched_examples}
+        return {
+            "answer": answer, "refined_question": refined_question,
+            "steps": steps, "matched_examples": matched_examples,
+        }
 
-    async def chat_stream(self, message: str, history: List[Dict[str, str]]) -> AsyncIterator[Dict]:
+    async def chat_stream(
+        self, message: str, context: Optional[ConversationContext] = None,
+    ) -> AsyncIterator[Dict]:
         """도구 호출/결과를 step 이벤트로, 최종 응답을 answer 이벤트로 스트리밍한다.
 
+        맥락이 있으면 먼저 질문을 독립 질문으로 재작성하고, 바뀌었으면 refined_question 이벤트를 보낸다.
         step: {step_number, code(도구 호출 표기), observations, tool_calls, error}
         """
-        # 임베딩 검색(동기 HTTP/DB)은 이벤트 루프를 막지 않도록 스레드에서 실행
-        prompt, matched_examples = await asyncio.to_thread(self._build_prompt, message, history)
+        context = context or ConversationContext()
+        # LLM/임베딩 호출(동기 HTTP/DB)은 이벤트 루프를 막지 않도록 스레드에서 실행
+        question = await asyncio.to_thread(self.memory.refine, message, context)
+        if question != message:
+            yield {"type": "refined_question", "data": {"question": question}}
+        prompt, matched_examples = await asyncio.to_thread(self._build_prompt, question, context, message)
         if matched_examples:
             yield {"type": "matched_examples", "data": {"examples": matched_examples}}
 

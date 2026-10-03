@@ -51,12 +51,18 @@ async def _scripted_stream(messages, info: AgentInfo):
     }
 
 
+class FakeMemory:
+    def refine(self, question, context):
+        return question if context.is_empty() else f"KODEX 200(069500)의 {question}"
+
+
 @pytest.fixture
 def service(monkeypatch):
     svc = cs.ChatService.__new__(cs.ChatService)
     svc._tag_names = []
     svc._tools = {"get_price": FakePriceTool()}
-    svc._build_prompt = lambda message, history: (message, [])
+    svc._build_prompt = lambda question, context, original: (question, [])
+    svc.memory = FakeMemory()
     from pydantic_ai import Agent
     svc.agent = Agent(FunctionModel(_scripted_model, stream_function=_scripted_stream),
                       tools=[t.as_agent_tool() for t in svc._tools.values()])
@@ -65,7 +71,7 @@ def service(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_chat_stream_emits_steps_and_answer(service):
-    events = [e async for e in service.chat_stream("종가 알려줘", [])]
+    events = [e async for e in service.chat_stream("종가 알려줘")]
     steps = [e["data"] for e in events if e["type"] == "step"]
     answers = [e["data"]["answer"] for e in events if e["type"] == "answer"]
 
@@ -77,9 +83,20 @@ async def test_chat_stream_emits_steps_and_answer(service):
 
 @pytest.mark.asyncio
 async def test_chat_collects_result(service):
-    result = await service.chat("종가 알려줘", [])
+    result = await service.chat("종가 알려줘")
     assert len(result["steps"]) == 2
     assert result["answer"].startswith("| ETF")
+    assert result["refined_question"] == "종가 알려줘"
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_refines_with_context(service):
+    from app.services.chat_memory import ConversationContext, Turn
+    context = ConversationContext(turns=[Turn("KODEX 200 정보 알려줘", "KODEX 200(069500)은 ...")])
+    events = [e async for e in service.chat_stream("종가 알려줘", context)]
+    assert events[0] == {"type": "refined_question", "data": {"question": "KODEX 200(069500)의 종가 알려줘"}}
+    result = await service.chat("종가 알려줘", context)
+    assert result["refined_question"] == "KODEX 200(069500)의 종가 알려줘"
 
 
 @pytest.mark.parametrize("cypher", [
@@ -97,3 +114,28 @@ def test_execute_cypher_rejects_dollar_quote_in_params():
         GraphService(db=None).execute_cypher(
             "MATCH (e:ETF {code: $code}) RETURN e", {"code": "x$$) as (r agtype); SELECT 1; --"},
         )
+
+
+def test_save_chat_log_keeps_steps_and_refined_question():
+    from types import SimpleNamespace
+    from app.routers.chat import _save_chat_log
+
+    class FakeDB:
+        def add(self, obj): self.added = obj
+        def commit(self): pass
+        def refresh(self, obj): obj.id = 7
+
+    db, session = FakeDB(), SimpleNamespace(id=3, updated_at=None)
+    steps = [
+        {"step_number": 1, "code": 'etf_search(query="KODEX 200")', "error": None},
+        {"step_number": 2, "code": "get_etf_info()", "error": "etf_code 누락"},
+    ]
+    assert _save_chat_log(db, 1, session, "그거 보수율은?", "KODEX 200의 보수율은?", "0.15%", steps) == 7
+    log = db.added
+    assert log.session_id == 3 and log.steps == steps
+    assert log.generated_code == 'etf_search(query="KODEX 200")'  # 실패한 호출은 예시에서 뺀다
+    assert log.refined_question == "KODEX 200의 보수율은?"
+    assert session.updated_at is not None
+
+    _save_chat_log(db, 1, session, "안녕", "안녕", "범위 밖", [])
+    assert db.added.steps is None and db.added.refined_question is None

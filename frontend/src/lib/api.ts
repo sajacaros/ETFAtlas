@@ -19,8 +19,11 @@ import type {
   TagETF,
   TagHolding,
   SimilarETF,
-  ChatMessage,
   ChatResponse,
+  ChatSessionSummary,
+  ChatSessionDetail,
+  ChatStep,
+  MatchedCodeExample,
   AdminCodeExampleList,
   AdminChatLogList,
   AdminETFTag,
@@ -296,19 +299,38 @@ export const tagsApi = {
 }
 
 // Chat
+export interface ChatStreamHandlers {
+  onSession?: (session: { session_id: number; title: string }) => void
+  onRefinedQuestion?: (question: string) => void
+  onStep: (step: ChatStep) => void
+  onAnswer: (answer: string) => void
+  onError: (error: string) => void
+  onMatchedExamples?: (examples: MatchedCodeExample[]) => void
+  onDone?: () => void
+}
+
 export const chatApi = {
-  sendMessage: async (message: string, history: ChatMessage[]) => {
-    const { data } = await api.post<ChatResponse>('/chat/message', { message, history })
+  sendMessage: async (message: string, sessionId: number | null) => {
+    const { data } = await api.post<ChatResponse>('/chat/message', { message, session_id: sessionId })
     return data
   },
-  streamMessage: (
-    message: string,
-    history: ChatMessage[],
-    onStep: (step: import('@/types/api').ChatStep) => void,
-    onAnswer: (answer: string) => void,
-    onError: (error: string) => void,
-    onMatchedExamples?: (examples: import('@/types/api').MatchedCodeExample[]) => void,
-  ) => {
+  listSessions: async () => {
+    const { data } = await api.get<ChatSessionSummary[]>('/chat/sessions')
+    return data
+  },
+  getSession: async (id: number) => {
+    const { data } = await api.get<ChatSessionDetail>(`/chat/sessions/${id}`)
+    return data
+  },
+  renameSession: async (id: number, title: string) => {
+    const { data } = await api.patch<{ id: number; title: string }>(`/chat/sessions/${id}`, { title })
+    return data
+  },
+  deleteSession: async (id: number) => {
+    await api.delete(`/chat/sessions/${id}`)
+  },
+  // sessionId가 null이면 서버가 새 세션을 만들고 onSession으로 알려준다
+  streamMessage: (message: string, sessionId: number | null, handlers: ChatStreamHandlers) => {
     const abortController = new AbortController()
     const baseUrl = `${API_URL}/api`
 
@@ -317,12 +339,12 @@ export const chatApi = {
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ message, history }),
+      body: JSON.stringify({ message, session_id: sessionId }),
       signal: abortController.signal,
     })
       .then(async (response) => {
         if (!response.ok) {
-          onError(`서버 오류 (${response.status})`)
+          handlers.onError(`서버 오류 (${response.status})`)
           return
         }
         const reader = response.body?.getReader()
@@ -342,16 +364,19 @@ export const chatApi = {
             if (!data || data === '[DONE]') continue
             try {
               const event = JSON.parse(data)
-              if (event.type === 'step') onStep(event.data)
-              else if (event.type === 'answer') onAnswer(event.data.answer)
-              else if (event.type === 'error') onError(event.data.message)
-              else if (event.type === 'matched_examples' && onMatchedExamples) onMatchedExamples(event.data.examples)
+              if (event.type === 'session') handlers.onSession?.(event.data)
+              else if (event.type === 'refined_question') handlers.onRefinedQuestion?.(event.data.question)
+              else if (event.type === 'step') handlers.onStep(event.data)
+              else if (event.type === 'answer') handlers.onAnswer(event.data.answer)
+              else if (event.type === 'error') handlers.onError(event.data.message)
+              else if (event.type === 'matched_examples') handlers.onMatchedExamples?.(event.data.examples)
             } catch { /* ignore parse errors */ }
           }
         }
+        handlers.onDone?.()
       })
       .catch((err) => {
-        if (err.name !== 'AbortError') onError(err.message)
+        if (err.name !== 'AbortError') handlers.onError(err.message)
       })
 
     return abortController

@@ -1172,6 +1172,9 @@ function ChatLogsTab() {
                   onClick={() => setDetailDialog(item)}
                 >
                   {item.question}
+                  {item.refined_question && (
+                    <div className="text-xs text-muted-foreground truncate">→ {item.refined_question}</div>
+                  )}
                 </TableCell>
                 <TableCell className="max-w-[200px] truncate text-muted-foreground">
                   {item.answer.slice(0, 80)}
@@ -1270,7 +1273,8 @@ function EmbedDialog({
 
   useEffect(() => {
     if (open && chatLog) {
-      setQuestion(chatLog.question)
+      // 맥락에 기대는 원문보다 재작성된 독립 질문이 예시로 쓸모 있다
+      setQuestion(chatLog.refined_question || chatLog.question)
       setCode(chatLog.generated_code || '')
       setDescription('')
     }

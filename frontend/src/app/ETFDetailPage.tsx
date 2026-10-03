@@ -23,9 +23,8 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { etfsApi, watchlistApi } from '@/lib/api'
-import { ETFInfoCards, ETFLink, dividendCycleLabel } from '@/components/ETFInfo'
+import { ETFInfoCards, ETFLink, dividendCycleLabel, type MarketCapInfo } from '@/components/ETFInfo'
 import { useAuth } from '@/hooks/useAuth'
-import { formatKrwAmount } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
 import type { ETF, Holding, HoldingChange, Price, SimilarETF } from '@/types/api'
 
@@ -92,6 +91,29 @@ export default function ETFDetailPage() {
     })
     return sorted
   }, [changes, changeSort])
+
+  // 최신 시가총액과 1주 전 대비 증감
+  const marketCap = useMemo<MarketCapInfo | null>(() => {
+    const validPrices = prices.filter((p) => p.market_cap != null)
+    if (validPrices.length === 0) return null
+    const latest = validPrices[validPrices.length - 1]
+    const latestDate = new Date(latest.date)
+    const weekAgoTarget = new Date(latestDate)
+    weekAgoTarget.setDate(weekAgoTarget.getDate() - 7)
+    const weekAgoPrice = validPrices.reduce((closest, p) => {
+      const d = new Date(p.date)
+      if (d > latestDate) return closest
+      if (!closest) return p
+      return Math.abs(d.getTime() - weekAgoTarget.getTime()) < Math.abs(new Date(closest.date).getTime() - weekAgoTarget.getTime()) ? p : closest
+    }, null as typeof latest | null)
+    const latestCap = latest.market_cap!
+    const weekAgoCap = weekAgoPrice && weekAgoPrice.market_cap && weekAgoPrice.date !== latest.date
+      ? weekAgoPrice.market_cap : null
+    const changeRate = weekAgoCap
+      ? ((latestCap - weekAgoCap) / weekAgoCap) * 100
+      : null
+    return { latest: latestCap, weekAgo: weekAgoCap, changeRate }
+  }, [prices])
 
   useEffect(() => {
     if (!code) return
@@ -242,7 +264,7 @@ export default function ETFDetailPage() {
         </Button>
       </div>
 
-      <ETFInfoCards etf={etf} tags={tags} />
+      <ETFInfoCards etf={etf} tags={tags} marketCap={marketCap} />
 
       {etf.description && (
         <Card>
@@ -263,45 +285,6 @@ export default function ETFDetailPage() {
           )}
         </Card>
       )}
-
-      {(() => {
-        const validPrices = prices.filter((p) => p.market_cap != null)
-        if (validPrices.length === 0) return null
-        const latest = validPrices[validPrices.length - 1]
-        const latestDate = new Date(latest.date)
-        const weekAgoTarget = new Date(latestDate)
-        weekAgoTarget.setDate(weekAgoTarget.getDate() - 7)
-        const weekAgoPrice = validPrices.reduce((closest, p) => {
-          const d = new Date(p.date)
-          if (d > latestDate) return closest
-          if (!closest) return p
-          return Math.abs(d.getTime() - weekAgoTarget.getTime()) < Math.abs(new Date(closest.date).getTime() - weekAgoTarget.getTime()) ? p : closest
-        }, null as typeof latest | null)
-        const latestCap = latest.market_cap!
-        const weekAgoCap = weekAgoPrice && weekAgoPrice.market_cap && weekAgoPrice.date !== latest.date
-          ? weekAgoPrice.market_cap : null
-        const changeRate = weekAgoCap
-          ? ((latestCap - weekAgoCap) / weekAgoCap) * 100
-          : null
-        return (
-          <Card className="py-3">
-            <CardContent className="pb-0 pt-0">
-              <p className="text-xs text-muted-foreground">시가총액</p>
-              <p className="text-sm font-semibold mt-1">
-                {formatKrwAmount(latestCap)}
-                {changeRate != null && (
-                  <span className={`text-xs font-normal ml-1 ${changeRate > 0 ? 'text-red-500' : changeRate < 0 ? 'text-blue-500' : 'text-muted-foreground'}`}>
-                    {changeRate > 0 ? '+' : ''}{changeRate.toFixed(1)}%
-                  </span>
-                )}
-              </p>
-              {weekAgoCap != null && (
-                <p className="text-[11px] text-muted-foreground mt-0.5">1W전 {formatKrwAmount(weekAgoCap)}</p>
-              )}
-            </CardContent>
-          </Card>
-        )
-      })()}
 
       <Card>
         <CardHeader

@@ -1,5 +1,6 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
+import { HelpCircle } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -45,8 +46,66 @@ function InfoCard({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
-/** ETF 기본 정보 카드 (운용사·카테고리·순자산·보수율·기초지수·상장일) */
-export function ETFInfoCards({ etf, tags }: { etf: ETF; tags: string[] }) {
+/** ? 아이콘: 마우스를 올리거나 누르면 설명을 보여준다 */
+function HelpTip({ text }: { text: string }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLSpanElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const close = (e: PointerEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('pointerdown', close)
+    return () => document.removeEventListener('pointerdown', close)
+  }, [open])
+
+  return (
+    <span ref={ref} className="relative inline-flex align-middle">
+      <button
+        type="button"
+        aria-label="설명 보기"
+        className="text-muted-foreground hover:text-foreground"
+        onPointerEnter={(e) => e.pointerType === 'mouse' && setOpen(true)}
+        onPointerLeave={(e) => e.pointerType === 'mouse' && setOpen(false)}
+        onPointerDown={(e) => e.pointerType !== 'mouse' && setOpen((o) => !o)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+      >
+        <HelpCircle className="w-3 h-3" />
+      </button>
+      {open && (
+        <span
+          role="tooltip"
+          className="absolute left-0 top-full z-20 mt-1 w-56 rounded-md border bg-popover p-2 text-xs font-normal leading-relaxed text-popover-foreground shadow-md"
+        >
+          {text}
+        </span>
+      )}
+    </span>
+  )
+}
+
+const NET_ASSETS_HELP = 'ETF가 실제로 보유한 주식·현금 등 자산의 가치 (1주당 순자산가치 × 발행 주식 수)'
+const MARKET_CAP_HELP = '시장에서 거래되는 ETF 가격으로 매긴 규모 (종가 × 상장 주식 수). 거래 가격이 순자산가치와 조금씩 달라 순자산과 차이가 납니다. 옆 숫자는 1주 전 대비 증감률입니다.'
+
+export interface MarketCapInfo {
+  latest: number
+  weekAgo: number | null
+  changeRate: number | null
+}
+
+function SizeLabel({ label, help }: { label: string; help: string }) {
+  return (
+    <p className="text-xs text-muted-foreground flex items-center gap-1">
+      {label}
+      <HelpTip text={help} />
+    </p>
+  )
+}
+
+/** ETF 기본 정보 카드 (운용사·카테고리·순자산/시가총액·보수율·기초지수·상장일). 시가총액은 가격 데이터가 있을 때만 */
+export function ETFInfoCards({ etf, tags, marketCap }: { etf: ETF; tags: string[]; marketCap?: MarketCapInfo | null }) {
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
       <InfoCard label="운용사">
@@ -64,11 +123,32 @@ export function ETFInfoCards({ etf, tags }: { etf: ETF; tags: string[] }) {
           }
         </div>
       </InfoCard>
-      <InfoCard label="순자산">
-        <p className="text-sm font-semibold mt-1">
-          {etf.net_assets ? formatKrwAmount(etf.net_assets) : '-'}
-        </p>
-      </InfoCard>
+      <Card className="py-3">
+        <CardContent className="pb-0 pt-0">
+          <SizeLabel label="순자산" help={NET_ASSETS_HELP} />
+          <p className="text-sm font-semibold mt-1">
+            {etf.net_assets ? formatKrwAmount(etf.net_assets) : '-'}
+          </p>
+          {marketCap && (
+            <>
+              <div className="mt-2">
+                <SizeLabel label="시가총액" help={MARKET_CAP_HELP} />
+              </div>
+              <p className="text-sm font-semibold mt-1">
+                {formatKrwAmount(marketCap.latest)}
+                {marketCap.changeRate != null && (
+                  <span className={`text-xs font-normal ml-1 ${marketCap.changeRate > 0 ? 'text-red-500' : marketCap.changeRate < 0 ? 'text-blue-500' : 'text-muted-foreground'}`}>
+                    {marketCap.changeRate > 0 ? '+' : ''}{marketCap.changeRate.toFixed(1)}%
+                  </span>
+                )}
+              </p>
+              {marketCap.weekAgo != null && (
+                <p className="text-[11px] text-muted-foreground mt-0.5">1W전 {formatKrwAmount(marketCap.weekAgo)}</p>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
       <InfoCard label="보수율">
         <p className="text-sm font-semibold mt-1">
           {etf.expense_ratio ? `${etf.expense_ratio}%` : '-'}

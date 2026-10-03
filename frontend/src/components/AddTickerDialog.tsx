@@ -19,6 +19,7 @@ interface AddTickerDialogProps {
 export default function AddTickerDialog({ onAdd }: AddTickerDialogProps) {
   const [open, setOpen] = useState(false)
   const [ticker, setTicker] = useState('')
+  const [query, setQuery] = useState('')
   const [targetWeight, setTargetWeight] = useState('')
   const [quantity, setQuantity] = useState('')
   const [avgPrice, setAvgPrice] = useState('')
@@ -31,6 +32,7 @@ export default function AddTickerDialog({ onAdd }: AddTickerDialogProps) {
 
   const reset = () => {
     setTicker('')
+    setQuery('')
     setTargetWeight('')
     setQuantity('')
     setAvgPrice('')
@@ -40,11 +42,13 @@ export default function AddTickerDialog({ onAdd }: AddTickerDialogProps) {
   }
 
   const handleSearch = async (query: string) => {
-    setTicker(query)
+    setQuery(query)
+    setTicker('')
     setValidated(false)
     setTickerName('')
 
     if (query.toUpperCase() === 'CASH') {
+      setTicker('CASH')
       setValidated(true)
       setTickerName('현금')
       setSearchResults([])
@@ -69,6 +73,7 @@ export default function AddTickerDialog({ onAdd }: AddTickerDialogProps) {
 
   const handleSelectTicker = (code: string, name: string) => {
     setTicker(code)
+    setQuery(name)
     setTickerName(name)
     setValidated(true)
     setSearchResults([])
@@ -107,7 +112,7 @@ export default function AddTickerDialog({ onAdd }: AddTickerDialogProps) {
             <div className="relative">
               <Input
                 placeholder="종목코드 또는 이름 검색"
-                value={ticker}
+                value={query}
                 onChange={(e) => handleSearch(e.target.value)}
               />
               {(searching || searchResults.length > 0) && (
@@ -128,8 +133,8 @@ export default function AddTickerDialog({ onAdd }: AddTickerDialogProps) {
                 </div>
               )}
             </div>
-            {validated && tickerName && (
-              <p className="text-sm text-green-600">{tickerName}</p>
+            {validated && ticker && !isCash && (
+              <p className="text-sm text-green-600 font-mono">{ticker}</p>
             )}
           </div>
           <div className="space-y-2">

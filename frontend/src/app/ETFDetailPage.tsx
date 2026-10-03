@@ -25,6 +25,7 @@ import {
 import { etfsApi, watchlistApi } from '@/lib/api'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
+import { formatKrwAmount } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
 import type { ETF, Holding, HoldingChange, Price, SimilarETF } from '@/types/api'
 
@@ -265,7 +266,7 @@ export default function ETFDetailPage() {
           <CardContent className="pb-0 pt-0">
             <p className="text-xs text-muted-foreground">순자산</p>
             <p className="text-sm font-semibold mt-1">
-              {etf.net_assets ? `${(etf.net_assets / 100000000).toFixed(0)}억원` : '-'}
+              {etf.net_assets ? formatKrwAmount(etf.net_assets) : '-'}
             </p>
           </CardContent>
         </Card>
@@ -330,15 +331,12 @@ export default function ETFDetailPage() {
         const changeRate = weekAgoCap
           ? ((latestCap - weekAgoCap) / weekAgoCap) * 100
           : null
-        const fmtCap = (v: number) => v >= 1_0000_0000
-          ? `${Math.floor(v / 1_0000_0000).toLocaleString()}억원`
-          : `${Math.floor(v / 1_0000).toLocaleString()}만원`
         return (
           <Card className="py-3">
             <CardContent className="pb-0 pt-0">
               <p className="text-xs text-muted-foreground">시가총액</p>
               <p className="text-sm font-semibold mt-1">
-                {fmtCap(latestCap)}
+                {formatKrwAmount(latestCap)}
                 {changeRate != null && (
                   <span className={`text-xs font-normal ml-1 ${changeRate > 0 ? 'text-red-500' : changeRate < 0 ? 'text-blue-500' : 'text-muted-foreground'}`}>
                     {changeRate > 0 ? '+' : ''}{changeRate.toFixed(1)}%
@@ -346,7 +344,7 @@ export default function ETFDetailPage() {
                 )}
               </p>
               {weekAgoCap != null && (
-                <p className="text-[11px] text-muted-foreground mt-0.5">1W전 {fmtCap(weekAgoCap)}</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">1W전 {formatKrwAmount(weekAgoCap)}</p>
               )}
             </CardContent>
           </Card>

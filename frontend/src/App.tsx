@@ -14,6 +14,7 @@ import WatchlistChangesPage from './app/WatchlistChangesPage'
 import SharedPortfoliosPage from '@/app/SharedPortfoliosPage'
 import SharedPortfolioDetailPage from '@/app/SharedPortfolioDetailPage'
 import AdminPage from './app/AdminPage'
+import ProfilePage from './app/ProfilePage'
 import LoginPage from './app/LoginPage'
 import SetupPage from './app/SetupPage'
 import InvitePage from './app/InvitePage'
@@ -83,6 +84,7 @@ function App() {
             <Route path="/shared/:shareToken" element={<SharedPortfolioDetailPage />} />
             <Route path="/chat" element={<ChatPage />} />
             <Route path="/admin" element={<AdminPage />} />
+            <Route path="/profile" element={<ProfilePage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/setup" element={<SetupPage />} />
             <Route path="/invite/:token" element={<InvitePage />} />

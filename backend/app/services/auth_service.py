@@ -32,6 +32,10 @@ class InvalidPasswordResetError(Exception):
     """재설정 토큰이 없거나, 이미 쓰였거나, 만료됨."""
 
 
+class IncorrectPasswordError(Exception):
+    """비밀번호 변경 시 현재 비밀번호가 틀림."""
+
+
 class AuthService:
     def __init__(self, db: Session):
         self.db = db
@@ -121,6 +125,25 @@ class AuthService:
         reset.used_at = utcnow()
         self.db.query(AuthSession).filter(AuthSession.user_id == user.id).delete()
         self.db.commit()
+
+    def change_password(self, user_id: int, current_password: str, new_password: str, keep_token: str | None) -> None:
+        """현재 비밀번호를 확인하고 바꾼다. 지금 쓰는 세션(keep_token)만 남기고 다른 기기의 세션은 끊는다."""
+        user = self.db.get(User, user_id)
+        if user is None or not verify_password(current_password, user.password_hash):
+            raise IncorrectPasswordError()
+        user.password_hash = hash_password(new_password)
+        others = self.db.query(AuthSession).filter(AuthSession.user_id == user_id)
+        if keep_token:
+            others = others.filter(AuthSession.token_hash != hash_token(keep_token))
+        others.delete()
+        self.db.commit()
+
+    def update_name(self, user_id: int, name: str) -> User:
+        user = self.db.get(User, user_id)
+        user.name = name
+        self.db.commit()
+        self.db.refresh(user)
+        return user
 
     def authenticate(self, username: str, password: str) -> Optional[User]:
         user = self.db.query(User).filter(User.username == username).first()

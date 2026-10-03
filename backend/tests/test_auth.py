@@ -49,3 +49,22 @@ def test_password_reset_request_validation():
                    {"token": "", "password": "password123"}):
         with pytest.raises(ValidationError):
             PasswordResetRequest(**kwargs)
+
+
+def test_password_change_request_validation():
+    from app.routers.auth import PasswordChangeRequest
+    req = PasswordChangeRequest(current_password="old-pass", password="password123")
+    assert req.password == "password123"
+    for kwargs in ({"current_password": "old-pass", "password": "short"},
+                   {"current_password": "old-pass", "password": "가" * 30},
+                   {"current_password": "", "password": "password123"}):
+        with pytest.raises(ValidationError):
+            PasswordChangeRequest(**kwargs)
+
+
+def test_profile_update_request_strips_and_rejects_blank():
+    from app.routers.auth import ProfileUpdateRequest
+    assert ProfileUpdateRequest(name="  김데모  ").name == "김데모"
+    for name in ("", "   ", "가" * 256):
+        with pytest.raises(ValidationError):
+            ProfileUpdateRequest(name=name)

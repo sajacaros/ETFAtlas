@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..services.auth_service import (
-    AuthService, InvalidInvitationError, InvalidPasswordResetError, SetupAlreadyCompletedError,
+    AuthService, IncorrectPasswordError, InvalidInvitationError, InvalidPasswordResetError, SetupAlreadyCompletedError,
     UsernameTakenError, is_admin,
 )
 from ..models.user import User
@@ -32,6 +32,23 @@ class CredentialsRequest(PasswordField):
 
 class PasswordResetRequest(PasswordField):
     token: str = Field(min_length=1, max_length=64)
+
+
+class PasswordChangeRequest(PasswordField):
+    """password가 새 비밀번호"""
+    current_password: str = Field(min_length=1, max_length=72)
+
+
+class ProfileUpdateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+
+    @field_validator("name")
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("name must not be blank")
+        return v
 
 
 class PasswordResetStatusResponse(BaseModel):
@@ -137,6 +154,31 @@ async def get_current_user(
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     return _user_response(db, user)
+
+
+@router.patch("/me", response_model=UserResponse)
+async def update_profile(
+    body: ProfileUpdateRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    return _user_response(db, AuthService(db).update_name(user_id, body.name))
+
+
+@router.post("/password", status_code=status.HTTP_204_NO_CONTENT)
+async def change_password(
+    body: PasswordChangeRequest,
+    request: Request,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """로그인한 회원이 직접 비밀번호를 바꾼다. 이 브라우저의 세션은 유지하고 다른 기기의 세션은 끊는다."""
+    try:
+        AuthService(db).change_password(
+            user_id, body.current_password, body.password, request.cookies.get(SESSION_COOKIE)
+        )
+    except IncorrectPasswordError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)

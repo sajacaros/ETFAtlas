@@ -11,6 +11,7 @@ interface AuthContextType {
   register: (payload: RegisterPayload, inviteToken: string) => Promise<void>
   setup: (payload: RegisterPayload) => Promise<void>
   logout: () => Promise<void>
+  updateProfile: (name: string) => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -64,6 +65,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  const updateProfile = async (name: string) => {
+    setUser(await authApi.updateProfile(name))
+  }
+
   return (
     <AuthContext.Provider
       value={{
@@ -75,6 +80,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         register,
         setup,
         logout,
+        updateProfile,
       }}
     >
       {children}

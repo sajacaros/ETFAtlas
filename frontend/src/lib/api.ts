@@ -105,6 +105,13 @@ export const authApi = {
     const { data } = await api.get<User>('/auth/me')
     return data
   },
+  updateProfile: async (name: string) => {
+    const { data } = await api.patch<User>('/auth/me', { name })
+    return data
+  },
+  changePassword: async (currentPassword: string, password: string) => {
+    await api.post('/auth/password', { current_password: currentPassword, password })
+  },
 }
 
 // ETFs

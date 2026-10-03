@@ -7,14 +7,6 @@ import { useNotification } from '@/hooks/useNotification'
 import { useTheme } from '@/hooks/useTheme'
 import { Switch } from '@/components/ui/switch'
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
-import {
   Search,
   PieChart,
   LogOut,
@@ -27,7 +19,6 @@ import {
   X,
   PanelLeftClose,
   PanelLeftOpen,
-  ChevronsUpDown,
   Globe2,
   Gamepad2,
 } from 'lucide-react'
@@ -217,44 +208,39 @@ function SidebarBody({
       </div>
 
       <div className={cn('border-t p-3', collapsed && 'p-2')}>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              className={cn(
-                'flex w-full items-center gap-3 rounded-lg p-1.5 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        <div className="flex items-center gap-1">
+          <NavLink
+            to="/profile"
+            title={collapsed ? '프로필 설정' : undefined}
+            className={({ isActive }) =>
+              cn(
+                'flex min-w-0 flex-1 items-center gap-3 rounded-lg p-1.5 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                 collapsed && 'justify-center',
-              )}
-            >
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-slate-700 to-slate-900 text-xs font-semibold text-white">
-                {initial}
+                isActive && 'bg-accent text-accent-foreground hover:bg-accent',
+              )
+            }
+          >
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-slate-700 to-slate-900 text-xs font-semibold text-white">
+              {initial}
+            </span>
+            {!collapsed && (
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium">{displayName}</span>
+                <span className="block truncate text-xs text-muted-foreground">프로필 설정</span>
               </span>
-              {!collapsed && (
-                <>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">{displayName}</span>
-                    <span className="block truncate text-xs text-muted-foreground">
-                      {user?.is_admin ? '관리자' : '사용자'}
-                    </span>
-                  </span>
-                  <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-                </>
-              )}
+            )}
+          </NavLink>
+          {!collapsed && (
+            <button
+              onClick={logout}
+              title="로그아웃"
+              aria-label="로그아웃"
+              className="shrink-0 rounded-lg p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <LogOut className="h-4 w-4" />
             </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent side="top" align="start" className="w-56">
-            <DropdownMenuLabel className="font-normal">
-              <div className="text-sm font-medium">{displayName}</div>
-              {user?.username && user.name && (
-                <div className="text-xs text-muted-foreground">{user.username}</div>
-              )}
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={logout}>
-              <LogOut className="mr-2 h-4 w-4" />
-              로그아웃
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+          )}
+        </div>
       </div>
     </div>
   )

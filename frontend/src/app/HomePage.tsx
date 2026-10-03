@@ -23,18 +23,17 @@ interface ETFCardItem {
 
 const formatAmount = (value: number) => formatKrwAmount(value, '')
 
+const returnColor = (value: number | null | undefined) =>
+  value == null || value === 0 ? 'text-muted-foreground' : value > 0 ? 'text-red-500' : 'text-blue-500'
+
+const formatReturn = (value: number | null | undefined) =>
+  value == null ? '-' : value > 0 ? `+${value.toFixed(1)}%` : `${value.toFixed(1)}%`
+
 function ReturnBadge({ label, value, className = '' }: { label: string; value: number | null | undefined; className?: string }) {
-  const hasValue = value != null
-  const color = hasValue
-    ? value > 0 ? 'text-red-500' : value < 0 ? 'text-blue-500' : 'text-muted-foreground'
-    : 'text-muted-foreground'
-  const formatted = hasValue
-    ? value > 0 ? `+${value.toFixed(1)}%` : `${value.toFixed(1)}%`
-    : '-'
   return (
-    <div className={`text-right w-16 sm:w-20 ${className}`}>
+    <div className={`text-right w-20 ${className}`}>
       <div className="text-[10px] text-muted-foreground leading-none mb-0.5">{label}</div>
-      <div className={`text-base font-medium whitespace-nowrap ${color}`}>{formatted}</div>
+      <div className={`text-base font-medium whitespace-nowrap ${returnColor(value)}`}>{formatReturn(value)}</div>
     </div>
   )
 }
@@ -58,63 +57,69 @@ function ETFExpandableCard({
     <Card>
       <CardContent className="p-0">
         <div
-          className="flex items-center justify-between gap-3 p-3 sm:p-4 cursor-pointer hover:bg-muted/50 transition-colors"
+          className="flex items-center gap-2 sm:gap-3 p-3 sm:p-4 cursor-pointer hover:bg-muted/50 transition-colors"
           onClick={onToggle}
         >
-          <div className="flex items-center gap-2 min-w-0">
-            {expanded ? (
-              <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-            ) : (
-              <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-            )}
-            <div className="min-w-0">
-              <Link
-                to={`/etf/${etf.code}`}
-                className="font-medium hover:underline truncate block"
-                onClick={(e) => e.stopPropagation()}
-              >
-                {etf.name}
-              </Link>
-              <div className="text-sm text-muted-foreground">
-                {etf.code}
+          {expanded ? (
+            <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+          ) : (
+            <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+          )}
+          <div className="min-w-0 flex-1">
+            <Link
+              to={`/etf/${etf.code}`}
+              className="font-medium hover:underline truncate block"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {etf.name}
+            </Link>
+            <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
+              {etf.code}
+              {/* 모바일: 이름은 첫 줄 전체를 쓰고 1D·시총은 코드 옆 둘째 줄에 */}
+              <div className="flex items-baseline gap-3 whitespace-nowrap sm:hidden">
+                <span>
+                  <span className="mr-1 text-[10px]">1D</span>
+                  <span className={`font-medium ${returnColor(etf.return_1d)}`}>{formatReturn(etf.return_1d)}</span>
+                </span>
+                <span>{etf.net_assets != null ? formatAmount(etf.net_assets) : '-'}</span>
               </div>
             </div>
           </div>
-          {/* 좁은 화면에선 1D·시총만 남겨 이름 자리를 확보한다 */}
-          <div className="flex items-center gap-2 sm:gap-5 flex-shrink-0">
+          {/* 넓을수록 열을 더 보여 준다: sm 1D·시총, md 1W·1M, xl 시총변화 */}
+          <div className="hidden sm:flex items-center gap-5 flex-shrink-0">
             <ReturnBadge label="1D" value={etf.return_1d} />
             <ReturnBadge label="1W" value={etf.return_1w} className="hidden md:block" />
             <ReturnBadge label="1M" value={etf.return_1m} className="hidden md:block" />
             <div className="hidden text-right w-32 xl:block">
               <div className="text-[10px] text-muted-foreground leading-none mb-0.5">시총변화(1W)</div>
               {etf.net_assets != null && etf.market_cap_change_1w != null ? (
-                <div className={`text-base font-medium whitespace-nowrap ${etf.market_cap_change_1w > 0 ? 'text-red-500' : etf.market_cap_change_1w < 0 ? 'text-blue-500' : 'text-muted-foreground'}`}>
+                <div className={`text-base font-medium whitespace-nowrap ${returnColor(etf.market_cap_change_1w)}`}>
                   {etf.market_cap_change_1w > 0 ? '+' : ''}{formatAmount(Math.round(etf.net_assets * etf.market_cap_change_1w / 100))}({etf.market_cap_change_1w > 0 ? '+' : ''}{etf.market_cap_change_1w.toFixed(1)}%)
                 </div>
               ) : (
                 <div className="text-base text-muted-foreground">-</div>
               )}
             </div>
-            <div className="text-right w-20 sm:w-24">
+            <div className="text-right w-24">
               <div className="text-[10px] text-muted-foreground leading-none mb-0.5">시총</div>
               <div className="text-base text-muted-foreground whitespace-nowrap">{etf.net_assets != null ? formatAmount(etf.net_assets) : '-'}</div>
             </div>
-            {onWatchToggle && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="shrink-0 h-8 w-8"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onWatchToggle(etf.code)
-                }}
-              >
-                <Star
-                  className={`w-4 h-4 ${isWatched ? 'fill-yellow-400 text-yellow-400' : 'text-muted-foreground'}`}
-                />
-              </Button>
-            )}
           </div>
+          {onWatchToggle && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="shrink-0 h-8 w-8"
+              onClick={(e) => {
+                e.stopPropagation()
+                onWatchToggle(etf.code)
+              }}
+            >
+              <Star
+                className={`w-4 h-4 ${isWatched ? 'fill-yellow-400 text-yellow-400' : 'text-muted-foreground'}`}
+              />
+            </Button>
+          )}
         </div>
         {expanded && (
           <div className="border-t px-4 py-3 bg-muted/30">

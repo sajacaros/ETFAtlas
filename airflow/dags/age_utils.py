@@ -223,7 +223,7 @@ FOREIGN_NAME_KEYWORDS = [
     '테슬라', 'Tesla', '엔비디아', 'NVIDIA', '구글', 'Google',
     '애플', 'Apple', '아마존', 'Amazon', '팔란티어', 'Palantir',
     '브로드컴', 'Broadcom', '알리바바', 'Alibaba', '버크셔', 'Berkshire',
-    '월드', 'World', '국제금', '금액티브',
+    '월드', 'World', '국제금', '금액티브', 'TSMC',
 ]
 
 EXCLUDE_KEYWORDS = [

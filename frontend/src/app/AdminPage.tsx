@@ -439,7 +439,6 @@ function ETFTagsTab() {
           <TableRow>
             <TableHead className="w-[90px]">코드</TableHead>
             <TableHead>ETF</TableHead>
-            <TableHead className="w-[110px] text-right">순자산(억)</TableHead>
             <TableHead>태그</TableHead>
             <TableHead className="w-[100px]">구분</TableHead>
           </TableRow>
@@ -447,13 +446,13 @@ function ETFTagsTab() {
         <TableBody>
           {loading ? (
             <TableRow>
-              <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+              <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
                 로딩 중...
               </TableCell>
             </TableRow>
           ) : visible.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+              <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
                 데이터가 없습니다
               </TableCell>
             </TableRow>
@@ -465,9 +464,6 @@ function ETFTagsTab() {
                 <TableRow key={item.code}>
                   <TableCell className="font-mono text-sm">{item.code}</TableCell>
                   <TableCell>{item.name}</TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {item.net_assets != null ? Math.round(item.net_assets / 1e8).toLocaleString() : '-'}
-                  </TableCell>
                   <TableCell>
                     <div className="flex flex-wrap items-center gap-1">
                       {item.tags.map((tag) => (

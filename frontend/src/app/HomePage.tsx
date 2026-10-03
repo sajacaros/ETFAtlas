@@ -185,7 +185,7 @@ export default function HomePage() {
     const tag = searchParams.get('tag')
     if (q) {
       setLoading(true)
-      etfsApi.searchUniverse(q).then(setEtfList).catch(() => setEtfList([])).finally(() => setLoading(false))
+      etfsApi.searchUniverse(q.trim()).then(setEtfList).catch(() => setEtfList([])).finally(() => setLoading(false))
     } else if (tag) {
       setTagLoading(true)
       if (tag === FAVORITES_TAG) {
@@ -230,13 +230,15 @@ export default function HomePage() {
   }, [setSearchParams])
 
   const handleSearch = async () => {
-    if (!searchQuery.trim()) return
+    const query = searchQuery.trim()
+    if (!query) return
+    setSearchQuery(query)
     setLoading(true)
     setSelectedTag(null)
     setExpandedETF(null)
-    updateParams(searchQuery.trim(), null)
+    updateParams(query, null)
     try {
-      const results = await etfsApi.searchUniverse(searchQuery)
+      const results = await etfsApi.searchUniverse(query)
       setEtfList(results)
     } catch {
       setEtfList([])

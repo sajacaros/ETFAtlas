@@ -804,8 +804,8 @@ function CodeExamplesTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {STATUS_FILTERS.codeExamples.map((f) => (
             <Button
               key={f.value}
@@ -816,7 +816,7 @@ function CodeExamplesTab() {
               {f.label}
             </Button>
           ))}
-          <span className="text-sm text-muted-foreground ml-2">총 {total}건</span>
+          <span className="text-sm text-muted-foreground ml-2 whitespace-nowrap">총 {total}건</span>
         </div>
         <Button
           size="sm"
@@ -1128,7 +1128,7 @@ function ChatLogsTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {STATUS_FILTERS.chatLogs.map((f) => (
           <Button
             key={f.value}
@@ -1139,7 +1139,7 @@ function ChatLogsTab() {
             {f.label}
           </Button>
         ))}
-        <span className="text-sm text-muted-foreground ml-2">총 {total}건</span>
+        <span className="text-sm text-muted-foreground ml-2 whitespace-nowrap">총 {total}건</span>
       </div>
 
       <Table>

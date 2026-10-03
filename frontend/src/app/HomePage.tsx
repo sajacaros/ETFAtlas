@@ -23,7 +23,7 @@ interface ETFCardItem {
 
 const formatAmount = (value: number) => formatKrwAmount(value, '')
 
-function ReturnBadge({ label, value }: { label: string; value: number | null | undefined }) {
+function ReturnBadge({ label, value, className = '' }: { label: string; value: number | null | undefined; className?: string }) {
   const hasValue = value != null
   const color = hasValue
     ? value > 0 ? 'text-red-500' : value < 0 ? 'text-blue-500' : 'text-muted-foreground'
@@ -32,7 +32,7 @@ function ReturnBadge({ label, value }: { label: string; value: number | null | u
     ? value > 0 ? `+${value.toFixed(1)}%` : `${value.toFixed(1)}%`
     : '-'
   return (
-    <div className="text-right w-20">
+    <div className={`text-right w-16 sm:w-20 ${className}`}>
       <div className="text-[10px] text-muted-foreground leading-none mb-0.5">{label}</div>
       <div className={`text-base font-medium whitespace-nowrap ${color}`}>{formatted}</div>
     </div>
@@ -58,7 +58,7 @@ function ETFExpandableCard({
     <Card>
       <CardContent className="p-0">
         <div
-          className="flex items-center justify-between p-4 cursor-pointer hover:bg-muted/50 transition-colors"
+          className="flex items-center justify-between gap-3 p-3 sm:p-4 cursor-pointer hover:bg-muted/50 transition-colors"
           onClick={onToggle}
         >
           <div className="flex items-center gap-2 min-w-0">
@@ -80,11 +80,12 @@ function ETFExpandableCard({
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-5 flex-shrink-0">
+          {/* 좁은 화면에선 1D·시총만 남겨 이름 자리를 확보한다 */}
+          <div className="flex items-center gap-2 sm:gap-5 flex-shrink-0">
             <ReturnBadge label="1D" value={etf.return_1d} />
-            <ReturnBadge label="1W" value={etf.return_1w} />
-            <ReturnBadge label="1M" value={etf.return_1m} />
-            <div className="text-right w-32">
+            <ReturnBadge label="1W" value={etf.return_1w} className="hidden md:block" />
+            <ReturnBadge label="1M" value={etf.return_1m} className="hidden md:block" />
+            <div className="hidden text-right w-32 xl:block">
               <div className="text-[10px] text-muted-foreground leading-none mb-0.5">시총변화(1W)</div>
               {etf.net_assets != null && etf.market_cap_change_1w != null ? (
                 <div className={`text-base font-medium whitespace-nowrap ${etf.market_cap_change_1w > 0 ? 'text-red-500' : etf.market_cap_change_1w < 0 ? 'text-blue-500' : 'text-muted-foreground'}`}>
@@ -94,7 +95,7 @@ function ETFExpandableCard({
                 <div className="text-base text-muted-foreground">-</div>
               )}
             </div>
-            <div className="text-right w-24">
+            <div className="text-right w-20 sm:w-24">
               <div className="text-[10px] text-muted-foreground leading-none mb-0.5">시총</div>
               <div className="text-base text-muted-foreground whitespace-nowrap">{etf.net_assets != null ? formatAmount(etf.net_assets) : '-'}</div>
             </div>
@@ -345,12 +346,12 @@ export default function HomePage() {
     <div className="space-y-4">
       <div className="mx-auto">
         {/* 정렬 버튼 그룹 + 검색 */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1 rounded-lg border p-1 shrink-0">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="no-scrollbar flex items-center gap-1 overflow-x-auto rounded-lg border p-1 sm:shrink-0">
             {Object.keys(SORT_TAGS).map((name) => (
               <button
                 key={name}
-                className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+                className={`shrink-0 whitespace-nowrap px-3 py-1.5 text-sm rounded-md transition-colors ${
                   selectedTag === name
                     ? 'bg-primary text-primary-foreground font-medium'
                     : 'text-muted-foreground hover:text-foreground hover:bg-muted'
@@ -362,7 +363,7 @@ export default function HomePage() {
             ))}
             {isAuthenticated && (
               <button
-                className={`px-3 py-1.5 text-sm rounded-md transition-colors flex items-center gap-1 ${
+                className={`shrink-0 whitespace-nowrap px-3 py-1.5 text-sm rounded-md transition-colors flex items-center gap-1 ${
                   selectedTag === FAVORITES_TAG
                     ? 'bg-primary text-primary-foreground font-medium'
                     : 'text-muted-foreground hover:text-foreground hover:bg-muted'

@@ -120,6 +120,15 @@
   }
 }
 
+@layer utilities {
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
+
 /* 게임보이 테마에서 하드코딩된 색·효과를 어두운 바탕에 맞게 바꾼다 */
 @layer utilities {
   .theme-gameboy body {

@@ -15,6 +15,7 @@ import SharedPortfolioDetailPage from '@/app/SharedPortfolioDetailPage'
 import AdminPage from './app/AdminPage'
 import LoginPage from './app/LoginPage'
 import SetupPage from './app/SetupPage'
+import InvitePage from './app/InvitePage'
 import { Toaster } from './components/ui/toaster'
 
 // 최초 설치(사용자 0명) 상태면 모든 경로를 /setup으로 보낸다
@@ -23,6 +24,28 @@ function SetupGuard({ children }: { children: ReactNode }) {
   const location = useLocation()
   if (setupRequired && location.pathname !== '/setup') {
     return <Navigate to="/setup" replace />
+  }
+  return <>{children}</>
+}
+
+// 로그인하지 않았으면 /login으로 보낸다 (/login, /setup, /invite/* 제외). 로그인 후 돌아올 경로는 state.from에 담는다
+const PUBLIC_PATHS = ['/login', '/setup']
+
+const isPublicPath = (pathname: string) => PUBLIC_PATHS.includes(pathname) || pathname.startsWith('/invite/')
+
+function AuthGuard({ children }: { children: ReactNode }) {
+  const { isAuthenticated, isLoading } = useAuth()
+  const location = useLocation()
+  if (isPublicPath(location.pathname)) return <>{children}</>
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="text-muted-foreground">로딩 중...</div>
+      </div>
+    )
+  }
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace state={{ from: location }} />
   }
   return <>{children}</>
 }
@@ -36,6 +59,7 @@ function App() {
         <Header />
         <main className="container mx-auto py-6 px-4">
           <SetupGuard>
+          <AuthGuard>
           <Routes>
             <Route path="/" element={<HomePage />} />
             <Route path="/etf/:code" element={<ETFDetailPage />} />
@@ -49,7 +73,9 @@ function App() {
             <Route path="/admin" element={<AdminPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/setup" element={<SetupPage />} />
+            <Route path="/invite/:token" element={<InvitePage />} />
           </Routes>
+          </AuthGuard>
           </SetupGuard>
         </main>
         <Toaster />

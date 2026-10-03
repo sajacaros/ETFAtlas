@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
-import { authApi } from '@/lib/api'
+import { authApi, AUTH_EXPIRED_EVENT } from '@/lib/api'
 import { setToken, getToken, removeToken } from '@/lib/auth'
 import type { User, RegisterPayload } from '@/types/api'
 
@@ -9,7 +9,7 @@ interface AuthContextType {
   isAuthenticated: boolean
   setupRequired: boolean
   login: (username: string, password: string) => Promise<void>
-  register: (payload: RegisterPayload) => Promise<void>
+  register: (payload: RegisterPayload, inviteToken: string) => Promise<void>
   setup: (payload: RegisterPayload) => Promise<void>
   logout: () => void
 }
@@ -42,6 +42,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     init()
   }, [])
 
+  useEffect(() => {
+    const onExpired = () => setUser(null)
+    window.addEventListener(AUTH_EXPIRED_EVENT, onExpired)
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, onExpired)
+  }, [])
+
   const applyToken = async (accessToken: string) => {
     setToken(accessToken)
     setUser(await authApi.getMe())
@@ -52,8 +58,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await applyToken(access_token)
   }
 
-  const register = async (payload: RegisterPayload) => {
-    const { access_token } = await authApi.register(payload)
+  const register = async (payload: RegisterPayload, inviteToken: string) => {
+    const { access_token } = await authApi.register(payload, inviteToken)
     await applyToken(access_token)
   }
 

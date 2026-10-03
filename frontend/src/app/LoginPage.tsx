@@ -1,19 +1,22 @@
 import { useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
+import type { Location } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import AccountForm from '@/components/AccountForm'
 
 export default function LoginPage() {
   const navigate = useNavigate()
-  const { isAuthenticated, isLoading, login, register } = useAuth()
+  const location = useLocation()
+  const from = (location.state as { from?: Location } | null)?.from
+  const redirectTo = from ? `${from.pathname}${from.search}${from.hash}` : '/'
+  const { isAuthenticated, isLoading, login } = useAuth()
 
   useEffect(() => {
     if (isAuthenticated && !isLoading) {
-      navigate('/')
+      navigate(redirectTo, { replace: true })
     }
-  }, [isAuthenticated, isLoading, navigate])
+  }, [isAuthenticated, isLoading, navigate, redirectTo])
 
   if (isLoading) {
     return (
@@ -29,26 +32,15 @@ export default function LoginPage() {
         <CardHeader className="text-center">
           <CardTitle className="text-2xl">ETF Atlas</CardTitle>
           <CardDescription>
-            로그인하면 포트폴리오, 워치리스트, AI 챗봇을 사용할 수 있습니다
+            로그인 후 이용할 수 있습니다. 계정이 없으면 관리자에게 초대 링크를 요청하세요.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Tabs defaultValue="login">
-            <TabsList className="grid w-full grid-cols-2 mb-4">
-              <TabsTrigger value="login">로그인</TabsTrigger>
-              <TabsTrigger value="register">회원가입</TabsTrigger>
-            </TabsList>
-            <TabsContent value="login">
-              <AccountForm
-                mode="login"
-                submitLabel="로그인"
-                onSubmit={({ username, password }) => login(username, password)}
-              />
-            </TabsContent>
-            <TabsContent value="register">
-              <AccountForm mode="register" submitLabel="가입하기" onSubmit={register} />
-            </TabsContent>
-          </Tabs>
+          <AccountForm
+            mode="login"
+            submitLabel="로그인"
+            onSubmit={({ username, password }) => login(username, password)}
+          />
         </CardContent>
       </Card>
     </div>

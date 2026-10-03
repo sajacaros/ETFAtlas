@@ -24,55 +24,57 @@ export default function Header() {
           <Link to="/" className="text-xl font-bold text-primary">
             ETF Atlas
           </Link>
-          <nav className="hidden md:flex items-center gap-6">
-            <Link
-              to="/"
-              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
-            >
-              <Search className="w-4 h-4" />
-              ETF 검색
-            </Link>
-            <Link
-              to="/portfolio"
-              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
-            >
-              <PieChart className="w-4 h-4" />
-              포트폴리오
-            </Link>
-            <Link
-              to="/shared"
-              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
-            >
-              <Share2 className="w-4 h-4" />
-              Shared
-            </Link>
-            <Link
-              to="/watchlist/changes"
-              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground relative"
-            >
-              <Bell className="w-4 h-4" />
-              비중 변화
-              {hasNew && (
-                <span className="absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full" />
-              )}
-            </Link>
-            <Link
-              to="/chat"
-              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
-            >
-              <MessageCircle className="w-4 h-4" />
-              ETF 챗봇
-            </Link>
-            {user?.is_admin && (
+          {isAuthenticated && (
+            <nav className="hidden md:flex items-center gap-6">
               <Link
-                to="/admin"
+                to="/"
                 className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
               >
-                <Shield className="w-4 h-4" />
-                관리
+                <Search className="w-4 h-4" />
+                ETF 검색
               </Link>
-            )}
-          </nav>
+              <Link
+                to="/portfolio"
+                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+              >
+                <PieChart className="w-4 h-4" />
+                포트폴리오
+              </Link>
+              <Link
+                to="/shared"
+                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+              >
+                <Share2 className="w-4 h-4" />
+                Shared
+              </Link>
+              <Link
+                to="/watchlist/changes"
+                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground relative"
+              >
+                <Bell className="w-4 h-4" />
+                비중 변화
+                {hasNew && (
+                  <span className="absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full" />
+                )}
+              </Link>
+              <Link
+                to="/chat"
+                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+              >
+                <MessageCircle className="w-4 h-4" />
+                ETF 챗봇
+              </Link>
+              {user?.is_admin && (
+                <Link
+                  to="/admin"
+                  className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+                >
+                  <Shield className="w-4 h-4" />
+                  관리
+                </Link>
+              )}
+            </nav>
+          )}
         </div>
 
         <div className="flex items-center gap-4">

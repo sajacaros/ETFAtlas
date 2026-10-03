@@ -65,6 +65,16 @@ export interface AdminDiscordSettings {
   configured: boolean  // false: 웹에서 저장한 적 없음 (DAG는 서버 환경변수 사용)
 }
 
+export interface AdminInvitation {
+  id: number
+  token: string
+  status: 'active' | 'used' | 'expired'
+  created_at: string | null
+  expires_at: string
+  used_at: string | null
+  used_by_username: string | null
+}
+
 export interface ETF {
   code: string
   name: string

@@ -1,9 +1,10 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
+from .utils.jwt import get_current_user_id
 from .routers import auth, etfs, watchlist, portfolio, tags, chat, notifications, admin, shared
 
 logger = logging.getLogger(__name__)
@@ -43,11 +44,14 @@ app.add_middleware(
 
 # Routers
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
-app.include_router(etfs.router, prefix="/api/etfs", tags=["ETFs"])
+# 엔드포인트별 인증이 없는 라우터는 라우터 단위로 로그인을 요구한다
+require_login = [Depends(get_current_user_id)]
+
+app.include_router(etfs.router, prefix="/api/etfs", tags=["ETFs"], dependencies=require_login)
 app.include_router(watchlist.router, prefix="/api/watchlist", tags=["Watchlist"])
 app.include_router(portfolio.router, prefix="/api/portfolios", tags=["Portfolio"])
-app.include_router(shared.router, prefix="/api/shared", tags=["Shared"])
-app.include_router(tags.router, prefix="/api/tags", tags=["Tags"])
+app.include_router(shared.router, prefix="/api/shared", tags=["Shared"], dependencies=require_login)
+app.include_router(tags.router, prefix="/api/tags", tags=["Tags"], dependencies=require_login)
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
 app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])

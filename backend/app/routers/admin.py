@@ -6,11 +6,13 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..utils.jwt import get_current_user_id
 from ..services.embedding_service import EmbeddingService
-from ..services.auth_service import is_admin
+from ..services.auth_service import AuthService, is_admin
 from ..services.graph_service import GraphService
 from ..models.chat import ChatLog, ChatLogStatus
 from ..models.code_example import CodeExample
 from ..models.discord_setting import DiscordSetting
+from ..models.invitation import Invitation
+from ..models.user import User
 from ..utils.time import utcnow
 from ..schemas.chat import (
     CodeExampleCreate,
@@ -477,3 +479,63 @@ async def test_discord_webhook(
         logger.warning(f"Discord test failed: {type(e).__name__} status={status}")
         raise HTTPException(status_code=502, detail="디스코드 전송에 실패했습니다. 웹훅 주소를 확인하세요.")
     return {"ok": True}
+
+
+# === Member Invitations ===
+
+def _invitation_response(inv: Invitation, used_by_username: str | None) -> dict:
+    if inv.used_at:
+        status = "used"
+    elif inv.expires_at <= utcnow():
+        status = "expired"
+    else:
+        status = "active"
+    return {
+        "id": inv.id,
+        "token": inv.token,
+        "status": status,
+        "created_at": inv.created_at.isoformat() if inv.created_at else None,
+        "expires_at": inv.expires_at.isoformat(),
+        "used_at": inv.used_at.isoformat() if inv.used_at else None,
+        "used_by_username": used_by_username,
+    }
+
+
+@router.get("/invitations")
+async def list_invitations(
+    db: Session = Depends(get_db),
+    admin_id: int = Depends(get_admin_user_id),
+):
+    """최근 초대 링크 50개 (최신순)"""
+    rows = (
+        db.query(Invitation, User.username)
+        .outerjoin(User, User.id == Invitation.used_by)
+        .order_by(Invitation.created_at.desc())
+        .limit(50)
+        .all()
+    )
+    return [_invitation_response(inv, username) for inv, username in rows]
+
+
+@router.post("/invitations", status_code=201)
+async def create_invitation(
+    db: Session = Depends(get_db),
+    admin_id: int = Depends(get_admin_user_id),
+):
+    return _invitation_response(AuthService(db).create_invitation(admin_id), None)
+
+
+@router.delete("/invitations/{invitation_id}", status_code=204)
+async def delete_invitation(
+    invitation_id: int,
+    db: Session = Depends(get_db),
+    admin_id: int = Depends(get_admin_user_id),
+):
+    """아직 쓰지 않은 초대를 취소한다. 사용된 초대는 가입 기록이라 남긴다."""
+    inv = db.get(Invitation, invitation_id)
+    if inv is None:
+        raise HTTPException(status_code=404, detail="Invitation not found")
+    if inv.used_at:
+        raise HTTPException(status_code=409, detail="Invitation already used")
+    db.delete(inv)
+    db.commit()

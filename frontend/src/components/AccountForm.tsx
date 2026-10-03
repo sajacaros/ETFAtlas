@@ -15,7 +15,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   'Invalid username or password': '아이디 또는 비밀번호가 올바르지 않습니다.',
   'Username already exists': '이미 사용 중인 아이디입니다.',
   'Setup already completed': '이미 초기 설정이 완료되었습니다.',
-  'Setup required first': '초기 설정이 먼저 필요합니다.',
+  'Invalid invitation': '초대 링크가 유효하지 않거나 만료되었습니다. 관리자에게 새 링크를 요청하세요.',
 }
 
 function toErrorMessage(err: unknown): string {

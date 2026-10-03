@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/use-toast'
 import { adminApi } from '@/lib/api'
-import type { AdminCodeExample, AdminChatLog, AdminETFTag, AdminDiscordSettings } from '@/types/api'
+import type { AdminCodeExample, AdminChatLog, AdminETFTag, AdminDiscordSettings, AdminInvitation } from '@/types/api'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -26,7 +26,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog'
 import { Switch } from '@/components/ui/switch'
-import { ShieldAlert, Plus, Pencil, Archive, Check, X, Upload, Undo2, Search, Loader2, RotateCcw } from 'lucide-react'
+import { ShieldAlert, Plus, Pencil, Archive, Check, X, Upload, Undo2, Search, Loader2, RotateCcw, Copy, Trash2 } from 'lucide-react'
 
 const STATUS_FILTERS = {
   codeExamples: [
@@ -80,6 +80,7 @@ export default function AdminPage() {
           <TabsTrigger value="chat-logs">채팅 로그</TabsTrigger>
           <TabsTrigger value="etf-tags">ETF 태그</TabsTrigger>
           <TabsTrigger value="notifications">알림</TabsTrigger>
+          <TabsTrigger value="invitations">멤버 초대</TabsTrigger>
         </TabsList>
         <TabsContent value="code-examples">
           <CodeExamplesTab />
@@ -92,6 +93,9 @@ export default function AdminPage() {
         </TabsContent>
         <TabsContent value="notifications">
           <DiscordSettingsTab />
+        </TabsContent>
+        <TabsContent value="invitations">
+          <InvitationsTab />
         </TabsContent>
       </Tabs>
     </div>
@@ -221,6 +225,126 @@ function DiscordSettingsTab() {
           </Button>
         )}
       </div>
+    </div>
+  )
+}
+
+// ============ Invitations Tab ============
+
+const INVITATION_STATUS: Record<AdminInvitation['status'], { label: string; variant: 'default' | 'secondary' | 'outline' }> = {
+  active: { label: '사용 가능', variant: 'default' },
+  used: { label: '사용됨', variant: 'secondary' },
+  expired: { label: '만료', variant: 'outline' },
+}
+
+const inviteUrl = (token: string) => `${window.location.origin}/invite/${token}`
+
+function InvitationsTab() {
+  const { toast } = useToast()
+  const [items, setItems] = useState<AdminInvitation[] | null>(null)
+  const [creating, setCreating] = useState(false)
+
+  const load = useCallback(() => {
+    adminApi.listInvitations()
+      .then(setItems)
+      .catch(() => toast({ title: '초대 목록 조회 실패', variant: 'destructive' }))
+  }, [toast])
+
+  useEffect(() => { load() }, [load])
+
+  // http로 접속하면 클립보드 API가 없을 수 있다 — 그때는 표의 링크를 직접 복사
+  const copy = async (token: string) => {
+    try {
+      await navigator.clipboard.writeText(inviteUrl(token))
+      toast({ title: '초대 링크를 복사했습니다' })
+    } catch {
+      toast({ title: '복사하지 못했습니다', description: '표의 링크를 직접 복사하세요.', variant: 'destructive' })
+    }
+  }
+
+  const create = async () => {
+    setCreating(true)
+    try {
+      const inv = await adminApi.createInvitation()
+      load()
+      await copy(inv.token)
+    } catch {
+      toast({ title: '초대 링크 생성 실패', variant: 'destructive' })
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const revoke = async (id: number) => {
+    try {
+      await adminApi.deleteInvitation(id)
+      load()
+    } catch {
+      toast({ title: '초대 취소 실패', variant: 'destructive' })
+    }
+  }
+
+  if (!items) {
+    return <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin" /></div>
+  }
+
+  return (
+    <div className="space-y-4 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-muted-foreground">
+          초대 링크로만 가입할 수 있습니다. 링크는 한 번만 쓸 수 있고 7일 뒤 만료됩니다.
+        </p>
+        <Button onClick={create} disabled={creating}>
+          {creating ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Plus className="h-4 w-4 mr-1" />}
+          초대 링크 만들기
+        </Button>
+      </div>
+
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>링크</TableHead>
+            <TableHead>상태</TableHead>
+            <TableHead>가입자</TableHead>
+            <TableHead>만든 날</TableHead>
+            <TableHead>만료</TableHead>
+            <TableHead className="w-24" />
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {items.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                아직 만든 초대 링크가 없습니다
+              </TableCell>
+            </TableRow>
+          ) : items.map((inv) => (
+            <TableRow key={inv.id}>
+              <TableCell className="font-mono text-xs break-all">
+                {inv.status === 'active' ? inviteUrl(inv.token) : '-'}
+              </TableCell>
+              <TableCell>
+                <Badge variant={INVITATION_STATUS[inv.status].variant}>{INVITATION_STATUS[inv.status].label}</Badge>
+              </TableCell>
+              <TableCell>{inv.used_by_username ?? '-'}</TableCell>
+              <TableCell>{inv.created_at ? new Date(inv.created_at + 'Z').toLocaleDateString() : '-'}</TableCell>
+              <TableCell>{new Date(inv.expires_at + 'Z').toLocaleString()}</TableCell>
+              <TableCell>
+                {inv.status === 'active' && (
+                  <div className="flex gap-1">
+                    <Button variant="ghost" size="icon" title="링크 복사" onClick={() => copy(inv.token)}>
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                    <Button variant="ghost" size="icon" title="초대 취소" onClick={() => revoke(inv.id)}>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                )}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
     </div>
   )
 }

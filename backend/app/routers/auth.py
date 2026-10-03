@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..services.auth_service import (
-    AuthService, SetupAlreadyCompletedError, UsernameTakenError, is_admin,
+    AuthService, InvalidInvitationError, SetupAlreadyCompletedError, UsernameTakenError, is_admin,
 )
 from ..utils.jwt import create_access_token, get_current_user_id
 
@@ -24,6 +24,14 @@ class CredentialsRequest(BaseModel):
 
 class RegisterRequest(CredentialsRequest):
     name: str | None = Field(default=None, max_length=255)
+
+
+class InviteRegisterRequest(RegisterRequest):
+    invite_token: str = Field(min_length=1, max_length=64)
+
+
+class InvitationStatusResponse(BaseModel):
+    valid: bool
 
 
 class LoginRequest(BaseModel):
@@ -68,12 +76,21 @@ async def setup(request: RegisterRequest, db: Session = Depends(get_db)):
     return _token_for(user.id)
 
 
+@router.get("/invitations/{invite_token}", response_model=InvitationStatusResponse)
+async def invitation_status(invite_token: str, db: Session = Depends(get_db)):
+    """초대 링크가 아직 쓸 수 있는지 (가입 화면 진입 시 확인)"""
+    return InvitationStatusResponse(valid=AuthService(db).invitation_valid(invite_token))
+
+
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def register(request: RegisterRequest, db: Session = Depends(get_db)):
+async def register(request: InviteRegisterRequest, db: Session = Depends(get_db)):
+    """초대 링크로만 가입할 수 있다"""
     try:
-        user = AuthService(db).register(request.username, request.password, request.name)
-    except SetupAlreadyCompletedError:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Setup required first")
+        user = AuthService(db).register(
+            request.username, request.password, request.name, request.invite_token
+        )
+    except InvalidInvitationError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid invitation")
     except UsernameTakenError:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already exists")
     return _token_for(user.id)

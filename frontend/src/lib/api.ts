@@ -26,6 +26,7 @@ import type {
   AdminETFTag,
   AdminETFTagList,
   AdminDiscordSettings,
+  AdminInvitation,
   SharedPortfolioListItem,
   SharedPortfolioDetail,
   SharedReturnsResponse,
@@ -51,6 +52,21 @@ api.interceptors.request.use((config) => {
   return config
 })
 
+// 토큰이 만료·무효면 로그아웃시킨다 (로그인 실패 등 /auth 요청의 401은 각 화면이 처리)
+export const AUTH_EXPIRED_EVENT = 'auth:expired'
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const url: string = error.config?.url ?? ''
+    if (error.response?.status === 401 && !url.startsWith('/auth/')) {
+      localStorage.removeItem('token')
+      window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT))
+    }
+    return Promise.reject(error)
+  }
+)
+
 // Auth
 export const authApi = {
   getSetupStatus: async () => {
@@ -61,8 +77,15 @@ export const authApi = {
     const { data } = await api.post<{ access_token: string }>('/auth/setup', payload)
     return data
   },
-  register: async (payload: RegisterPayload) => {
-    const { data } = await api.post<{ access_token: string }>('/auth/register', payload)
+  getInvitationStatus: async (inviteToken: string) => {
+    const { data } = await api.get<{ valid: boolean }>(`/auth/invitations/${encodeURIComponent(inviteToken)}`)
+    return data
+  },
+  register: async (payload: RegisterPayload, inviteToken: string) => {
+    const { data } = await api.post<{ access_token: string }>('/auth/register', {
+      ...payload,
+      invite_token: inviteToken,
+    })
     return data
   },
   login: async (username: string, password: string) => {
@@ -410,6 +433,17 @@ export const adminApi = {
   testDiscordWebhook: async () => {
     const { data } = await api.post<{ ok: boolean }>('/admin/settings/discord/test')
     return data
+  },
+  listInvitations: async () => {
+    const { data } = await api.get<AdminInvitation[]>('/admin/invitations')
+    return data
+  },
+  createInvitation: async () => {
+    const { data } = await api.post<AdminInvitation>('/admin/invitations')
+    return data
+  },
+  deleteInvitation: async (id: number) => {
+    await api.delete(`/admin/invitations/${id}`)
   },
 }
 

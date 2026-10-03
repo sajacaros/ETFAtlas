@@ -38,7 +38,8 @@
 - `domain/portfolio_calculation.py`: 리밸런싱/수익률 계산 순수 로직
 - 인증: ID/비밀번호 + JWT(PyJWT, 7일). 비밀번호는 bcrypt. 보호 라우트는 모두 `utils/jwt.get_current_user_id` 하나에 의존, 관리자 판정은 `services/auth_service.is_admin`
   - 최초 실행 시 사용자가 0명이면 프론트가 `/setup`으로 보내고, 거기서 만든 계정이 admin
-  - 이후 `/login`의 회원가입 탭으로 member 가입
+  - 공개 회원가입은 없다. 관리자가 만든 초대 링크(`/invite/{token}`, 1회용·7일 유효, `invitations` 테이블)로만 member 가입
+  - `auth` 외 모든 API는 로그인 필요 (`etfs`·`tags`·`shared`는 `main.py`에서 라우터 단위로 인증)
 - 챗봇(`services/chat_service.py`): pydantic-ai tool-calling 에이전트 + 도구 10개(ETF/종목 검색, 가격, 비교, Cypher 직접 실행 등). 질문과 유사한 해결 절차(도구 호출 순서) 예시를 pgvector로 찾아 few-shot으로 주입. 관리자가 채팅 로그를 승인하면 예시로 임베딩되는 피드백 루프(`routers/admin.py`). 상세: `chatbot_tools.md`
 - 알림: Airflow 수집 완료 시 `pg_notify('new_collection')` → 백엔드 LISTEN → SSE(`/api/notifications/stream`)
 
@@ -100,8 +101,8 @@
 
 ## 5. Frontend (`frontend/src`)
 
-- 페이지 13개: 홈(검색/Top), ETF 상세, 포트폴리오, 대시보드(개별/통합), 관심종목 변화, 공유 포트폴리오, 챗봇, 관리자, 로그인, 초기 설정
-- `hooks/useAuth.tsx`: setup-status 조회 → `App.tsx`의 `SetupGuard`가 `/setup`으로 리다이렉트
+- 페이지 14개: 홈(검색/Top), ETF 상세, 포트폴리오, 대시보드(개별/통합), 관심종목 변화, 공유 포트폴리오, 챗봇, 관리자, 로그인, 초기 설정, 초대 가입
+- `hooks/useAuth.tsx`: setup-status 조회 → `App.tsx`의 `SetupGuard`가 `/setup`으로, `AuthGuard`가 미로그인 시 `/login`으로 리다이렉트 (`/login`·`/setup`·`/invite/*` 제외). API가 401을 주면 자동 로그아웃
 - PDF 내보내기: jsPDF + NotoSansKR
 
 ## 6. 2026-09 재가동 변경 요약

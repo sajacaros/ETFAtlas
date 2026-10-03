@@ -85,15 +85,38 @@
 | 409 | `Setup already completed` | 이미 사용자가 존재 |
 | 409 | `Username already exists` | 아이디 중복 |
 
+### GET /api/auth/invitations/{invite_token}
+
+초대 링크를 아직 쓸 수 있는지 조회 (가입 화면 진입 시).
+
+**Response**
+```typescript
+{
+  "valid": boolean  // 없거나, 이미 쓰였거나, 만료됐으면 false
+}
+```
+
 ### POST /api/auth/register
 
-일반 회원가입 (`member` 역할). Request/Response는 `/api/auth/setup`과 동일.
+초대 링크로 멤버 가입 (`member` 역할). 공개 가입은 없다. 초대는 관리자가 `POST /api/admin/invitations`로 만들며 1회용, 7일 유효.
+
+**Request**
+```typescript
+{
+  "username": string,
+  "password": string,
+  "name"?: string | null,
+  "invite_token": string
+}
+```
+
+**Response** `201` — `/api/auth/setup`과 동일
 
 **에러**
 | HTTP | detail | 설명 |
 |------|--------|------|
-| 409 | `Setup required first` | 최초 설치(관리자 생성) 전 |
-| 409 | `Username already exists` | 아이디 중복 |
+| 400 | `Invalid invitation` | 초대가 없거나, 이미 쓰였거나, 만료됨 |
+| 409 | `Username already exists` | 아이디 중복 (초대는 소모되지 않음) |
 
 ### POST /api/auth/login
 

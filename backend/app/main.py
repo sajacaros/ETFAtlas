@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
-from .utils.jwt import get_current_user_id
+from .utils.session import get_current_user_id
 from .routers import auth, etfs, watchlist, portfolio, tags, chat, notifications, admin, shared
 
 logger = logging.getLogger(__name__)

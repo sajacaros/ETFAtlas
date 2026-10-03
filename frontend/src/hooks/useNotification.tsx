@@ -1,7 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
 import { notificationApi } from '@/lib/api'
 import { useAuth } from '@/hooks/useAuth'
-import { getToken } from '@/lib/auth'
 
 interface NotificationContextType {
   hasNew: boolean
@@ -27,11 +26,9 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!isAuthenticated) return
 
-    const token = getToken()
-    if (!token) return
-
+    // 같은 출처라 세션 쿠키가 자동으로 붙는다
     const API_URL = import.meta.env.VITE_API_URL || ''
-    const es = new EventSource(`${API_URL}/api/notifications/stream?token=${token}`)
+    const es = new EventSource(`${API_URL}/api/notifications/stream`)
 
     es.onmessage = () => {
       setHasNew(true)

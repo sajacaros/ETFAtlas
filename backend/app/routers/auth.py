@@ -1,11 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..services.auth_service import (
     AuthService, InvalidInvitationError, SetupAlreadyCompletedError, UsernameTakenError, is_admin,
 )
-from ..utils.jwt import create_access_token, get_current_user_id
+from ..models.user import User
+from ..utils.session import (
+    SESSION_COOKIE, clear_session_cookie, create_session, get_current_user_id, revoke_session,
+    set_session_cookie,
+)
 
 router = APIRouter()
 
@@ -39,11 +43,6 @@ class LoginRequest(BaseModel):
     password: str
 
 
-class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-
-
 class SetupStatusResponse(BaseModel):
     setup_required: bool
 
@@ -55,8 +54,17 @@ class UserResponse(BaseModel):
     is_admin: bool = False
 
 
-def _token_for(user_id: int) -> TokenResponse:
-    return TokenResponse(access_token=create_access_token(data={"sub": str(user_id)}))
+def _user_response(db: Session, user: User) -> UserResponse:
+    return UserResponse(id=user.id, username=user.username, name=user.name, is_admin=is_admin(db, user.id))
+
+
+def _start_session(request: Request, response: Response, db: Session, user: User) -> UserResponse:
+    """새 세션을 쿠키로 내려준다. 브라우저에 남아 있던 이전 세션은 폐기."""
+    old_token = request.cookies.get(SESSION_COOKIE)
+    if old_token:
+        revoke_session(db, old_token)
+    set_session_cookie(response, create_session(db, user.id))
+    return _user_response(db, user)
 
 
 @router.get("/setup-status", response_model=SetupStatusResponse)
@@ -64,16 +72,16 @@ async def setup_status(db: Session = Depends(get_db)):
     return SetupStatusResponse(setup_required=AuthService(db).setup_required())
 
 
-@router.post("/setup", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def setup(request: RegisterRequest, db: Session = Depends(get_db)):
+@router.post("/setup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def setup(body: RegisterRequest, request: Request, response: Response, db: Session = Depends(get_db)):
     """최초 설치: 관리자 계정 생성 (사용자가 한 명도 없을 때만)"""
     try:
-        user = AuthService(db).setup_admin(request.username, request.password, request.name)
+        user = AuthService(db).setup_admin(body.username, body.password, body.name)
     except SetupAlreadyCompletedError:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Setup already completed")
     except UsernameTakenError:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already exists")
-    return _token_for(user.id)
+    return _start_session(request, response, db, user)
 
 
 @router.get("/invitations/{invite_token}", response_model=InvitationStatusResponse)
@@ -82,29 +90,29 @@ async def invitation_status(invite_token: str, db: Session = Depends(get_db)):
     return InvitationStatusResponse(valid=AuthService(db).invitation_valid(invite_token))
 
 
-@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def register(request: InviteRegisterRequest, db: Session = Depends(get_db)):
+@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def register(body: InviteRegisterRequest, request: Request, response: Response, db: Session = Depends(get_db)):
     """초대 링크로만 가입할 수 있다"""
     try:
         user = AuthService(db).register(
-            request.username, request.password, request.name, request.invite_token
+            body.username, body.password, body.name, body.invite_token
         )
     except InvalidInvitationError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid invitation")
     except UsernameTakenError:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already exists")
-    return _token_for(user.id)
+    return _start_session(request, response, db, user)
 
 
-@router.post("/login", response_model=TokenResponse)
-async def login(request: LoginRequest, db: Session = Depends(get_db)):
-    user = AuthService(db).authenticate(request.username, request.password)
+@router.post("/login", response_model=UserResponse)
+async def login(body: LoginRequest, request: Request, response: Response, db: Session = Depends(get_db)):
+    user = AuthService(db).authenticate(body.username, body.password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
         )
-    return _token_for(user.id)
+    return _start_session(request, response, db, user)
 
 
 @router.get("/me", response_model=UserResponse)
@@ -115,9 +123,13 @@ async def get_current_user(
     user = AuthService(db).get_user_by_id(user_id)
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    return UserResponse(
-        id=user.id,
-        username=user.username,
-        name=user.name,
-        is_admin=is_admin(db, user.id),
-    )
+    return _user_response(db, user)
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(request: Request, response: Response, db: Session = Depends(get_db)):
+    """서버 세션을 폐기하고 쿠키를 지운다 (세션이 이미 없어도 성공)"""
+    token = request.cookies.get(SESSION_COOKIE)
+    if token:
+        revoke_session(db, token)
+    clear_session_cookie(response)

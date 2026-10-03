@@ -4,7 +4,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..utils.jwt import get_current_user_id
+from ..utils.session import get_current_user_id
 from ..services.embedding_service import EmbeddingService
 from ..services.auth_service import AuthService, is_admin
 from ..services.graph_service import GraphService

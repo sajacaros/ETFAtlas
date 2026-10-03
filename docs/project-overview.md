@@ -36,7 +36,7 @@
 
 - `routers/` 9개. `portfolio.py`(~950줄)가 CRUD·정렬·공유·대시보드·리스크 분석·리밸런싱 계산을 모두 담당
 - `domain/portfolio_calculation.py`: 리밸런싱/수익률 계산 순수 로직
-- 인증: ID/비밀번호 + JWT(PyJWT, 7일). 비밀번호는 bcrypt. 보호 라우트는 모두 `utils/jwt.get_current_user_id` 하나에 의존, 관리자 판정은 `services/auth_service.is_admin`
+- 인증: ID/비밀번호 + 서버 세션(HttpOnly 쿠키 `etf_atlas_session`, 7일, 토큰 해시를 `auth_sessions`에 저장). 비밀번호는 bcrypt. 보호 라우트는 모두 `utils/session.get_current_user_id` 하나에 의존, 관리자 판정은 `services/auth_service.is_admin`
   - 최초 실행 시 사용자가 0명이면 프론트가 `/setup`으로 보내고, 거기서 만든 계정이 admin
   - 공개 회원가입은 없다. 관리자가 만든 초대 링크(`/invite/{token}`, 1회용·7일 유효, `invitations` 테이블)로만 member 가입
   - `auth` 외 모든 API는 로그인 필요 (`etfs`·`tags`·`shared`는 `main.py`에서 라우터 단위로 인증)

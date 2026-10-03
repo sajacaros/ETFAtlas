@@ -54,11 +54,11 @@ last_notification_checked_at TIMESTAMP
 
 | 엔드포인트 | 메서드 | 인증 | 설명 |
 |---|---|---|---|
-| `/api/notifications/status` | GET | Bearer token | 새 알림 유무 (`has_new`, `latest_collected_at`) |
-| `/api/notifications/check` | POST | Bearer token | `last_notification_checked_at` 갱신 |
-| `/api/notifications/stream` | GET | query param `token` | SSE 스트림. pg_notify LISTEN으로 즉시 수신 |
+| `/api/notifications/status` | GET | 세션 쿠키 | 새 알림 유무 (`has_new`, `latest_collected_at`) |
+| `/api/notifications/check` | POST | 세션 쿠키 | `last_notification_checked_at` 갱신 |
+| `/api/notifications/stream` | GET | 세션 쿠키 | SSE 스트림. pg_notify LISTEN으로 즉시 수신 |
 
-SSE는 `EventSource`가 Authorization 헤더를 지원하지 않으므로 query param으로 토큰 전달.
+SSE도 같은 출처라 `EventSource`가 세션 쿠키를 자동으로 보낸다. 스트림이 열려 있는 동안 커넥션 풀을 붙잡지 않도록 인증할 때만 DB 세션을 연다.
 
 ### 디스코드 알림 설정 (관리자)
 

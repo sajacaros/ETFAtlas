@@ -37,8 +37,9 @@
 
 ## 인증 API
 
-아이디/비밀번호 + JWT 방식 (`backend/app/routers/auth.py`). 인증 API는 공통 응답 래퍼 없이 객체를 그대로 반환하고, 에러는 FastAPI 기본 형식(`{"detail": "..."}`)을 따른다.
-발급된 access token은 이후 요청에 `Authorization: Bearer {access_token}` 헤더로 전달한다 (기본 만료 7일, refresh token 없음).
+아이디/비밀번호 + 서버 세션 방식 (`backend/app/routers/auth.py`, `utils/session.py`). 인증 API는 공통 응답 래퍼 없이 객체를 그대로 반환하고, 에러는 FastAPI 기본 형식(`{"detail": "..."}`)을 따른다.
+setup·register·login에 성공하면 응답 본문으로 사용자 정보를, `Set-Cookie`로 세션 쿠키 `etf_atlas_session`(HttpOnly, SameSite=Lax, Path=/api, 7일, `COOKIE_SECURE=true`면 Secure)를 내려준다. 이후 요청은 브라우저가 쿠키를 자동으로 보낸다 — JS는 토큰을 다루지 않는다.
+서버는 토큰의 SHA-256 해시를 `auth_sessions`에 저장해 매 요청 대조한다. 로그아웃하거나 사용자가 삭제되면 세션이 즉시 무효가 된다.
 
 **비밀번호/아이디 규칙** (setup, register 공통)
 | 필드 | 규칙 |
@@ -74,9 +75,11 @@
 **Response** `201`
 ```typescript
 {
-  "access_token": string,
-  "token_type": "bearer"
-}
+  "id": number,
+  "username": string,
+  "name": string | null,
+  "is_admin": boolean
+}  // + Set-Cookie: etf_atlas_session=...
 ```
 
 **에러**
@@ -131,9 +134,11 @@
 **Response**
 ```typescript
 {
-  "access_token": string,
-  "token_type": "bearer"
-}
+  "id": number,
+  "username": string,
+  "name": string | null,
+  "is_admin": boolean
+}  // + Set-Cookie: etf_atlas_session=...
 ```
 
 **에러**
@@ -141,14 +146,15 @@
 |------|--------|------|
 | 401 | `Invalid username or password` | 아이디 또는 비밀번호 불일치 |
 
+### POST /api/auth/logout
+
+서버 세션을 폐기하고 쿠키를 지운다. 세션이 이미 없어도 `204`.
+
 ### GET /api/auth/me
 
 내 정보 조회
 
-**Headers**
-```
-Authorization: Bearer {access_token}
-```
+**인증**: 세션 쿠키 필요
 
 **Response**
 ```typescript
@@ -400,10 +406,7 @@ ETF 가격 데이터 (캔들차트용)
 
 내 워치리스트 조회
 
-**Headers**
-```
-Authorization: Bearer {access_token}
-```
+**인증**: 세션 쿠키 필요
 
 **Response**
 ```typescript
@@ -432,10 +435,7 @@ Authorization: Bearer {access_token}
 
 워치리스트에 ETF 추가
 
-**Headers**
-```
-Authorization: Bearer {access_token}
-```
+**인증**: 세션 쿠키 필요
 
 **Request**
 ```typescript
@@ -465,10 +465,7 @@ Authorization: Bearer {access_token}
 
 워치리스트에서 ETF 삭제
 
-**Headers**
-```
-Authorization: Bearer {access_token}
-```
+**인증**: 세션 쿠키 필요
 
 **Path Parameters**
 | 파라미터 | 타입 | 설명 |
@@ -486,10 +483,7 @@ Authorization: Bearer {access_token}
 
 워치리스트 ETF들의 포트폴리오 변화
 
-**Headers**
-```
-Authorization: Bearer {access_token}
-```
+**인증**: 세션 쿠키 필요
 
 **Query Parameters**
 | 파라미터 | 타입 | 필수 | 설명 |
@@ -525,10 +519,7 @@ Authorization: Bearer {access_token}
 
 워치리스트 기반 종목 추천
 
-**Headers**
-```
-Authorization: Bearer {access_token}
-```
+**인증**: 세션 쿠키 필요
 
 **Query Parameters**
 | 파라미터 | 타입 | 필수 | 설명 |
@@ -634,11 +625,6 @@ export interface User {
   username: string;
   name: string | null;
   is_admin: boolean;
-}
-
-export interface TokenResponse {
-  access_token: string;
-  token_type: 'bearer';
 }
 
 // 종목

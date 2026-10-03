@@ -7,7 +7,7 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..services.chat_service import ChatService
-from ..utils.jwt import get_current_user_id
+from ..utils.session import get_current_user_id
 from ..models.chat import ChatLog, ChatLogStatus
 from ..schemas.chat import FeedbackRequest
 

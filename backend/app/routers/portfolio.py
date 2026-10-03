@@ -9,7 +9,7 @@ from sqlalchemy import func, text as sa_text
 from ..database import get_db
 from ..models.portfolio import Portfolio, TargetAllocation, Holding, PortfolioSnapshot
 from ..models.ticker_price import TickerPrice
-from ..utils.jwt import get_current_user_id
+from ..utils.session import get_current_user_id
 from ..schemas.portfolio import (
     PortfolioCreate, PortfolioUpdate, PortfolioResponse,
     PortfolioReorderRequest,

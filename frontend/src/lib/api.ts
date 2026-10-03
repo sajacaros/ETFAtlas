@@ -44,15 +44,9 @@ const api = axios.create({
   },
 })
 
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token')
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
-  }
-  return config
-})
+// 인증은 HttpOnly 세션 쿠키(같은 출처 /api)로 — 브라우저가 자동으로 보내므로 JS는 토큰을 다루지 않는다
 
-// 토큰이 만료·무효면 로그아웃시킨다 (로그인 실패 등 /auth 요청의 401은 각 화면이 처리)
+// 세션이 만료·폐기되면 로그아웃시킨다 (로그인 실패 등 /auth 요청의 401은 각 화면이 처리)
 export const AUTH_EXPIRED_EVENT = 'auth:expired'
 
 api.interceptors.response.use(
@@ -60,7 +54,6 @@ api.interceptors.response.use(
   (error) => {
     const url: string = error.config?.url ?? ''
     if (error.response?.status === 401 && !url.startsWith('/auth/')) {
-      localStorage.removeItem('token')
       window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT))
     }
     return Promise.reject(error)
@@ -74,7 +67,7 @@ export const authApi = {
     return data
   },
   setup: async (payload: RegisterPayload) => {
-    const { data } = await api.post<{ access_token: string }>('/auth/setup', payload)
+    const { data } = await api.post<User>('/auth/setup', payload)
     return data
   },
   getInvitationStatus: async (inviteToken: string) => {
@@ -82,15 +75,18 @@ export const authApi = {
     return data
   },
   register: async (payload: RegisterPayload, inviteToken: string) => {
-    const { data } = await api.post<{ access_token: string }>('/auth/register', {
+    const { data } = await api.post<User>('/auth/register', {
       ...payload,
       invite_token: inviteToken,
     })
     return data
   },
   login: async (username: string, password: string) => {
-    const { data } = await api.post<{ access_token: string }>('/auth/login', { username, password })
+    const { data } = await api.post<User>('/auth/login', { username, password })
     return data
+  },
+  logout: async () => {
+    await api.post('/auth/logout')
   },
   getMe: async () => {
     const { data } = await api.get<User>('/auth/me')
@@ -306,12 +302,10 @@ export const chatApi = {
     const abortController = new AbortController()
     const baseUrl = `${API_URL}/api`
 
-    const token = localStorage.getItem('token')
     fetch(`${baseUrl}/chat/message/stream`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify({ message, history }),
       signal: abortController.signal,

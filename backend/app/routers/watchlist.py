@@ -4,7 +4,7 @@ from typing import List
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..services.graph_service import GraphService
-from ..utils.jwt import get_current_user_id
+from ..utils.session import get_current_user_id
 
 router = APIRouter()
 

@@ -9,7 +9,7 @@
 | **Database** | PostgreSQL 18 + Apache AGE 1.8.0 (Graph) + pgvector 0.8.6 |
 | **Data Pipeline** | Airflow 3.3.2, 한국투자증권 KIS Open API, 네이버 증권(보수율), yfinance |
 | **AI** | pydantic-ai (tool-calling 에이전트) + LiteLLM 프록시 (OpenAI 호환) |
-| **Auth** | 아이디/비밀번호 (bcrypt) + JWT (PyJWT) |
+| **Auth** | 아이디/비밀번호 (bcrypt) + 서버 세션 (HttpOnly 쿠키) |
 
 ---
 
@@ -24,7 +24,7 @@
 │  │   Frontend   │     │   Backend    │     │   Data Pipeline      │    │
 │  │              │     │              │     │                      │    │
 │  │  React + TS  │────>│   FastAPI    │     │   Airflow DAG        │    │
-│  │  shadcn/ui   │     │  (JWT 인증)  │     │   (Daily 08:30)      │    │
+│  │  shadcn/ui   │     │ (세션 쿠키)  │     │   (Daily 08:30)      │    │
 │  │              │     │              │     │                      │    │
 │  └──────────────┘     └──────┬───────┘     └──────────┬───────────┘    │
 │                              │                        │                 │
@@ -50,7 +50,7 @@
 
 ---
 
-## 인증 (아이디/비밀번호 + JWT)
+## 인증 (아이디/비밀번호 + 서버 세션)
 
 ### 플로우
 
@@ -68,13 +68,13 @@
      │───────────────>│ POST /api/auth/setup
      │                │───────────────>│ (사용자 0명일 때만, admin 역할 부여)
      │                │                │
-     │  (이후 → /login: 로그인 / 회원가입 탭)
+     │  (이후 → /login, 멤버는 초대 링크 /invite/{token}로 가입)
      │ 3. 아이디/비밀번호              │
      │───────────────>│ POST /api/auth/login 또는 /register
      │                │───────────────>│ bcrypt 검증 / 해시 저장
-     │                │   JWT 발급     │
+     │                │ Set-Cookie     │ auth_sessions에 토큰 해시 저장
      │                │<───────────────│
-     │ 4. 로그인 완료 │ (localStorage 저장, Authorization: Bearer)
+     │ 4. 로그인 완료 │ (HttpOnly 쿠키 — 이후 요청에 브라우저가 자동 첨부)
      │<───────────────│                │
 ```
 
@@ -83,9 +83,9 @@
 | 요소 | 설명 |
 |------|------|
 | `bcrypt` | 비밀번호 해시 (`backend/app/utils/security.py`, 입력 최대 72바이트) |
-| `PyJWT` | HS256 access token (기본 7일, `JWT_SECRET`), refresh token 없음 |
+| 세션 | 랜덤 토큰을 HttpOnly 쿠키(`etf_atlas_session`, SameSite=Lax, 7일)로, 서버는 SHA-256 해시를 `auth_sessions`에 저장. 로그아웃·사용자 삭제 시 즉시 무효 |
 | 최초 설치 | 사용자가 0명이면 `/setup`에서 관리자 계정 생성 (`POST /api/auth/setup`) |
-| 회원가입 | `POST /api/auth/register` — `member` 역할, 설치 완료 후에만 가능 |
+| 회원가입 | `POST /api/auth/register` — 관리자가 만든 초대 링크(1회용, 7일)로만, `member` 역할 |
 | users 테이블 | username, password_hash, name 저장 (역할은 `roles`/`user_roles`) |
 
 ---
@@ -200,9 +200,10 @@ CREATE TABLE users (
 
 ```
 GET  /api/auth/setup-status    # 최초 설치 필요 여부 {setup_required}
-POST /api/auth/setup           # 최초 관리자 생성 (사용자 0명일 때만), JWT 발급
-POST /api/auth/register        # 회원가입 (member), JWT 발급
-POST /api/auth/login           # 로그인, JWT 발급
+POST /api/auth/setup           # 최초 관리자 생성 (사용자 0명일 때만), 세션 쿠키 발급
+POST /api/auth/register        # 초대 링크로 회원가입 (member), 세션 쿠키 발급
+POST /api/auth/login           # 로그인, 세션 쿠키 발급
+POST /api/auth/logout          # 세션 폐기 + 쿠키 삭제
 GET  /api/auth/me              # 내 정보 {id, username, name, is_admin}
 ```
 
@@ -396,7 +397,7 @@ Airflow UI 로그인은 SimpleAuthManager로 `AIRFLOW_USER`/`AIRFLOW_PASSWORD` �
 
 ```env
 # Backend
-JWT_SECRET=                 # python -c "import secrets; print(secrets.token_hex(32))"
+COOKIE_SECURE=false         # https로 서비스할 때만 true
 ENCRYPTION_KEY=             # 32-byte hex (AES-256-GCM), 한 번 정하면 변경 금지
 
 # AI (LiteLLM 프록시, OpenAI 호환 API)

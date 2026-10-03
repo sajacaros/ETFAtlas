@@ -6,10 +6,9 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "postgresql://postgres:postgres@localhost:5432/etf_atlas"
 
-    # JWT
-    jwt_secret: str = "your-secret-key-change-in-production"
-    jwt_algorithm: str = "HS256"
-    jwt_expire_minutes: int = 60 * 24 * 7  # 7 days
+    # 로그인 세션 (HttpOnly 쿠키)
+    session_expire_minutes: int = 60 * 24 * 7  # 7 days
+    cookie_secure: bool = False  # https로 서비스하면 true
 
     # Encryption
     encryption_key: str = ""  # 32-byte hex key for AES-256-GCM

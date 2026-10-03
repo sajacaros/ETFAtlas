@@ -52,7 +52,7 @@
 | Backend | Python 3.14, FastAPI, SQLAlchemy 2.1 (동기, psycopg2), Pydantic 2 |
 | Database | PostgreSQL 18 + Apache AGE 1.8 (그래프) + pgvector 0.8 + pg_trgm |
 | Pipeline | Apache Airflow 3.3 (Python 3.14) |
-| Auth | ID/비밀번호 (bcrypt) + JWT |
+| Auth | ID/비밀번호 (bcrypt) + 서버 세션 (HttpOnly 쿠키) |
 | AI | LiteLLM 프록시(OpenAI 호환) — `qwen38-27b`, `embedding-gemma-300m`(768d), pydantic-ai |
 | 외부 데이터 | 한국투자증권 KIS Open API, 네이버 증권(보수율), yfinance(실시간 현재가) |
 
@@ -73,7 +73,7 @@ cp .env.example .env
 
 | 변수 | 설명 | 필수 |
 |------|------|------|
-| `JWT_SECRET` | JWT 서명 키 (`python -c "import secrets; print(secrets.token_hex(32))"`) | O |
+| `COOKIE_SECURE` | 세션 쿠키 Secure 플래그. https로 서비스할 때만 `true` (http에서 켜면 로그인 불가) | - (기본 false) |
 | `ENCRYPTION_KEY` | 포트폴리오 금액 암호화 키 (32바이트 hex, 위와 같은 방법). **한 번 정하면 변경 금지** | O |
 | `LLM_API_KEY` | LiteLLM 프록시 채팅 모델 키 — 챗봇, ETF 태깅 (`LLM_API_BASE`, `LLM_MODEL`로 변경 가능) | O |
 | `EMBEDDING_API_KEY` | LiteLLM 프록시 임베딩 키 — 챗봇 예시 검색 (`EMBEDDING_API_BASE`, `EMBEDDING_MODEL`로 변경 가능) | O |

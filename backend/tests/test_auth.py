@@ -1,11 +1,8 @@
-from datetime import timedelta
-
 import pytest
-from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.routers.auth import RegisterRequest
-from app.utils.jwt import create_access_token, decode_access_token
+from app.utils.session import hash_token
 from app.utils.security import hash_password, verify_password
 
 
@@ -20,16 +17,12 @@ def test_verify_password_rejects_malformed_hash():
     assert not verify_password("anything", "not-a-bcrypt-hash")
 
 
-def test_jwt_roundtrip():
-    token = create_access_token({"sub": "42"})
-    assert decode_access_token(token)["sub"] == "42"
-
-
-def test_jwt_expired():
-    token = create_access_token({"sub": "42"}, expires_delta=timedelta(seconds=-1))
-    with pytest.raises(HTTPException) as exc:
-        decode_access_token(token)
-    assert exc.value.status_code == 401
+def test_session_token_stored_as_hash():
+    h = hash_token("raw-session-token")
+    assert h != "raw-session-token"
+    assert len(h) == 64
+    assert h == hash_token("raw-session-token")
+    assert h != hash_token("other-token")
 
 
 @pytest.mark.parametrize("username,password", [

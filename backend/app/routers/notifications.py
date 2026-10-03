@@ -3,15 +3,15 @@ import json
 import select
 import psycopg2
 import psycopg2.extensions
-from fastapi import APIRouter, Depends, Query as QueryParam
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
-from ..database import get_db
+from ..database import SessionLocal, get_db
 from ..config import get_settings
 from ..models.user import User
 from ..models.collection_run import CollectionRun
-from ..utils.jwt import get_current_user_id, decode_access_token
+from ..utils.session import SESSION_COOKIE, get_current_user_id, resolve_user_id
 
 router = APIRouter()
 
@@ -68,12 +68,12 @@ async def check_notifications(
 
 
 @router.get("/stream")
-async def notification_stream(
-    token: str = QueryParam(...),
-):
-    """SSE 스트림 — pg_notify LISTEN으로 새 수집 즉시 감지 (query param 토큰 인증)"""
-    payload = decode_access_token(token)
-    user_id = int(payload.get("sub"))
+async def notification_stream(request: Request):
+    """SSE 스트림 — pg_notify LISTEN으로 새 수집 즉시 감지 (세션 쿠키 인증)"""
+    # 스트림이 열려 있는 동안 커넥션 풀을 붙잡지 않도록 get_db 대신 인증 때만 세션을 연다
+    with SessionLocal() as db:
+        if resolve_user_id(db, request.cookies.get(SESSION_COOKIE)) is None:
+            raise HTTPException(status_code=401, detail="Not authenticated")
 
     async def event_generator():
         settings = get_settings()

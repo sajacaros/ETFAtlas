@@ -6,10 +6,14 @@ from sqlalchemy.orm import Session
 from ..models.user import User
 from ..models.role import Role, UserRole
 from ..models.invitation import Invitation
+from ..models.password_reset import PasswordReset
+from ..models.auth_session import AuthSession
 from ..utils.security import hash_password, verify_password
+from ..utils.session import hash_token
 from ..utils.time import utcnow
 
 INVITATION_TTL = timedelta(days=7)
+PASSWORD_RESET_TTL = timedelta(hours=24)
 
 
 class SetupAlreadyCompletedError(Exception):
@@ -22,6 +26,10 @@ class UsernameTakenError(Exception):
 
 class InvalidInvitationError(Exception):
     """초대 토큰이 없거나, 이미 쓰였거나, 만료됨."""
+
+
+class InvalidPasswordResetError(Exception):
+    """재설정 토큰이 없거나, 이미 쓰였거나, 만료됨."""
 
 
 class AuthService:
@@ -72,8 +80,47 @@ class AuthService:
         return invitation
 
     @staticmethod
-    def _is_usable(invitation: Invitation | None) -> bool:
+    def _is_usable(invitation: Invitation | PasswordReset | None) -> bool:
         return invitation is not None and invitation.used_at is None and invitation.expires_at > utcnow()
+
+    def create_password_reset(self, user_id: int, created_by: int) -> tuple[str, PasswordReset]:
+        """재설정 링크 토큰을 만든다. 원본 토큰은 이때 한 번만 반환하고, 같은 회원의 미사용 링크는 폐기한다."""
+        self.db.query(PasswordReset).filter(
+            PasswordReset.user_id == user_id, PasswordReset.used_at.is_(None)
+        ).delete()
+        token = secrets.token_urlsafe(24)
+        reset = PasswordReset(
+            user_id=user_id,
+            token_hash=hash_token(token),
+            created_by=created_by,
+            expires_at=utcnow() + PASSWORD_RESET_TTL,
+        )
+        self.db.add(reset)
+        self.db.commit()
+        self.db.refresh(reset)
+        return token, reset
+
+    def password_reset_username(self, token: str) -> str | None:
+        """재설정 링크가 쓸 수 있으면 대상 회원의 아이디, 아니면 None."""
+        row = self.db.query(PasswordReset, User.username).join(User, User.id == PasswordReset.user_id).filter(
+            PasswordReset.token_hash == hash_token(token)
+        ).first()
+        return row[1] if row and self._is_usable(row[0]) else None
+
+    def reset_password(self, token: str, password: str) -> None:
+        """비밀번호를 바꾸고 링크를 사용 처리한다. 그 회원의 기존 로그인 세션은 모두 끊는다."""
+        # 같은 링크로 동시에 재설정하는 경합 방지
+        reset = self.db.query(PasswordReset).filter(
+            PasswordReset.token_hash == hash_token(token)
+        ).with_for_update().first()
+        if not self._is_usable(reset):
+            self.db.rollback()
+            raise InvalidPasswordResetError()
+        user = self.db.get(User, reset.user_id)
+        user.password_hash = hash_password(password)
+        reset.used_at = utcnow()
+        self.db.query(AuthSession).filter(AuthSession.user_id == user.id).delete()
+        self.db.commit()
 
     def authenticate(self, username: str, password: str) -> Optional[User]:
         user = self.db.query(User).filter(User.username == username).first()

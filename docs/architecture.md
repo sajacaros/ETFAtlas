@@ -86,6 +86,7 @@
 | 세션 | 랜덤 토큰을 HttpOnly 쿠키(`etf_atlas_session`, SameSite=Lax, 7일)로, 서버는 SHA-256 해시를 `auth_sessions`에 저장. 로그아웃·사용자 삭제 시 즉시 무효 |
 | 최초 설치 | 사용자가 0명이면 `/setup`에서 관리자 계정 생성 (`POST /api/auth/setup`) |
 | 회원가입 | `POST /api/auth/register` — 관리자가 만든 초대 링크(1회용, 7일)로만, `member` 역할 |
+| 비밀번호 재설정 | 관리자가 멤버 탭에서 만든 링크(1회용, 24시간, 토큰 해시를 `password_resets`에 저장)로 `POST /api/auth/password-reset`. 바꾸면 그 회원의 세션을 모두 끊는다 |
 | users 테이블 | username, password_hash, name 저장 (역할은 `roles`/`user_roles`) |
 
 ---
@@ -204,6 +205,8 @@ POST /api/auth/setup           # 최초 관리자 생성 (사용자 0명일 때�
 POST /api/auth/register        # 초대 링크로 회원가입 (member), 세션 쿠키 발급
 POST /api/auth/login           # 로그인, 세션 쿠키 발급
 POST /api/auth/logout          # 세션 폐기 + 쿠키 삭제
+GET  /api/auth/password-resets/{token}  # 재설정 링크 유효 여부 {valid, username}
+POST /api/auth/password-reset  # 재설정 링크로 비밀번호 변경 (해당 회원 세션 전부 폐기)
 GET  /api/auth/me              # 내 정보 {id, username, name, is_admin}
 ```
 

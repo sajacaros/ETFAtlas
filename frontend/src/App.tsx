@@ -16,6 +16,7 @@ import AdminPage from './app/AdminPage'
 import LoginPage from './app/LoginPage'
 import SetupPage from './app/SetupPage'
 import InvitePage from './app/InvitePage'
+import PasswordResetPage from './app/PasswordResetPage'
 import { Toaster } from './components/ui/toaster'
 
 // 최초 설치(사용자 0명) 상태면 모든 경로를 /setup으로 보낸다
@@ -28,10 +29,11 @@ function SetupGuard({ children }: { children: ReactNode }) {
   return <>{children}</>
 }
 
-// 로그인하지 않았으면 /login으로 보낸다 (/login, /setup, /invite/* 제외). 로그인 후 돌아올 경로는 state.from에 담는다
+// 로그인하지 않았으면 /login으로 보낸다 (/login, /setup, /invite/*, /reset-password/* 제외). 로그인 후 돌아올 경로는 state.from에 담는다
 const PUBLIC_PATHS = ['/login', '/setup']
 
-const isPublicPath = (pathname: string) => PUBLIC_PATHS.includes(pathname) || pathname.startsWith('/invite/')
+const isPublicPath = (pathname: string) =>
+  PUBLIC_PATHS.includes(pathname) || pathname.startsWith('/invite/') || pathname.startsWith('/reset-password/')
 
 function AuthGuard({ children }: { children: ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth()
@@ -74,6 +76,7 @@ function App() {
             <Route path="/login" element={<LoginPage />} />
             <Route path="/setup" element={<SetupPage />} />
             <Route path="/invite/:token" element={<InvitePage />} />
+            <Route path="/reset-password/:token" element={<PasswordResetPage />} />
           </Routes>
           </AuthGuard>
           </SetupGuard>

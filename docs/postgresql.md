@@ -267,7 +267,7 @@ engine = create_engine(
 | ticker_prices | 티커별 일별 가격 캐시 | 복합 PK (ticker, date) |
 | collection_runs | 수집 완료 기록 | collected_at UNIQUE, 알림 트리거 |
 | kis_tokens | KIS 접근 토큰 캐시 | PK app_key_hash |
-| chat_logs | 챗봇 대화 로그 | 피드백/검수 상태 |
+| chat_logs | 챗봇 대화 로그 | 피드백/검수 상태. 회원 삭제 시 user_id만 NULL (0006) |
 | code_examples | 챗봇 코드 예제 | pgvector 768차원, ivfflat |
 
 ## 스키마 마이그레이션 (Alembic)
@@ -283,6 +283,10 @@ RDB 스키마 변경은 `backend/migrations/versions/`의 Alembic 리비전으�
 |--------|------|
 | 0001 | 기준선 (`02_schema.sql`) |
 | 0002 | `portfolios.user_id`, `target_allocations/holdings/portfolio_snapshots.portfolio_id` NOT NULL |
+| 0003 | `discord_settings` (관리자 페이지 디스코드 알림 설정) |
+| 0004 | `invitations` (초대 링크) |
+| 0005 | `auth_sessions` (서버 세션) |
+| 0006 | `password_resets` (비밀번호 재설정 링크). 회원 삭제 시 `chat_logs.user_id`(NULL 허용으로 변경)와 `code_examples.created_by`는 `ON DELETE SET NULL` |
 
 새 리비전 만들기 (모델을 고친 뒤, DB가 떠 있는 상태에서):
 

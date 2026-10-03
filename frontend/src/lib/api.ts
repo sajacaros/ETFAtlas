@@ -27,6 +27,7 @@ import type {
   AdminETFTagList,
   AdminDiscordSettings,
   AdminInvitation,
+  AdminMember,
   SharedPortfolioListItem,
   SharedPortfolioDetail,
   SharedReturnsResponse,
@@ -80,6 +81,15 @@ export const authApi = {
       invite_token: inviteToken,
     })
     return data
+  },
+  getPasswordResetStatus: async (resetToken: string) => {
+    const { data } = await api.get<{ valid: boolean; username: string | null }>(
+      `/auth/password-resets/${encodeURIComponent(resetToken)}`,
+    )
+    return data
+  },
+  resetPassword: async (resetToken: string, password: string) => {
+    await api.post('/auth/password-reset', { token: resetToken, password })
   },
   login: async (username: string, password: string) => {
     const { data } = await api.post<User>('/auth/login', { username, password })
@@ -438,6 +448,24 @@ export const adminApi = {
   },
   deleteInvitation: async (id: number) => {
     await api.delete(`/admin/invitations/${id}`)
+  },
+  listMembers: async () => {
+    const { data } = await api.get<AdminMember[]>('/admin/members')
+    return data
+  },
+  updateMemberRole: async (userId: number, isAdmin: boolean) => {
+    await api.put(`/admin/members/${userId}/role`, { is_admin: isAdmin })
+  },
+  logoutMember: async (userId: number) => {
+    const { data } = await api.post<{ revoked: number }>(`/admin/members/${userId}/logout`)
+    return data
+  },
+  deleteMember: async (userId: number) => {
+    await api.delete(`/admin/members/${userId}`)
+  },
+  createPasswordReset: async (userId: number) => {
+    const { data } = await api.post<{ token: string; expires_at: string }>(`/admin/members/${userId}/password-reset`)
+    return data
   },
 }
 

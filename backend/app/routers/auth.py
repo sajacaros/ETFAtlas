@@ -3,7 +3,8 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..services.auth_service import (
-    AuthService, InvalidInvitationError, SetupAlreadyCompletedError, UsernameTakenError, is_admin,
+    AuthService, InvalidInvitationError, InvalidPasswordResetError, SetupAlreadyCompletedError,
+    UsernameTakenError, is_admin,
 )
 from ..models.user import User
 from ..utils.session import (
@@ -14,8 +15,7 @@ from ..utils.session import (
 router = APIRouter()
 
 
-class CredentialsRequest(BaseModel):
-    username: str = Field(min_length=3, max_length=50, pattern=r"^[A-Za-z0-9_.-]+$")
+class PasswordField(BaseModel):
     password: str = Field(min_length=8, max_length=72)
 
     @field_validator("password")
@@ -24,6 +24,19 @@ class CredentialsRequest(BaseModel):
         if len(v.encode("utf-8")) > 72:  # bcrypt 입력 한도
             raise ValueError("password must be at most 72 bytes")
         return v
+
+
+class CredentialsRequest(PasswordField):
+    username: str = Field(min_length=3, max_length=50, pattern=r"^[A-Za-z0-9_.-]+$")
+
+
+class PasswordResetRequest(PasswordField):
+    token: str = Field(min_length=1, max_length=64)
+
+
+class PasswordResetStatusResponse(BaseModel):
+    valid: bool
+    username: str | None = None
 
 
 class RegisterRequest(CredentialsRequest):
@@ -133,3 +146,19 @@ async def logout(request: Request, response: Response, db: Session = Depends(get
     if token:
         revoke_session(db, token)
     clear_session_cookie(response)
+
+
+@router.get("/password-resets/{reset_token}", response_model=PasswordResetStatusResponse)
+async def password_reset_status(reset_token: str, db: Session = Depends(get_db)):
+    """재설정 링크가 아직 쓸 수 있는지와 대상 아이디 (재설정 화면 진입 시 확인)"""
+    username = AuthService(db).password_reset_username(reset_token)
+    return PasswordResetStatusResponse(valid=username is not None, username=username)
+
+
+@router.post("/password-reset", status_code=status.HTTP_204_NO_CONTENT)
+async def reset_password(body: PasswordResetRequest, db: Session = Depends(get_db)):
+    """관리자가 발급한 링크로 비밀번호를 바꾼다. 그 회원의 기존 세션은 모두 끊기고 다시 로그인해야 한다."""
+    try:
+        AuthService(db).reset_password(body.token, body.password)
+    except InvalidPasswordResetError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid password reset link")

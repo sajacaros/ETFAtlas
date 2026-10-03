@@ -150,6 +150,37 @@ setup·register·login에 성공하면 응답 본문으로 사용자 정보를, 
 
 서버 세션을 폐기하고 쿠키를 지운다. 세션이 이미 없어도 `204`.
 
+### GET /api/auth/password-resets/{reset_token}
+
+비밀번호 재설정 링크를 아직 쓸 수 있는지 조회 (재설정 화면 진입 시). 링크는 관리자가 `POST /api/admin/members/{user_id}/password-reset`으로 만든다.
+
+**Response**
+```typescript
+{
+  "valid": boolean,         // 없거나, 이미 쓰였거나, 만료됐으면 false
+  "username": string | null // valid일 때 대상 아이디
+}
+```
+
+### POST /api/auth/password-reset
+
+재설정 링크로 비밀번호를 바꾼다. 링크는 사용 처리되고, 그 회원의 기존 로그인 세션은 모두 끊긴다(새 비밀번호로 다시 로그인).
+
+**Request**
+```typescript
+{
+  "token": string,
+  "password": string  // 8자 이상, 72바이트 이하
+}
+```
+
+**Response** `204`
+
+**에러**
+| HTTP | detail | 설명 |
+|------|--------|------|
+| 400 | `Invalid password reset link` | 링크가 없거나, 이미 쓰였거나, 만료됨 |
+
 ### GET /api/auth/me
 
 내 정보 조회
@@ -598,6 +629,44 @@ ETF 태그를 수동 지정한다. 지정한 ETF는 `age_tagging`의 규칙/LLM 
 | `{"tags": null}` | 수동 지정 해제. `tagged_at`도 지워 다음 `age_tagging` 실행에서 신규 ETF처럼 다시 태깅된다 (그때까지 현재 태그 유지) |
 
 응답은 `items`의 원소 하나. 없는 태그는 400, 없는 ETF는 404.
+
+---
+
+## 관리자 멤버 API (관리자 권한 필요)
+
+자기 자신의 권한 변경·삭제는 `400` (관리자가 0명이 되지 않게). 없는 회원은 `404`.
+
+### GET /api/admin/members
+
+가입순 회원 목록.
+
+```json
+[{
+  "id": 2, "username": "alice", "name": "Alice", "created_at": "2026-10-03T05:00:00",
+  "is_admin": false, "invited_by": "admin",
+  "active_sessions": 1, "last_login_at": "2026-10-03T06:00:00", "portfolio_count": 2
+}]
+```
+
+`last_login_at`은 남아 있는 세션 중 가장 최근 생성 시각이라, 세션이 모두 만료·폐기되면 `null`.
+
+### PUT /api/admin/members/{user_id}/role
+
+`{"is_admin": true}`면 `member` → `admin`, `false`면 반대로 바꾼다. `204`.
+
+### POST /api/admin/members/{user_id}/logout
+
+회원의 모든 로그인 세션을 끊는다. `{"revoked": number}`
+
+### DELETE /api/admin/members/{user_id}
+
+회원 삭제. `204`. 포트폴리오·세션·역할·재설정 링크는 함께 지워지고(CASCADE), 그래프의 `User` 노드와 `WATCHES`도 지운다. 챗봇 로그·코드 예제·초대 기록은 작성자(`user_id`/`created_by`/`used_by`)만 `NULL`로 비우고 남긴다.
+
+### POST /api/admin/members/{user_id}/password-reset
+
+비밀번호 재설정 링크 토큰 발급. `201` `{"token": string, "expires_at": string}`. 프론트는 `/reset-password/{token}` 링크로 보여준다.
+- 24시간 유효, 1회용. 같은 회원의 이전 미사용 링크는 무효가 된다.
+- 토큰은 `password_resets`에 SHA-256 해시로만 저장하므로 이 응답에서만 볼 수 있다.
 
 ---
 

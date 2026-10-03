@@ -9,6 +9,7 @@ from .role import Role, UserRole
 from .discord_setting import DiscordSetting
 from .invitation import Invitation
 from .auth_session import AuthSession
+from .password_reset import PasswordReset
 
 __all__ = [
     "User",
@@ -26,4 +27,5 @@ __all__ = [
     "DiscordSetting",
     "Invitation",
     "AuthSession",
+    "PasswordReset",
 ]

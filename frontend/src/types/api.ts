@@ -32,7 +32,7 @@ export interface AdminCodeExampleList {
 
 export interface AdminChatLog {
   id: number
-  user_id: number
+  user_id: number | null
   question: string
   answer: string
   generated_code: string | null
@@ -73,6 +73,18 @@ export interface AdminInvitation {
   expires_at: string
   used_at: string | null
   used_by_username: string | null
+}
+
+export interface AdminMember {
+  id: number
+  username: string
+  name: string | null
+  created_at: string | null
+  is_admin: boolean
+  invited_by: string | null
+  active_sessions: number
+  last_login_at: string | null
+  portfolio_count: number
 }
 
 export interface ETF {

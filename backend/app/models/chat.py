@@ -23,7 +23,7 @@ class ChatLog(Base):
     )
 
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)  # 회원 삭제 후에도 로그는 남긴다
     question = Column(Text, nullable=False)
     answer = Column(Text, nullable=False)
     generated_code = Column(Text, nullable=True)

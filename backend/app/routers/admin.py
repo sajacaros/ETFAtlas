@@ -1,5 +1,6 @@
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -8,6 +9,7 @@ from ..utils.session import get_current_user_id
 from ..services.embedding_service import EmbeddingService
 from ..services.auth_service import AuthService, is_admin
 from ..services.graph_service import GraphService
+from ..services.member_service import MemberNotFoundError, MemberService, SelfActionError
 from ..models.chat import ChatLog, ChatLogStatus
 from ..models.code_example import CodeExample
 from ..models.discord_setting import DiscordSetting
@@ -539,3 +541,73 @@ async def delete_invitation(
         raise HTTPException(status_code=409, detail="Invitation already used")
     db.delete(inv)
     db.commit()
+
+
+# === Members ===
+
+class MemberRoleUpdate(BaseModel):
+    is_admin: bool
+
+
+@router.get("/members")
+async def list_members(
+    db: Session = Depends(get_db),
+    admin_id: int = Depends(get_admin_user_id),
+):
+    return MemberService(db).list_members()
+
+
+@router.put("/members/{user_id}/role", status_code=204)
+async def update_member_role(
+    user_id: int,
+    body: MemberRoleUpdate,
+    db: Session = Depends(get_db),
+    admin_id: int = Depends(get_admin_user_id),
+):
+    """관리자 권한 부여/회수. 자기 자신은 바꿀 수 없다 (관리자가 0명이 되지 않게)."""
+    try:
+        MemberService(db).set_admin(user_id, body.is_admin, admin_id)
+    except SelfActionError:
+        raise HTTPException(status_code=400, detail="Cannot change your own role")
+    except MemberNotFoundError:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+
+@router.post("/members/{user_id}/logout")
+async def logout_member(
+    user_id: int,
+    db: Session = Depends(get_db),
+    admin_id: int = Depends(get_admin_user_id),
+):
+    """회원의 모든 로그인 세션을 끊는다"""
+    try:
+        return {"revoked": MemberService(db).revoke_sessions(user_id)}
+    except MemberNotFoundError:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+
+@router.delete("/members/{user_id}", status_code=204)
+async def delete_member(
+    user_id: int,
+    db: Session = Depends(get_db),
+    admin_id: int = Depends(get_admin_user_id),
+):
+    try:
+        MemberService(db).delete_member(user_id, admin_id)
+    except SelfActionError:
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    except MemberNotFoundError:
+        raise HTTPException(status_code=404, detail="Member not found")
+
+
+@router.post("/members/{user_id}/password-reset", status_code=201)
+async def create_password_reset(
+    user_id: int,
+    db: Session = Depends(get_db),
+    admin_id: int = Depends(get_admin_user_id),
+):
+    """재설정 링크 토큰 발급. 토큰은 해시로만 저장하므로 이 응답에서만 볼 수 있다."""
+    if db.get(User, user_id) is None:
+        raise HTTPException(status_code=404, detail="Member not found")
+    token, reset = AuthService(db).create_password_reset(user_id, admin_id)
+    return {"token": token, "expires_at": reset.expires_at.isoformat()}

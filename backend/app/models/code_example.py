@@ -14,7 +14,7 @@ class CodeExample(Base):
     description = Column(Text, nullable=True)
     embedding = Column(Text, nullable=True)  # vector(768), managed via raw SQL
     status = Column(String(20), default="active")
-    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     source_chat_log_id = Column(Integer, ForeignKey("chat_logs.id"), nullable=True)
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)

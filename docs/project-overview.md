@@ -39,6 +39,7 @@
 - 인증: ID/비밀번호 + 서버 세션(HttpOnly 쿠키 `etf_atlas_session`, 7일, 토큰 해시를 `auth_sessions`에 저장). 비밀번호는 bcrypt. 보호 라우트는 모두 `utils/session.get_current_user_id` 하나에 의존, 관리자 판정은 `services/auth_service.is_admin`
   - 최초 실행 시 사용자가 0명이면 프론트가 `/setup`으로 보내고, 거기서 만든 계정이 admin
   - 공개 회원가입은 없다. 관리자가 만든 초대 링크(`/invite/{token}`, 1회용·7일 유효, `invitations` 테이블)로만 member 가입
+  - 관리자 페이지 멤버 탭: 회원 목록, 관리자 권한 부여/회수, 강제 로그아웃, 삭제, 비밀번호 재설정 링크(`/reset-password/{token}`, 1회용·24시간, `password_resets`에 해시로 저장) (`services/member_service.py`)
   - `auth` 외 모든 API는 로그인 필요 (`etfs`·`tags`·`shared`는 `main.py`에서 라우터 단위로 인증)
 - 챗봇(`services/chat_service.py`): pydantic-ai tool-calling 에이전트 + 도구 10개(ETF/종목 검색, 가격, 비교, Cypher 직접 실행 등). 질문과 유사한 해결 절차(도구 호출 순서) 예시를 pgvector로 찾아 few-shot으로 주입. 관리자가 채팅 로그를 승인하면 예시로 임베딩되는 피드백 루프(`routers/admin.py`). 상세: `chatbot_tools.md`
 - 알림: Airflow 수집 완료 시 `pg_notify('new_collection')` → 백엔드 LISTEN → SSE(`/api/notifications/stream`)
@@ -101,7 +102,7 @@
 
 ## 5. Frontend (`frontend/src`)
 
-- 페이지 14개: 홈(검색/Top), ETF 상세, 포트폴리오, 대시보드(개별/통합), 관심종목 변화, 공유 포트폴리오, 챗봇, 관리자, 로그인, 초기 설정, 초대 가입
+- 페이지 14개: 홈(검색/Top), ETF 상세, 포트폴리오, 대시보드(개별/통합), 관심종목 변화, 공유 포트폴리오, 챗봇, 관리자, 로그인, 초기 설정, 초대 가입, 비밀번호 재설정
 - `hooks/useAuth.tsx`: setup-status 조회 → `App.tsx`의 `SetupGuard`가 `/setup`으로, `AuthGuard`가 미로그인 시 `/login`으로 리다이렉트 (`/login`·`/setup`·`/invite/*` 제외). API가 401을 주면 자동 로그아웃
 - PDF 내보내기: jsPDF + NotoSansKR
 

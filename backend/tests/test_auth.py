@@ -39,3 +39,13 @@ def test_register_request_validation(username, password):
 def test_register_request_ok():
     req = RegisterRequest(username="alice_01", password="password123")
     assert req.name is None
+
+
+def test_password_reset_request_validation():
+    from app.routers.auth import PasswordResetRequest
+    assert PasswordResetRequest(token="t", password="password123").password == "password123"
+    for kwargs in ({"token": "t", "password": "short"},
+                   {"token": "t", "password": "가" * 30},
+                   {"token": "", "password": "password123"}):
+        with pytest.raises(ValidationError):
+            PasswordResetRequest(**kwargs)

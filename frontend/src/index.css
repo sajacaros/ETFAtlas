@@ -53,8 +53,16 @@
   * {
     @apply border-border;
   }
+  /* 페이지 길이가 달라져 스크롤바가 생기고 사라져도 레이아웃이 좌우로 밀리지 않게 자리를 비워 둔다 */
+  html {
+    scrollbar-gutter: stable;
+  }
   body {
     @apply bg-background text-foreground;
+  }
+  /* 다이얼로그가 스크롤을 잠글 때 Radix가 스크롤바 폭만큼 margin을 넣는데, 위에서 자리를 이미 비워 두었으므로 막는다 */
+  html body[data-scroll-locked] {
+    margin-right: 0 !important;
   }
   input[type="number"]::-webkit-inner-spin-button,
   input[type="number"]::-webkit-outer-spin-button {

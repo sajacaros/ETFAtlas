@@ -111,6 +111,12 @@ get_etf_info(etf_code="<ETF의 code>")""",
 graph_query(cypher="MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock) WHERE s.name IN ['<종목명1>', '<종목명2>', '<종목명3>'] WITH e, sum(h.weight) AS weight_sum, collect(s.name) AS stocks RETURN {code: e.code, name: e.name, weight_sum: weight_sum, stocks: stocks} ORDER BY weight_sum DESC LIMIT 10")""",
     },
     {
+        "question": "2차전지 ETF 중 LG에너지솔루션과 삼성SDI 비중이 낮은 ETF를 알려줘",
+        "description": "후보 ETF(태그)에서 출발 → 종목은 OPTIONAL MATCH(미보유·상위 30위 밖 = 0) → 합산 비중 오름차순",
+        "code": """\
+graph_query(cypher="MATCH (e:ETF)-[:TAGGED]->(:Tag {name: '2차전지'}) OPTIONAL MATCH (e)-[h:CURRENT_HOLDS]->(s:Stock) WHERE s.name IN ['<종목명1>', '<종목명2>'] WITH e, coalesce(sum(h.weight), 0) AS weight_sum, collect(s.name) AS held RETURN {code: e.code, name: e.name, weight_sum: weight_sum, held: held, expense_ratio: e.expense_ratio} ORDER BY weight_sum ASC LIMIT 10")""",
+    },
+    {
         "question": "삼성전자를 10% 이상 보유한 ETF들의 최근 수익률을 비교해줘",
         "description": "종목 비중 조건(WHERE latest.weight >= N) → 수익률",
         "code": """\

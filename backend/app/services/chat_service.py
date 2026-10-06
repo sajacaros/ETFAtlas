@@ -550,6 +550,7 @@ class GraphQueryTool(ChatTool):
 4. 집계 함수와 ORDER BY를 함께 쓸 때 WITH 절로 분리하세요
 5. weight, expense_ratio, return_*, net_assets는 숫자로 저장되어 있습니다(비중·보수율·수익률은 % 단위, 순자산은 원). 결과에 '%'나 '억원'이 붙어 보이는 건 표시용 서식이니, 조건은 숫자로 쓰세요 (예: h.weight >= 10, e.expense_ratio <= 0.1)
 6. dividend_cycle은 분배 주기 개월 수입니다 (1=월배당, 3=분기배당, 0=분배 없음(TR)). 월배당 ETF는 e.dividend_cycle = 1
+7. CURRENT_HOLDS는 ETF당 비중 상위 30개뿐이라, 엣지가 없으면 미보유이거나 30위 밖(사실상 0)입니다. 특정 종목 비중이 '낮은/적은' ETF는 후보 ETF(태그 등)에서 MATCH로 출발하고 종목은 OPTIONAL MATCH + coalesce(sum(h.weight), 0)로 붙이세요. MATCH로 붙이면 미보유 ETF가 결과에서 빠집니다
 
 ## 쿼리 패턴 예시
 

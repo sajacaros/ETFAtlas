@@ -119,14 +119,21 @@ INSERT INTO code_examples (question, code, description, status) VALUES (
   $d$여러 종목 합산 비중순 (일부만 보유해도 포함)$d$,
   'active');
 
--- Example 15: 삼성전자를 10% 이상 보유한 ETF들의 최근 수익률을 비교해줘
+-- Example 15: 2차전지 ETF 중 LG에너지솔루션과 삼성SDI 비중이 낮은 ETF를 알려줘
+INSERT INTO code_examples (question, code, description, status) VALUES (
+  $q$2차전지 ETF 중 LG에너지솔루션과 삼성SDI 비중이 낮은 ETF를 알려줘$q$,
+  $c$graph_query(cypher="MATCH (e:ETF)-[:TAGGED]->(:Tag {name: '2차전지'}) OPTIONAL MATCH (e)-[h:CURRENT_HOLDS]->(s:Stock) WHERE s.name IN ['<종목명1>', '<종목명2>'] WITH e, coalesce(sum(h.weight), 0) AS weight_sum, collect(s.name) AS held RETURN {code: e.code, name: e.name, weight_sum: weight_sum, held: held, expense_ratio: e.expense_ratio} ORDER BY weight_sum ASC LIMIT 10")$c$,
+  $d$후보 ETF(태그)에서 출발 → 종목은 OPTIONAL MATCH(미보유·상위 30위 밖 = 0) → 합산 비중 오름차순$d$,
+  'active');
+
+-- Example 16: 삼성전자를 10% 이상 보유한 ETF들의 최근 수익률을 비교해줘
 INSERT INTO code_examples (question, code, description, status) VALUES (
   $q$삼성전자를 10% 이상 보유한 ETF들의 최근 수익률을 비교해줘$q$,
   $c$graph_query(cypher="MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock {name: '<종목명>'}) WHERE h.weight >= 10 RETURN {code: e.code, name: e.name, weight: h.weight, return_1w: e.return_1w, return_1m: e.return_1m} ORDER BY e.return_1m DESC")$c$,
   $d$종목 비중 조건(WHERE latest.weight >= N) → 수익률$d$,
   'active');
 
--- Example 16: SK하이닉스를 보유한 ETF 중 수익률이 좋은 3개의 가격 추이를 보여줘
+-- Example 17: SK하이닉스를 보유한 ETF 중 수익률이 좋은 3개의 가격 추이를 보여줘
 INSERT INTO code_examples (question, code, description, status) VALUES (
   $q$SK하이닉스를 보유한 ETF 중 수익률이 좋은 3개의 가격 추이를 보여줘$q$,
   $c$graph_query(cypher="MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock {name: '<종목명>'}) WHERE e.return_1m IS NOT NULL RETURN {code: e.code, name: e.name, weight: h.weight, return_1m: e.return_1m} ORDER BY e.return_1m DESC LIMIT 3")
@@ -135,7 +142,7 @@ get_etf_prices(etf_code="<ETF의 code>", period="1m")$c$,
   $d$종목 보유 ETF → 수익률순 → ETF별 가격$d$,
   'active');
 
--- Example 17: 삼성전자 주가와 삼성전자를 가장 많이 보유한 ETF 3개의 가격을 비교해줘
+-- Example 18: 삼성전자 주가와 삼성전자를 가장 많이 보유한 ETF 3개의 가격을 비교해줘
 INSERT INTO code_examples (question, code, description, status) VALUES (
   $q$삼성전자 주가와 삼성전자를 가장 많이 보유한 ETF 3개의 가격을 비교해줘$q$,
   $c$graph_query(cypher="MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock {name: '<종목명>'}) RETURN {stock_code: s.code, code: e.code, name: e.name, weight: h.weight} ORDER BY h.weight DESC LIMIT 3")
@@ -145,7 +152,7 @@ get_etf_prices(etf_code="<ETF의 code>", period="1m")$c$,
   $d$종목 코드 확인 → 종목 가격 + 보유 비중 상위 ETF 가격$d$,
   'active');
 
--- Example 18: 삼성전자 주가와 반도체 ETF 수익률을 비교해줘
+-- Example 19: 삼성전자 주가와 반도체 ETF 수익률을 비교해줘
 INSERT INTO code_examples (question, code, description, status) VALUES (
   $q$삼성전자 주가와 반도체 ETF 수익률을 비교해줘$q$,
   $c$stock_search(query="<종목명>")
@@ -154,28 +161,28 @@ graph_query(cypher="MATCH (e:ETF)-[:TAGGED]->(:Tag {name: '반도체'}) RETURN {
   $d$종목 가격 + 태그 ETF 수익률$d$,
   'active');
 
--- Example 19: 삼성전자가 많이 포함된 테마(태그)는 뭐야? 각 태그별 대표 ETF도 알려줘
+-- Example 20: 삼성전자가 많이 포함된 테마(태그)는 뭐야? 각 태그별 대표 ETF도 알려줘
 INSERT INTO code_examples (question, code, description, status) VALUES (
   $q$삼성전자가 많이 포함된 테마(태그)는 뭐야? 각 태그별 대표 ETF도 알려줘$q$,
   $c$graph_query(cypher="MATCH (t:Tag)<-[:TAGGED]-(e:ETF)-[h:CURRENT_HOLDS]->(s:Stock {name: '<종목명>'}) WITH t, e, h ORDER BY h.weight DESC WITH t, count(e) AS etf_count, avg(h.weight) AS avg_weight, head(collect(e.name)) AS top_etf RETURN {tag: t.name, etf_count: etf_count, avg_weight: avg_weight, top_etf: top_etf} ORDER BY etf_count DESC")$c$,
   $d$종목 보유 ETF의 태그 분포(태그별 ETF 수, 평균 비중) + 태그별 비중 1위 ETF$d$,
   'active');
 
--- Example 20: KODEX 200의 보유종목 상위 10개를 알려줘
+-- Example 21: KODEX 200의 보유종목 상위 10개를 알려줘
 INSERT INTO code_examples (question, code, description, status) VALUES (
   $q$KODEX 200의 보유종목 상위 10개를 알려줘$q$,
   $c$graph_query(cypher="MATCH (e:ETF {name: '<ETF명>'})-[h:CURRENT_HOLDS]->(s:Stock) RETURN {stock_code: s.code, stock_name: s.name, weight: h.weight} ORDER BY h.weight DESC LIMIT 10")$c$,
   $d$ETF 이름으로 최신 보유종목 비중순$d$,
   'active');
 
--- Example 21: KODEX 200과 TIGER 200의 공통 보유종목 비중을 비교해줘
+-- Example 22: KODEX 200과 TIGER 200의 공통 보유종목 비중을 비교해줘
 INSERT INTO code_examples (question, code, description, status) VALUES (
   $q$KODEX 200과 TIGER 200의 공통 보유종목 비중을 비교해줘$q$,
   $c$graph_query(cypher="MATCH (a:ETF {name: '<ETF명1>'})-[ha:CURRENT_HOLDS]->(s:Stock)<-[hb:CURRENT_HOLDS]-(b:ETF {name: '<ETF명2>'}) RETURN {stock: s.name, weight_a: ha.weight, weight_b: hb.weight} ORDER BY ha.weight DESC")$c$,
   $d$두 ETF가 함께 보유한 종목과 각각의 비중$d$,
   'active');
 
--- Example 22: KODEX 200과 유사한 ETF 5개의 상세 정보를 비교해줘
+-- Example 23: KODEX 200과 유사한 ETF 5개의 상세 정보를 비교해줘
 INSERT INTO code_examples (question, code, description, status) VALUES (
   $q$KODEX 200과 유사한 ETF 5개의 상세 정보를 비교해줘$q$,
   $c$etf_search(query="<ETF명>")
@@ -184,7 +191,7 @@ compare_etfs(etf_codes="<유사 ETF 5개의 code, 쉼표 구분>")$c$,
   $d$ETF 코드 확인 → 유사 ETF → compare_etfs$d$,
   'active');
 
--- Example 23: 최근 1주 수익률 상위 3개 ETF의 보유종목과 유사 ETF를 알려줘
+-- Example 24: 최근 1주 수익률 상위 3개 ETF의 보유종목과 유사 ETF를 알려줘
 INSERT INTO code_examples (question, code, description, status) VALUES (
   $q$최근 1주 수익률 상위 3개 ETF의 보유종목과 유사 ETF를 알려줘$q$,
   $c$graph_query(cypher="MATCH (e:ETF) WHERE e.return_1w IS NOT NULL RETURN {code: e.code, name: e.name, return_1w: e.return_1w} ORDER BY e.return_1w DESC LIMIT 3")
@@ -194,56 +201,56 @@ find_similar_etfs(etf_code="<ETF의 code>")$c$,
   $d$수익률 상위 ETF → ETF별 상세(보유종목) + 유사 ETF$d$,
   'active');
 
--- Example 24: 최근 신규 편입된 종목이 있는 ETF를 알려줘
+-- Example 25: 최근 신규 편입된 종목이 있는 ETF를 알려줘
 INSERT INTO code_examples (question, code, description, status) VALUES (
   $q$최근 신규 편입된 종목이 있는 ETF를 알려줘$q$,
   $c$graph_query(cypher="MATCH (e:ETF {code: '069500'})-[h:HOLDS]->() WITH DISTINCT h.date AS d ORDER BY d DESC LIMIT 2 WITH collect(d) AS ds WHERE size(ds) = 2 MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock) WHERE h.date = ds[0] AND NOT EXISTS((e)-[:HOLDS {date: ds[1]}]->(s)) RETURN {code: e.code, name: e.name, stock: s.name, weight: h.weight} ORDER BY h.weight DESC LIMIT 20")$c$,
   $d$기준 ETF(069500)로 최근 두 수집일 확인 → 현재 구성종목 중 직전 수집일 HOLDS에 없던 종목$d$,
   'active');
 
--- Example 25: 삼성전자 비중이 늘어난 ETF를 알려줘
+-- Example 26: 삼성전자 비중이 늘어난 ETF를 알려줘
 INSERT INTO code_examples (question, code, description, status) VALUES (
   $q$삼성전자 비중이 늘어난 ETF를 알려줘$q$,
   $c$graph_query(cypher="MATCH (e:ETF)-[h:HOLDS]->(s:Stock {name: '<종목명>'}) WITH e, h ORDER BY h.date DESC WITH e, collect(h) AS hs WHERE size(hs) >= 2 WITH e, hs[0] AS cur, hs[1] AS prev WHERE cur.weight > prev.weight RETURN {code: e.code, name: e.name, prev_date: prev.date, prev_weight: prev.weight, date: cur.date, weight: cur.weight, change: cur.weight - prev.weight} ORDER BY cur.weight - prev.weight DESC")$c$,
   $d$종목의 ETF별 HOLDS 이력 → 최신 vs 직전 비중 비교$d$,
   'active');
 
--- Example 26: KoAct 바이오헬스케어에서 알테오젠 비중이 급변한 시점을 분석해줘
+-- Example 27: KoAct 바이오헬스케어에서 알테오젠 비중이 급변한 시점을 분석해줘
 INSERT INTO code_examples (question, code, description, status) VALUES (
   $q$KoAct 바이오헬스케어에서 알테오젠 비중이 급변한 시점을 분석해줘$q$,
   $c$graph_query(cypher="MATCH (e:ETF {name: '<ETF명>'})-[h:HOLDS]->(s:Stock {name: '<종목명>'}) RETURN {date: h.date, weight: h.weight, shares: h.shares} ORDER BY h.date")$c$,
   $d$ETF-종목 HOLDS 날짜별 이력 (변화량 계산은 응답에서)$d$,
   'active');
 
--- Example 27: 순자산 100억 이상 ETF 중 보수율이 낮은 ETF를 알려줘
+-- Example 28: 순자산 100억 이상 ETF 중 보수율이 낮은 ETF를 알려줘
 INSERT INTO code_examples (question, code, description, status) VALUES (
   $q$순자산 100억 이상 ETF 중 보수율이 낮은 ETF를 알려줘$q$,
   $c$graph_query(cypher="MATCH (e:ETF) WHERE e.net_assets >= 10000000000 RETURN {code: e.code, name: e.name, net_assets: e.net_assets, expense_ratio: e.expense_ratio} ORDER BY e.expense_ratio ASC LIMIT 10")$c$,
   $d$ETF 속성 조건(순자산은 원 단위) → 보수율순$d$,
   'active');
 
--- Example 28: 보수율 낮으면서 수익률 좋은 ETF를 추천해줘
+-- Example 29: 보수율 낮으면서 수익률 좋은 ETF를 추천해줘
 INSERT INTO code_examples (question, code, description, status) VALUES (
   $q$보수율 낮으면서 수익률 좋은 ETF를 추천해줘$q$,
   $c$graph_query(cypher="MATCH (e:ETF) WHERE e.expense_ratio <= 0.1 AND e.return_1m IS NOT NULL RETURN {code: e.code, name: e.name, expense_ratio: e.expense_ratio, return_1m: e.return_1m} ORDER BY e.return_1m DESC LIMIT 10")$c$,
   $d$보수율 상한 조건 + 수익률순$d$,
   'active');
 
--- Example 29: 1주 수익률과 1개월 수익률 차이가 큰 ETF를 알려줘
+-- Example 30: 1주 수익률과 1개월 수익률 차이가 큰 ETF를 알려줘
 INSERT INTO code_examples (question, code, description, status) VALUES (
   $q$1주 수익률과 1개월 수익률 차이가 큰 ETF를 알려줘$q$,
   $c$graph_query(cypher="MATCH (e:ETF) WHERE e.return_1w IS NOT NULL AND e.return_1m IS NOT NULL WITH e, abs(e.return_1w - e.return_1m) AS gap RETURN {code: e.code, name: e.name, return_1w: e.return_1w, return_1m: e.return_1m, gap: gap} ORDER BY gap DESC LIMIT 10")$c$,
   $d$두 속성의 차이를 Cypher에서 계산해 정렬$d$,
   'active');
 
--- Example 30: 최근 시가총액이 가장 많이 늘어난 ETF 5개를 알려줘
+-- Example 31: 최근 시가총액이 가장 많이 늘어난 ETF 5개를 알려줘
 INSERT INTO code_examples (question, code, description, status) VALUES (
   $q$최근 시가총액이 가장 많이 늘어난 ETF 5개를 알려줘$q$,
   $c$graph_query(cypher="MATCH (e:ETF) WHERE e.market_cap_change_1w IS NOT NULL RETURN {code: e.code, name: e.name, market_cap_change_1w: e.market_cap_change_1w} ORDER BY e.market_cap_change_1w DESC LIMIT 5")$c$,
   $d$ETF 속성(market_cap_change_1w) 정렬$d$,
   'active');
 
--- Example 31: 순자산 상위 5개 ETF의 최근 1주 가격과 보유종목 변동을 알려줘
+-- Example 32: 순자산 상위 5개 ETF의 최근 1주 가격과 보유종목 변동을 알려줘
 INSERT INTO code_examples (question, code, description, status) VALUES (
   $q$순자산 상위 5개 ETF의 최근 1주 가격과 보유종목 변동을 알려줘$q$,
   $c$graph_query(cypher="MATCH (e:ETF) RETURN {code: e.code, name: e.name, net_assets: e.net_assets} ORDER BY e.net_assets DESC LIMIT 5")
@@ -253,14 +260,14 @@ get_holdings_changes(etf_code="<ETF의 code>", period="1w")$c$,
   $d$순자산순 → ETF별 가격 + 보유종목 변동$d$,
   'active');
 
--- Example 32: 거래량이 가장 많은 ETF 5개를 알려줘
+-- Example 33: 거래량이 가장 많은 ETF 5개를 알려줘
 INSERT INTO code_examples (question, code, description, status) VALUES (
   $q$거래량이 가장 많은 ETF 5개를 알려줘$q$,
   $c$graph_query(cypher="MATCH (e:ETF)-[:HAS_PRICE]->(p:Price) WITH e, p ORDER BY p.date DESC WITH e, head(collect(p)) AS latest RETURN {code: e.code, name: e.name, date: latest.date, volume: latest.volume, trade_value: latest.trade_value} ORDER BY latest.volume DESC LIMIT 5")$c$,
   $d$ETF별 최신 Price 노드 → 거래량순$d$,
   'active');
 
--- Example 33: KODEX ETF 중 순자산이 가장 큰 5개와 가장 작은 5개를 비교해줘
+-- Example 34: KODEX ETF 중 순자산이 가장 큰 5개와 가장 작은 5개를 비교해줘
 INSERT INTO code_examples (question, code, description, status) VALUES (
   $q$KODEX ETF 중 순자산이 가장 큰 5개와 가장 작은 5개를 비교해줘$q$,
   $c$graph_query(cypher="MATCH (e:ETF) WHERE e.name STARTS WITH 'KODEX' RETURN {code: e.code, name: e.name, net_assets: e.net_assets} ORDER BY e.net_assets DESC LIMIT 5")
@@ -268,7 +275,7 @@ graph_query(cypher="MATCH (e:ETF) WHERE e.name STARTS WITH 'KODEX' RETURN {code:
   $d$이름 접두어(브랜드) 필터 → 순자산 상/하위$d$,
   'active');
 
--- Example 34: TIGER ETF 중에서 보수율이 0.1% 이하인 ETF의 가격 추이를 보여줘
+-- Example 35: TIGER ETF 중에서 보수율이 0.1% 이하인 ETF의 가격 추이를 보여줘
 INSERT INTO code_examples (question, code, description, status) VALUES (
   $q$TIGER ETF 중에서 보수율이 0.1% 이하인 ETF의 가격 추이를 보여줘$q$,
   $c$graph_query(cypher="MATCH (e:ETF) WHERE e.name STARTS WITH 'TIGER' AND e.expense_ratio <= 0.1 RETURN {code: e.code, name: e.name, expense_ratio: e.expense_ratio} ORDER BY e.expense_ratio ASC")
@@ -277,14 +284,14 @@ get_etf_prices(etf_code="<ETF의 code>", period="1m")$c$,
   $d$브랜드 + 보수율 조건 → ETF별 가격$d$,
   'active');
 
--- Example 35: 코스피 200 추종 ETF들의 보수율과 수익률을 비교해줘
+-- Example 36: 코스피 200 추종 ETF들의 보수율과 수익률을 비교해줘
 INSERT INTO code_examples (question, code, description, status) VALUES (
   $q$코스피 200 추종 ETF들의 보수율과 수익률을 비교해줘$q$,
   $c$graph_query(cypher="MATCH (e:ETF)-[:TAGGED]->(:Tag {name: '코스피'}) WHERE e.name CONTAINS '200' RETURN {code: e.code, name: e.name, expense_ratio: e.expense_ratio, return_1m: e.return_1m} ORDER BY e.expense_ratio ASC")$c$,
   $d$지수 태그(코스피) → 보수율·수익률$d$,
   'active');
 
--- Example 36: 삼성자산운용의 ETF 중 수익률 상위 5개의 보유종목을 알려줘
+-- Example 37: 삼성자산운용의 ETF 중 수익률 상위 5개의 보유종목을 알려줘
 INSERT INTO code_examples (question, code, description, status) VALUES (
   $q$삼성자산운용의 ETF 중 수익률 상위 5개의 보유종목을 알려줘$q$,
   $c$graph_query(cypher="MATCH (e:ETF)-[:MANAGED_BY]->(c:Company {name: '<운용사>'}) WHERE e.return_1m IS NOT NULL RETURN {code: e.code, name: e.name, return_1m: e.return_1m} ORDER BY e.return_1m DESC LIMIT 5")
@@ -293,14 +300,14 @@ get_etf_info(etf_code="<ETF의 code>")$c$,
   $d$운용사 → 수익률순 → ETF별 상세(보유종목)$d$,
   'active');
 
--- Example 37: 미래에셋자산운용과 삼성자산운용의 반도체 ETF를 비교해줘
+-- Example 38: 미래에셋자산운용과 삼성자산운용의 반도체 ETF를 비교해줘
 INSERT INTO code_examples (question, code, description, status) VALUES (
   $q$미래에셋자산운용과 삼성자산운용의 반도체 ETF를 비교해줘$q$,
   $c$graph_query(cypher="MATCH (c:Company)<-[:MANAGED_BY]-(e:ETF)-[:TAGGED]->(:Tag {name: '반도체'}) WHERE c.name IN ['<운용사1>', '<운용사2>'] RETURN {company: c.name, code: e.code, name: e.name, expense_ratio: e.expense_ratio, net_assets: e.net_assets} ORDER BY c.name, e.net_assets DESC")$c$,
   $d$운용사 × 태그 교차 조건$d$,
   'active');
 
--- Example 38: 운용사별 ETF 개수와 평균 보수율을 비교해줘
+-- Example 39: 운용사별 ETF 개수와 평균 보수율을 비교해줘
 INSERT INTO code_examples (question, code, description, status) VALUES (
   $q$운용사별 ETF 개수와 평균 보수율을 비교해줘$q$,
   $c$graph_query(cypher="MATCH (e:ETF)-[:MANAGED_BY]->(c:Company) WITH c, count(e) AS etf_count, avg(e.expense_ratio) AS avg_fee RETURN {company: c.name, etf_count: etf_count, avg_fee: avg_fee} ORDER BY etf_count DESC")$c$,

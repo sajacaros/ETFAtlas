@@ -298,6 +298,7 @@ ORDER BY e.name LIMIT 10
 3. 문자열 값은 작은따옴표: `{code: '005930'}`
 4. 집계 함수 + ORDER BY는 WITH 절로 분리
 5. weight, expense_ratio, return_*, net_assets는 숫자로 저장된다(비중·보수율·수익률은 % 단위, 순자산은 원). 결과에 붙는 `%`·`억원`은 표시용 서식이므로 조건은 숫자로 쓴다 (예: `h.weight >= 10`, `e.expense_ratio <= 0.1`)
+6. `CURRENT_HOLDS`는 ETF당 비중 상위 30개뿐이라 엣지가 없으면 미보유이거나 30위 밖(사실상 0)이다. 특정 종목 비중이 낮은 ETF는 후보 ETF(태그 등)에서 MATCH로 출발하고 종목은 `OPTIONAL MATCH` + `coalesce(sum(h.weight), 0)`로 붙인다. `MATCH`로 붙이면 미보유 ETF가 결과에서 빠진다
 
 **쿼리 예시**
 ```cypher
@@ -470,7 +471,7 @@ agent.run_stream_events(prompt, usage_limits=UsageLimits(request_limit=15))
 ### 해결 절차 예시(few-shot)와 피드백 루프
 
 - `code_examples.code`에는 도구 호출을 `name(key="value")` 형태로 한 줄에 하나씩 저장한다. 목적은 질문 유형별로 맞는 **Cypher 패턴**을 보여 주는 것이다.
-- 시드 예시 38개의 원본은 `docker/db/seed/code_examples.py`다. 고유명사는 `<종목명>`, `<ETF명>`, `<운용사>` 자리표시자로 두고, 종목·ETF·운용사는 Cypher에서 이름으로 바로 매칭한다(`stock_search` 호출 불필요). 고친 뒤 `python docker/db/seed/code_examples.py > docker/db/init/03_seed_code_examples.sql`로 SQL을 다시 만든다.
+- 시드 예시 39개의 원본은 `docker/db/seed/code_examples.py`다. 고유명사는 `<종목명>`, `<ETF명>`, `<운용사>` 자리표시자로 두고, 종목·ETF·운용사는 Cypher에서 이름으로 바로 매칭한다(`stock_search` 호출 불필요). 고친 뒤 `python docker/db/seed/code_examples.py > docker/db/init/03_seed_code_examples.sql`로 SQL을 다시 만든다.
 - 프롬프트에는 일반화된 질문(`question_generalized`)과 함께 들어가고, LLM은 자리표시자를 현재 질문의 값으로 바꿔 쓴다.
 - 검색할 때도 사용자 질문을 같은 프롬프트로 일반화한 뒤 임베딩한다(`현대차와 기아…` → `특정 종목 2개…`). 일반화는 추론을 끄고 호출해 0.2~0.4초 걸린다.
 - 채팅 로그의 `generated_code`는 성공한 도구 호출을 `name(key="value")` 한 줄씩 이어 붙인 것 → 관리자가 승인해 임베딩하면 새 예시가 된다

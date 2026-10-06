@@ -120,16 +120,16 @@ export const etfsApi = {
     const { data } = await api.get<{ date: string | null }>('/etfs/latest-date')
     return data.date
   },
-  getTop: async (limit = 20, sort = 'market_cap') => {
-    const { data } = await api.get<{ code: string; name: string; net_assets: number | null; close_price: number | null; return_1d: number | null; return_1w: number | null; return_1m: number | null; market_cap_change_1w: number | null }[]>('/etfs/top', { params: { limit, sort } })
+  getTop: async (limit = 20, sort = 'market_cap', offset = 0) => {
+    const { data } = await api.get<{ code: string; name: string; net_assets: number | null; close_price: number | null; return_1d: number | null; return_1w: number | null; return_1m: number | null; market_cap_change_1w: number | null }[]>('/etfs/top', { params: { limit, sort, offset } })
     return data
   },
   search: async (query: string, limit = 20) => {
     const { data } = await api.get<ETF[]>('/etfs/search', { params: { q: query, limit } })
     return data
   },
-  searchUniverse: async (query: string, limit = 20) => {
-    const { data } = await api.get<{ code: string; name: string; net_assets: number | null; close_price: number | null; return_1d: number | null; return_1w: number | null; return_1m: number | null; market_cap_change_1w: number | null }[]>('/etfs/search/universe', { params: { q: query, limit } })
+  searchUniverse: async (query: string, limit = 20, offset = 0) => {
+    const { data } = await api.get<{ code: string; name: string; net_assets: number | null; close_price: number | null; return_1d: number | null; return_1w: number | null; return_1m: number | null; market_cap_change_1w: number | null }[]>('/etfs/search/universe', { params: { q: query, limit, offset } })
     return data
   },
   get: async (code: string) => {

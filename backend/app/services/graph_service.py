@@ -174,29 +174,31 @@ class GraphService:
                 return str(raw)
         return None
 
-    def get_top_etfs(self, limit: int = 20, sort: str = "market_cap") -> List[Dict]:
+    def get_top_etfs(self, limit: int = 20, sort: str = "market_cap", offset: int = 0) -> List[Dict]:
         """AGE Universe 내 ETF 목록 (정렬 기준 선택 가능)"""
         order_field = self.SORT_FIELDS.get(sort, "e.net_assets")
         cypher = f"""
         MATCH (e:ETF)
         WHERE {order_field} IS NOT NULL
         RETURN {{code: e.code, name: e.name, net_assets: e.net_assets, return_1d: e.return_1d, return_1w: e.return_1w, return_1m: e.return_1m, market_cap_change_1w: e.market_cap_change_1w}}
-        ORDER BY {order_field} DESC
+        ORDER BY {order_field} DESC, e.code
+        SKIP $offset
         LIMIT $limit
         """
-        rows = self.execute_cypher(cypher, {"limit": limit})
+        rows = self.execute_cypher(cypher, {"offset": offset, "limit": limit})
         return [self.parse_agtype(row["result"]) for row in rows]
 
-    def search_etfs_in_universe(self, query: str, limit: int = 20) -> List[Dict]:
+    def search_etfs_in_universe(self, query: str, limit: int = 20, offset: int = 0) -> List[Dict]:
         """AGE Universe 내 ETF 검색 (시가총액순, 대소문자 무시)"""
         cypher = """
         MATCH (e:ETF)
         WHERE toLower(e.name) CONTAINS toLower($query) OR toLower(e.code) CONTAINS toLower($query)
         RETURN {code: e.code, name: e.name, net_assets: e.net_assets, return_1d: e.return_1d, return_1w: e.return_1w, return_1m: e.return_1m, market_cap_change_1w: e.market_cap_change_1w}
-        ORDER BY e.net_assets DESC
+        ORDER BY e.net_assets DESC, e.code
+        SKIP $offset
         LIMIT $limit
         """
-        rows = self.execute_cypher(cypher, {"query": query, "limit": limit})
+        rows = self.execute_cypher(cypher, {"query": query, "offset": offset, "limit": limit})
         return [self.parse_agtype(row["result"]) for row in rows]
 
     def get_etf_detail(self, code: str) -> Dict | None:

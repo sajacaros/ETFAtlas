@@ -21,6 +21,9 @@ interface ETFCardItem {
   market_cap_change_1w?: number | null
 }
 
+const PAGE_SIZE = 20
+type PageFetcher = (offset: number) => Promise<ETFCardItem[]>
+
 const formatAmount = (value: number) => formatKrwAmount(value, '')
 
 const returnColor = (value: number | null | undefined) =>
@@ -164,7 +167,6 @@ export default function HomePage() {
   // Tag state
   const [tags, setTags] = useState<Tag[]>([])
   const [selectedTag, setSelectedTag] = useState<string | null>(searchParams.get('tag') || '시총')
-  const [tagLoading, setTagLoading] = useState(false)
   const [tagsExpanded, setTagsExpanded] = useState(false)
   const [tagsOverflow, setTagsOverflow] = useState(false)
   const tagsRef = useRef<HTMLDivElement>(null)
@@ -182,6 +184,80 @@ export default function HomePage() {
   }
   const isSortTag = (tagName: string) => tagName in SORT_TAGS
 
+  // 무한 스크롤: 검색·정렬 탭은 PAGE_SIZE씩 이어 받고, 분류 태그·즐겨찾기는 한 번에 전체를 받는다
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const pageFetcherRef = useRef<PageFetcher | null>(null)
+  const offsetRef = useRef(0)
+  const listRequestRef = useRef(0)
+  const loadingMoreRef = useRef(false)
+  const sentinelRef = useRef<HTMLDivElement>(null)
+
+  const loadList = useCallback(async (fetcher: PageFetcher, paged: boolean) => {
+    // 응답이 늦게 온 이전 요청이 새 목록을 덮어쓰지 않도록 요청 번호로 거른다
+    const requestId = ++listRequestRef.current
+    pageFetcherRef.current = paged ? fetcher : null
+    offsetRef.current = 0
+    setHasMore(false)
+    setLoading(true)
+    try {
+      const items = await fetcher(0)
+      if (requestId !== listRequestRef.current) return
+      setEtfList(items)
+      offsetRef.current = items.length
+      setHasMore(paged && items.length === PAGE_SIZE)
+    } catch {
+      if (requestId !== listRequestRef.current) return
+      setEtfList([])
+    } finally {
+      if (requestId === listRequestRef.current) setLoading(false)
+    }
+  }, [])
+
+  const loadMore = useCallback(async () => {
+    const fetcher = pageFetcherRef.current
+    if (!fetcher || loadingMoreRef.current) return
+    const requestId = listRequestRef.current
+    loadingMoreRef.current = true
+    setLoadingMore(true)
+    try {
+      const items = await fetcher(offsetRef.current)
+      if (requestId !== listRequestRef.current) return
+      offsetRef.current += items.length
+      setEtfList((prev) => {
+        const seen = new Set(prev.map((e) => e.code))
+        return [...prev, ...items.filter((e) => !seen.has(e.code))]
+      })
+      setHasMore(items.length === PAGE_SIZE)
+    } catch {
+      if (requestId === listRequestRef.current) setHasMore(false)
+    } finally {
+      loadingMoreRef.current = false
+      setLoadingMore(false)
+    }
+  }, [])
+
+  // 목록 끝의 sentinel이 보이면 다음 페이지를 불러온다.
+  // loadingMore가 바뀔 때마다 다시 관찰해서, 한 페이지를 붙인 뒤에도 sentinel이 화면 안에 있으면 이어서 불러온다.
+  useEffect(() => {
+    const el = sentinelRef.current
+    if (!el || !hasMore || loading || loadingMore) return
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting) loadMore()
+    }, { rootMargin: '200px' })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [hasMore, loading, loadingMore, loadMore])
+
+  const loadSearch = (query: string) =>
+    loadList((offset) => etfsApi.searchUniverse(query, PAGE_SIZE, offset), true)
+
+  const loadTag = (tagName: string) => {
+    if (tagName === FAVORITES_TAG) return loadList(() => watchlistApi.getETFs(), false)
+    if (isSortTag(tagName)) return loadList((offset) => etfsApi.getTop(PAGE_SIZE, SORT_TAGS[tagName], offset), true)
+    return loadList(() => tagsApi.getETFs(tagName), false)
+  }
+
   // Restore state from URL params on mount, or load top ETFs by default
   const restoredRef = useRef(false)
   useEffect(() => {
@@ -190,25 +266,13 @@ export default function HomePage() {
     const q = searchParams.get('q')
     const tag = searchParams.get('tag')
     if (q) {
-      setLoading(true)
-      etfsApi.searchUniverse(q.trim()).then(setEtfList).catch(() => setEtfList([])).finally(() => setLoading(false))
+      loadSearch(q.trim())
     } else if (tag) {
-      setTagLoading(true)
-      if (tag === FAVORITES_TAG) {
-        watchlistApi.getETFs()
-          .then(setEtfList)
-          .catch(() => setEtfList([]))
-          .finally(() => setTagLoading(false))
-      } else if (isSortTag(tag)) {
-        etfsApi.getTop(20, SORT_TAGS[tag]).then(setEtfList).catch(() => setEtfList([])).finally(() => setTagLoading(false))
-      } else {
-        tagsApi.getETFs(tag).then(setEtfList).catch(() => setEtfList([])).finally(() => setTagLoading(false))
-      }
+      loadTag(tag)
     } else {
-      // 기본: 시가총액 TOP 20 (시총 TOP 태그 선택 상태)
+      // 기본: 시가총액순 (시총 태그 선택 상태)
       setSelectedTag('시총')
-      setLoading(true)
-      etfsApi.getTop(20).then(setEtfList).catch(() => setEtfList([])).finally(() => setLoading(false))
+      loadTag('시총')
     }
   }, [searchParams])
 
@@ -239,18 +303,10 @@ export default function HomePage() {
     const query = searchQuery.trim()
     if (!query) return
     setSearchQuery(query)
-    setLoading(true)
     setSelectedTag(null)
     setExpandedETF(null)
     updateParams(query, null)
-    try {
-      const results = await etfsApi.searchUniverse(query)
-      setEtfList(results)
-    } catch {
-      setEtfList([])
-    } finally {
-      setLoading(false)
-    }
+    await loadSearch(query)
   }
 
   const handleTagClick = async (tagName: string) => {
@@ -260,38 +316,14 @@ export default function HomePage() {
       setExpandedETF(null)
       setSearchQuery('')
       updateParams(null, null)
-      setLoading(true)
-      try {
-        const etfs = await etfsApi.getTop(20)
-        setEtfList(etfs)
-      } catch {
-        setEtfList([])
-      } finally {
-        setLoading(false)
-      }
+      await loadTag('시총')
       return
     }
     setSelectedTag(tagName)
     setExpandedETF(null)
     setSearchQuery('')
     updateParams(null, tagName)
-    setTagLoading(true)
-    try {
-      if (tagName === FAVORITES_TAG) {
-        const etfs = await watchlistApi.getETFs()
-        setEtfList(etfs)
-      } else if (isSortTag(tagName)) {
-        const etfs = await etfsApi.getTop(20, SORT_TAGS[tagName])
-        setEtfList(etfs)
-      } else {
-        const etfs = await tagsApi.getETFs(tagName)
-        setEtfList(etfs)
-      }
-    } catch {
-      setEtfList([])
-    } finally {
-      setTagLoading(false)
-    }
+    await loadTag(tagName)
   }
 
   const handleETFExpand = async (etfCode: string) => {
@@ -344,8 +376,6 @@ export default function HomePage() {
       handleSearch()
     }
   }
-
-  const isLoading = loading || tagLoading
 
   return (
     <div className="space-y-4">
@@ -431,7 +461,7 @@ export default function HomePage() {
             기준일: {latestDate?.slice(2).replace(/-/g, '/')}
           </div>
         )}
-        {isLoading ? (
+        {loading ? (
           <div className="text-center py-8 text-muted-foreground">불러오는 중...</div>
         ) : etfList.length > 0 ? (
           <div className="space-y-2">
@@ -446,6 +476,10 @@ export default function HomePage() {
                 onWatchToggle={isAuthenticated ? handleWatchToggle : null}
               />
             ))}
+            {hasMore && <div ref={sentinelRef} className="h-px" />}
+            {loadingMore && (
+              <div className="text-center py-4 text-sm text-muted-foreground">불러오는 중...</div>
+            )}
           </div>
         ) : null}
       </div>

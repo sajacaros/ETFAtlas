@@ -376,6 +376,7 @@ export const chatApi = {
           buffer = lines.pop() || ''
 
           for (const line of lines) {
+            if (line.startsWith(':')) continue  // 연결 유지용 heartbeat
             const data = line.replace(/^data: /, '').trim()
             if (!data || data === '[DONE]') continue
             try {

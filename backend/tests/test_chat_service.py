@@ -136,6 +136,32 @@ async def test_chat_stream_reports_stages(service):
 
 
 @pytest.mark.asyncio
+async def test_with_heartbeat_pings_while_idle():
+    from app.routers.chat import _with_heartbeat
+
+    async def slow():
+        yield "data: 1\n\n"
+        await asyncio.sleep(0.05)
+        yield "data: 2\n\n"
+
+    chunks = [c async for c in _with_heartbeat(slow(), interval=0.02)]
+    assert chunks[0] == "data: 1\n\n" and chunks[-1] == "data: 2\n\n"
+    assert ": ping\n\n" in chunks[1:-1]
+
+
+@pytest.mark.asyncio
+async def test_with_heartbeat_raises_producer_error():
+    from app.routers.chat import _with_heartbeat
+
+    async def broken():
+        yield "data: 1\n\n"
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        [c async for c in _with_heartbeat(broken(), interval=1)]
+
+
+@pytest.mark.asyncio
 async def test_chat_collects_result(service):
     result = await service.chat("종가 알려줘")
     assert len(result["steps"]) == 2

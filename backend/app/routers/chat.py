@@ -4,7 +4,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import AsyncIterator, List, Optional
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..services.chat_service import ChatService
@@ -19,6 +19,9 @@ router = APIRouter()
 
 
 SESSION_TITLE_LENGTH = 50
+
+# 모델이 오래 생각하는 동안에도 프록시(nginx 기본 60초)가 유휴 연결을 끊지 않도록 보내는 주기
+HEARTBEAT_INTERVAL = 15.0
 
 # 진행 중인 스트림의 중지 신호 ((user_id, session_id) → Event). uvicorn 단일 워커라 프로세스 메모리로 충분하다
 _stop_events: dict[tuple[int, int], asyncio.Event] = {}
@@ -54,6 +57,37 @@ def _extract_generated_code(steps: List[dict]) -> Optional[str]:
     """성공한 도구 호출 순서를 한 줄씩 이어 붙인다 (승인 시 few-shot 예시로 사용)."""
     calls = [step["code"] for step in steps if step.get("code") and not step.get("error")]
     return "\n".join(calls) or None
+
+
+async def _with_heartbeat(chunks: AsyncIterator[str], interval: float = HEARTBEAT_INTERVAL) -> AsyncIterator[str]:
+    """chunks를 그대로 흘려보내되, interval 동안 아무것도 없으면 SSE 주석(`: ping`)을 끼워 넣는다.
+
+    에이전트 스트림은 진입한 task 안에서만 닫을 수 있어서, 한 task가 끝까지 돌리고 큐로 넘겨받는다.
+    """
+    queue: asyncio.Queue = asyncio.Queue()
+    done = object()
+
+    async def produce():
+        try:
+            async for chunk in chunks:
+                await queue.put(chunk)
+        finally:
+            await queue.put(done)
+
+    producer = asyncio.create_task(produce())
+    try:
+        while True:
+            try:
+                chunk = await asyncio.wait_for(queue.get(), timeout=interval)
+            except asyncio.TimeoutError:
+                yield ": ping\n\n"
+                continue
+            if chunk is done:
+                break
+            yield chunk
+        await producer  # 생산 중 예외가 있었으면 여기서 드러난다
+    finally:
+        producer.cancel()  # 클라이언트가 끊으면 에이전트 실행도 멈춘다
 
 
 def _get_own_session(db: Session, user_id: int, session_id: int) -> ChatSession:
@@ -153,7 +187,7 @@ async def stream_message(
 
     async def event_generator():
         try:
-            async for chunk in _stream_events():
+            async for chunk in _with_heartbeat(_stream_events()):
                 yield chunk
         finally:
             # 끝났거나 클라이언트가 끊었을 때 등록을 지운다 (같은 세션의 새 스트림이 덮어썼으면 그대로 둔다)

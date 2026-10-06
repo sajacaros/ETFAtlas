@@ -82,6 +82,19 @@ async def test_chat_stream_emits_steps_and_answer(service):
 
 
 @pytest.mark.asyncio
+async def test_chat_stream_announces_step_before_result(service):
+    events = [e for e in [e async for e in service.chat_stream("종가 알려줘")] if e["type"] in ("step_start", "step")]
+    for n in (1, 2):
+        kinds = [e["type"] for e in events if e["data"]["step_number"] == n]
+        assert kinds == ["step_start", "step"]
+    starts = {e["data"]["step_number"]: e["data"] for e in events if e["type"] == "step_start"}
+    for e in events:
+        if e["type"] == "step":
+            assert e["data"]["code"] == starts[e["data"]["step_number"]]["code"]
+    assert "observations" not in starts[1]
+
+
+@pytest.mark.asyncio
 async def test_chat_collects_result(service):
     result = await service.chat("종가 알려줘")
     assert len(result["steps"]) == 2

@@ -622,6 +622,15 @@ def format_tool_call(name: str, args: Dict[str, Any]) -> str:
     return f"{name}({params})"
 
 
+def _step_call(step_number: int, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    """step 이벤트 중 호출 시점에 정해지는 부분 (step_start와 step이 공유)."""
+    return {
+        "step_number": step_number,
+        "code": format_tool_call(name, args),
+        "tool_calls": [{"name": name, "arguments": json.dumps(args, ensure_ascii=False)}],
+    }
+
+
 class ChatService:
     def __init__(self, db: Session):
         self.db = db
@@ -733,10 +742,11 @@ class ChatService:
     async def chat_stream(
         self, message: str, context: Optional[ConversationContext] = None,
     ) -> AsyncIterator[Dict]:
-        """도구 호출/결과를 step 이벤트로, 최종 응답을 answer 이벤트로 스트리밍한다.
+        """도구 호출을 step_start로, 그 결과를 step 이벤트로, 최종 응답을 answer 이벤트로 스트리밍한다.
 
         맥락이 있으면 먼저 질문을 독립 질문으로 재작성하고, 바뀌었으면 refined_question 이벤트를 보낸다.
-        step: {step_number, code(도구 호출 표기), observations, tool_calls, error}
+        step_start: {step_number, code(도구 호출 표기), tool_calls}
+        step: step_start 필드 + {observations, error}
         """
         context = context or ConversationContext()
         # LLM/임베딩 호출(동기 HTTP/DB)은 이벤트 루프를 막지 않도록 스레드에서 실행
@@ -757,22 +767,26 @@ class ChatService:
             ) as stream:
                 async for event in stream:
                     if isinstance(event, FunctionToolCallEvent):
+                        # 실행 전에 무엇을 하는지 먼저 알리고, 결과는 같은 step_number의 step 이벤트로 채운다
                         part = event.part
-                        pending[part.tool_call_id] = {"name": part.tool_name, "args": part.args_as_dict()}
+                        step_number += 1
+                        call = _step_call(step_number, part.tool_name, part.args_as_dict())
+                        pending[part.tool_call_id] = call
+                        yield {"type": "step_start", "data": call}
                     elif isinstance(event, FunctionToolResultEvent):
-                        call = pending.pop(event.tool_call_id, None) or {"name": "unknown", "args": {}}
+                        call = pending.pop(event.tool_call_id, None)
+                        if call is None:
+                            step_number += 1
+                            call = _step_call(step_number, "unknown", {})
                         is_error = isinstance(event.part, RetryPromptPart)
                         content = event.part.model_response() if is_error else str(event.part.content)
                         if not is_error:
                             last_observations = content
-                        step_number += 1
                         yield {
                             "type": "step",
                             "data": {
-                                "step_number": step_number,
-                                "code": format_tool_call(call["name"], call["args"]),
+                                **call,
                                 "observations": content[:2000],
-                                "tool_calls": [{"name": call["name"], "arguments": json.dumps(call["args"], ensure_ascii=False)}],
                                 "error": content[:500] if is_error else None,
                             },
                         }

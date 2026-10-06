@@ -309,6 +309,7 @@ export const tagsApi = {
 export interface ChatStreamHandlers {
   onSession?: (session: { session_id: number; title: string }) => void
   onRefinedQuestion?: (question: string) => void
+  onStepStart?: (step: Pick<ChatStep, 'step_number' | 'code' | 'tool_calls'>) => void
   onStep: (step: ChatStep) => void
   onAnswer: (answer: string) => void
   onError: (error: string) => void
@@ -373,6 +374,7 @@ export const chatApi = {
               const event = JSON.parse(data)
               if (event.type === 'session') handlers.onSession?.(event.data)
               else if (event.type === 'refined_question') handlers.onRefinedQuestion?.(event.data.question)
+              else if (event.type === 'step_start') handlers.onStepStart?.(event.data)
               else if (event.type === 'step') handlers.onStep(event.data)
               else if (event.type === 'answer') handlers.onAnswer(event.data.answer)
               else if (event.type === 'error') handlers.onError(event.data.message)

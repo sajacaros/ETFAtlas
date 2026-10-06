@@ -262,6 +262,7 @@ export interface ChatStep {
   observations: string
   tool_calls: ToolCall[]
   error: string | null
+  running?: boolean  // 스트리밍 중 결과를 기다리는 단계 (화면 전용)
 }
 
 export interface MatchedCodeExample {

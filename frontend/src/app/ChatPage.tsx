@@ -117,13 +117,24 @@ export default function ChatPage() {
     setStreamingSteps([])
     setStreamingExamples([])
 
-    const collectedSteps: ChatStep[] = []
+    let collectedSteps: ChatStep[] = []
+    // 같은 step_number가 있으면 결과로 바꾸고, 없으면 뒤에 붙인다
+    const upsertStep = (step: ChatStep) => {
+      const exists = collectedSteps.some((s) => s.step_number === step.step_number)
+      collectedSteps = exists
+        ? collectedSteps.map((s) => (s.step_number === step.step_number ? step : s))
+        : [...collectedSteps, step]
+      setStreamingSteps(collectedSteps)
+    }
     let collectedExamples: MatchedCodeExample[] = []
 
     const finish = (content: string) => {
       setMessages([
         ...newMessages,
-        { role: 'assistant', content, steps: collectedSteps, matchedExamples: collectedExamples },
+        {
+          role: 'assistant', content, matchedExamples: collectedExamples,
+          steps: collectedSteps.filter((s) => !s.running),  // 결과 없이 끝난 단계는 남기지 않는다
+        },
       ])
       setStreamingSteps([])
       setStreamingExamples([])
@@ -137,10 +148,8 @@ export default function ChatPage() {
         newMessages = [...newMessages.slice(0, -1), { ...userMessage, refinedQuestion: question }]
         setMessages(newMessages)
       },
-      onStep: (step) => {
-        collectedSteps.push(step)
-        setStreamingSteps([...collectedSteps])
-      },
+      onStepStart: (step) => upsertStep({ ...step, observations: '', error: null, running: true }),
+      onStep: (step) => upsertStep(step),
       onAnswer: (answer) => finish(answer),
       onError: (error) => finish(`죄송합니다. 오류가 발생했습니다: ${error}`),
       onMatchedExamples: (examples) => {
@@ -283,9 +292,7 @@ export default function ChatPage() {
                 <Card className="bg-muted">
                   <CardContent className="p-3 flex items-center gap-2 text-sm text-muted-foreground">
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    {streamingSteps.length > 0
-                      ? `Step ${streamingSteps.length} 실행 중...`
-                      : '생각 중...'}
+                    <span className="truncate">{streamingStatus(streamingSteps)}</span>
                   </CardContent>
                 </Card>
                 {streamingExamples.length > 0 && (
@@ -465,6 +472,15 @@ function MatchedExamplesView({ examples }: { examples: MatchedCodeExample[] }) {
   )
 }
 
+function streamingStatus(steps: ChatStep[]) {
+  const running = steps.filter((s) => s.running)
+  if (running.length > 0) {
+    const names = running.flatMap((s) => s.tool_calls.map((tc) => tc.name)).join(', ')
+    return `Step ${running[0].step_number} 실행 중... [${names}]`
+  }
+  return '생각 중...'  // 다음 도구를 고르거나 답변을 쓰는 중
+}
+
 function StepsView({ steps, defaultOpen = false }: { steps: ChatStep[]; defaultOpen?: boolean }) {
   return (
     <details className="mt-1 group" open={defaultOpen}>
@@ -483,12 +499,14 @@ function StepsView({ steps, defaultOpen = false }: { steps: ChatStep[]; defaultO
                 </span>
               )}
               {step.error && <span className="ml-1 text-destructive">Error</span>}
+              {step.running && <Loader2 className="ml-1 inline w-3 h-3 animate-spin" />}
             </div>
             {step.code && (
               <pre className="bg-muted rounded p-1.5 overflow-x-auto text-[11px] leading-relaxed">
                 {step.code}
               </pre>
             )}
+            {step.running && <div className="text-muted-foreground">결과를 기다리는 중...</div>}
             {step.observations && (
               <pre className="bg-muted rounded p-1.5 overflow-x-auto text-[11px] leading-relaxed max-h-40 overflow-y-auto">
                 {step.observations}

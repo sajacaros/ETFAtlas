@@ -59,6 +59,23 @@ export interface AdminETFTagList {
   tags: string[]
 }
 
+// source — db: 관리자 페이지에서 저장한 값, env: 서버 환경변수 (API 키 value는 끝 4자리만)
+export interface AdminAISettingItem {
+  value: string | null
+  source: 'db' | 'env'
+}
+
+export type AdminAISettingField =
+  | 'llm_api_base' | 'llm_api_key' | 'llm_model'
+  | 'embedding_api_base' | 'embedding_api_key' | 'embedding_model'
+
+export type AdminAISettings = Record<AdminAISettingField, AdminAISettingItem>
+
+export interface AdminAITestResult {
+  llm: { ok: boolean; error: string | null }
+  embedding: { ok: boolean; error: string | null; dim: number | null }
+}
+
 export interface AdminDiscordSettings {
   enabled: boolean
   threshold: number

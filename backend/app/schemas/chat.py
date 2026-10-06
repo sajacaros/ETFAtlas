@@ -105,3 +105,26 @@ class DiscordSettingsUpdate(BaseModel):
         if v and not v.startswith(DISCORD_WEBHOOK_PREFIXES):
             raise ValueError("디스코드 웹훅 주소(https://discord.com/api/webhooks/...)만 입력할 수 있습니다")
         return v
+
+
+# --- Admin AI Settings ---
+class AISettingsUpdate(BaseModel):
+    # 항목마다 None: 기존 값 유지, "": 지우고 서버 환경변수로 되돌림
+    llm_api_base: Optional[str] = None
+    llm_api_key: Optional[str] = None
+    llm_model: Optional[str] = None
+    embedding_api_base: Optional[str] = None
+    embedding_api_key: Optional[str] = None
+    embedding_model: Optional[str] = None
+
+    @field_validator("*")
+    @classmethod
+    def strip(cls, v: Optional[str]) -> Optional[str]:
+        return v.strip() if v is not None else None
+
+    @field_validator("llm_api_base", "embedding_api_base")
+    @classmethod
+    def check_api_base(cls, v: Optional[str]) -> Optional[str]:
+        if v and not v.startswith(("http://", "https://")):
+            raise ValueError("주소는 http:// 또는 https://로 시작해야 합니다")
+        return v.rstrip("/") if v else v

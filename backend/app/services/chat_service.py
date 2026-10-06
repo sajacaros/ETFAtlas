@@ -13,7 +13,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.usage import UsageLimits
 from sqlalchemy.orm import Session
 
-from ..config import get_settings
+from .ai_config import load_ai_config
 from .graph_service import GraphService
 from .embedding_service import EmbeddingService
 from .chat_prompt import SYSTEM_PROMPT
@@ -635,7 +635,7 @@ def _step_call(step_number: int, name: str, args: Dict[str, Any]) -> Dict[str, A
 class ChatService:
     def __init__(self, db: Session):
         self.db = db
-        self._settings = get_settings()
+        self._ai_config = load_ai_config(db)
         self._tag_names = self._load_tag_names()
         self._embedding_service = EmbeddingService(db)
         self.memory = ChatMemory(db)
@@ -670,10 +670,10 @@ class ChatService:
     def _init_agent(self):
         """tool-calling 에이전트 초기화 (LiteLLM 프록시, OpenAI 호환 API)."""
         model = OpenAIChatModel(
-            self._settings.llm_model,
+            self._ai_config.llm_model,
             provider=OpenAIProvider(
-                base_url=self._settings.llm_api_base,
-                api_key=self._settings.llm_api_key,
+                base_url=self._ai_config.llm_api_base,
+                api_key=self._ai_config.llm_api_key,
             ),
         )
         self.agent = Agent(

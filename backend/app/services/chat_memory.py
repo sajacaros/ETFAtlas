@@ -6,6 +6,7 @@ from openai import OpenAI
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
+from .ai_config import load_ai_config
 from ..models.chat import ChatLog, ChatSession
 from .chat_memory_prompt import REFINE_SYSTEM_PROMPT, SUMMARY_SYSTEM_PROMPT
 
@@ -53,10 +54,10 @@ class ChatMemory:
 
     def __init__(self, db: Session):
         self.db = db
-        settings = get_settings()
-        self._client = OpenAI(base_url=settings.llm_api_base, api_key=settings.llm_api_key)
-        self._llm_model = settings.llm_model
-        self.window = settings.chat_history_window
+        config = load_ai_config(db)
+        self._client = OpenAI(base_url=config.llm_api_base, api_key=config.llm_api_key)
+        self._llm_model = config.llm_model
+        self.window = get_settings().chat_history_window
 
     def _complete(self, system: str, user: str, max_tokens: int) -> str:
         resp = self._client.chat.completions.create(

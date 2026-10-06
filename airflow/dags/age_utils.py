@@ -1039,6 +1039,42 @@ def _query_holdings(cur, etf_code: str, date_str: str) -> dict:
 DISCORD_MAX_CONTENT = 2000  # 디스코드 메시지 content 최대 길이
 
 
+AI_ENV_DEFAULTS = {
+    'llm_api_base': ('LLM_API_BASE', 'http://localhost:4000'),
+    'llm_api_key': ('LLM_API_KEY', ''),
+    'llm_model': ('LLM_MODEL', 'qwen38-27b'),
+    'embedding_api_base': ('EMBEDDING_API_BASE', 'http://localhost:4000'),
+    'embedding_api_key': ('EMBEDDING_API_KEY', ''),
+    'embedding_model': ('EMBEDDING_MODEL', 'embedding-gemma-300m'),
+}
+
+
+def load_ai_config(conn) -> dict:
+    """LLM/임베딩 접속 설정. 웹(관리자 페이지)에서 저장한 ai_settings가 우선,
+    저장 전이거나 비어 있는 항목은 환경변수를 쓴다. API 키는 암호문이라 복호화한다."""
+    # backend 암호화 유틸 (컨테이너 PYTHONPATH=/opt/backend)
+    from app.utils.encryption import decrypt_value
+
+    config = {name: os.environ.get(env, default) for name, (env, default) in AI_ENV_DEFAULTS.items()}
+    cur = conn.cursor()
+    try:
+        cur.execute(f"SELECT {', '.join(AI_ENV_DEFAULTS)} FROM ai_settings WHERE id = 1")
+        row = cur.fetchone()
+    finally:
+        cur.close()
+    for name, value in zip(AI_ENV_DEFAULTS, row or ()):
+        if not value:
+            continue
+        if name.endswith('_api_key'):
+            try:
+                value = decrypt_value(value)
+            except Exception:
+                log.warning("Failed to decrypt ai_settings.%s; using environment", name)
+                continue
+        config[name] = value
+    return config
+
+
 def _load_discord_settings(conn) -> dict:
     """디스코드 알림 설정. 웹(관리자 페이지)에서 저장한 discord_settings가 우선,
     저장 전이거나 주소가 비었으면 환경변수 DISCORD_WEBHOOK_URL을 쓴다."""

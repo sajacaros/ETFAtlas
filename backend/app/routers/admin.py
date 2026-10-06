@@ -13,6 +13,9 @@ from ..services.member_service import MemberNotFoundError, MemberService, SelfAc
 from ..models.chat import ChatLog, ChatLogStatus
 from ..models.code_example import CodeExample
 from ..models.discord_setting import DiscordSetting
+from ..models.ai_setting import AISetting
+from ..services.ai_config import AI_CONFIG_FIELDS, SECRET_FIELDS, load_ai_config, stored_value
+from ..utils.encryption import encrypt_value
 from ..models.invitation import Invitation
 from ..models.user import User
 from ..utils.time import utcnow
@@ -23,6 +26,7 @@ from ..schemas.chat import (
     EmbedRequest,
     ETFTagsUpdate,
     DiscordSettingsUpdate,
+    AISettingsUpdate,
 )
 
 logger = logging.getLogger(__name__)
@@ -483,6 +487,102 @@ async def test_discord_webhook(
         logger.warning(f"Discord test failed: {type(e).__name__} status={status}")
         raise HTTPException(status_code=502, detail="디스코드 전송에 실패했습니다. 웹훅 주소를 확인하세요.")
     return {"ok": True}
+
+
+# === AI(LLM/임베딩) 접속 설정 ===
+
+# code_examples.embedding 컬럼이 vector(768)이라 다른 차원의 임베딩 모델은 쓸 수 없다
+EMBEDDING_DIM = 768
+
+
+def _mask_secret(value: str | None) -> str | None:
+    """API 키는 비밀값 — 응답에는 끝 4자리만 남긴다."""
+    if not value:
+        return None
+    return f"…{value[-4:]}"
+
+
+def _ai_settings_response(db: Session) -> dict:
+    """항목마다 지금 쓰이는 값과 출처(db: 관리자 페이지, env: 서버 환경변수)."""
+    setting = db.get(AISetting, 1)
+    config = load_ai_config(db)
+    response = {}
+    for name in AI_CONFIG_FIELDS:
+        value = getattr(config, name)
+        response[name] = {
+            "value": _mask_secret(value) if name in SECRET_FIELDS else (value or None),
+            "source": "db" if stored_value(setting, name) else "env",
+        }
+    return response
+
+
+@router.get("/settings/ai")
+async def get_ai_settings(
+    db: Session = Depends(get_db),
+    admin_id: int = Depends(get_admin_user_id),
+):
+    return _ai_settings_response(db)
+
+
+@router.put("/settings/ai")
+async def update_ai_settings(
+    body: AISettingsUpdate,
+    db: Session = Depends(get_db),
+    admin_id: int = Depends(get_admin_user_id),
+):
+    """항목마다 None은 유지, ""는 지워서 환경변수로 되돌린다. 다음 채팅 요청부터 반영된다."""
+    setting = db.get(AISetting, 1)
+    if setting is None:
+        setting = AISetting(id=1)
+        db.add(setting)
+    for name in AI_CONFIG_FIELDS:
+        value = getattr(body, name)
+        if value is None:
+            continue
+        if value and name in SECRET_FIELDS:
+            value = encrypt_value(value)
+        setattr(setting, name, value or None)
+    db.commit()
+    return _ai_settings_response(db)
+
+
+def _check_ai_connection(config) -> dict:
+    """LLM은 1토큰 응답, 임베딩은 차원까지 확인한다. 오류 메시지는 짧게 자른다."""
+    from openai import OpenAI
+
+    result = {}
+    try:
+        client = OpenAI(base_url=config.llm_api_base, api_key=config.llm_api_key, timeout=20, max_retries=0)
+        client.chat.completions.create(
+            model=config.llm_model,
+            messages=[{"role": "user", "content": "ping"}],
+            max_tokens=1,
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+        )
+        result["llm"] = {"ok": True, "error": None}
+    except Exception as e:
+        result["llm"] = {"ok": False, "error": f"{type(e).__name__}: {str(e)[:200]}"}
+    try:
+        client = OpenAI(
+            base_url=config.embedding_api_base, api_key=config.embedding_api_key, timeout=20, max_retries=0,
+        )
+        dim = len(client.embeddings.create(model=config.embedding_model, input="ping").data[0].embedding)
+        error = None if dim == EMBEDDING_DIM else f"임베딩 차원이 {dim}입니다 ({EMBEDDING_DIM}차원 모델만 쓸 수 있습니다)"
+        result["embedding"] = {"ok": error is None, "error": error, "dim": dim}
+    except Exception as e:
+        result["embedding"] = {"ok": False, "error": f"{type(e).__name__}: {str(e)[:200]}", "dim": None}
+    return result
+
+
+@router.post("/settings/ai/test")
+async def test_ai_settings(
+    db: Session = Depends(get_db),
+    admin_id: int = Depends(get_admin_user_id),
+):
+    """지금 적용된 설정(저장값 + 환경변수)으로 LLM과 임베딩에 실제로 요청해 본다."""
+    import asyncio
+
+    return await asyncio.to_thread(_check_ai_connection, load_ai_config(db))
 
 
 # === Member Invitations ===

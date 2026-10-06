@@ -5,7 +5,7 @@ from openai import OpenAI
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from ..config import get_settings
+from .ai_config import load_ai_config
 from .generalize_prompt import GENERALIZE_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -15,11 +15,11 @@ logger = logging.getLogger(__name__)
 class EmbeddingService:
     def __init__(self, db: Session):
         self.db = db
-        settings = get_settings()
-        self._client = OpenAI(base_url=settings.llm_api_base, api_key=settings.llm_api_key)
-        self._embed_client = OpenAI(base_url=settings.embedding_api_base, api_key=settings.embedding_api_key)
-        self._llm_model = settings.llm_model
-        self._embedding_model = settings.embedding_model  # 768차원 (code_examples.embedding)
+        config = load_ai_config(db)
+        self._client = OpenAI(base_url=config.llm_api_base, api_key=config.llm_api_key)
+        self._embed_client = OpenAI(base_url=config.embedding_api_base, api_key=config.embedding_api_key)
+        self._llm_model = config.llm_model
+        self._embedding_model = config.embedding_model  # 768차원 (code_examples.embedding)
 
     def generalize_question(self, question: str) -> str:
         """LLM으로 질문에서 특정 ETF/종목명을 제거하고 패턴만 남긴 일반화 질문 생성."""

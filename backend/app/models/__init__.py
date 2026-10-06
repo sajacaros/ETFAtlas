@@ -7,6 +7,7 @@ from .chat import ChatLog, ChatLogStatus, ChatSession
 from .code_example import CodeExample
 from .role import Role, UserRole
 from .discord_setting import DiscordSetting
+from .ai_setting import AISetting
 from .invitation import Invitation
 from .auth_session import AuthSession
 from .password_reset import PasswordReset
@@ -26,6 +27,7 @@ __all__ = [
     "Role",
     "UserRole",
     "DiscordSetting",
+    "AISetting",
     "Invitation",
     "AuthSession",
     "PasswordReset",

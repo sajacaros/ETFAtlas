@@ -29,6 +29,9 @@ import type {
   AdminETFTag,
   AdminETFTagList,
   AdminDiscordSettings,
+  AdminAISettings,
+  AdminAISettingField,
+  AdminAITestResult,
   AdminInvitation,
   AdminMember,
   SharedPortfolioListItem,
@@ -480,6 +483,19 @@ export const adminApi = {
   },
   testDiscordWebhook: async () => {
     const { data } = await api.post<{ ok: boolean }>('/admin/settings/discord/test')
+    return data
+  },
+  getAISettings: async () => {
+    const { data } = await api.get<AdminAISettings>('/admin/settings/ai')
+    return data
+  },
+  // 항목이 없으면 기존 값 유지, ''면 지우고 서버 환경변수로 되돌림
+  updateAISettings: async (body: Partial<Record<AdminAISettingField, string>>) => {
+    const { data } = await api.put<AdminAISettings>('/admin/settings/ai', body)
+    return data
+  },
+  testAISettings: async () => {
+    const { data } = await api.post<AdminAITestResult>('/admin/settings/ai/test')
     return data
   },
   listInvitations: async () => {

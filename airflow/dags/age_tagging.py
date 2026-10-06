@@ -5,7 +5,7 @@ ETF 태깅 DAG (Apache AGE)
 이미 태깅된 ETF는 매주 다시 LLM에 돌리지 않는다 — LLM 결과가 실행마다 달라 태그가 흔들리기 때문.
 규칙이나 태그 목록을 바꿨으면 params.full_rebuild=true로 수동 실행해 전체를 다시 태깅한다.
 관리자가 수동 지정한 ETF(ETF.manual_tags)는 규칙/LLM을 건너뛰고 지정한 태그를 그대로 쓴다.
-LLM_API_KEY 필요 (LiteLLM 프록시). 수동 트리거 또는 주간 스케줄.
+LLM 접속 설정 필요 (관리자 페이지 또는 LLM_API_* 환경변수, LiteLLM 프록시). 수동 트리거 또는 주간 스케줄.
 """
 
 from datetime import datetime, timedelta
@@ -14,7 +14,7 @@ from airflow.providers.standard.operators.python import PythonOperator
 import logging
 
 from age_utils import (
-    get_db_connection, init_age, execute_cypher, execute_cypher_batch,
+    get_db_connection, init_age, execute_cypher, execute_cypher_batch, load_ai_config,
     _parse_age_value, INDEX_TAG_PATTERNS, RULE_ONLY_TAGS,
 )
 
@@ -61,18 +61,17 @@ def tag_all_etfs(**context):
     새 태그를 메모리에 모두 구한 뒤 대상 ETF의 TAGGED만 교체한다.
     LLM이 실패한 ETF는 기존 태그를 그대로 두고 tagged_at도 남기지 않아 다음 실행에서 다시 시도한다.
     """
-    import os
     import json
     import re
 
     allowed_set = set(ALLOWED_TAGS)
 
-    api_key = os.environ.get('LLM_API_KEY', '')
-    if not api_key:
-        log.warning("LLM_API_KEY not set, skipping ETF tagging")
-        return
-
     conn = get_db_connection()
+    ai = load_ai_config(conn)
+    if not ai['llm_api_key']:
+        log.warning("LLM API key not set (admin page or LLM_API_KEY), skipping ETF tagging")
+        conn.close()
+        return
     cur = init_age(conn)
 
     try:
@@ -210,11 +209,8 @@ def tag_all_etfs(**context):
         class ETFTagBatchResult(BaseModel):
             results: list[ETFTagResult]
 
-        client = OpenAI(
-            base_url=os.environ.get('LLM_API_BASE', 'http://localhost:4000'),
-            api_key=api_key,
-        )
-        llm_model = os.environ.get('LLM_MODEL', 'qwen38-27b')
+        client = OpenAI(base_url=ai['llm_api_base'], api_key=ai['llm_api_key'])
+        llm_model = ai['llm_model']
 
         tags_str = ", ".join(ALLOWED_TAGS)
         system_prompt = f"""한국 주식시장 ETF 분류 전문가입니다.

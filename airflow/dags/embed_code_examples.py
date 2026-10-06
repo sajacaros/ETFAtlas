@@ -6,20 +6,15 @@ DB에서 status='active'(승인됨, 미임베딩)인 레코드를 찾아 임베�
 """
 
 import logging
-import os
 from datetime import datetime, timedelta
 
 from airflow.sdk import DAG
 from airflow.providers.standard.operators.python import PythonOperator
 
-from age_utils import get_db_connection
+from age_utils import get_db_connection, load_ai_config
 
 log = logging.getLogger(__name__)
 
-LLM_API_BASE = os.environ.get("LLM_API_BASE", "http://localhost:4000")
-LLM_MODEL = os.environ.get("LLM_MODEL", "qwen38-27b")
-EMBEDDING_API_BASE = os.environ.get("EMBEDDING_API_BASE", "http://localhost:4000")
-EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "embedding-gemma-300m")  # 768차원
 BATCH_SIZE = 50
 
 default_args = {
@@ -44,13 +39,13 @@ dag = DAG(
 from generalize_prompt import GENERALIZE_SYSTEM_PROMPT
 
 
-def _generalize_questions(client, questions):
+def _generalize_questions(client, model, questions):
     """LLM으로 질문 목록을 일반화. 개별 호출."""
     results = []
     for q in questions:
         try:
             resp = client.chat.completions.create(
-                model=LLM_MODEL,
+                model=model,
                 messages=[
                     {"role": "system", "content": GENERALIZE_SYSTEM_PROMPT},
                     {"role": "user", "content": q},
@@ -87,19 +82,19 @@ def embed_and_load():
 
         log.info("Found %d unembedded examples to process.", len(rows))
 
-        api_key = os.environ.get("LLM_API_KEY")
-        embedding_api_key = os.environ.get("EMBEDDING_API_KEY")
-        if not api_key or not embedding_api_key:
-            raise RuntimeError("LLM_API_KEY / EMBEDDING_API_KEY is not set")
+        # 관리자 페이지 설정이 우선, 비어 있는 항목은 환경변수 (임베딩은 768차원 모델)
+        ai = load_ai_config(conn)
+        if not ai["llm_api_key"] or not ai["embedding_api_key"]:
+            raise RuntimeError("LLM / embedding API key is not set (admin page or LLM_API_KEY / EMBEDDING_API_KEY)")
 
-        client = OpenAI(base_url=LLM_API_BASE, api_key=api_key)  # 질문 일반화
-        embed_client = OpenAI(base_url=EMBEDDING_API_BASE, api_key=embedding_api_key)
+        client = OpenAI(base_url=ai["llm_api_base"], api_key=ai["llm_api_key"])  # 질문 일반화
+        embed_client = OpenAI(base_url=ai["embedding_api_base"], api_key=ai["embedding_api_key"])
 
         # question_generalized가 없는 레코드는 LLM으로 생성
         needs_generalization = [r for r in rows if not r[2]]
         if needs_generalization:
             log.info("Generating generalized questions for %d examples.", len(needs_generalization))
-            gen_questions = _generalize_questions(client, [r[1] for r in needs_generalization])
+            gen_questions = _generalize_questions(client, ai["llm_model"], [r[1] for r in needs_generalization])
             for (row_id, _, _), gen_q in zip(needs_generalization, gen_questions):
                 cur.execute(
                     "UPDATE code_examples SET question_generalized = %s WHERE id = %s",
@@ -121,7 +116,7 @@ def embed_and_load():
             embed_inputs = [r[2] or r[1] for r in batch]
 
             resp = embed_client.embeddings.create(
-                model=EMBEDDING_MODEL, input=embed_inputs
+                model=ai["embedding_model"], input=embed_inputs
             )
             embeddings = [item.embedding for item in resp.data]
 

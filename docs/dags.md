@@ -248,6 +248,8 @@ check_market_open → collect_prices → update_snapshots
 | `LLM_MODEL` | 태그 분류/질문 일반화 모델 (기본 `qwen38-27b`) |
 | `EMBEDDING_API_BASE`, `EMBEDDING_API_KEY` | 임베딩용 LiteLLM 프록시 (채팅 모델과 키가 다름) |
 | `EMBEDDING_MODEL` | 임베딩 모델 (기본 `embedding-gemma-300m`, 768차원) |
+
+LLM/임베딩 항목(`LLM_*`, `EMBEDDING_*`)은 관리자 페이지 > AI 탭에서 저장한 값(`ai_settings`)이 우선하고, 비어 있는 항목만 환경변수를 쓴다 (`age_utils.load_ai_config`).
 | `ENCRYPTION_KEY` | 포트폴리오 금액 암호화 키 |
 | `DISCORD_WEBHOOK_URL` | (선택) 수집 완료 디스코드 알림 |
 

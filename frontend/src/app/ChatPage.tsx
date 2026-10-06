@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, KeyboardEvent } from 'react'
 import {
-  Send, Loader2, MessageCircle, ChevronRight, Trash2, BookOpen, Plus, Pencil, Check, X, History, CornerDownRight,
+  Send, Loader2, MessageCircle, ChevronLeft, ChevronRight, Trash2, BookOpen, Plus, Pencil, Check, X, History, CornerDownRight,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -46,6 +46,7 @@ export default function ChatPage() {
   const [streamingSteps, setStreamingSteps] = useState<ChatStep[]>([])
   const [streamingExamples, setStreamingExamples] = useState<MatchedCodeExample[]>([])
   const [showSessions, setShowSessions] = useState(false)
+  const [sessionsCollapsed, setSessionsCollapsed] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<ChatSessionSummary | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -173,7 +174,18 @@ export default function ChatPage() {
   return (
     <div className="flex gap-4 h-[calc(100dvh-6.5rem)] lg:h-[calc(100dvh-4rem)]">
       {/* Sessions (desktop) */}
-      <aside className="hidden md:flex w-60 shrink-0 flex-col border-r pr-3">{sessionList}</aside>
+      <div className="hidden md:flex shrink-0">
+        {!sessionsCollapsed && <aside className="w-60 flex flex-col border-r pr-3">{sessionList}</aside>}
+        <button
+          type="button"
+          onClick={() => setSessionsCollapsed((v) => !v)}
+          className="self-center ml-1 h-20 w-6 flex items-center justify-center rounded-md border bg-background text-muted-foreground hover:text-foreground hover:bg-muted"
+          aria-label={sessionsCollapsed ? '대화 목록 펼치기' : '대화 목록 접기'}
+          title={sessionsCollapsed ? '대화 목록 펼치기' : '대화 목록 접기'}
+        >
+          {sessionsCollapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
+        </button>
+      </div>
 
       <div className="flex-1 min-w-0 flex flex-col relative">
         {/* Header */}
@@ -455,9 +467,9 @@ function MatchedExamplesView({ examples }: { examples: MatchedCodeExample[] }) {
 
 function StepsView({ steps, defaultOpen = false }: { steps: ChatStep[]; defaultOpen?: boolean }) {
   return (
-    <details className="mt-1" open={defaultOpen}>
+    <details className="mt-1 group" open={defaultOpen}>
       <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground flex items-center gap-1 select-none">
-        <ChevronRight className="w-3 h-3" />
+        <ChevronRight className="w-3 h-3 transition-transform group-open:rotate-90" />
         실행 과정 ({steps.length}단계)
       </summary>
       <div className="mt-1 space-y-1">

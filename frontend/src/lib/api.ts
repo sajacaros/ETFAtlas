@@ -337,6 +337,10 @@ export const chatApi = {
   deleteSession: async (id: number) => {
     await api.delete(`/chat/sessions/${id}`)
   },
+  // 실행 중인 도구는 결과까지 기다리고 다음 단계부터 멈춘다 (결과는 열려 있는 스트림으로 온다)
+  stopMessage: async (sessionId: number) => {
+    await api.post(`/chat/sessions/${sessionId}/stop`)
+  },
   // sessionId가 null이면 서버가 새 세션을 만들고 onSession으로 알려준다
   streamMessage: (message: string, sessionId: number | null, handlers: ChatStreamHandlers) => {
     const abortController = new AbortController()

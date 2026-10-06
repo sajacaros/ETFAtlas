@@ -614,6 +614,7 @@ RETURN {code: e.code, name: e.name, company: c.name}"""
 
 MAX_MODEL_REQUESTS = 15
 FALLBACK_ANSWER = "죄송합니다. 답변 생성에 실패했습니다. 다시 질문해 주세요."
+STOPPED_ANSWER = "요청하신 대로 중지했습니다. 지금까지 실행한 단계는 '실행 과정'에서 확인할 수 있어요."
 
 
 def format_tool_call(name: str, args: Dict[str, Any]) -> str:
@@ -741,13 +742,16 @@ class ChatService:
 
     async def chat_stream(
         self, message: str, context: Optional[ConversationContext] = None,
+        stop: Optional[asyncio.Event] = None,
     ) -> AsyncIterator[Dict]:
         """도구 호출을 step_start로, 그 결과를 step 이벤트로, 최종 응답을 answer 이벤트로 스트리밍한다.
 
         맥락이 있으면 먼저 질문을 독립 질문으로 재작성하고, 바뀌었으면 refined_question 이벤트를 보낸다.
         step_start: {step_number, code(도구 호출 표기), tool_calls}
         step: step_start 필드 + {observations, error}
+        stop이 설정되면 실행 중인 도구는 결과까지 기다리고, 다음 모델 요청/도구 호출 전에 멈춘다.
         """
+        stop = stop or asyncio.Event()
         context = context or ConversationContext()
         # LLM/임베딩 호출(동기 HTTP/DB)은 이벤트 루프를 막지 않도록 스레드에서 실행
         question = await asyncio.to_thread(self.memory.refine, message, context)
@@ -761,12 +765,17 @@ class ChatService:
         step_number = 0
         last_observations = ""
         answer = None
+        if stop.is_set():
+            yield {"type": "answer", "data": {"answer": STOPPED_ANSWER}}
+            return
         try:
             async with self.agent.run_stream_events(
                 prompt, usage_limits=UsageLimits(request_limit=MAX_MODEL_REQUESTS),
             ) as stream:
                 async for event in stream:
                     if isinstance(event, FunctionToolCallEvent):
+                        if stop.is_set() and not pending:
+                            break  # 중지 요청 뒤의 새 도구 호출은 실행하지 않는다
                         # 실행 전에 무엇을 하는지 먼저 알리고, 결과는 같은 step_number의 step 이벤트로 채운다
                         part = event.part
                         step_number += 1
@@ -790,6 +799,8 @@ class ChatService:
                                 "error": content[:500] if is_error else None,
                             },
                         }
+                        if stop.is_set() and not pending:
+                            break  # 실행 중이던 도구가 모두 끝났으니 다음 모델 요청 전에 멈춘다
                     elif isinstance(event, AgentRunResultEvent):
                         answer = str(event.result.output).strip()
         except UsageLimitExceeded:
@@ -797,6 +808,8 @@ class ChatService:
         except Exception:
             logger.exception("Chat agent failed")
 
+        if not answer and stop.is_set():
+            answer = STOPPED_ANSWER
         if not answer:
             answer = last_observations[:2000] if last_observations else FALLBACK_ANSWER
         yield {"type": "answer", "data": {"answer": answer}}

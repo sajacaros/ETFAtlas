@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, KeyboardEvent } from 'react'
 import {
-  Send, Loader2, MessageCircle, ChevronLeft, ChevronRight, Trash2, BookOpen, Plus, Pencil, Check, X, History, CornerDownRight,
+  Send, Square, Loader2, MessageCircle, ChevronLeft, ChevronRight, Trash2, BookOpen, Plus, Pencil, Check, X, History, CornerDownRight,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -42,6 +42,7 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<DisplayMessage[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [isStopping, setIsStopping] = useState(false)
   const [isLoadingSession, setIsLoadingSession] = useState(false)
   const [streamingSteps, setStreamingSteps] = useState<ChatStep[]>([])
   const [streamingExamples, setStreamingExamples] = useState<MatchedCodeExample[]>([])
@@ -139,6 +140,7 @@ export default function ChatPage() {
       setStreamingSteps([])
       setStreamingExamples([])
       setIsLoading(false)
+      setIsStopping(false)
       textareaRef.current?.focus()
     }
 
@@ -159,6 +161,14 @@ export default function ChatPage() {
       // 새 세션 추가·최근 활동 순서를 반영
       onDone: () => refreshSessions(),
     })
+  }
+
+  const stopMessage = async () => {
+    if (sessionId === null || isStopping) return
+    setIsStopping(true)
+    try {
+      await chatApi.stopMessage(sessionId)
+    } catch { /* 이미 끝났으면 404 — 스트림이 곧 마무리된다 */ }
   }
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -292,7 +302,7 @@ export default function ChatPage() {
                 <Card className="bg-muted">
                   <CardContent className="p-3 flex items-center gap-2 text-sm text-muted-foreground">
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    <span className="truncate">{streamingStatus(streamingSteps)}</span>
+                    <span className="truncate">{streamingStatus(streamingSteps, isStopping)}</span>
                   </CardContent>
                 </Card>
                 {streamingExamples.length > 0 && (
@@ -318,14 +328,27 @@ export default function ChatPage() {
             rows={1}
             className="resize-none min-h-[44px] max-h-[120px]"
           />
-          <Button
-            onClick={() => sendMessage(input)}
-            disabled={isLoading || isLoadingSession || !input.trim()}
-            size="icon"
-            className="shrink-0 h-[44px] w-[44px]"
-          >
-            <Send className="w-4 h-4" />
-          </Button>
+          {isLoading ? (
+            <Button
+              onClick={stopMessage}
+              disabled={sessionId === null || isStopping}
+              size="icon"
+              variant="outline"
+              title="중지 (실행 중인 단계는 끝까지 기다립니다)"
+              className="shrink-0 h-[44px] w-[44px]"
+            >
+              {isStopping ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4 fill-current" />}
+            </Button>
+          ) : (
+            <Button
+              onClick={() => sendMessage(input)}
+              disabled={isLoadingSession || !input.trim()}
+              size="icon"
+              className="shrink-0 h-[44px] w-[44px]"
+            >
+              <Send className="w-4 h-4" />
+            </Button>
+          )}
         </div>
       </div>
 
@@ -472,8 +495,9 @@ function MatchedExamplesView({ examples }: { examples: MatchedCodeExample[] }) {
   )
 }
 
-function streamingStatus(steps: ChatStep[]) {
+function streamingStatus(steps: ChatStep[], isStopping: boolean) {
   const running = steps.filter((s) => s.running)
+  if (isStopping) return running.length > 0 ? '중지 요청됨 — 실행 중인 단계가 끝나면 멈춰요...' : '중지하는 중...'
   if (running.length > 0) {
     const names = running.flatMap((s) => s.tool_calls.map((tc) => tc.name)).join(', ')
     return `Step ${running[0].step_number} 실행 중... [${names}]`

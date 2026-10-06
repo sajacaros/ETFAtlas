@@ -20,6 +20,9 @@ router = APIRouter()
 
 SESSION_TITLE_LENGTH = 50
 
+# 진행 중인 스트림의 중지 신호 ((user_id, session_id) → Event). uvicorn 단일 워커라 프로세스 메모리로 충분하다
+_stop_events: dict[tuple[int, int], asyncio.Event] = {}
+
 
 class ChatRequest(BaseModel):
     message: str
@@ -144,7 +147,20 @@ async def stream_message(
     def sse(event: dict) -> str:
         return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
+    stop_key = (user_id, session.id)
+    stop = asyncio.Event()
+    _stop_events[stop_key] = stop
+
     async def event_generator():
+        try:
+            async for chunk in _stream_events():
+                yield chunk
+        finally:
+            # 끝났거나 클라이언트가 끊었을 때 등록을 지운다 (같은 세션의 새 스트림이 덮어썼으면 그대로 둔다)
+            if _stop_events.get(stop_key) is stop:
+                del _stop_events[stop_key]
+
+    async def _stream_events():
         yield sse({"type": "session", "data": {"session_id": session.id, "title": session.title}})
         answer = ""
         refined_question = None
@@ -155,7 +171,7 @@ async def stream_message(
             memory = chat_service.memory
             await asyncio.to_thread(memory.update_summary, session)  # 지난 요약이 실패했으면 여기서 따라잡는다
             context = memory.load_context(session)
-            async for event in chat_service.chat_stream(request.message, context):
+            async for event in chat_service.chat_stream(request.message, context, stop=stop):
                 if event.get("type") == "refined_question":
                     refined_question = event["data"]["question"]
                 elif event.get("type") == "step":
@@ -185,6 +201,18 @@ async def stream_message(
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@router.post("/sessions/{session_id}/stop", status_code=204)
+async def stop_message(
+    session_id: int,
+    user_id: int = Depends(get_current_user_id),
+):
+    """진행 중인 답변을 멈춘다. 실행 중인 도구는 결과까지 기다리고, 그다음 단계부터 실행하지 않는다."""
+    stop = _stop_events.get((user_id, session_id))
+    if stop is None:
+        raise HTTPException(status_code=404, detail="No running chat in this session")
+    stop.set()
 
 
 # --- Sessions ---

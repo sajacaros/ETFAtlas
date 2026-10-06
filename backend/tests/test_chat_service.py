@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import pytest
@@ -92,6 +93,35 @@ async def test_chat_stream_announces_step_before_result(service):
         if e["type"] == "step":
             assert e["data"]["code"] == starts[e["data"]["step_number"]]["code"]
     assert "observations" not in starts[1]
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_stop_waits_for_running_tools(service):
+    stop = asyncio.Event()
+    tool = service._tools["get_price"]
+    original = tool.forward
+
+    def forward_then_stop(**kwargs):
+        stop.set()  # 첫 도구가 실행되는 도중 중지 요청
+        return original(**kwargs)
+
+    tool.forward = forward_then_stop
+    events = [e async for e in service.chat_stream("종가 알려줘", stop=stop)]
+    steps = [e["data"] for e in events if e["type"] == "step"]
+    answers = [e["data"]["answer"] for e in events if e["type"] == "answer"]
+
+    assert [s["step_number"] for s in steps] == [1, 2]  # 같이 실행 중이던 도구는 결과까지 받는다
+    assert all(s["error"] is None for s in steps)
+    assert answers == [cs.STOPPED_ANSWER]  # 다음 모델 요청(최종 답변)은 쓰지 않는다
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_stop_before_agent_runs(service):
+    stop = asyncio.Event()
+    stop.set()
+    events = [e async for e in service.chat_stream("종가 알려줘", stop=stop)]
+    assert [e["type"] for e in events] == ["answer"]
+    assert events[0]["data"]["answer"] == cs.STOPPED_ANSWER
 
 
 @pytest.mark.asyncio

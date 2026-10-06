@@ -749,14 +749,18 @@ class ChatService:
         맥락이 있으면 먼저 질문을 독립 질문으로 재작성하고, 바뀌었으면 refined_question 이벤트를 보낸다.
         step_start: {step_number, code(도구 호출 표기), tool_calls}
         step: step_start 필드 + {observations, error}
+        status: {stage} — 도구 실행 전 준비 단계(refining → searching_examples → thinking)를 알린다
         stop이 설정되면 실행 중인 도구는 결과까지 기다리고, 다음 모델 요청/도구 호출 전에 멈춘다.
         """
         stop = stop or asyncio.Event()
         context = context or ConversationContext()
         # LLM/임베딩 호출(동기 HTTP/DB)은 이벤트 루프를 막지 않도록 스레드에서 실행
+        if not context.is_empty():  # 맥락이 없으면 재작성하지 않는다
+            yield {"type": "status", "data": {"stage": "refining"}}
         question = await asyncio.to_thread(self.memory.refine, message, context)
         if question != message:
             yield {"type": "refined_question", "data": {"question": question}}
+        yield {"type": "status", "data": {"stage": "searching_examples"}}
         prompt, matched_examples = await asyncio.to_thread(self._build_prompt, question, context, message)
         if matched_examples:
             yield {"type": "matched_examples", "data": {"examples": matched_examples}}
@@ -768,6 +772,7 @@ class ChatService:
         if stop.is_set():
             yield {"type": "answer", "data": {"answer": STOPPED_ANSWER}}
             return
+        yield {"type": "status", "data": {"stage": "thinking"}}
         try:
             async with self.agent.run_stream_events(
                 prompt, usage_limits=UsageLimits(request_limit=MAX_MODEL_REQUESTS),

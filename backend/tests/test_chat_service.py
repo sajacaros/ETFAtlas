@@ -120,8 +120,19 @@ async def test_chat_stream_stop_before_agent_runs(service):
     stop = asyncio.Event()
     stop.set()
     events = [e async for e in service.chat_stream("종가 알려줘", stop=stop)]
-    assert [e["type"] for e in events] == ["answer"]
-    assert events[0]["data"]["answer"] == cs.STOPPED_ANSWER
+    assert [e["type"] for e in events] == ["status", "answer"]  # 예시 검색까지만 하고 에이전트는 돌리지 않는다
+    assert events[-1]["data"]["answer"] == cs.STOPPED_ANSWER
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_reports_stages(service):
+    stages = [e["data"]["stage"] async for e in service.chat_stream("종가 알려줘") if e["type"] == "status"]
+    assert stages == ["searching_examples", "thinking"]  # 맥락이 없으면 질문 재작성 단계는 건너뛴다
+
+    from app.services.chat_memory import ConversationContext, Turn
+    context = ConversationContext(turns=[Turn("KODEX 200 정보 알려줘", "KODEX 200(069500)은 ...")])
+    stages = [e["data"]["stage"] async for e in service.chat_stream("종가 알려줘", context) if e["type"] == "status"]
+    assert stages == ["refining", "searching_examples", "thinking"]
 
 
 @pytest.mark.asyncio
@@ -136,7 +147,7 @@ async def test_chat_collects_result(service):
 async def test_chat_stream_refines_with_context(service):
     from app.services.chat_memory import ConversationContext, Turn
     context = ConversationContext(turns=[Turn("KODEX 200 정보 알려줘", "KODEX 200(069500)은 ...")])
-    events = [e async for e in service.chat_stream("종가 알려줘", context)]
+    events = [e async for e in service.chat_stream("종가 알려줘", context) if e["type"] != "status"]
     assert events[0] == {"type": "refined_question", "data": {"question": "KODEX 200(069500)의 종가 알려줘"}}
     result = await service.chat("종가 알려줘", context)
     assert result["refined_question"] == "KODEX 200(069500)의 종가 알려줘"

@@ -9,7 +9,7 @@ import { Textarea } from '@/components/ui/textarea'
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
-import { chatApi } from '@/lib/api'
+import { chatApi, type ChatStage } from '@/lib/api'
 import type { ChatSessionDetail, ChatSessionSummary, ChatStep, MatchedCodeExample } from '@/types/api'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -45,6 +45,7 @@ export default function ChatPage() {
   const [isStopping, setIsStopping] = useState(false)
   const [isLoadingSession, setIsLoadingSession] = useState(false)
   const [streamingSteps, setStreamingSteps] = useState<ChatStep[]>([])
+  const [streamingStage, setStreamingStage] = useState<ChatStage | null>(null)
   const [streamingExamples, setStreamingExamples] = useState<MatchedCodeExample[]>([])
   const [showSessions, setShowSessions] = useState(false)
   const [sessionsCollapsed, setSessionsCollapsed] = useState(false)
@@ -116,6 +117,7 @@ export default function ChatPage() {
     setInput('')
     setIsLoading(true)
     setStreamingSteps([])
+    setStreamingStage(null)
     setStreamingExamples([])
 
     let collectedSteps: ChatStep[] = []
@@ -146,6 +148,7 @@ export default function ChatPage() {
 
     chatApi.streamMessage(trimmed, sessionId, {
       onSession: ({ session_id }) => setSessionId(session_id),
+      onStatus: setStreamingStage,
       onRefinedQuestion: (question) => {
         newMessages = [...newMessages.slice(0, -1), { ...userMessage, refinedQuestion: question }]
         setMessages(newMessages)
@@ -302,7 +305,7 @@ export default function ChatPage() {
                 <Card className="bg-muted">
                   <CardContent className="p-3 flex items-center gap-2 text-sm text-muted-foreground">
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    <span className="truncate">{streamingStatus(streamingSteps, isStopping)}</span>
+                    <span className="truncate">{streamingStatus(streamingSteps, streamingStage, isStopping)}</span>
                   </CardContent>
                 </Card>
                 {streamingExamples.length > 0 && (
@@ -495,14 +498,21 @@ function MatchedExamplesView({ examples }: { examples: MatchedCodeExample[] }) {
   )
 }
 
-function streamingStatus(steps: ChatStep[], isStopping: boolean) {
+const STAGE_LABELS: Record<ChatStage, string> = {
+  refining: '질문 이해 중...',
+  searching_examples: '예시 찾는 중...',
+  thinking: '생각 중...',
+}
+
+function streamingStatus(steps: ChatStep[], stage: ChatStage | null, isStopping: boolean) {
   const running = steps.filter((s) => s.running)
   if (isStopping) return running.length > 0 ? '중지 요청됨 — 실행 중인 단계가 끝나면 멈춰요...' : '중지하는 중...'
   if (running.length > 0) {
     const names = running.flatMap((s) => s.tool_calls.map((tc) => tc.name)).join(', ')
     return `Step ${running[0].step_number} 실행 중... [${names}]`
   }
-  return '생각 중...'  // 다음 도구를 고르거나 답변을 쓰는 중
+  if (steps.length > 0 || !stage) return '생각 중...'  // 다음 도구를 고르거나 답변을 쓰는 중
+  return STAGE_LABELS[stage]
 }
 
 function StepsView({ steps, defaultOpen = false }: { steps: ChatStep[]; defaultOpen?: boolean }) {

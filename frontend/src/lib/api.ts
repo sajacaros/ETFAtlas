@@ -306,9 +306,13 @@ export const tagsApi = {
 }
 
 // Chat
+// 도구 실행 전 준비 단계: 질문 재작성(맥락이 있을 때만) → 참고 예시 검색 → 에이전트 실행
+export type ChatStage = 'refining' | 'searching_examples' | 'thinking'
+
 export interface ChatStreamHandlers {
   onSession?: (session: { session_id: number; title: string }) => void
   onRefinedQuestion?: (question: string) => void
+  onStatus?: (stage: ChatStage) => void
   onStepStart?: (step: Pick<ChatStep, 'step_number' | 'code' | 'tool_calls'>) => void
   onStep: (step: ChatStep) => void
   onAnswer: (answer: string) => void
@@ -378,6 +382,7 @@ export const chatApi = {
               const event = JSON.parse(data)
               if (event.type === 'session') handlers.onSession?.(event.data)
               else if (event.type === 'refined_question') handlers.onRefinedQuestion?.(event.data.question)
+              else if (event.type === 'status') handlers.onStatus?.(event.data.stage)
               else if (event.type === 'step_start') handlers.onStepStart?.(event.data)
               else if (event.type === 'step') handlers.onStep(event.data)
               else if (event.type === 'answer') handlers.onAnswer(event.data.answer)

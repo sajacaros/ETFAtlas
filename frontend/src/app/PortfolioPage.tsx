@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Trash2, ArrowLeft, AlertTriangle, RefreshCw, Pencil, Check, BarChart3, Eye, EyeOff, GripVertical, Share2 } from 'lucide-react'
+import { Plus, Trash2, ArrowLeft, AlertTriangle, RefreshCw, Pencil, Check, BarChart3, Eye, EyeOff, GripVertical, Share2, Copy } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
@@ -46,6 +46,7 @@ function formatNumber(n: number): string {
 function SortablePortfolioCard({
   portfolio: p,
   onSelect,
+  onDuplicate,
   onDelete,
   onToggleSnapshot,
   onDashboard,
@@ -54,6 +55,7 @@ function SortablePortfolioCard({
 }: {
   portfolio: Portfolio
   onSelect: (id: number) => void
+  onDuplicate: (id: number) => void
   onDelete: (id: number) => void
   onToggleSnapshot: (id: number, enabled: boolean) => void
   onDashboard: (id: number) => void
@@ -107,6 +109,17 @@ function SortablePortfolioCard({
               })()}
             </span>
           )}
+          <Button
+            variant="ghost"
+            size="sm"
+            title="복제"
+            onClick={(e) => {
+              e.stopPropagation()
+              onDuplicate(p.id)
+            }}
+          >
+            <Copy className="w-4 h-4" />
+          </Button>
           <Button
             variant="ghost"
             size="sm"
@@ -371,6 +384,16 @@ export default function PortfolioPage() {
       toast({ title: '포트폴리오가 생성되었습니다' })
     } catch {
       toast({ title: '생성 실패', variant: 'destructive' })
+    }
+  }
+
+  const handleDuplicate = async (id: number) => {
+    try {
+      const p = await portfolioApi.duplicate(id)
+      setPortfolios((prev) => [...prev, p])
+      toast({ title: `'${p.name}'이(가) 생성되었습니다` })
+    } catch {
+      toast({ title: '복제 실패', variant: 'destructive' })
     }
   }
 
@@ -1046,6 +1069,7 @@ export default function PortfolioPage() {
                   key={p.id}
                   portfolio={p}
                   onSelect={selectPortfolio}
+                  onDuplicate={handleDuplicate}
                   onDelete={handleDelete}
                   onToggleSnapshot={handleToggleSnapshot}
                   onDashboard={(id) => navigate(`/portfolio/${id}/dashboard`)}

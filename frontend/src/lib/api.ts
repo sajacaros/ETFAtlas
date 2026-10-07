@@ -211,6 +211,10 @@ export const portfolioApi = {
   delete: async (id: number) => {
     await api.delete(`/portfolios/${id}`)
   },
+  duplicate: async (id: number) => {
+    const { data } = await api.post<Portfolio>(`/portfolios/${id}/duplicate`)
+    return data
+  },
   batchUpdate: async (id: number, params: {
     name?: string;
     calculation_base?: string;

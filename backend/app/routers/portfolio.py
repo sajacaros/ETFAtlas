@@ -160,6 +160,39 @@ async def create_portfolio(
     return portfolio
 
 
+@router.post("/{portfolio_id}/duplicate", response_model=PortfolioResponse, status_code=status.HTTP_201_CREATED)
+async def duplicate_portfolio(
+    portfolio_id: int,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """목표 비중·보유 종목까지 복사한 새 포트폴리오 생성. 스냅샷·공유 설정은 복사하지 않음."""
+    source = _get_portfolio_or_404(db, portfolio_id, user_id)
+    max_order = db.query(func.max(Portfolio.display_order)).filter(
+        Portfolio.user_id == user_id
+    ).scalar() or 0
+    suffix = " (사본)"
+    copy = Portfolio(
+        user_id=user_id,
+        name=source.name[:255 - len(suffix)] + suffix,
+        calculation_base=source.calculation_base,
+        target_total_amount=source.target_total_amount,
+        display_order=max_order + 1,
+        target_allocations=[
+            TargetAllocation(ticker=t.ticker, target_weight=t.target_weight)
+            for t in source.target_allocations
+        ],
+        holdings=[
+            Holding(ticker=h.ticker, quantity=h.quantity, avg_price=h.avg_price)
+            for h in source.holdings
+        ],
+    )
+    db.add(copy)
+    db.commit()
+    db.refresh(copy)
+    return copy
+
+
 @router.put("/{portfolio_id}/share", response_model=ShareToggleResponse)
 async def toggle_share(
     portfolio_id: int,

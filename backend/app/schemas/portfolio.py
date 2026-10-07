@@ -3,11 +3,17 @@ from typing import Optional
 from decimal import Decimal
 
 
+class TargetAllocationCreate(BaseModel):
+    ticker: str
+    target_weight: Decimal
+
+
 # --- Portfolio ---
 class PortfolioCreate(BaseModel):
     name: str = "My Portfolio"
     calculation_base: str = "CURRENT_TOTAL"
     target_total_amount: Optional[Decimal] = None
+    targets: list[TargetAllocationCreate] = []  # 구성종목 분석에서 저장할 때 목표 비중을 함께 넣는다
 
 
 class PortfolioUpdate(BaseModel):
@@ -44,11 +50,6 @@ class PortfolioResponse(BaseModel):
 
 
 # --- Target Allocation ---
-class TargetAllocationCreate(BaseModel):
-    ticker: str
-    target_weight: Decimal
-
-
 class TargetAllocationUpdate(BaseModel):
     target_weight: Decimal
 

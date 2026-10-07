@@ -429,6 +429,40 @@ ETF 가격 데이터 (캔들차트용)
 }
 ```
 
+### POST /api/etfs/composition
+
+ETF 투자 비중으로 구성종목 비중 계산 (구성종목 분석 화면). ETF 비중은 합계 100%로 환산하고, 여러 ETF에 겹치는 종목은 합산해 상위 30개를 돌려준다. ETF마다 수집된 상위 30개 구성종목만 반영하며, `CASH`는 환산에서 뺀다.
+
+**Request Body**
+```typescript
+{
+  "items": [
+    { "code": string, "weight": number }   // weight: 입력 비중 (0 이상, 합계는 100이 아니어도 됨)
+  ]
+}
+```
+
+**Response**
+```typescript
+{
+  "stocks": [
+    {
+      "rank": number,
+      "stock_code": string,
+      "stock_name": string,
+      "weight": number,          // 포트폴리오 비중 (%)
+      "etfs": [                  // 기여 비중 내림차순
+        { "code": string, "name": string, "weight": number }
+      ]
+    }
+  ],
+  "total_stocks": number,        // 합산 전체 종목 수
+  "as_of": string | null         // 구성종목 기준일 (가장 최근)
+}
+```
+
+같은 ETF가 두 번 들어 있으면 400.
+
 ---
 
 ## 워치리스트 API (인증 필요)

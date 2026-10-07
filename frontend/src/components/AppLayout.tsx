@@ -21,6 +21,7 @@ import {
   PanelLeftOpen,
   Globe2,
   Gamepad2,
+  Layers,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import StoryDialog from '@/components/StoryDialog'
@@ -103,6 +104,7 @@ function SidebarBody({
   const mainItems: NavItem[] = [
     { to: '/', label: 'ETF 검색', icon: Search, end: true },
     { to: '/portfolio', label: '포트폴리오', icon: PieChart },
+    { to: '/composition', label: '구성종목 분석', icon: Layers },
     { to: '/shared', label: '공유 포트폴리오', icon: Share2 },
     { to: '/watchlist/changes', label: '비중 변화', icon: Bell, dot: hasNew },
     { to: '/chat', label: 'ETF 챗봇', icon: MessageCircle },

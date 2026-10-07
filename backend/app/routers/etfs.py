@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..services.graph_service import GraphService
 from ..services.etf_service import ETFService
+from ..models.etf import ETF
+from ..domain.composition import ETFAllocation, aggregate_composition
 
 router = APIRouter()
 
@@ -72,6 +74,38 @@ class ETFSearchResponse(BaseModel):
     name: str
 
 
+class CompositionItem(BaseModel):
+    code: str
+    weight: float = Field(ge=0)
+
+
+class CompositionRequest(BaseModel):
+    items: List[CompositionItem] = Field(max_length=50)
+
+
+class CompositionETF(BaseModel):
+    code: str
+    name: str
+    weight: float
+
+
+class CompositionStock(BaseModel):
+    rank: int
+    stock_code: str
+    stock_name: str
+    weight: float
+    etfs: List[CompositionETF]
+
+
+class CompositionResponse(BaseModel):
+    stocks: List[CompositionStock]
+    total_stocks: int
+    as_of: str | None = None
+
+
+COMPOSITION_TOP_N = 30
+
+
 @router.get("/latest-date")
 async def get_latest_date(db: Session = Depends(get_db)):
     """최신 가격 데이터 기준일 조회"""
@@ -113,6 +147,43 @@ async def search_etfs(
     """ETF 검색 (RDB 기반, 전체 ETF 대상)"""
     service = ETFService(db)
     return service.search_etfs(q, limit)
+
+
+@router.post("/composition", response_model=CompositionResponse)
+async def get_composition(request: CompositionRequest, db: Session = Depends(get_db)):
+    """ETF 투자 비중으로 구성종목 비중 계산. ETF 비중은 100%로 환산하고 겹치는 종목은 합산해 상위 30개"""
+    # 현금은 구성종목이 없으므로 환산에서도 뺀다
+    items = [i for i in request.items if i.code.upper() != "CASH"]
+    codes = list(dict.fromkeys(i.code for i in items))
+    if len(codes) != len(items):
+        raise HTTPException(status_code=400, detail="같은 ETF가 두 번 들어 있습니다")
+    names = {e.code: e.name for e in db.query(ETF).filter(ETF.code.in_(codes)).all()}
+
+    graph = GraphService(db)
+    allocations = []
+    as_of = None
+    for item in items:
+        holdings = graph.get_etf_holdings_full(item.code) if item.weight > 0 else []
+        for h in holdings:
+            if h.get("recorded_at") and (as_of is None or h["recorded_at"] > as_of):
+                as_of = h["recorded_at"]
+        allocations.append(ETFAllocation(item.code, names.get(item.code, item.code), item.weight, holdings))
+
+    stocks = aggregate_composition(allocations)
+    return CompositionResponse(
+        stocks=[
+            CompositionStock(
+                rank=i + 1,
+                stock_code=s.stock_code,
+                stock_name=s.stock_name,
+                weight=s.weight,
+                etfs=[CompositionETF(code=e.code, name=e.name, weight=e.weight) for e in s.etfs],
+            )
+            for i, s in enumerate(stocks[:COMPOSITION_TOP_N])
+        ],
+        total_stocks=len(stocks),
+        as_of=as_of,
+    )
 
 
 @router.get("/{code}", response_model=ETFResponse)

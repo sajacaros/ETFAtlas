@@ -442,3 +442,24 @@ export interface RiskAnalysisResponse {
   chart_data: RiskChartPoint[]
   drawdown_data: DrawdownPoint[]
 }
+
+// Composition (구성종목 분석)
+export interface CompositionETF {
+  code: string
+  name: string
+  weight: number  // 이 ETF를 통해 들어온 포트폴리오 비중(%)
+}
+
+export interface CompositionStock {
+  rank: number
+  stock_code: string
+  stock_name: string
+  weight: number  // 포트폴리오 비중(%)
+  etfs: CompositionETF[]
+}
+
+export interface CompositionResponse {
+  stocks: CompositionStock[]
+  total_stocks: number
+  as_of: string | null
+}

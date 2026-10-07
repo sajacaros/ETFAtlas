@@ -8,6 +8,7 @@ import AppLayout, { PublicLayout } from './components/AppLayout'
 import HomePage from './app/HomePage'
 import ETFDetailPage from './app/ETFDetailPage'
 import ChatPage from './app/ChatPage'
+import CompositionPage from './app/CompositionPage'
 import PortfolioPage from './app/PortfolioPage'
 import PortfolioDashboardPage from './app/PortfolioDashboardPage'
 import WatchlistChangesPage from './app/WatchlistChangesPage'
@@ -80,6 +81,7 @@ function App() {
             <Route path="/portfolio/dashboard" element={<PortfolioDashboardPage />} />
             <Route path="/portfolio/:id/dashboard" element={<PortfolioDashboardPage />} />
             <Route path="/watchlist/changes" element={<WatchlistChangesPage />} />
+            <Route path="/composition" element={<CompositionPage />} />
             <Route path="/shared" element={<SharedPortfoliosPage />} />
             <Route path="/shared/:shareToken" element={<SharedPortfolioDetailPage />} />
             <Route path="/chat" element={<ChatPage />} />

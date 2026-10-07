@@ -195,10 +195,14 @@ interface ETFInfoDialogProps {
   name?: string
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** 포트폴리오에서 이 ETF의 비중(%). 주면 구성 종목에 포트폴리오 비중 열을 더한다 */
+  portfolioWeight?: number
+  /** 상세 보기를 새 탭으로 연다 (입력 중인 화면을 유지해야 할 때) */
+  detailInNewTab?: boolean
 }
 
 /** ETF 정보 카드(시가총액 포함) + 구성 종목 모달. 가격 추이는 상세 페이지에서만 */
-export function ETFInfoDialog({ code, name, open, onOpenChange }: ETFInfoDialogProps) {
+export function ETFInfoDialog({ code, name, open, onOpenChange, portfolioWeight, detailInNewTab }: ETFInfoDialogProps) {
   const [etf, setEtf] = useState<ETF | null>(null)
   const [tags, setTags] = useState<string[]>([])
   const [holdings, setHoldings] = useState<Holding[]>([])
@@ -238,8 +242,23 @@ export function ETFInfoDialog({ code, name, open, onOpenChange }: ETFInfoDialogP
         <DialogHeader>
           <DialogTitle className="text-xl">{etf?.name ?? name ?? code}</DialogTitle>
           <DialogDescription className="flex items-center gap-2">
-            <span>{[code, etf && dividendCycleLabel(etf.dividend_cycle)].filter(Boolean).join(' · ')}</span>
-            {etf && (
+            <span>
+              {[
+                code,
+                etf && dividendCycleLabel(etf.dividend_cycle),
+                portfolioWeight != null && `포트폴리오 비중 ${portfolioWeight.toFixed(1)}%`,
+              ].filter(Boolean).join(' · ')}
+            </span>
+            {etf && (detailInNewTab ? (
+              <a
+                href={`/etf/${code}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-blue-600 hover:underline"
+              >
+                상세 페이지 열기 ↗
+              </a>
+            ) : (
               <Link
                 to={`/etf/${code}`}
                 className="text-xs text-blue-600 hover:underline"
@@ -247,7 +266,7 @@ export function ETFInfoDialog({ code, name, open, onOpenChange }: ETFInfoDialogP
               >
                 상세 보기
               </Link>
-            )}
+            ))}
           </DialogDescription>
         </DialogHeader>
 
@@ -270,6 +289,7 @@ export function ETFInfoDialog({ code, name, open, onOpenChange }: ETFInfoDialogP
                         <TableHead>종목명</TableHead>
                         <TableHead>종목코드</TableHead>
                         <TableHead className="text-right">비중</TableHead>
+                        {portfolioWeight != null && <TableHead className="text-right">포트폴리오 비중</TableHead>}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -278,6 +298,11 @@ export function ETFInfoDialog({ code, name, open, onOpenChange }: ETFInfoDialogP
                           <TableCell className="font-medium">{h.stock_name}</TableCell>
                           <TableCell>{h.stock_code}</TableCell>
                           <TableCell className="text-right">{h.weight.toFixed(2)}%</TableCell>
+                          {portfolioWeight != null && (
+                            <TableCell className="text-right font-medium text-primary">
+                              {(portfolioWeight * h.weight / 100).toFixed(2)}%
+                            </TableCell>
+                          )}
                         </TableRow>
                       ))}
                     </TableBody>

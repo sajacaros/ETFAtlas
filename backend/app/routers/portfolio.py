@@ -144,6 +144,9 @@ async def create_portfolio(
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db)
 ):
+    tickers = [t.ticker for t in request.targets]
+    if len(set(tickers)) != len(tickers):
+        raise HTTPException(status_code=400, detail="같은 종목이 두 번 들어 있습니다")
     max_order = db.query(func.max(Portfolio.display_order)).filter(
         Portfolio.user_id == user_id
     ).scalar() or 0
@@ -153,6 +156,10 @@ async def create_portfolio(
         calculation_base=request.calculation_base,
         target_total_amount=request.target_total_amount,
         display_order=max_order + 1,
+        target_allocations=[
+            TargetAllocation(ticker=t.ticker, target_weight=t.target_weight)
+            for t in request.targets
+        ],
     )
     db.add(portfolio)
     db.commit()

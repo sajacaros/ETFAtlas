@@ -19,6 +19,7 @@ import type {
   TagETF,
   TagHolding,
   SimilarETF,
+  CompositionResponse,
   ChatResponse,
   ChatSessionSummary,
   ChatSessionDetail,
@@ -159,6 +160,10 @@ export const etfsApi = {
     const { data } = await api.get<SimilarETF[]>(`/etfs/${code}/similar`, { params: { min_overlap: minOverlap } })
     return data
   },
+  getComposition: async (items: { code: string; weight: number }[], signal?: AbortSignal) => {
+    const { data } = await api.post<CompositionResponse>('/etfs/composition', { items }, { signal })
+    return data
+  },
 }
 
 // Watchlist (즐겨찾기)
@@ -200,7 +205,7 @@ export const portfolioApi = {
     const { data } = await api.get<PortfolioDetail>(`/portfolios/${id}`)
     return data
   },
-  create: async (params: { name: string; calculation_base: string; target_total_amount?: number | null }) => {
+  create: async (params: { name: string; calculation_base: string; target_total_amount?: number | null; targets?: { ticker: string; target_weight: number }[] }) => {
     const { data } = await api.post<Portfolio>('/portfolios/', params)
     return data
   },

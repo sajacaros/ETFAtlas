@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { useNavigate } from 'react-router-dom'
-import { Plus, Trash2, ArrowLeft, AlertTriangle, RefreshCw, Pencil, Check, BarChart3, Eye, EyeOff, GripVertical, Share2, Copy } from 'lucide-react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { Plus, Trash2, ArrowLeft, AlertTriangle, RefreshCw, Pencil, Check, BarChart3, Eye, EyeOff, GripVertical, Share2, Copy, Layers } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
@@ -47,6 +47,7 @@ function SortablePortfolioCard({
   portfolio: p,
   onSelect,
   onDuplicate,
+  onComposition,
   onDelete,
   onToggleSnapshot,
   onDashboard,
@@ -56,6 +57,7 @@ function SortablePortfolioCard({
   portfolio: Portfolio
   onSelect: (id: number) => void
   onDuplicate: (id: number) => void
+  onComposition: (id: number) => void
   onDelete: (id: number) => void
   onToggleSnapshot: (id: number, enabled: boolean) => void
   onDashboard: (id: number) => void
@@ -109,6 +111,17 @@ function SortablePortfolioCard({
               })()}
             </span>
           )}
+          <Button
+            variant="ghost"
+            size="sm"
+            title="구성종목 보기"
+            onClick={(e) => {
+              e.stopPropagation()
+              onComposition(p.id)
+            }}
+          >
+            <Layers className="w-4 h-4" />
+          </Button>
           <Button
             variant="ghost"
             size="sm"
@@ -229,6 +242,7 @@ export default function PortfolioPage() {
   const { isAuthenticated } = useAuth()
   const { toast } = useToast()
   const navigate = useNavigate()
+  const location = useLocation()
   const { visible: amountVisible, toggle: toggleAmount } = useAmountVisibility()
 
   const [portfolios, setPortfolios] = useState<Portfolio[]>([])
@@ -367,6 +381,14 @@ export default function PortfolioPage() {
     await loadDetail(id)
     loadCalc(id)
   }, [loadDetail, loadCalc])
+
+  // 구성종목 분석에서 저장하고 넘어오면 새 포트폴리오를 바로 연다
+  const pendingSelectId = (location.state as { selectId?: number } | null)?.selectId
+  useEffect(() => {
+    if (loading || !pendingSelectId) return
+    navigate(location.pathname, { replace: true, state: null })
+    if (portfolios.some((p) => p.id === pendingSelectId)) selectPortfolio(pendingSelectId)
+  }, [loading, pendingSelectId, portfolios, navigate, location.pathname, selectPortfolio])
 
   const handleCreate = async () => {
     if (!newName.trim()) return
@@ -1070,6 +1092,7 @@ export default function PortfolioPage() {
                   portfolio={p}
                   onSelect={selectPortfolio}
                   onDuplicate={handleDuplicate}
+                  onComposition={(id) => navigate(`/composition?portfolio=${id}`)}
                   onDelete={handleDelete}
                   onToggleSnapshot={handleToggleSnapshot}
                   onDashboard={(id) => navigate(`/portfolio/${id}/dashboard`)}

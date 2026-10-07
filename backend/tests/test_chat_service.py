@@ -62,9 +62,7 @@ def service(monkeypatch):
     svc = cs.ChatService.__new__(cs.ChatService)
     svc._tag_names = []
     svc._tools = {"get_price": FakePriceTool()}
-    svc._build_prompt = lambda question, context, original, portfolio=None: (question, [])
-    svc.db = None
-    svc.user_id = 1
+    svc._build_prompt = lambda question, context, original: (question, [])
     svc.memory = FakeMemory()
     from pydantic_ai import Agent
     svc.agent = Agent(FunctionModel(_scripted_model, stream_function=_scripted_stream),

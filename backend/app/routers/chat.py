@@ -144,7 +144,7 @@ async def send_message(
 ):
     session = _resolve_session(db, user_id, request.session_id, request.message)
     try:
-        chat_service = ChatService(db, user_id)
+        chat_service = ChatService(db)
         memory = chat_service.memory
         await asyncio.to_thread(memory.update_summary, session)  # 지난 요약이 실패했으면 여기서 따라잡는다
         context = memory.load_context(session)
@@ -201,7 +201,7 @@ async def stream_message(
         steps = []
         memory = None
         try:
-            chat_service = ChatService(db, user_id)
+            chat_service = ChatService(db)
             memory = chat_service.memory
             await asyncio.to_thread(memory.update_summary, session)  # 지난 요약이 실패했으면 여기서 따라잡는다
             context = memory.load_context(session)

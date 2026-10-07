@@ -22,7 +22,6 @@ import { useToast } from '@/hooks/use-toast'
 import type { Portfolio, PortfolioDetail, CalculationResult, CalculationRow, CalculationBase, DashboardSummary } from '@/types/api'
 import PortfolioTable from '@/components/PortfolioTable'
 import AddTickerDialog from '@/components/AddTickerDialog'
-import PortfolioKeyTitle from '@/components/PortfolioKeyTitle'
 import { useAmountVisibility, formatMaskedNumber } from '@/hooks/useAmountVisibility'
 import {
   DndContext,
@@ -761,9 +760,7 @@ export default function PortfolioPage() {
               }}
             />
           ) : (
-            <h2 className="text-xl font-bold py-1 px-2">
-              <PortfolioKeyTitle name={detail.name} chatKey={detail.chat_key} />
-            </h2>
+            <h2 className="text-xl font-bold py-1 px-2">{detail.name}</h2>
           )}
           <div className="flex items-center gap-2 ml-auto">
             {calcLoading && <span className="text-sm text-muted-foreground">계산 중...</span>}

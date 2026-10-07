@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { ETFLink } from '@/components/ETFInfo'
-import PortfolioKeyTitle from '@/components/PortfolioKeyTitle'
 import { useParams, Link } from 'react-router-dom'
 import { sharedApi } from '@/lib/api'
 import type { SharedPortfolioDetail, SharedReturnsResponse, SharedReturnsSummary } from '@/types/api'
@@ -82,9 +81,7 @@ export default function SharedPortfolioDetailPage() {
           <Button variant="ghost" size="sm"><ArrowLeft className="w-4 h-4 mr-1" />목록</Button>
         </Link>
         <div className="flex-1">
-          <h1 className="text-2xl font-bold">
-            <PortfolioKeyTitle name={detail.portfolio_name} chatKey={detail.chat_key} />
-          </h1>
+          <h1 className="text-2xl font-bold">{detail.portfolio_name}</h1>
         </div>
         <Button
           variant="outline"

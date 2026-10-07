@@ -192,7 +192,6 @@ export interface PortfolioDetail {
   target_total_amount: number | null
   is_shared: boolean
   share_token: string | null
-  chat_key: string
   snapshot_enabled: boolean
   target_allocations: TargetAllocationItem[]
   holdings: HoldingItem[]
@@ -394,7 +393,6 @@ export interface SharedAllocationItem {
 
 export interface SharedPortfolioDetail {
   portfolio_name: string
-  chat_key: string
   allocations: SharedAllocationItem[]
 }
 

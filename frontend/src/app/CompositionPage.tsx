@@ -105,16 +105,23 @@ export default function CompositionPage() {
       // 현금은 구성종목이 없으므로 불러오지 않는다
       const targets = detail.target_allocations.filter((t) => t.ticker.toUpperCase() !== 'CASH')
       const etfs = await Promise.allSettled(targets.map((t) => etfsApi.get(t.ticker)))
-      setPicks(targets.map((t, i) => {
+      // ETF 목록에 없는 종목(해외 ETF 등)은 구성종목을 관리하지 않으므로 빼고, 그 밖의 오류는 불러오기 실패로 본다
+      const isNotFound = (r: PromiseSettledResult<unknown>) =>
+        r.status === 'rejected' && (r.reason as { response?: { status?: number } })?.response?.status === 404
+      if (etfs.some((r) => r.status === 'rejected' && !isNotFound(r))) throw new Error('ETF 조회 실패')
+      const loaded = targets.flatMap((t, i) => {
         const etf = etfs[i]
-        return {
-          code: t.ticker,
-          name: etf.status === 'fulfilled' ? etf.value.name : t.ticker,
-          weight: String(Number(t.target_weight)),
-        }
-      }))
+        return etf.status === 'fulfilled'
+          ? [{ code: t.ticker, name: etf.value.name, weight: String(Number(t.target_weight)) }]
+          : []
+      })
+      const skipped = targets.length - loaded.length
+      setPicks(loaded)
       setExpanded(true)
-      toast({ title: `'${detail.name}'의 목표 비중을 불러왔습니다` })
+      toast({
+        title: `'${detail.name}'의 목표 비중을 불러왔습니다`,
+        description: skipped > 0 ? `구성종목을 관리하지 않는 ${skipped}개 종목(해외 ETF 등)은 제외했습니다` : undefined,
+      })
     } catch {
       toast({ title: '포트폴리오를 불러오지 못했습니다', variant: 'destructive' })
     }

@@ -150,16 +150,17 @@ async def create_portfolio(
     max_order = db.query(func.max(Portfolio.display_order)).filter(
         Portfolio.user_id == user_id
     ).scalar() or 0
+    targets = [TargetAllocation(ticker=t.ticker, target_weight=t.target_weight) for t in request.targets]
+    # 현금은 기본으로 0% 넣어 둔다 (새 포트폴리오, 구성종목 분석에서 저장 모두)
+    if not any(t.ticker.upper() == "CASH" for t in request.targets):
+        targets.append(TargetAllocation(ticker="CASH", target_weight=Decimal("0")))
     portfolio = Portfolio(
         user_id=user_id,
         name=request.name,
         calculation_base=request.calculation_base,
         target_total_amount=request.target_total_amount,
         display_order=max_order + 1,
-        target_allocations=[
-            TargetAllocation(ticker=t.ticker, target_weight=t.target_weight)
-            for t in request.targets
-        ],
+        target_allocations=targets,
     )
     db.add(portfolio)
     db.commit()

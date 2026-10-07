@@ -28,6 +28,7 @@ async def list_shared_portfolios(db: Session = Depends(get_db)):
             TargetAllocation.portfolio_id,
             func.count(TargetAllocation.id).label("tickers_count"),
         )
+        .filter(TargetAllocation.ticker != "CASH")  # 현금은 종목 수에 넣지 않는다
         .group_by(TargetAllocation.portfolio_id)
         .subquery()
     )

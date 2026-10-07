@@ -3,6 +3,7 @@ import { ETFLink } from '@/components/ETFInfo'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/use-toast'
 import { adminApi } from '@/lib/api'
+import { copyText } from '@/lib/clipboard'
 import type {
   AdminCodeExample, AdminChatLog, AdminETFTag, AdminDiscordSettings, AdminInvitation, AdminMember,
   AdminAISettings, AdminAISettingField, AdminAITestResult,
@@ -471,11 +472,11 @@ function MembersTab() {
     }, '멤버 삭제 실패')
   }
 
-  // http로 접속하면 클립보드 API가 없을 수 있다 — 그때는 대화상자의 링크를 직접 복사
+  // 복사마저 실패하면 대화상자의 링크를 직접 복사
   const copyReset = async () => {
     if (!resetLink) return
     try {
-      await navigator.clipboard.writeText(resetLink.url)
+      await copyText(resetLink.url)
       toast({ title: '재설정 링크를 복사했습니다' })
     } catch {
       toast({ title: '복사하지 못했습니다', description: '링크를 직접 복사하세요.', variant: 'destructive' })
@@ -621,10 +622,10 @@ function InvitationsTab() {
 
   useEffect(() => { load() }, [load])
 
-  // http로 접속하면 클립보드 API가 없을 수 있다 — 그때는 표의 링크를 직접 복사
+  // 복사마저 실패하면 표의 링크를 직접 복사
   const copy = async (token: string) => {
     try {
-      await navigator.clipboard.writeText(inviteUrl(token))
+      await copyText(inviteUrl(token))
       toast({ title: '초대 링크를 복사했습니다' })
     } catch {
       toast({ title: '복사하지 못했습니다', description: '표의 링크를 직접 복사하세요.', variant: 'destructive' })

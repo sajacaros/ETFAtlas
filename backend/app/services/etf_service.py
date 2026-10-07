@@ -10,12 +10,18 @@ class ETFService:
 
     def search_etfs(self, query: str, limit: int = 50) -> List[ETF]:
         stripped = query.replace(" ", "")
+        # Every whitespace-separated token appears in the name, in any order
+        # ("time 나스닥" -> "TIME 미국나스닥100액티브")
+        tokens = query.split() or [query]
+        token_params = {f"tok{i}": f"%{t}%" for i, t in enumerate(tokens)}
+        all_tokens = " AND ".join(f"e.name ILIKE :{k}" for k in token_params)
         rows = self.db.execute(
-            text("""
+            text(f"""
                 SELECT e.code
                 FROM etfs e
                 WHERE e.name ILIKE :like_q OR e.code ILIKE :like_q
                    OR REPLACE(e.name, ' ', '') ILIKE :like_stripped
+                   OR ({all_tokens})
                    OR LOWER(e.name) % LOWER(:q)
                 ORDER BY
                     CASE
@@ -26,8 +32,10 @@ class ETFService:
                         WHEN REPLACE(e.name, ' ', '') ILIKE :starts_stripped THEN 4
                         WHEN e.name ILIKE :like_q THEN 5
                         WHEN REPLACE(e.name, ' ', '') ILIKE :like_stripped THEN 6
-                        ELSE 7
+                        WHEN {all_tokens} THEN 7
+                        ELSE 8
                     END,
+                    similarity(LOWER(e.name), LOWER(:q)) DESC,
                     e.name
                 LIMIT :lim
             """),
@@ -38,6 +46,7 @@ class ETFService:
                 "like_stripped": f"%{stripped}%",
                 "starts_stripped": f"{stripped}%",
                 "lim": limit,
+                **token_params,
             }
         ).fetchall()
         if not rows:

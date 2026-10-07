@@ -24,6 +24,7 @@ const EXAMPLE_QUESTIONS = [
 interface DisplayMessage {
   role: 'user' | 'assistant'
   content: string
+  sentAt?: Date
   refinedQuestion?: string | null
   steps?: ChatStep[]
   matchedExamples?: MatchedCodeExample[]
@@ -31,9 +32,17 @@ interface DisplayMessage {
 
 function toDisplayMessages(detail: ChatSessionDetail): DisplayMessage[] {
   return detail.messages.flatMap((m): DisplayMessage[] => [
-    { role: 'user', content: m.question, refinedQuestion: m.refined_question },
+    // created_at은 타임존 없는 UTC라 'Z'를 붙여 읽는다
+    { role: 'user', content: m.question, refinedQuestion: m.refined_question, sentAt: new Date(m.created_at + 'Z') },
     { role: 'assistant', content: m.answer, steps: m.steps },
   ])
+}
+
+// 2026-09-28 오전 10:47
+function formatSentAt(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const time = d.toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' })
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${time}`
 }
 
 export default function ChatPage() {
@@ -111,7 +120,7 @@ export default function ChatPage() {
     const trimmed = text.trim()
     if (!trimmed || isLoading) return
 
-    const userMessage: DisplayMessage = { role: 'user', content: trimmed }
+    const userMessage: DisplayMessage = { role: 'user', content: trimmed, sentAt: new Date() }
     let newMessages = [...messages, userMessage]
     setMessages(newMessages)
     setInput('')
@@ -264,6 +273,9 @@ export default function ChatPage() {
           {!isLoadingSession && messages.map((msg, i) => (
             <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
               <div className="max-w-[80%]">
+                {msg.sentAt && (
+                  <div className="mb-1 text-right text-xs text-muted-foreground">{formatSentAt(msg.sentAt)}</div>
+                )}
                 <Card
                   className={
                     msg.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted'

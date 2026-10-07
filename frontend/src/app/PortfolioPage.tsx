@@ -17,6 +17,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog'
 import { portfolioApi } from '@/lib/api'
+import { copyText } from '@/lib/clipboard'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/use-toast'
 import type { Portfolio, PortfolioDetail, CalculationResult, CalculationRow, CalculationBase, DashboardSummary } from '@/types/api'
@@ -782,6 +783,30 @@ export default function PortfolioPage() {
                 >
                   <Share2 className="w-4 h-4 mr-1" />
                   {detail.is_shared ? '공유 중' : '공유'}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!calcResult?.rows.length}
+                  onClick={async () => {
+                    if (!calcResult) return
+                    const cell = (v: string) => v.replace(/\|/g, '\\|')
+                    const markdown = [
+                      '| 종목 | 심볼 | 비중 |',
+                      '| --- | --- | ---: |',
+                      ...calcResult.rows.map((r) =>
+                        `| ${cell(r.name)} | ${cell(r.ticker)} | ${Number(r.target_weight).toFixed(1)}% |`),
+                    ].join('\n')
+                    try {
+                      await copyText(markdown)
+                      toast({ title: '구성을 마크다운으로 복사했습니다' })
+                    } catch {
+                      toast({ title: '복사하지 못했습니다', variant: 'destructive' })
+                    }
+                  }}
+                >
+                  <Copy className="w-4 h-4 mr-1" />
+                  복사
                 </Button>
               </>
             )}

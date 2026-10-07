@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/dialog'
 import { portfolioApi } from '@/lib/api'
 import { copyText } from '@/lib/clipboard'
+import { holdingsMarkdown } from '@/lib/holdingsMarkdown'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/use-toast'
 import type { Portfolio, PortfolioDetail, CalculationResult, CalculationRow, CalculationBase, DashboardSummary } from '@/types/api'
@@ -790,13 +791,9 @@ export default function PortfolioPage() {
                   disabled={!calcResult?.rows.length}
                   onClick={async () => {
                     if (!calcResult) return
-                    const cell = (v: string) => v.replace(/\|/g, '\\|')
-                    const markdown = [
-                      '| 종목 | 심볼 | 비중 |',
-                      '| --- | --- | ---: |',
-                      ...calcResult.rows.map((r) =>
-                        `| ${cell(r.name)} | ${cell(r.ticker)} | ${Number(r.target_weight).toFixed(1)}% |`),
-                    ].join('\n')
+                    const markdown = holdingsMarkdown(
+                      calcResult.rows.map((r) => ({ name: r.name, ticker: r.ticker, weight: r.target_weight })),
+                    )
                     try {
                       await copyText(markdown)
                       toast({ title: '구성을 마크다운으로 복사했습니다' })

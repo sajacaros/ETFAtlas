@@ -5,11 +5,14 @@ import { sharedApi } from '@/lib/api'
 import type { SharedPortfolioDetail, SharedReturnsResponse, SharedReturnsSummary } from '@/types/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, ChevronDown, ChevronUp, Download } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronUp, Copy, Download } from 'lucide-react'
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
 } from 'recharts'
 import { generateSharedPdf } from '@/lib/sharedPdf'
+import { copyText } from '@/lib/clipboard'
+import { holdingsMarkdown } from '@/lib/holdingsMarkdown'
+import { useToast } from '@/hooks/use-toast'
 
 const PERIODS = [
   { key: '1w', label: '1주' },
@@ -34,6 +37,17 @@ export default function SharedPortfolioDetailPage() {
   const [returnsError, setReturnsError] = useState<string | null>(null)
   const [chartOpen, setChartOpen] = useState(false)
   const [pdfLoading, setPdfLoading] = useState(false)
+  const { toast } = useToast()
+
+  const handleCopy = async () => {
+    if (!detail) return
+    try {
+      await copyText(holdingsMarkdown(detail.allocations))
+      toast({ title: '구성을 마크다운으로 복사했습니다' })
+    } catch {
+      toast({ title: '복사하지 못했습니다', variant: 'destructive' })
+    }
+  }
 
   const handleDownloadPdf = async () => {
     if (!detail) return
@@ -83,6 +97,16 @@ export default function SharedPortfolioDetailPage() {
         <div className="flex-1">
           <h1 className="text-2xl font-bold">{detail.portfolio_name}</h1>
         </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleCopy}
+          disabled={detail.allocations.length === 0}
+          className="shrink-0"
+        >
+          <Copy className="w-4 h-4 mr-1" />
+          복사
+        </Button>
         <Button
           variant="outline"
           size="sm"

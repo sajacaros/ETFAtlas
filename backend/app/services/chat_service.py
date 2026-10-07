@@ -18,6 +18,10 @@ from .graph_service import GraphService
 from .embedding_service import EmbeddingService
 from .chat_prompt import SYSTEM_PROMPT
 from .chat_memory import ChatMemory, ConversationContext
+from .portfolio_chat import (
+    COMMAND as PORTFOLIO_COMMAND, describe_portfolio, find_accessible_portfolio, parse_portfolio_command,
+)
+from ..models.portfolio import Portfolio
 
 logger = logging.getLogger(__name__)
 
@@ -534,6 +538,35 @@ etf_search로 ETF 코드를 먼저 확인한 후 사용하세요."""
         return json.dumps(results, ensure_ascii=False, default=str)
 
 
+class GetPortfolioTool(ChatTool):
+    name = "get_portfolio"
+    description = """사용자가 `/portfolio <키>`로 첨부한 포트폴리오의 구성을 조회합니다. portfolio_key는 'pf_'로 시작하는 키입니다.
+결과: name, kind(내 포트폴리오/공유 포트폴리오), etfs(ETF별 목표 비중), stocks(ETF 비중대로 합산한 구성종목 상위 30개, via=비중을 보탠 ETF 상위 3개), total_stocks(합산된 전체 종목 수), excluded_from_stocks(구성종목 데이터가 없어 합산에서 뺀 ETF), holdings_as_of(구성종목 기준일)
+stocks의 비중은 현금과 excluded_from_stocks를 뺀 ETF 비중 합을 100%로 환산한 값입니다. 보유 수량·평가금액은 제공하지 않습니다."""
+    inputs = {
+        "portfolio_key": {
+            "type": "string",
+            "description": "포트폴리오 키 (예: 'pf_7Kq2xM9aZt')"
+        }
+    }
+
+    def __init__(self, db: Session, user_id: int):
+        super().__init__()
+        self.db = db
+        self.user_id = user_id
+
+    def forward(self, portfolio_key: str) -> str:
+        portfolio = find_accessible_portfolio(self.db, self.user_id, portfolio_key.strip())
+        if portfolio is None:
+            return "오류: 포트폴리오를 찾을 수 없거나 조회 권한이 없습니다"
+        data = describe_portfolio(self.db, portfolio, self.user_id)
+        data["etfs"] = [_format_percent_fields(e) for e in data["etfs"]]
+        for s in data["stocks"]:
+            _format_percent_fields(s)
+            s["via"] = [_format_percent_fields(e) for e in s["via"]]
+        return json.dumps(data, ensure_ascii=False, default=str)
+
+
 class GraphQueryTool(ChatTool):
     name = "graph_query"
     description = """그래프 DB에 Cypher 쿼리를 직접 실행합니다. 다른 전용 도구로 해결할 수 없는 그래프 관계 질문에 사용하세요.
@@ -615,6 +648,15 @@ RETURN {code: e.code, name: e.name, company: c.name}"""
 MAX_MODEL_REQUESTS = 15
 FALLBACK_ANSWER = "죄송합니다. 답변 생성에 실패했습니다. 다시 질문해 주세요."
 STOPPED_ANSWER = "요청하신 대로 중지했습니다. 지금까지 실행한 단계는 '실행 과정'에서 확인할 수 있어요."
+PORTFOLIO_USAGE_ANSWER = (
+    "포트폴리오 키를 함께 입력해 주세요. 예: `/portfolio pf_xxxxxxxxxx 구성 종목을 정리해줘`\n\n"
+    "키는 포트폴리오 상세 화면이나 공유 포트폴리오 화면에서 이름을 누르면 복사됩니다."
+)
+PORTFOLIO_NOT_FOUND_ANSWER = (
+    "포트폴리오 `{key}`를 찾을 수 없거나 조회 권한이 없습니다. "
+    "본인 포트폴리오나 공유 중인 포트폴리오의 키만 쓸 수 있어요."
+)
+DEFAULT_PORTFOLIO_QUESTION = "이 포트폴리오의 구성을 정리해줘"
 
 
 def format_tool_call(name: str, args: Dict[str, Any]) -> str:
@@ -633,8 +675,10 @@ def _step_call(step_number: int, name: str, args: Dict[str, Any]) -> Dict[str, A
 
 
 class ChatService:
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, user_id: Optional[int] = None):
+        """user_id가 있으면 그 사용자가 볼 수 있는 포트폴리오를 조회하는 get_portfolio 도구를 붙인다."""
         self.db = db
+        self.user_id = user_id
         self._ai_config = load_ai_config(db)
         self._tag_names = self._load_tag_names()
         self._embedding_service = EmbeddingService(db)
@@ -665,6 +709,8 @@ class ChatService:
             CompareETFsTool(db=self.db),
             GraphQueryTool(db=self.db),
         ]
+        if self.user_id is not None:
+            tools.append(GetPortfolioTool(db=self.db, user_id=self.user_id))
         return {t.name: t for t in tools}
 
     def _init_agent(self):
@@ -688,10 +734,14 @@ class ChatService:
             parts.append(f"## 사용 가능한 태그 목록\n{', '.join(self._tag_names)}")
         return "\n\n".join(parts)
 
-    def _build_prompt(self, question: str, context: ConversationContext, original: str) -> tuple:
-        """사용자 프롬프트(참고 예시 + 대화 맥락 + 현재 질문)와 매칭된 예시를 반환한다.
+    def _build_prompt(
+        self, question: str, context: ConversationContext, original: str,
+        portfolio: Optional[Portfolio] = None,
+    ) -> tuple:
+        """사용자 프롬프트(참고 예시 + 대화 맥락 + 첨부 포트폴리오 + 현재 질문)와 매칭된 예시를 반환한다.
 
-        question은 맥락으로 재작성된 독립 질문, original은 사용자가 입력한 원문.
+        question은 맥락으로 재작성된 독립 질문, original은 사용자가 입력한 원문(`/portfolio` 명령은 뗀 것).
+        portfolio는 `/portfolio` 명령으로 첨부되어 권한 확인을 마친 포트폴리오.
         """
         parts = []
         # 예시는 일반화된 질문으로 임베딩되어 있으므로 검색 질의도 같은 방식으로 일반화한다
@@ -703,14 +753,19 @@ class ChatService:
                          "<종목명>, <ETF명>, <운용사> 같은 자리표시자는 현재 질문의 값으로 바꾸고, "
                          "<…의 code>는 앞 호출 결과의 값을 쓰세요. 쿼리 구조(특히 Cypher)는 그대로 따르세요:")
             for ex in code_examples:
-                question = ex.get("question_generalized") or ex["question"]
-                parts.append(f"Q: {question}\n```\n{ex['code']}\n```")
+                example_question = ex.get("question_generalized") or ex["question"]
+                parts.append(f"Q: {example_question}\n```\n{ex['code']}\n```")
             parts.append("")
         if not context.is_empty():
             parts.append("## 이전 대화 (참고용)")
             parts.append("아래는 이전 대화 내용입니다. 맥락 파악에만 참고하세요.")
             parts.append("현재 질문은 이미 맥락을 반영해 다시 쓴 것이니, 이전 대화의 조건(개수, 필터 등)을 덧붙이지 마세요.")
             parts.append(context.render())
+            parts.append("")
+        if portfolio is not None:
+            parts.append("## 첨부한 포트폴리오")
+            parts.append(f"사용자가 포트폴리오 '{portfolio.name}'(portfolio_key: {portfolio.chat_key})를 첨부했습니다. "
+                         f'먼저 get_portfolio(portfolio_key="{portfolio.chat_key}")로 구성을 조회한 뒤 답하세요.')
             parts.append("")
         parts.append(f"## 현재 질문 (이 질문의 조건만 따르세요):\n{question}")
         if question != original:
@@ -754,14 +809,30 @@ class ChatService:
         """
         stop = stop or asyncio.Event()
         context = context or ConversationContext()
+        # `/portfolio <키> 질문`이면 권한부터 확인하고, 명령을 뗀 질문으로 이어간다
+        portfolio = None
+        command = parse_portfolio_command(message)
+        if command is not None:
+            if not command.key:
+                yield {"type": "answer", "data": {"answer": PORTFOLIO_USAGE_ANSWER}}
+                return
+            portfolio = await asyncio.to_thread(find_accessible_portfolio, self.db, self.user_id, command.key)
+            if portfolio is None:
+                yield {"type": "answer", "data": {"answer": PORTFOLIO_NOT_FOUND_ANSWER.format(key=command.key)}}
+                return
+            message = command.question or DEFAULT_PORTFOLIO_QUESTION
         # LLM/임베딩 호출(동기 HTTP/DB)은 이벤트 루프를 막지 않도록 스레드에서 실행
         if not context.is_empty():  # 맥락이 없으면 재작성하지 않는다
             yield {"type": "status", "data": {"stage": "refining"}}
         question = await asyncio.to_thread(self.memory.refine, message, context)
         if question != message:
-            yield {"type": "refined_question", "data": {"question": question}}
+            # 다음 턴의 맥락에서도 어느 포트폴리오였는지 보이도록 명령을 붙여 둔다
+            shown = f"{PORTFOLIO_COMMAND} {portfolio.chat_key} {question}" if portfolio is not None else question
+            yield {"type": "refined_question", "data": {"question": shown}}
         yield {"type": "status", "data": {"stage": "searching_examples"}}
-        prompt, matched_examples = await asyncio.to_thread(self._build_prompt, question, context, message)
+        prompt, matched_examples = await asyncio.to_thread(
+            self._build_prompt, question, context, message, portfolio,
+        )
         if matched_examples:
             yield {"type": "matched_examples", "data": {"examples": matched_examples}}
 

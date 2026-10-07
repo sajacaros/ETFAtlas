@@ -84,6 +84,7 @@ async def get_shared_portfolio(share_token: str, db: Session = Depends(get_db)):
 
     return SharedPortfolioDetail(
         portfolio_name=portfolio.name,
+        chat_key=portfolio.chat_key,
         allocations=[
             SharedAllocationItem(
                 ticker=a.ticker,

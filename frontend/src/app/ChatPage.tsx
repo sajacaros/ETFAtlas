@@ -379,7 +379,7 @@ export default function ChatPage() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="ETF에 대해 질문하세요... (Enter로 전송, Shift+Enter로 줄바꿈)"
+            placeholder="ETF에 대해 질문하세요. 포트폴리오는 /portfolio 키 (Enter로 전송, Shift+Enter로 줄바꿈)"
             disabled={isAnswering || isLoadingSession}
             rows={1}
             className="resize-none min-h-[44px] max-h-[120px]"

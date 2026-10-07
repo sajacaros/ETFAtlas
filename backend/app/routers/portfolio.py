@@ -236,6 +236,7 @@ async def get_portfolio(
         snapshot_enabled=portfolio.snapshot_enabled,
         is_shared=portfolio.is_shared,
         share_token=str(portfolio.share_token) if portfolio.share_token else None,
+        chat_key=portfolio.chat_key,
         target_allocations=[TargetAllocationResponse.model_validate(t) for t in portfolio.target_allocations],
         holdings=[HoldingResponse.model_validate(h) for h in portfolio.holdings],
     )
@@ -406,6 +407,7 @@ async def batch_update_portfolio(
         snapshot_enabled=portfolio.snapshot_enabled,
         is_shared=portfolio.is_shared,
         share_token=str(portfolio.share_token) if portfolio.share_token else None,
+        chat_key=portfolio.chat_key,
         target_allocations=[TargetAllocationResponse.model_validate(t) for t in portfolio.target_allocations],
         holdings=[HoldingResponse.model_validate(h) for h in portfolio.holdings],
     )

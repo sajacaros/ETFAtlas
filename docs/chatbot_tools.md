@@ -2,7 +2,7 @@
 
 ## 개요
 
-ETF Atlas 챗봇은 **pydantic-ai** tool-calling 에이전트를 사용하며, 총 **10개의 커스텀 도구**를 제공합니다.
+ETF Atlas 챗봇은 **pydantic-ai** tool-calling 에이전트를 사용하며, 총 **11개의 커스텀 도구**를 제공합니다 (`get_portfolio`는 로그인 사용자의 대화에만 붙는다).
 모든 도구는 `backend/app/services/chat_service.py`에 정의되어 있습니다.
 
 ---
@@ -334,6 +334,42 @@ LIMIT 5
 RETURN {etf_code: e.code, etf_name: e.name, weight_samsung: h1.weight, weight_tes: h2.weight, total_weight: total_weight}
 ```
 
+### 11. get_portfolio - 첨부한 포트폴리오 조회
+
+| 항목 | 내용 |
+|------|------|
+| **클래스** | `GetPortfolioTool` (조회 로직은 `services/portfolio_chat.py`) |
+| **용도** | 사용자가 `/portfolio <키>`로 첨부한 포트폴리오의 ETF 목표 비중과, 그 비중대로 합산한 구성종목(look-through) 조회 |
+| **데이터 소스** | PostgreSQL(포트폴리오·목표 비중) + Apache AGE(`CURRENT_HOLDS`) |
+| **권한** | 키는 비밀이 아니라 식별자다. 호출할 때마다 로그인 사용자 기준으로 확인해 **본인 포트폴리오**이거나 **공유 중인 포트폴리오**만 연다. 없음과 권한 없음은 같은 오류로 답한다. 공유를 끄면 다른 사람은 바로 못 쓴다 |
+| **넘기지 않는 것** | 보유 수량·평단가·평가금액 (목표 비중만 넘긴다) |
+
+**키**: 포트폴리오마다 `pf_` + 영숫자 10자(`portfolios.chat_key`, 생성 시 발급). 포트폴리오 상세·공유 포트폴리오 화면에서 이름을 누르면 키가 복사된다.
+
+**입력**
+| 파라미터 | 타입 | 필수 | 설명 |
+|----------|------|------|------|
+| `portfolio_key` | string | O | 포트폴리오 키 (예: `pf_7Kq2xM9aZt`) |
+
+**출력**
+```json
+{
+  "name": "연금", "kind": "내 포트폴리오",
+  "etfs": [{"code": "069500", "name": "KODEX 200", "weight": "40.00%"}],
+  "stocks": [{"rank": 1, "stock_code": "005930", "stock_name": "삼성전자", "weight": "25.00%",
+              "via": [{"code": "069500", "name": "KODEX 200", "weight": "15.00%"}]}],
+  "total_stocks": 87, "excluded_from_stocks": ["현금", "QQQ"], "holdings_as_of": "2026-10-07"
+}
+```
+- `stocks`: 구성종목 상위 30개. 현금과 구성종목 데이터가 없는 ETF(해외 ETF 등, `excluded_from_stocks`)를 빼고 나머지 ETF 비중 합을 100%로 환산해 계산한다 (구성 비교 페이지와 같은 `domain/composition.py`)
+- `via`: 그 종목 비중을 보탠 ETF 상위 3개
+
+**`/portfolio` 명령 처리** (`ChatService.chat_stream`)
+1. 메시지가 `/portfolio <키> 질문`이면 키를 떼어 권한을 확인한다. 키가 없거나 권한이 없으면 에이전트를 돌리지 않고 안내 답변만 보낸다
+2. 질문이 비어 있으면 "이 포트폴리오의 구성을 정리해줘"로 처리한다
+3. 프롬프트에 "첨부한 포트폴리오" 절을 넣어 `get_portfolio`를 먼저 부르게 한다
+4. 질문이 맥락으로 재작성되면 재작성된 질문 앞에 `/portfolio <키>`를 다시 붙여 저장한다. 다음 턴 맥락에서도 키가 보이므로 "여기서 반도체 비중은?" 같은 후속 질문도 같은 포트폴리오로 조회한다
+
 ---
 
 ## 도구 요약표
@@ -350,6 +386,7 @@ RETURN {etf_code: e.code, etf_name: e.name, weight_samsung: h1.weight, weight_te
 | 8 | `get_stock_prices` | 주식 가격 추이 | stock_code, period? | PG |
 | 9 | `compare_etfs` | ETF 비교 (2~3개) | etf_codes | AGE + PG |
 | 10 | `graph_query` | Cypher 직접 실행 | cypher | AGE |
+| 11 | `get_portfolio` | 첨부한 포트폴리오 구성 | portfolio_key | PG + AGE |
 
 > **AGE** = Apache AGE 그래프 DB, **PG** = PostgreSQL
 
@@ -445,6 +482,7 @@ chat_logs 저장 (session_id, refined_question, steps) → ChatMemory.update_sum
 4. 확인된 코드/태그명으로 → **전용 도구** 실행
 5. ETF 비교 → `compare_etfs` 사용
 6. 전용 도구로 불가능한 복잡한 관계 → `graph_query`로 Cypher 직접 작성
+7. 포트폴리오 첨부 → `get_portfolio`로 구성 먼저 확인, 필요하면 결과의 ETF 코드로 다른 도구 이어서 호출
 
 ### 에이전트 설정
 

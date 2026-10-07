@@ -122,6 +122,7 @@ class PortfolioDetailResponse(BaseModel):
     target_total_amount: Optional[Decimal] = None
     is_shared: bool = False
     share_token: Optional[str] = None
+    chat_key: str
     snapshot_enabled: bool = False
     target_allocations: list[TargetAllocationResponse] = []
     holdings: list[HoldingResponse] = []
@@ -222,6 +223,7 @@ class SharedAllocationItem(BaseModel):
 
 class SharedPortfolioDetail(BaseModel):
     portfolio_name: str
+    chat_key: str
     allocations: list[SharedAllocationItem]
 
 

@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { Plus, Trash2, ArrowLeft, AlertTriangle, RefreshCw, Pencil, Check, BarChart3, Eye, EyeOff, GripVertical, Share2, Copy, Layers } from 'lucide-react'
+import { Plus, Trash2, ArrowLeft, RefreshCw, Pencil, Check, BarChart3, Eye, EyeOff, GripVertical, Share2, Copy, Layers } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
@@ -900,14 +900,6 @@ export default function PortfolioPage() {
         })()}
 
 
-        {/* Weight warning */}
-        {calcResult?.weight_warning && (
-          <div className="flex items-center gap-2 px-4 py-3 bg-yellow-50 border border-yellow-200 rounded-md text-yellow-800 text-sm">
-            <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-            {calcResult.weight_warning}
-          </div>
-        )}
-
         {/* Table */}
         {calcLoading && !calcResult && (
           <Card>
@@ -921,6 +913,7 @@ export default function PortfolioPage() {
           <PortfolioTable
             rows={displayedRows}
             totalWeight={calcResult.total_weight}
+            weightWarning={calcResult.weight_warning}
             totalHoldingAmount={calcResult.total_holding_amount}
             totalAdjustmentAmount={calcResult.total_adjustment_amount}
             totalProfitLossAmount={calcResult.total_profit_loss_amount}

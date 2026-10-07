@@ -11,12 +11,13 @@ import {
 } from '@/components/ui/table'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { Trash2, ArrowUp, ArrowDown } from 'lucide-react'
+import { Trash2, ArrowUp, ArrowDown, AlertTriangle } from 'lucide-react'
 import type { CalculationRow, TargetAllocationItem, HoldingItem } from '@/types/api'
 
 interface PortfolioTableProps {
   rows: CalculationRow[]
   totalWeight: number
+  weightWarning: string | null
   totalHoldingAmount: number
   totalAdjustmentAmount: number
   totalProfitLossAmount: number | null
@@ -59,6 +60,7 @@ const COL_W2 = 'w-[14%]'
 export default function PortfolioTable({
   rows,
   totalWeight,
+  weightWarning,
   totalHoldingAmount,
   totalAdjustmentAmount,
   totalProfitLossAmount,
@@ -201,8 +203,21 @@ export default function PortfolioTable({
   }
 
   const weightIsWarning = Math.abs(liveTotalWeight - 100) > 0.001
+  // 서버 경고는 저장된 비중 기준이라, 편집 중에는 추가·삭제·수정한 비중으로 다시 판단한다
+  const warningText = isEditing
+    ? (weightIsWarning && targetAllocations.length > 0
+        ? `목표 비중 합계가 ${liveTotalWeight.toFixed(1)}%입니다 (100%가 아님)`
+        : null)
+    : weightWarning
 
   return (
+    <>
+    {warningText && (
+      <div className="flex items-center gap-2 px-4 py-3 bg-yellow-50 border border-yellow-200 rounded-md text-yellow-800 text-sm">
+        <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+        {warningText}
+      </div>
+    )}
     <Table className="table-fixed">
       <TableHeader>
         <TableRow>
@@ -439,5 +454,6 @@ export default function PortfolioTable({
         </TableFooter>
       )}
     </Table>
+    </>
   )
 }

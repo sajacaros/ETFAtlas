@@ -30,6 +30,17 @@ interface DisplayMessage {
   matchedExamples?: MatchedCodeExample[]
 }
 
+interface ChatStream {
+  key: number  // 화면에서만 쓰는 식별자 (새 대화는 첫 이벤트가 올 때까지 세션 id가 없다)
+  sessionId: number | null
+  messages: DisplayMessage[]
+  steps: ChatStep[]
+  stage: ChatStage | null
+  examples: MatchedCodeExample[]
+  isStopping: boolean
+  done: boolean  // 답변은 받았고 서버 저장을 기다리는 중
+}
+
 function toDisplayMessages(detail: ChatSessionDetail): DisplayMessage[] {
   return detail.messages.flatMap((m): DisplayMessage[] => [
     // created_at은 타임존 없는 UTC라 'Z'를 붙여 읽는다
@@ -49,18 +60,24 @@ export default function ChatPage() {
   const [sessions, setSessions] = useState<ChatSessionSummary[]>([])
   const [sessionId, setSessionId] = useState<number | null>(null)
   const [messages, setMessages] = useState<DisplayMessage[]>([])
+  // 답변을 만드는 중인 대화들 — 세션마다 따로 돌고, 다른 세션을 보는 동안에도 이어진다 (서버는 답변이 끝나야 저장한다)
+  const [streams, setStreams] = useState<ChatStream[]>([])
   const [input, setInput] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
-  const [isStopping, setIsStopping] = useState(false)
   const [isLoadingSession, setIsLoadingSession] = useState(false)
-  const [streamingSteps, setStreamingSteps] = useState<ChatStep[]>([])
-  const [streamingStage, setStreamingStage] = useState<ChatStage | null>(null)
-  const [streamingExamples, setStreamingExamples] = useState<MatchedCodeExample[]>([])
   const [showSessions, setShowSessions] = useState(false)
   const [sessionsCollapsed, setSessionsCollapsed] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<ChatSessionSummary | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const nextStreamKey = useRef(0)
+  // 스트림 콜백에서 지금 보고 있는 세션을 읽기 위한 ref
+  const sessionIdRef = useRef<number | null>(null)
+  sessionIdRef.current = sessionId
+
+  const viewedStream = streams.find((s) => s.sessionId === sessionId)
+  const isAnswering = viewedStream !== undefined && !viewedStream.done
+  const shownMessages = viewedStream ? viewedStream.messages : messages
+  const runningIds = new Set(streams.filter((s) => !s.done && s.sessionId !== null).map((s) => s.sessionId as number))
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -74,12 +91,12 @@ export default function ChatPage() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, isLoading, streamingSteps])
+  }, [shownMessages, viewedStream])
 
   const startNewChat = () => {
     setSessionId(null)
     setMessages([])
-    setStreamingSteps([])
+    setIsLoadingSession(false)
     setShowSessions(false)
     textareaRef.current?.focus()
   }
@@ -87,15 +104,24 @@ export default function ChatPage() {
   const openSession = async (id: number) => {
     setShowSessions(false)
     if (id === sessionId) return
+    setSessionId(id)
+    if (streams.some((s) => s.sessionId === id)) {
+      setIsLoadingSession(false)  // 진행 중인 대화는 화면에 들고 있는 걸 보여준다
+      return
+    }
+    setMessages([])
     setIsLoadingSession(true)
     try {
       const detail = await chatApi.getSession(id)
-      setSessionId(detail.id)
+      if (sessionIdRef.current !== id) return  // 기다리는 사이 다른 세션으로 옮겼다
       setMessages(toDisplayMessages(detail))
-    } catch {
-      refreshSessions()  // 다른 탭에서 지워졌을 수 있다
-    } finally {
       setIsLoadingSession(false)
+    } catch {
+      if (sessionIdRef.current === id) {
+        setSessionId(null)
+        setIsLoadingSession(false)
+      }
+      refreshSessions()  // 다른 탭에서 지워졌을 수 있다
     }
   }
 
@@ -118,16 +144,22 @@ export default function ChatPage() {
 
   const sendMessage = async (text: string) => {
     const trimmed = text.trim()
-    if (!trimmed || isLoading) return
+    if (!trimmed || isAnswering || isLoadingSession) return
+
+    const key = nextStreamKey.current++
+    let streamSessionId = sessionId
+    const isViewing = () => sessionIdRef.current === streamSessionId
+    const updateStream = (patch: Partial<ChatStream>) =>
+      setStreams((prev) => prev.map((s) => (s.key === key ? { ...s, ...patch } : s)))
 
     const userMessage: DisplayMessage = { role: 'user', content: trimmed, sentAt: new Date() }
-    let newMessages = [...messages, userMessage]
-    setMessages(newMessages)
+    let newMessages = [...shownMessages, userMessage]
+    setStreams((prev) => [
+      // 같은 세션에서 저장을 기다리던 지난 스트림은 이번 것으로 대신한다
+      ...prev.filter((s) => s.sessionId !== sessionId),
+      { key, sessionId, messages: newMessages, steps: [], stage: null, examples: [], isStopping: false, done: false },
+    ])
     setInput('')
-    setIsLoading(true)
-    setStreamingSteps([])
-    setStreamingStage(null)
-    setStreamingExamples([])
 
     let collectedSteps: ChatStep[] = []
     // 같은 step_number가 있으면 결과로 바꾸고, 없으면 뒤에 붙인다
@@ -136,31 +168,34 @@ export default function ChatPage() {
       collectedSteps = exists
         ? collectedSteps.map((s) => (s.step_number === step.step_number ? step : s))
         : [...collectedSteps, step]
-      setStreamingSteps(collectedSteps)
+      updateStream({ steps: collectedSteps })
     }
     let collectedExamples: MatchedCodeExample[] = []
 
     const finish = (content: string) => {
-      setMessages([
+      newMessages = [
         ...newMessages,
         {
           role: 'assistant', content, matchedExamples: collectedExamples,
           steps: collectedSteps.filter((s) => !s.running),  // 결과 없이 끝난 단계는 남기지 않는다
         },
-      ])
-      setStreamingSteps([])
-      setStreamingExamples([])
-      setIsLoading(false)
-      setIsStopping(false)
-      textareaRef.current?.focus()
+      ]
+      // 서버 저장이 끝날 때까지는 스트림이 들고 있는 대화를 보여준다
+      updateStream({ messages: newMessages, steps: [], examples: [], isStopping: false, done: true })
+      if (isViewing()) textareaRef.current?.focus()
     }
 
     chatApi.streamMessage(trimmed, sessionId, {
-      onSession: ({ session_id }) => setSessionId(session_id),
-      onStatus: setStreamingStage,
+      onSession: ({ session_id }) => {
+        if (isViewing()) setSessionId(session_id)
+        streamSessionId = session_id
+        updateStream({ sessionId: session_id })
+        refreshSessions()  // 새 대화도 바로 목록에 올려 다른 세션에 갔다 돌아올 수 있게 한다
+      },
+      onStatus: (stage) => updateStream({ stage }),
       onRefinedQuestion: (question) => {
         newMessages = [...newMessages.slice(0, -1), { ...userMessage, refinedQuestion: question }]
-        setMessages(newMessages)
+        updateStream({ messages: newMessages })
       },
       onStepStart: (step) => upsertStep({ ...step, observations: '', error: null, running: true }),
       onStep: (step) => upsertStep(step),
@@ -168,18 +203,22 @@ export default function ChatPage() {
       onError: (error) => finish(`죄송합니다. 오류가 발생했습니다: ${error}`),
       onMatchedExamples: (examples) => {
         collectedExamples = examples
-        setStreamingExamples(examples)
+        updateStream({ examples })
       },
-      // 새 세션 추가·최근 활동 순서를 반영
-      onDone: () => refreshSessions(),
+      onDone: () => {
+        if (isViewing()) setMessages(newMessages)
+        setStreams((prev) => prev.filter((s) => s.key !== key))
+        refreshSessions()  // 새 세션 추가·최근 활동 순서를 반영
+      },
     })
   }
 
   const stopMessage = async () => {
-    if (sessionId === null || isStopping) return
-    setIsStopping(true)
+    const stream = viewedStream
+    if (!stream || stream.sessionId === null || stream.isStopping) return
+    setStreams((prev) => prev.map((s) => (s.key === stream.key ? { ...s, isStopping: true } : s)))
     try {
-      await chatApi.stopMessage(sessionId)
+      await chatApi.stopMessage(stream.sessionId)
     } catch { /* 이미 끝났으면 404 — 스트림이 곧 마무리된다 */ }
   }
 
@@ -194,7 +233,7 @@ export default function ChatPage() {
     <SessionList
       sessions={sessions}
       activeId={sessionId}
-      disabled={isLoading}
+      runningIds={runningIds}
       onNew={startNewChat}
       onOpen={openSession}
       onRename={renameSession}
@@ -227,11 +266,11 @@ export default function ChatPage() {
               ETF 챗봇
             </h1>
             <div className="flex gap-1 md:hidden">
-              <Button variant="ghost" size="sm" onClick={() => setShowSessions((v) => !v)} disabled={isLoading}>
+              <Button variant="ghost" size="sm" onClick={() => setShowSessions((v) => !v)}>
                 <History className="w-4 h-4 mr-1" />
                 대화 목록
               </Button>
-              <Button variant="ghost" size="sm" onClick={startNewChat} disabled={isLoading}>
+              <Button variant="ghost" size="sm" onClick={startNewChat}>
                 <Plus className="w-4 h-4" />
               </Button>
             </div>
@@ -253,7 +292,7 @@ export default function ChatPage() {
             </div>
           )}
 
-          {messages.length === 0 && !isLoading && !isLoadingSession && (
+          {shownMessages.length === 0 && !viewedStream && !isLoadingSession && (
             <div className="flex flex-col items-center justify-center h-full gap-6">
               <p className="text-muted-foreground text-sm">예시 질문을 클릭하거나 직접 입력하세요</p>
               <div className="flex flex-wrap justify-center gap-2">
@@ -270,7 +309,7 @@ export default function ChatPage() {
             </div>
           )}
 
-          {!isLoadingSession && messages.map((msg, i) => (
+          {!isLoadingSession && shownMessages.map((msg, i) => (
             <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
               <div className="max-w-[80%]">
                 {msg.sentAt && (
@@ -311,19 +350,21 @@ export default function ChatPage() {
           ))}
 
           {/* Streaming state */}
-          {isLoading && (
+          {viewedStream && !viewedStream.done && (
             <div className="flex justify-start">
               <div className="max-w-[80%]">
                 <Card className="bg-muted">
                   <CardContent className="p-3 flex items-center gap-2 text-sm text-muted-foreground">
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    <span className="truncate">{streamingStatus(streamingSteps, streamingStage, isStopping)}</span>
+                    <span className="truncate">
+                      {streamingStatus(viewedStream.steps, viewedStream.stage, viewedStream.isStopping)}
+                    </span>
                   </CardContent>
                 </Card>
-                {streamingExamples.length > 0 && (
-                  <MatchedExamplesView examples={streamingExamples} />
+                {viewedStream.examples.length > 0 && (
+                  <MatchedExamplesView examples={viewedStream.examples} />
                 )}
-                {streamingSteps.length > 0 && <StepsView steps={streamingSteps} defaultOpen />}
+                {viewedStream.steps.length > 0 && <StepsView steps={viewedStream.steps} defaultOpen />}
               </div>
             </div>
           )}
@@ -339,20 +380,20 @@ export default function ChatPage() {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="ETF에 대해 질문하세요... (Enter로 전송, Shift+Enter로 줄바꿈)"
-            disabled={isLoading || isLoadingSession}
+            disabled={isAnswering || isLoadingSession}
             rows={1}
             className="resize-none min-h-[44px] max-h-[120px]"
           />
-          {isLoading ? (
+          {isAnswering ? (
             <Button
               onClick={stopMessage}
-              disabled={sessionId === null || isStopping}
+              disabled={viewedStream.sessionId === null || viewedStream.isStopping}
               size="icon"
               variant="outline"
               title="중지 (실행 중인 단계는 끝까지 기다립니다)"
               className="shrink-0 h-[44px] w-[44px]"
             >
-              {isStopping ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4 fill-current" />}
+              {viewedStream.isStopping ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4 fill-current" />}
             </Button>
           ) : (
             <Button
@@ -390,11 +431,11 @@ export default function ChatPage() {
 }
 
 function SessionList({
-  sessions, activeId, disabled, onNew, onOpen, onRename, onDelete,
+  sessions, activeId, runningIds, onNew, onOpen, onRename, onDelete,
 }: {
   sessions: ChatSessionSummary[]
   activeId: number | null
-  disabled: boolean
+  runningIds: Set<number>
   onNew: () => void
   onOpen: (id: number) => void
   onRename: (id: number, title: string) => Promise<void>
@@ -411,7 +452,7 @@ function SessionList({
 
   return (
     <>
-      <Button variant="outline" size="sm" className="w-full mb-2" onClick={onNew} disabled={disabled}>
+      <Button variant="outline" size="sm" className="w-full mb-2" onClick={onNew}>
         <Plus className="w-4 h-4 mr-1" />
         새 대화
       </Button>
@@ -449,15 +490,16 @@ function SessionList({
             >
               <button
                 onClick={() => onOpen(s.id)}
-                disabled={disabled}
-                className="flex-1 min-w-0 text-left truncate disabled:cursor-not-allowed"
+                className="flex-1 min-w-0 text-left truncate"
                 title={s.title}
               >
                 {s.title}
               </button>
+              {runningIds.has(s.id) && (
+                <Loader2 className="w-3 h-3 shrink-0 animate-spin text-muted-foreground" aria-label="답변 생성 중" />
+              )}
               <button
                 onClick={() => { setEditingId(s.id); setEditTitle(s.title) }}
-                disabled={disabled}
                 className="p-1 text-muted-foreground hover:text-foreground opacity-100 md:opacity-0 md:group-hover:opacity-100"
                 aria-label="이름 바꾸기"
               >
@@ -465,8 +507,8 @@ function SessionList({
               </button>
               <button
                 onClick={() => onDelete(s)}
-                disabled={disabled}
-                className="p-1 text-muted-foreground hover:text-destructive opacity-100 md:opacity-0 md:group-hover:opacity-100"
+                disabled={runningIds.has(s.id)}  // 답변이 끝나야 저장되므로 진행 중에는 지우지 않는다
+                className="p-1 text-muted-foreground hover:text-destructive opacity-100 md:opacity-0 md:group-hover:opacity-100 disabled:hidden"
                 aria-label="삭제"
               >
                 <Trash2 className="w-3 h-3" />

@@ -395,11 +395,11 @@ export const chatApi = {
             } catch { /* ignore parse errors */ }
           }
         }
-        handlers.onDone?.()
       })
       .catch((err) => {
         if (err.name !== 'AbortError') handlers.onError(err.message)
       })
+      .finally(() => handlers.onDone?.())
 
     return abortController
   },

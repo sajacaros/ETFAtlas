@@ -1,5 +1,5 @@
 from datetime import date, timedelta
-from typing import Dict, List, Literal
+from typing import ClassVar, Dict, List, Literal, Tuple
 
 from pydantic import Field
 from sqlalchemy.orm import Session
@@ -27,31 +27,33 @@ def _summary_line(name: str, prices: List[Dict]) -> str:
     )
 
 
-class PriceTrendSkill(DataSkill):
-    name = "price_trend"
-    description = (
-        "ETF 가격 추이. ETF가 여럿이면 시작일 대비 누적 수익률(%)로 겹쳐 그린다. "
-        "candlestick은 ETF 하나의 일별 시가·고가·저가·종가와 거래량, table은 ETF별 기간 요약(시작·끝 종가, 등락률, 최고·최저)"
-    )
-    Args = PriceTrendArgs
+class PriceTrendBase(DataSkill):
+    """가격 추이 공통: 대상(ETF·종목)을 찾고 가격을 가져오는 부분만 하위 클래스가 정한다."""
     displays = ("line", "candlestick", "table")
+    target: ClassVar[str]  # 화면 문구에 쓰는 대상 이름
 
-    def fetch(self, args: PriceTrendArgs, display: str, db: Session, resolver: EntityResolver) -> SkillResult:
-        found, missing = resolver.etfs(db, args.etfs)
+    def targets(self, args, db: Session, resolver: EntityResolver) -> Tuple[List[Dict], List[str]]:
+        raise NotImplementedError
+
+    def prices(self, graph: GraphService, code: str, days: int) -> List[Dict]:
+        raise NotImplementedError
+
+    def fetch(self, args, display: str, db: Session, resolver: EntityResolver) -> SkillResult:
+        found, missing = self.targets(args, db, resolver)
         if not found:
-            return empty(f"ETF를 찾지 못했습니다: {', '.join(missing)}")
+            return empty(f"찾지 못한 {self.target}: {', '.join(missing)}")
         graph = GraphService(db)
         names = {e["code"]: e["name"] for e in found}
         series: Dict[str, List[Dict]] = {}
         for code in names:
-            prices = [p for p in graph.get_etf_prices(code, days=PERIOD_DAYS[args.period]) if p.get("close")]
+            prices = [p for p in self.prices(graph, code, PERIOD_DAYS[args.period]) if p.get("close")]
             if prices:
                 series[code] = prices
         if not series:
             return empty("해당 기간의 가격 데이터가 없습니다")
 
         summary = "\n".join(_summary_line(names[c], ps) for c, ps in series.items())
-        sources = [Source(label="ETF 일별 시세", as_of=max(ps[-1]["date"] for ps in series.values()))]
+        sources = [Source(label=f"{self.target} 일별 시세", as_of=max(ps[-1]["date"] for ps in series.values()))]
         notes = missing_notes(missing)
         # 수집 이력이 요청 기간보다 짧으면 알린다 (해설이 '한 달간'처럼 쓰지 않게 요약에도 넣는다)
         requested_start = (date.today() - timedelta(days=PERIOD_DAYS[args.period])).isoformat()
@@ -64,7 +66,7 @@ class PriceTrendSkill(DataSkill):
         if display == "candlestick":
             code, prices = next(iter(series.items()))
             if len(series) > 1:
-                notes.append(f"봉차트는 한 ETF만 그립니다: {names[code]}")
+                notes.append(f"봉차트는 하나만 그립니다: {names[code]}")
             dataset = Dataset(
                 fields=[
                     DataField(key="date", label="날짜", format="date"),
@@ -82,7 +84,7 @@ class PriceTrendSkill(DataSkill):
         if display == "table":
             dataset = Dataset(
                 fields=[
-                    DataField(key="name", label="ETF", format="text"),
+                    DataField(key="name", label=self.target, format="text"),
                     DataField(key="start", label="시작 종가", format="price"),
                     DataField(key="end", label="마지막 종가", format="price"),
                     DataField(key="change", label="등락률", format="percent"),
@@ -116,3 +118,19 @@ class PriceTrendSkill(DataSkill):
         if not single:
             notes.append("시작일 종가를 기준으로 한 누적 수익률입니다")
         return data_result(dataset, LineView(x="date", y=list(series)), summary, sources, notes)
+
+
+class PriceTrendSkill(PriceTrendBase):
+    name = "price_trend"
+    description = (
+        "ETF 가격 추이. ETF가 여럿이면 시작일 대비 누적 수익률(%)로 겹쳐 그린다. "
+        "candlestick은 ETF 하나의 일별 시가·고가·저가·종가와 거래량, table은 ETF별 기간 요약(시작·끝 종가, 등락률, 최고·최저)"
+    )
+    Args = PriceTrendArgs
+    target = "ETF"
+
+    def targets(self, args: PriceTrendArgs, db: Session, resolver: EntityResolver):
+        return resolver.etfs(db, args.etfs)
+
+    def prices(self, graph: GraphService, code: str, days: int) -> List[Dict]:
+        return graph.get_etf_prices(code, days=days)

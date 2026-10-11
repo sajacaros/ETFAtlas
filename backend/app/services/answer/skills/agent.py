@@ -14,7 +14,7 @@ class AgentSkill(Skill):
     name = "agent"
     description = (
         "그래프 DB를 직접 조회하는 범용 에이전트(마크다운 답변). 다른 스킬로 표현할 수 없는 질문에: "
-        "종목을 보유한 ETF 찾기, 태그·테마·운용사별 ETF 목록, 유사 ETF, 보유종목 비중 변화, 개별 주식 시세, ETF 검색, 범위 밖 질문"
+        "태그·테마·운용사별 ETF 목록, 유사 ETF, 보유종목 비중 변화, ETF 검색, 조건이 복잡한 그래프 질문, 범위 밖 질문"
     )
     Args = AgentArgs
     displays = ("markdown",)

@@ -9,6 +9,8 @@ from .holdings import HoldingsSkill
 from .narrative import NarrativeSkill
 from .period_returns import PeriodReturnsSkill
 from .price_trend import PriceTrendSkill
+from .stock_holders import StockHoldersSkill
+from .stock_trend import StockTrendSkill
 
 REGISTRY: Dict[str, Skill] = {
     s.name: s
@@ -18,6 +20,8 @@ REGISTRY: Dict[str, Skill] = {
         ETFCompareSkill(),
         ETFProfileSkill(),
         HoldingsSkill(),
+        StockTrendSkill(),
+        StockHoldersSkill(),
         NarrativeSkill(),
         AgentSkill(),
     )

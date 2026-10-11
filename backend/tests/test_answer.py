@@ -224,3 +224,32 @@ def test_stop_skips_slots_that_wait_for_others(monkeypatch):
     events = _collect(service, stop)
     assert service._store.saved == {"s1": "complete", "s2": "stopped"}
     assert not any(e["type"] == "slot_delta" for e in events)
+
+
+# --- 종목 스킬 / 해석기 ---
+
+def test_resolver_strips_characters_that_could_break_the_query():
+    from app.services.answer.resolver import _normalize
+    assert _normalize("KODEX 미국S&P500(H)") == "kodex미국s&p500(h)"
+    assert _normalize("x' OR 1=1 $$ ;\\") == "xor11"
+
+
+class FakeStockResolver:
+    def stock(self, db, name):
+        return {"code": "005930", "name": "삼성전자"}
+
+
+def test_stock_holders_ranks_etfs_by_weight(monkeypatch):
+    from app.services.answer.skills import stock_holders as mod
+    calls = []
+
+    def fake_node(graph, cypher, params):
+        calls.append(params)
+        return [{"code": "448100", "name": "WON 200", "weight": 35.21, "expense_ratio": 0.05, "date": "2026-10-07"}]
+
+    monkeypatch.setattr(mod, "node", fake_node)
+    skill = REGISTRY["stock_holders"]
+    result = skill.fetch(skill.Args(stock="삼성전자", top=5), "bar", None, FakeStockResolver())
+    assert calls == [{"code": "005930", "top": 5}]
+    assert result.content["view"] == {"kind": "bar", "x": "name", "y": ["weight"], "horizontal": True}
+    assert "WON 200 35.21%" in result.summary

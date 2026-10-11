@@ -74,7 +74,7 @@ class MySkill(DataSkill):
     displays = ("bar", "table")       # 지원하는 표시 방식, 첫 번째가 기본값
 
     def fetch(self, args, display, db, resolver) -> SkillResult:
-        etf = resolver.etf(db, args.etf)          # 이름 → 코드 (한 답변 안에서 공유)
+        etf = resolver.etf(db, args.etf)          # 이름 → 코드 (한 답변 안에서 공유, 종목은 resolver.stock)
         ...
         return data_result(dataset, view, summary, sources, notes)  # 없으면 empty("...")
 ```
@@ -96,6 +96,8 @@ class MySkill(DataSkill):
 | `etf_compare` | table | 기본 정보 비교표 (행마다 서식·우열 강조) |
 | `etf_profile` | radar, table | 전체 ETF 대비 백분위 점수: 저보수, 규모, 1주 수익률, 1주 시총 증감, 분산도 |
 | `holdings` | treemap, donut, bar, table | 구성종목 비중 (도넛은 상위 7개 + 기타) |
+| `stock_trend` | line, candlestick, table | 개별 종목 가격 추이 (`price_trend`와 같은 베이스) |
+| `stock_holders` | bar, table | 종목을 많이 담은 ETF 순위 |
 | `narrative` | text | 앞 슬롯 요약을 바탕으로 한 해설 (토큰 스트리밍) |
 | `agent` | markdown | 기존 tool-calling 에이전트. 다른 스킬로 안 되는 질문과 레이아웃 설계 실패 시 폴백 |
 

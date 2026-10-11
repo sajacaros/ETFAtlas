@@ -1,0 +1,242 @@
+/**
+ * 차트 레지스트리: view.kind → ECharts 옵션. 새 차트는 여기에 빌더 하나를 더하면 된다.
+ * 레지스트리에 없는 kind나 빌드에 실패한 차트는 ChartView가 같은 데이터셋을 표로 보여준다.
+ */
+import type { EChartsCoreOption } from 'echarts/core'
+import type { DataContent, DataField, DataRow, DataView } from '@/types/api'
+import { axisFormatter, formatValue } from './format'
+
+export interface ChartTheme {
+  palette: string[]
+  text: string
+  muted: string
+  border: string
+  up: string  // 국내 관례: 상승 빨강
+  down: string
+  font: string
+}
+
+type Builder<K extends DataView['kind']> = (
+  view: Extract<DataView, { kind: K }>, content: DataContent, theme: ChartTheme,
+) => EChartsCoreOption
+
+const fieldOf = (content: DataContent, key: string): DataField =>
+  content.dataset.fields.find((f) => f.key === key) ?? { key, label: key, format: 'number' }
+
+const num = (v: unknown): number | null => (typeof v === 'number' ? v : null)
+
+const xLabels = (content: DataContent, key: string): string[] => {
+  const labels = content.dataset.rows.map((r) => String(r[key]))
+  return fieldOf(content, key).format === 'date' ? dateLabels(labels) : labels
+}
+
+function base(theme: ChartTheme): EChartsCoreOption {
+  return {
+    color: theme.palette,
+    textStyle: { color: theme.text, fontFamily: theme.font },
+    tooltip: { backgroundColor: 'rgba(20,20,20,0.9)', borderWidth: 0, textStyle: { color: '#fff', fontSize: 12 } },
+    animationDuration: 400,
+  }
+}
+
+function legend(theme: ChartTheme, show: boolean) {
+  return show ? { legend: { top: 0, type: 'scroll', textStyle: { color: theme.muted } } } : {}
+}
+
+function categoryAxis(theme: ChartTheme, data: string[], extra: object = {}) {
+  return {
+    type: 'category', data,
+    axisLine: { lineStyle: { color: theme.border } },
+    axisLabel: { color: theme.muted, hideOverlap: true },
+    ...extra,
+  }
+}
+
+function valueAxis(theme: ChartTheme, field: DataField, extra: object = {}) {
+  return {
+    type: 'value', scale: field.format === 'price',
+    axisLabel: { color: theme.muted, formatter: axisFormatter(field.format) },
+    splitLine: { lineStyle: { color: theme.border, type: 'dashed' } },
+    ...extra,
+  }
+}
+
+/** 날짜 축 라벨: 한 해 안의 데이터면 연도를 뺀다 (2026-10-07 → 10-07) */
+function dateLabels(dates: string[]): string[] {
+  const sameYear = dates.length > 0 && dates.every((d) => d.slice(0, 4) === dates[0].slice(0, 4))
+  return sameYear ? dates.map((d) => d.slice(5)) : dates
+}
+
+const line: Builder<'line'> = (view, content, theme) => {
+  const rows = content.dataset.rows
+  const yField = fieldOf(content, view.y[0])
+  return {
+    ...base(theme),
+    ...legend(theme, view.y.length > 1),
+    grid: { left: 8, right: 24, top: view.y.length > 1 ? 32 : 12, bottom: 8, containLabel: true },
+    tooltip: { ...base(theme).tooltip as object, trigger: 'axis', valueFormatter: (v: unknown) => formatValue(v, yField.format) },
+    xAxis: categoryAxis(theme, xLabels(content, view.x), { boundaryGap: false }),
+    yAxis: valueAxis(theme, yField),
+    series: view.y.map((key) => ({
+      type: 'line', name: fieldOf(content, key).label, data: rows.map((r) => num(r[key])),
+      connectNulls: true, showSymbol: rows.length <= 30, smooth: false,
+    })),
+  }
+}
+
+const bar: Builder<'bar'> = (view, content, theme) => {
+  const rows = content.dataset.rows
+  const yField = fieldOf(content, view.y[0])
+  const single = view.y.length === 1
+  const signed = rows.some((r) => (num(r[view.y[0]]) ?? 0) < 0)
+  const categories = categoryAxis(theme, rows.map((r) => String(r[view.x])), view.horizontal ? { inverse: true } : {})
+  const values = valueAxis(theme, yField)
+  return {
+    ...base(theme),
+    ...legend(theme, !single),
+    grid: { left: 8, right: 24, top: single ? 12 : 32, bottom: 8, containLabel: true },
+    tooltip: { ...base(theme).tooltip as object, trigger: 'axis', axisPointer: { type: 'shadow' },
+      valueFormatter: (v: unknown) => formatValue(v, yField.format) },
+    xAxis: view.horizontal ? values : categories,
+    yAxis: view.horizontal ? categories : values,
+    series: view.y.map((key) => ({
+      type: 'bar', name: fieldOf(content, key).label, data: rows.map((r) => num(r[key])), barMaxWidth: 28,
+      // 계열이 하나이고 음수가 섞이면 상승·하락 색으로
+      ...(single && signed
+        ? { itemStyle: { color: (p: { value: number }) => (p.value < 0 ? theme.down : theme.up) } }
+        : {}),
+    })),
+  }
+}
+
+const nameValue = (rows: DataRow[], name: string, value: string) =>
+  rows.map((r) => ({ name: String(r[name]), value: num(r[value]) ?? 0 }))
+
+const donut: Builder<'donut'> = (view, content, theme) => {
+  const format = fieldOf(content, view.value).format
+  return {
+    ...base(theme),
+    tooltip: { ...base(theme).tooltip as object, trigger: 'item', valueFormatter: (v: unknown) => formatValue(v, format) },
+    series: [{
+      type: 'pie', radius: ['38%', '62%'], avoidLabelOverlap: true,
+      itemStyle: { borderColor: 'transparent', borderWidth: 1 },
+      // 좁은 영역에서도 이름이 잘리지 않게: 라벨은 줄바꿈 없이 그대로, 작은 조각(3% 미만)은 툴팁으로만
+      label: {
+        color: theme.text, overflow: 'none',
+        formatter: (p: { name: string; value: number }) => `${p.name}\n${formatValue(p.value, format)}`,
+      },
+      labelLine: { length: 8, length2: 6 },
+      labelLayout: { hideOverlap: true },
+      data: nameValue(content.dataset.rows, view.name, view.value).map((d) => (
+        d.value < 3 ? { ...d, label: { show: false }, labelLine: { show: false } } : d
+      )),
+    }],
+  }
+}
+
+const treemap: Builder<'treemap'> = (view, content, theme) => {
+  const format = fieldOf(content, view.value).format
+  return {
+    ...base(theme),
+    tooltip: { ...base(theme).tooltip as object, formatter: (p: { name: string; value: number }) => `${p.name}: ${formatValue(p.value, format)}` },
+    series: [{
+      type: 'treemap', roam: false, nodeClick: false, breadcrumb: { show: false },
+      width: '100%', height: '100%', top: 0, left: 0,
+      // 칸 색이 밝든 어둡든 읽히도록 흰 글씨에 그림자
+      label: {
+        formatter: (p: { name: string; value: number }) => `${p.name}\n${formatValue(p.value, format)}`,
+        fontSize: 12, color: '#fff', textShadowColor: 'rgba(0,0,0,0.85)', textShadowBlur: 3,
+      },
+      itemStyle: { borderColor: theme.border, borderWidth: 1, gapWidth: 1 },
+      levels: [{ color: theme.palette, colorMappingBy: 'index' }],
+      data: nameValue(content.dataset.rows, view.name, view.value),
+    }],
+  }
+}
+
+const radar: Builder<'radar'> = (view, content, theme) => {
+  const rows = content.dataset.rows
+  return {
+    ...base(theme),
+    ...legend(theme, true),
+    tooltip: {
+      ...base(theme).tooltip as object, trigger: 'item',
+      // 점수와 함께 원값을 보여준다 (_raw)
+      formatter: (p: { seriesIndex: number; name: string }) => {
+        const key = view.series[p.seriesIndex]
+        const lines = rows.map((r) => {
+          const raw = r._raw?.[key]
+          const rawText = raw === undefined ? '' : ` (${formatValue(raw, r._format ?? 'number')})`
+          return `${String(r[view.axis])}: ${formatValue(r[key], 'number')}점${rawText}`
+        })
+        return [`<b>${p.name}</b>`, ...lines].join('<br/>')
+      },
+    },
+    radar: {
+      indicator: rows.map((r) => ({ name: String(r[view.axis]), max: view.max })),
+      radius: '62%', center: ['50%', '56%'],
+      axisName: { color: theme.muted },
+      splitLine: { lineStyle: { color: theme.border } },
+      splitArea: { show: false },
+      axisLine: { lineStyle: { color: theme.border } },
+    },
+    series: [{
+      type: 'radar',
+      data: view.series.map((key) => ({
+        name: fieldOf(content, key).label, value: rows.map((r) => num(r[key]) ?? 0), areaStyle: { opacity: 0.15 },
+      })),
+    }],
+  }
+}
+
+const candlestick: Builder<'candlestick'> = (view, content, theme) => {
+  const rows = content.dataset.rows
+  const dates = xLabels(content, view.x)
+  const priceField = fieldOf(content, view.close)
+  const hasVolume = view.volume !== null
+  const tooltipBase = base(theme).tooltip as object
+  return {
+    ...base(theme),
+    tooltip: { ...tooltipBase, trigger: 'axis', axisPointer: { type: 'cross' } },
+    axisPointer: { link: [{ xAxisIndex: 'all' }] },
+    grid: hasVolume
+      ? [{ left: 8, right: 16, top: 12, height: '58%', containLabel: true },
+         { left: 8, right: 16, top: '76%', bottom: 8, containLabel: true }]
+      : [{ left: 8, right: 16, top: 12, bottom: 8, containLabel: true }],
+    xAxis: [
+      categoryAxis(theme, dates, { gridIndex: 0, axisLabel: { show: !hasVolume, color: theme.muted } }),
+      ...(hasVolume ? [categoryAxis(theme, dates, { gridIndex: 1 })] : []),
+    ],
+    yAxis: [
+      valueAxis(theme, priceField, { gridIndex: 0 }),
+      ...(hasVolume ? [valueAxis(theme, fieldOf(content, view.volume as string), { gridIndex: 1, splitNumber: 2,
+        axisLabel: { color: theme.muted, formatter: (v: number) => `${Math.round(v / 1e4).toLocaleString('ko-KR')}만` } })] : []),
+    ],
+    series: [
+      {
+        type: 'candlestick', name: '가격',
+        // ECharts 순서: 시가, 종가, 저가, 고가
+        data: rows.map((r) => [r[view.open], r[view.close], r[view.low], r[view.high]].map(num)),
+        itemStyle: { color: theme.up, color0: theme.down, borderColor: theme.up, borderColor0: theme.down },
+      },
+      ...(hasVolume ? [{
+        type: 'bar', name: '거래량', xAxisIndex: 1, yAxisIndex: 1,
+        data: rows.map((r) => ({
+          value: num(r[view.volume as string]),
+          itemStyle: { color: (num(r[view.close]) ?? 0) >= (num(r[view.open]) ?? 0) ? theme.up : theme.down, opacity: 0.6 },
+        })),
+      }] : []),
+    ],
+  }
+}
+
+const BUILDERS: { [K in DataView['kind']]?: Builder<K> } = { line, bar, donut, treemap, radar, candlestick }
+
+/** 차트 높이(px). 스켈레톤도 같은 높이를 써서 내용이 들어올 때 화면이 흔들리지 않는다 */
+export const CHART_HEIGHT: Record<string, number> = { treemap: 320, candlestick: 340, radar: 300 }
+export const DEFAULT_CHART_HEIGHT = 280
+
+export function buildChartOption(content: DataContent, theme: ChartTheme): EChartsCoreOption | null {
+  const builder = BUILDERS[content.view.kind] as Builder<DataView['kind']> | undefined
+  return builder ? builder(content.view, content, theme) : null
+}

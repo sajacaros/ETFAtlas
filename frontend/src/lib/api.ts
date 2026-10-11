@@ -24,6 +24,9 @@ import type {
   ChatSessionSummary,
   ChatSessionDetail,
   ChatStep,
+  ChatSlotResponse,
+  LayoutNode,
+  SlotStatus,
   MatchedCodeExample,
   AdminCodeExampleList,
   AdminChatLogList,
@@ -318,8 +321,8 @@ export const tagsApi = {
 }
 
 // Chat
-// 도구 실행 전 준비 단계: 질문 재작성(맥락이 있을 때만) → 참고 예시 검색 → 에이전트 실행
-export type ChatStage = 'refining' | 'searching_examples' | 'thinking'
+// 준비 단계: 질문 재작성(맥락이 있을 때만) → 화면 설계 → (agent 영역) 참고 예시 검색 → 에이전트 실행
+export type ChatStage = 'refining' | 'planning' | 'searching_examples' | 'thinking'
 
 export interface ChatStreamHandlers {
   onSession?: (session: { session_id: number; title: string }) => void
@@ -330,6 +333,9 @@ export interface ChatStreamHandlers {
   onAnswer: (answer: string) => void
   onError: (error: string) => void
   onMatchedExamples?: (examples: MatchedCodeExample[]) => void
+  onLayout?: (data: { chat_log_id: number; layout: LayoutNode }) => void
+  onSlot?: (data: { id: string; status: SlotStatus; message?: string }) => void
+  onSlotDelta?: (data: { id: string; text: string }) => void
   onDone?: () => void
 }
 
@@ -352,6 +358,11 @@ export const chatApi = {
   },
   deleteSession: async (id: number) => {
     await api.delete(`/chat/sessions/${id}`)
+  },
+  // 답변 화면 한 영역의 내용 (완료 알림을 받았거나 지난 대화를 열 때)
+  getSlot: async (chatLogId: number, slotId: string) => {
+    const { data } = await api.get<ChatSlotResponse>(`/chat/logs/${chatLogId}/slots/${slotId}`)
+    return data
   },
   // 실행 중인 도구는 결과까지 기다리고 다음 단계부터 멈춘다 (결과는 열려 있는 스트림으로 온다)
   stopMessage: async (sessionId: number) => {
@@ -401,6 +412,9 @@ export const chatApi = {
               else if (event.type === 'answer') handlers.onAnswer(event.data.answer)
               else if (event.type === 'error') handlers.onError(event.data.message)
               else if (event.type === 'matched_examples') handlers.onMatchedExamples?.(event.data.examples)
+              else if (event.type === 'layout') handlers.onLayout?.(event.data)
+              else if (event.type === 'slot') handlers.onSlot?.(event.data)
+              else if (event.type === 'slot_delta') handlers.onSlotDelta?.(event.data)
             } catch { /* ignore parse errors */ }
           }
         }

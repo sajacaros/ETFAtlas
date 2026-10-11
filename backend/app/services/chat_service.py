@@ -742,7 +742,7 @@ class ChatService:
 
     async def chat_stream(
         self, message: str, context: Optional[ConversationContext] = None,
-        stop: Optional[asyncio.Event] = None,
+        stop: Optional[asyncio.Event] = None, refine: bool = True,
     ) -> AsyncIterator[Dict]:
         """도구 호출을 step_start로, 그 결과를 step 이벤트로, 최종 응답을 answer 이벤트로 스트리밍한다.
 
@@ -751,15 +751,17 @@ class ChatService:
         step: step_start 필드 + {observations, error}
         status: {stage} — 도구 실행 전 준비 단계(refining → searching_examples → thinking)를 알린다
         stop이 설정되면 실행 중인 도구는 결과까지 기다리고, 다음 모델 요청/도구 호출 전에 멈춘다.
+        refine=False면 이미 재작성된 질문으로 보고 재작성 단계를 건너뛴다 (답변 화면의 agent 스킬).
         """
         stop = stop or asyncio.Event()
         context = context or ConversationContext()
         # LLM/임베딩 호출(동기 HTTP/DB)은 이벤트 루프를 막지 않도록 스레드에서 실행
-        if not context.is_empty():  # 맥락이 없으면 재작성하지 않는다
+        question = message
+        if refine and not context.is_empty():  # 맥락이 없으면 재작성하지 않는다
             yield {"type": "status", "data": {"stage": "refining"}}
-        question = await asyncio.to_thread(self.memory.refine, message, context)
-        if question != message:
-            yield {"type": "refined_question", "data": {"question": question}}
+            question = await asyncio.to_thread(self.memory.refine, message, context)
+            if question != message:
+                yield {"type": "refined_question", "data": {"question": question}}
         yield {"type": "status", "data": {"stage": "searching_examples"}}
         prompt, matched_examples = await asyncio.to_thread(self._build_prompt, question, context, message)
         if matched_examples:

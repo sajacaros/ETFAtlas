@@ -279,6 +279,7 @@ export interface ChatStep {
   observations: string
   tool_calls: ToolCall[]
   error: string | null
+  slot_id?: string  // 이 단계를 실행한 답변 영역
   running?: boolean  // 스트리밍 중 결과를 기다리는 단계 (화면 전용)
 }
 
@@ -310,8 +311,71 @@ export interface ChatSessionMessage {
   refined_question: string | null
   answer: string
   steps: ChatStep[]
+  layout: LayoutNode | null  // null이면 answer 마크다운만 있는 예전 답변
+  slots: Record<string, { status: SlotStatus; message?: string }>
   status: string
   created_at: string
+}
+
+// 답변 화면: 레이아웃(영역 배치)이 먼저 오고, 각 영역(슬롯)은 끝나는 대로 따로 가져온다
+export type SlotType = 'text' | 'markdown' | 'table' | 'chart'
+export type SlotStatus = 'pending' | 'running' | 'complete' | 'empty' | 'failed' | 'stopped'
+
+export type LayoutNode =
+  | { type: 'row' | 'column'; children: LayoutNode[] }
+  | { type: 'slot'; id: string; slot: SlotType; display: string; title: string }
+
+export type ValueFormat = 'text' | 'number' | 'percent' | 'krw' | 'price' | 'date'
+
+export interface DataField {
+  key: string
+  label: string
+  format: ValueFormat
+}
+
+// 값은 원시값. 행 메타: _format(행 서식), _better('high' | 'low'), _raw(점수화한 값의 원값)
+export type DataRow = Record<string, unknown> & {
+  _format?: ValueFormat
+  _better?: 'high' | 'low'
+  _raw?: Record<string, unknown>
+}
+
+export interface Dataset {
+  fields: DataField[]
+  rows: DataRow[]
+}
+
+export type DataView =
+  | { kind: 'table'; orientation: 'list' | 'compare' }
+  | { kind: 'line'; x: string; y: string[] }
+  | { kind: 'bar'; x: string; y: string[]; horizontal: boolean }
+  | { kind: 'donut'; name: string; value: string }
+  | { kind: 'treemap'; name: string; value: string }
+  | { kind: 'radar'; axis: string; series: string[]; max: number }
+  | { kind: 'candlestick'; x: string; open: string; high: string; low: string; close: string; volume: string | null }
+
+export interface DataContent {
+  type: 'data'
+  dataset: Dataset
+  view: DataView
+  sources: { label: string; as_of: string | null }[]
+  notes: string[]
+}
+
+export type SlotContent = DataContent | { type: 'text' | 'markdown'; text: string }
+
+export interface SlotState {
+  status: SlotStatus
+  message?: string
+  text?: string  // 텍스트 슬롯이 흘려보내는 중인 본문
+  content?: SlotContent
+}
+
+export interface ChatSlotResponse {
+  id: string
+  status: SlotStatus
+  content: SlotContent | null
+  message: string | null
 }
 
 export interface ChatSessionDetail {

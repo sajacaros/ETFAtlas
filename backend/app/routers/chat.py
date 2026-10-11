@@ -7,10 +7,11 @@ from pydantic import BaseModel
 from typing import AsyncIterator, List, Optional
 from sqlalchemy.orm import Session
 from ..database import get_db
+from ..services.answer import AnswerService
 from ..services.chat_service import ChatService
 from ..utils.session import get_current_user_id
 from ..utils.time import utcnow
-from ..models.chat import ChatLog, ChatLogStatus, ChatSession
+from ..models.chat import ChatLog, ChatLogStatus, ChatSession, ChatSlot
 from ..schemas.chat import FeedbackRequest, ChatSessionUpdate
 
 logger = logging.getLogger(__name__)
@@ -136,6 +137,38 @@ def _save_chat_log(
     return chat_log.id
 
 
+def _start_chat_log(db: Session, user_id: int, session: ChatSession, question: str) -> int:
+    """답변을 만들기 전에 로그를 만든다 — 슬롯 내용이 이 로그 id에 붙어 저장되고, 프런트는 이 id로 가져간다."""
+    chat_log = ChatLog(
+        user_id=user_id, session_id=session.id, question=question, answer="",
+        status=ChatLogStatus.PENDING.value,
+    )
+    db.add(chat_log)
+    db.commit()
+    db.refresh(chat_log)
+    return chat_log.id
+
+
+def _finish_chat_log(
+    db: Session,
+    chat_log_id: int,
+    session: ChatSession,
+    question: str,
+    refined_question: Optional[str],
+    answer: str,
+    steps: List[dict],
+    layout: Optional[dict],
+) -> None:
+    chat_log = db.get(ChatLog, chat_log_id)
+    chat_log.refined_question = refined_question if refined_question != question else None
+    chat_log.answer = answer
+    chat_log.generated_code = _extract_generated_code(steps)
+    chat_log.steps = steps or None
+    chat_log.layout = layout
+    session.updated_at = utcnow()
+    db.commit()
+
+
 @router.post("/message", response_model=ChatResponse)
 async def send_message(
     request: ChatRequest,
@@ -199,28 +232,39 @@ async def stream_message(
         answer = ""
         refined_question = None
         steps = []
+        layout = None
+        chat_log_id = None
         memory = None
         try:
-            chat_service = ChatService(db)
-            memory = chat_service.memory
+            service = AnswerService(db)
+            memory = service.memory
             await asyncio.to_thread(memory.update_summary, session)  # 지난 요약이 실패했으면 여기서 따라잡는다
             context = memory.load_context(session)
-            async for event in chat_service.chat_stream(request.message, context, stop=stop):
+            # 맥락을 읽은 뒤에 만든다 — 먼저 만들면 답이 빈 이번 턴이 맥락에 끼어든다
+            chat_log_id = _start_chat_log(db, user_id, session, request.message)
+            async for event in service.stream(request.message, context, chat_log_id, stop):
                 if event.get("type") == "refined_question":
                     refined_question = event["data"]["question"]
                 elif event.get("type") == "step":
                     steps.append(event["data"])
+                elif event.get("type") == "layout":
+                    layout = event["data"]["layout"]
                 elif event.get("type") == "answer":
                     answer = event["data"]["answer"]
                 yield sse(event)
         except Exception as e:
+            logger.exception("Chat stream error")
             yield sse({"type": "error", "data": {"message": str(e)}})
 
-        # Save chat log after stream completes
         try:
-            chat_log_id = _save_chat_log(
-                db, user_id, session, request.message, refined_question, answer or "", steps
-            )
+            if chat_log_id is None:
+                chat_log_id = _save_chat_log(
+                    db, user_id, session, request.message, refined_question, answer or "", steps
+                )
+            else:
+                _finish_chat_log(
+                    db, chat_log_id, session, request.message, refined_question, answer or "", steps, layout
+                )
             yield sse({"type": "chat_log_id", "data": {"chat_log_id": chat_log_id}})
         except Exception as e:
             logger.warning(f"Failed to save chat log: {e}")
@@ -280,6 +324,14 @@ async def get_session(
     """세션의 전체 대화 (요약된 오래된 턴도 화면 표시용으로 모두 돌려준다)."""
     session = _get_own_session(db, user_id, session_id)
     logs = db.query(ChatLog).filter(ChatLog.session_id == session.id).order_by(ChatLog.id).all()
+    slot_status: dict[int, dict[str, dict]] = {}
+    log_ids = [log.id for log in logs if log.layout]
+    if log_ids:
+        for slot in db.query(ChatSlot).filter(ChatSlot.chat_log_id.in_(log_ids)).all():
+            state = {"status": slot.status}
+            if slot.message:
+                state["message"] = slot.message
+            slot_status.setdefault(slot.chat_log_id, {})[slot.slot_id] = state
     return {
         "id": session.id,
         "title": session.title,
@@ -291,6 +343,8 @@ async def get_session(
                 "refined_question": log.refined_question,
                 "answer": log.answer,
                 "steps": log.steps or [],
+                "layout": log.layout,
+                "slots": slot_status.get(log.id, {}),
                 "status": log.status,
                 "created_at": log.created_at.isoformat(),
             }
@@ -383,6 +437,25 @@ async def get_my_chat_logs(
         ],
         "total": total,
     }
+
+
+@router.get("/logs/{log_id}/slots/{slot_id}")
+async def get_chat_slot(
+    log_id: int,
+    slot_id: str,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    """답변 화면 한 영역의 내용. 스트림의 slot 완료 알림을 받거나 지난 대화를 열 때 가져간다."""
+    chat_log = db.query(ChatLog).filter(ChatLog.id == log_id).first()
+    if not chat_log:
+        raise HTTPException(status_code=404, detail="Chat log not found")
+    if chat_log.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Not your chat log")
+    slot = db.get(ChatSlot, (log_id, slot_id))
+    if not slot:
+        raise HTTPException(status_code=404, detail="Slot not found")
+    return {"id": slot.slot_id, "status": slot.status, "content": slot.content, "message": slot.message}
 
 
 @router.get("/logs/{log_id}")

@@ -10,7 +10,10 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
 import { chatApi, type ChatStage } from '@/lib/api'
-import type { ChatSessionDetail, ChatSessionSummary, ChatStep, MatchedCodeExample } from '@/types/api'
+import type {
+  ChatSessionDetail, ChatSessionSummary, ChatStep, LayoutNode, MatchedCodeExample, SlotState,
+} from '@/types/api'
+import { AnswerView } from '@/components/answer/AnswerView'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
@@ -21,9 +24,17 @@ const EXAMPLE_QUESTIONS = [
   'KODEX 200과 비슷한 ETF는?',
 ]
 
+// 영역(슬롯)으로 나뉜 답변 화면
+interface AnswerScreen {
+  chatLogId: number
+  layout: LayoutNode
+  slots: Record<string, SlotState>
+}
+
 interface DisplayMessage {
   role: 'user' | 'assistant'
   content: string
+  answer?: AnswerScreen | null
   sentAt?: Date
   refinedQuestion?: string | null
   steps?: ChatStep[]
@@ -37,6 +48,7 @@ interface ChatStream {
   steps: ChatStep[]
   stage: ChatStage | null
   examples: MatchedCodeExample[]
+  answer: AnswerScreen | null  // 레이아웃을 받은 뒤부터 영역이 채워지는 화면
   isStopping: boolean
   done: boolean  // 답변은 받았고 서버 저장을 기다리는 중
 }
@@ -45,7 +57,10 @@ function toDisplayMessages(detail: ChatSessionDetail): DisplayMessage[] {
   return detail.messages.flatMap((m): DisplayMessage[] => [
     // created_at은 타임존 없는 UTC라 'Z'를 붙여 읽는다
     { role: 'user', content: m.question, refinedQuestion: m.refined_question, sentAt: new Date(m.created_at + 'Z') },
-    { role: 'assistant', content: m.answer, steps: m.steps },
+    {
+      role: 'assistant', content: m.answer, steps: m.steps,
+      answer: m.layout ? { chatLogId: m.id, layout: m.layout, slots: m.slots } : null,
+    },
   ])
 }
 
@@ -157,7 +172,10 @@ export default function ChatPage() {
     setStreams((prev) => [
       // 같은 세션에서 저장을 기다리던 지난 스트림은 이번 것으로 대신한다
       ...prev.filter((s) => s.sessionId !== sessionId),
-      { key, sessionId, messages: newMessages, steps: [], stage: null, examples: [], isStopping: false, done: false },
+      {
+        key, sessionId, messages: newMessages, steps: [], stage: null, examples: [], answer: null,
+        isStopping: false, done: false,
+      },
     ])
     setInput('')
 
@@ -171,17 +189,24 @@ export default function ChatPage() {
       updateStream({ steps: collectedSteps })
     }
     let collectedExamples: MatchedCodeExample[] = []
+    let answerScreen: AnswerScreen | null = null
+    const updateSlot = (id: string, patch: (prev: SlotState) => SlotState) => {
+      if (!answerScreen) return
+      const prev = answerScreen.slots[id] ?? { status: 'pending' }
+      answerScreen = { ...answerScreen, slots: { ...answerScreen.slots, [id]: patch(prev) } }
+      updateStream({ answer: answerScreen })
+    }
 
     const finish = (content: string) => {
       newMessages = [
         ...newMessages,
         {
-          role: 'assistant', content, matchedExamples: collectedExamples,
+          role: 'assistant', content, answer: answerScreen, matchedExamples: collectedExamples,
           steps: collectedSteps.filter((s) => !s.running),  // 결과 없이 끝난 단계는 남기지 않는다
         },
       ]
       // 서버 저장이 끝날 때까지는 스트림이 들고 있는 대화를 보여준다
-      updateStream({ messages: newMessages, steps: [], examples: [], isStopping: false, done: true })
+      updateStream({ messages: newMessages, steps: [], examples: [], answer: null, isStopping: false, done: true })
       if (isViewing()) textareaRef.current?.focus()
     }
 
@@ -201,6 +226,12 @@ export default function ChatPage() {
       onStep: (step) => upsertStep(step),
       onAnswer: (answer) => finish(answer),
       onError: (error) => finish(`죄송합니다. 오류가 발생했습니다: ${error}`),
+      onLayout: ({ chat_log_id, layout }) => {
+        answerScreen = { chatLogId: chat_log_id, layout, slots: {} }
+        updateStream({ answer: answerScreen })
+      },
+      onSlot: ({ id, status, message }) => updateSlot(id, (prev) => ({ ...prev, status, message })),
+      onSlotDelta: ({ id, text }) => updateSlot(id, (prev) => ({ ...prev, text: (prev.text ?? '') + text })),
       onMatchedExamples: (examples) => {
         collectedExamples = examples
         updateStream({ examples })
@@ -311,27 +342,31 @@ export default function ChatPage() {
 
           {!isLoadingSession && shownMessages.map((msg, i) => (
             <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className="max-w-[80%]">
+              <div className={msg.answer ? 'w-full' : 'max-w-[80%]'}>
                 {msg.sentAt && (
                   <div className="mb-1 text-right text-xs text-muted-foreground">{formatSentAt(msg.sentAt)}</div>
                 )}
-                <Card
-                  className={
-                    msg.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted'
-                  }
-                >
-                  <CardContent className="p-3 text-sm">
-                    {msg.role === 'user' ? (
-                      <span className="whitespace-pre-wrap">{msg.content}</span>
-                    ) : (
-                      <div className="prose prose-sm dark:prose-invert max-w-none prose-table:text-sm prose-td:px-2 prose-td:py-1 prose-th:px-2 prose-th:py-1 prose-th:text-left">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {msg.content}
-                        </ReactMarkdown>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
+                {msg.answer ? (
+                  <AnswerView chatLogId={msg.answer.chatLogId} layout={msg.answer.layout} slots={msg.answer.slots} />
+                ) : (
+                  <Card
+                    className={
+                      msg.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted'
+                    }
+                  >
+                    <CardContent className="p-3 text-sm">
+                      {msg.role === 'user' ? (
+                        <span className="whitespace-pre-wrap">{msg.content}</span>
+                      ) : (
+                        <div className="prose prose-sm dark:prose-invert max-w-none prose-table:text-sm prose-td:px-2 prose-td:py-1 prose-th:px-2 prose-th:py-1 prose-th:text-left">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {msg.content}
+                          </ReactMarkdown>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                )}
                 {msg.refinedQuestion && (
                   <div
                     className="mt-1 text-xs text-muted-foreground flex items-start justify-end gap-1"
@@ -352,12 +387,21 @@ export default function ChatPage() {
           {/* Streaming state */}
           {viewedStream && !viewedStream.done && (
             <div className="flex justify-start">
-              <div className="max-w-[80%]">
+              <div className={viewedStream.answer ? 'w-full' : 'max-w-[80%]'}>
+                {viewedStream.answer && (
+                  <div className="mb-2">
+                    <AnswerView
+                      chatLogId={viewedStream.answer.chatLogId}
+                      layout={viewedStream.answer.layout}
+                      slots={viewedStream.answer.slots}
+                    />
+                  </div>
+                )}
                 <Card className="bg-muted">
                   <CardContent className="p-3 flex items-center gap-2 text-sm text-muted-foreground">
                     <Loader2 className="w-4 h-4 animate-spin" />
                     <span className="truncate">
-                      {streamingStatus(viewedStream.steps, viewedStream.stage, viewedStream.isStopping)}
+                      {streamingStatus(viewedStream.steps, viewedStream.stage, viewedStream.isStopping, viewedStream.answer)}
                     </span>
                   </CardContent>
                 </Card>
@@ -554,16 +598,23 @@ function MatchedExamplesView({ examples }: { examples: MatchedCodeExample[] }) {
 
 const STAGE_LABELS: Record<ChatStage, string> = {
   refining: '질문 이해 중...',
+  planning: '화면 구성 중...',
   searching_examples: '예시 찾는 중...',
   thinking: '생각 중...',
 }
 
-function streamingStatus(steps: ChatStep[], stage: ChatStage | null, isStopping: boolean) {
+function streamingStatus(steps: ChatStep[], stage: ChatStage | null, isStopping: boolean, answer: AnswerScreen | null) {
   const running = steps.filter((s) => s.running)
   if (isStopping) return running.length > 0 ? '중지 요청됨 — 실행 중인 단계가 끝나면 멈춰요...' : '중지하는 중...'
   if (running.length > 0) {
     const names = running.flatMap((s) => s.tool_calls.map((tc) => tc.name)).join(', ')
     return `Step ${running[0].step_number} 실행 중... [${names}]`
+  }
+  if (answer) {
+    const states = Object.values(answer.slots)
+    const total = countSlots(answer.layout)
+    const finished = states.filter((s) => s.status !== 'pending' && s.status !== 'running').length
+    return `답변 채우는 중... (${finished}/${total})`
   }
   if (steps.length > 0 || !stage) return '생각 중...'  // 다음 도구를 고르거나 답변을 쓰는 중
   return STAGE_LABELS[stage]
@@ -605,4 +656,8 @@ function StepsView({ steps, defaultOpen = false }: { steps: ChatStep[]; defaultO
       </div>
     </details>
   )
+}
+
+function countSlots(node: LayoutNode): number {
+  return node.type === 'slot' ? 1 : node.children.reduce((n, child) => n + countSlots(child), 0)
 }

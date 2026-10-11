@@ -1,6 +1,6 @@
 from enum import Enum
 
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Index
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Index, PrimaryKeyConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 
 from ..database import Base
@@ -48,5 +48,23 @@ class ChatLog(Base):
     generated_code = Column(Text, nullable=True)
     # 실행 과정(도구 호출 step 목록). 세션을 다시 열 때 보여 준다
     steps = Column(JSONB, nullable=True)
+    # 답변 화면 구성 (column/row/slot 트리). 슬롯 내용은 chat_slots. NULL이면 answer 마크다운만 있는 예전 답변
+    layout = Column(JSONB, nullable=True)
     status = Column(String(20), default=ChatLogStatus.PENDING.value)
     created_at = Column(DateTime, default=utcnow)
+
+
+class ChatSlot(Base):
+    """답변 화면 한 영역의 내용. 슬롯이 끝나는 대로 저장되고, 프런트는 완료 알림을 받으면 여기서 가져간다."""
+    __tablename__ = "chat_slots"
+    __table_args__ = (PrimaryKeyConstraint("chat_log_id", "slot_id"),)
+
+    chat_log_id = Column(Integer, ForeignKey("chat_logs.id", ondelete="CASCADE"), nullable=False)
+    slot_id = Column(String(20), nullable=False)
+    skill = Column(String(50), nullable=False)
+    status = Column(String(20), nullable=False)  # pending | running | complete | empty | failed | stopped
+    content = Column(JSONB, nullable=True)
+    # 대화 기억·요약 텍스트에 넘기는 짧은 요약
+    summary = Column(Text, nullable=True)
+    message = Column(Text, nullable=True)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)

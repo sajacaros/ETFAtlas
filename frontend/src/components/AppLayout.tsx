@@ -22,9 +22,10 @@ import {
   Globe2,
   Gamepad2,
   Layers,
+  Network,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import StoryDialog from '@/components/StoryDialog'
+import DocDialog, { DOC_PAGES, type DocPage } from '@/components/DocDialog'
 import { cn } from '@/lib/utils'
 
 const COLLAPSED_KEY = 'sidebar-collapsed'
@@ -91,11 +92,11 @@ function NavItemLink({ item, collapsed }: { item: NavItem; collapsed: boolean })
 function SidebarBody({
   collapsed,
   onToggleCollapse,
-  onOpenStory,
+  onOpenDoc,
 }: {
   collapsed: boolean
   onToggleCollapse?: () => void
-  onOpenStory: () => void
+  onOpenDoc: (doc: DocPage) => void
 }) {
   const { user, logout } = useAuth()
   const { hasNew } = useNotification()
@@ -196,17 +197,23 @@ function SidebarBody({
             <Switch checked={theme === 'gameboy'} onCheckedChange={toggleTheme} />
           </label>
         )}
-        <button
-          onClick={onOpenStory}
-          title={collapsed ? 'Story' : undefined}
-          className={cn(
-            'flex h-9 w-full items-center gap-3 rounded-lg px-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground',
-            collapsed && 'justify-center px-0',
-          )}
-        >
-          <BookOpen className="h-[18px] w-[18px] shrink-0" />
-          {!collapsed && 'Story'}
-        </button>
+        {([
+          { doc: DOC_PAGES.story, label: 'Story', icon: BookOpen },
+          { doc: DOC_PAGES.architecture, label: 'Architecture', icon: Network },
+        ] as const).map(({ doc, label, icon: Icon }) => (
+          <button
+            key={label}
+            onClick={() => onOpenDoc(doc)}
+            title={collapsed ? label : undefined}
+            className={cn(
+              'flex h-9 w-full items-center gap-3 rounded-lg px-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground',
+              collapsed && 'justify-center px-0',
+            )}
+          >
+            <Icon className="h-[18px] w-[18px] shrink-0" />
+            {!collapsed && label}
+          </button>
+        ))}
       </div>
 
       <div className={cn('border-t p-3', collapsed && 'p-2')}>
@@ -250,7 +257,7 @@ function SidebarBody({
 
 export default function AppLayout({ children }: { children: ReactNode }) {
   const location = useLocation()
-  const [storyOpen, setStoryOpen] = useState(false)
+  const [openDoc, setOpenDoc] = useState<DocPage | null>(null)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [collapsed, setCollapsed] = useState(() => {
     try {
@@ -289,7 +296,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         <SidebarBody
           collapsed={collapsed}
           onToggleCollapse={toggleCollapse}
-          onOpenStory={() => setStoryOpen(true)}
+          onOpenDoc={setOpenDoc}
         />
       </aside>
 
@@ -319,9 +326,9 @@ export default function AppLayout({ children }: { children: ReactNode }) {
             </DialogPrimitive.Close>
             <SidebarBody
               collapsed={false}
-              onOpenStory={() => {
+              onOpenDoc={(doc) => {
                 setMobileOpen(false)
-                setStoryOpen(true)
+                setOpenDoc(doc)
               }}
             />
           </DialogPrimitive.Content>
@@ -332,7 +339,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         <main className="w-full max-w-[1600px] px-4 py-6 lg:px-8 lg:py-8">{children}</main>
       </div>
 
-      <StoryDialog open={storyOpen} onOpenChange={setStoryOpen} />
+      <DocDialog doc={openDoc} onClose={() => setOpenDoc(null)} />
     </div>
   )
 }

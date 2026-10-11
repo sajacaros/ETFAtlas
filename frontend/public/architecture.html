@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ETF Atlas Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --primary: #2563eb;
+    --primary-light: #dbeafe;
+    --accent: #f59e0b;
+    --accent-light: #fef3c7;
+    --green: #059669;
+    --green-light: #d1fae5;
+    --purple: #7c3aed;
+    --purple-light: #ede9fe;
+    --red: #dc2626;
+    --red-light: #fee2e2;
+    --bg: #fafbfc;
+    --surface: #ffffff;
+    --text: #1e293b;
+    --muted: #64748b;
+    --border: #e2e8f0;
+    --code-bg: #f1f5f9;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Noto Sans KR', -apple-system, sans-serif;
+    background: var(--bg); color: var(--text);
+    line-height: 1.7; font-size: 15px;
+  }
+  code, .mono { font-family: 'Fira Code', ui-monospace, monospace; font-size: 0.86em; }
+  code { background: var(--code-bg); padding: 1px 6px; border-radius: 4px; }
+
+  header {
+    position: sticky; top: 0; z-index: 10;
+    background: rgba(255,255,255,0.95); backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--border);
+    /* 오른쪽은 앱 다이얼로그의 닫기 버튼 자리 */
+    padding: 0 56px 0 24px; height: 56px;
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  }
+  header h1 { font-size: 17px; font-weight: 700; color: var(--primary); white-space: nowrap; }
+  header h1 span { font-weight: 400; color: var(--muted); font-size: 13px; margin-left: 6px; }
+  header nav { display: flex; gap: 4px; overflow-x: auto; }
+  header nav a {
+    font-size: 13px; color: var(--muted); text-decoration: none; white-space: nowrap;
+    padding: 4px 10px; border-radius: 6px;
+  }
+  header nav a:hover { background: var(--primary-light); color: var(--primary); }
+
+  main { max-width: 980px; margin: 0 auto; padding: 32px 24px 64px; }
+  section { margin-bottom: 56px; scroll-margin-top: 72px; }
+  h2 { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
+  h2 + .lead { color: var(--muted); margin-bottom: 20px; }
+  h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
+
+  /* ── 계층 다이어그램 ── */
+  .layer {
+    border: 1.5px solid var(--border); border-radius: 14px;
+    background: var(--surface); padding: 16px 18px 18px;
+  }
+  .layer > .layer-title {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 12px;
+  }
+  .layer-title .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .fe { border-color: #bfdbfe; } .fe .dot { background: var(--primary); }
+  .orch { border-color: #fde68a; background: #fffdf5; } .orch .dot { background: var(--accent); }
+  .skills { border-color: #a7f3d0; background: #f8fffc; } .skills .dot { background: var(--green); }
+  .data { border-color: #ddd6fe; background: #fbfaff; } .data .dot { background: var(--purple); }
+
+  .row { display: flex; flex-wrap: wrap; gap: 10px; }
+  .box {
+    flex: 1 1 160px; min-width: 0;
+    border: 1px solid var(--border); border-radius: 10px; background: var(--surface);
+    padding: 10px 12px;
+  }
+  .box .name { font-weight: 600; font-size: 14px; }
+  .box .desc { color: var(--muted); font-size: 12.5px; line-height: 1.55; margin-top: 2px; }
+  .box.agent { border: 1.5px dashed var(--red); background: var(--red-light); }
+  .box.agent .name::after {
+    content: 'AGENT'; margin-left: 6px; font-size: 10px; font-weight: 700; color: var(--red);
+    border: 1px solid var(--red); border-radius: 4px; padding: 0 4px; vertical-align: 2px;
+  }
+  .llm {
+    display: inline-block; font-size: 10px; font-weight: 700; color: var(--purple);
+    background: var(--purple-light); border-radius: 4px; padding: 0 5px; margin-left: 4px; vertical-align: 1px;
+  }
+
+  .arrow {
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    color: var(--muted); font-size: 12.5px; padding: 8px 0;
+  }
+  .arrow .line { width: 2px; height: 26px; background: linear-gradient(var(--border), #94a3b8); position: relative; }
+  .arrow .line::after {
+    content: ''; position: absolute; bottom: -2px; left: -4px;
+    border: 5px solid transparent; border-top: 7px solid #94a3b8;
+  }
+  .arrow.both .line::before {
+    content: ''; position: absolute; top: -2px; left: -4px;
+    border: 5px solid transparent; border-bottom: 7px solid #cbd5e1;
+  }
+
+  /* 오케스트레이터 단계 */
+  .steps { counter-reset: step; display: grid; gap: 8px; }
+  .step {
+    display: grid; grid-template-columns: 28px 1fr auto; gap: 10px; align-items: start;
+    background: var(--surface); border: 1px solid #fde68a; border-radius: 10px; padding: 10px 12px;
+  }
+  .step::before {
+    counter-increment: step; content: counter(step);
+    width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: #fff;
+    font-size: 12px; font-weight: 700; display: grid; place-items: center;
+  }
+  .step .t { font-weight: 600; font-size: 14px; }
+  .step .d { color: var(--muted); font-size: 12.5px; }
+  .step .time { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .phases { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+  .phase { border-radius: 8px; padding: 8px 10px; font-size: 12.5px; background: var(--accent-light); }
+
+  /* 스킬 */
+  .skill-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; }
+  .skill { border: 1px solid #a7f3d0; border-radius: 10px; background: var(--surface); padding: 10px 12px; }
+  .skill .name { font-family: 'Fira Code', monospace; font-weight: 500; font-size: 13.5px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .chip { font-size: 11px; border-radius: 999px; padding: 1px 8px; background: var(--green-light); color: var(--green); }
+  .chip.text { background: var(--code-bg); color: var(--muted); }
+  .skill .desc { color: var(--muted); font-size: 12.5px; margin-top: 4px; line-height: 1.5; }
+
+  .agent-wrap { margin-top: 12px; display: grid; grid-template-columns: 1fr 1.4fr; gap: 10px; }
+  .tools { border: 1px solid var(--border); border-radius: 10px; background: var(--surface); padding: 10px 12px; }
+  .tools ul { list-style: none; display: grid; grid-template-columns: 1fr 1fr; gap: 2px 12px; margin-top: 6px; }
+  .tools li { font-family: 'Fira Code', monospace; font-size: 12px; color: var(--text); }
+  .tools li::before { content: '▸ '; color: #94a3b8; }
+
+  /* 표 */
+  table { width: 100%; border-collapse: collapse; background: var(--surface); border-radius: 10px; overflow: hidden; font-size: 13.5px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { background: var(--code-bg); font-weight: 600; font-size: 12.5px; color: var(--muted); }
+  tr:last-child td { border-bottom: 0; }
+  .table-wrap { border: 1px solid var(--border); border-radius: 10px; overflow-x: auto; }
+
+  /* 시퀀스 */
+  .seq { display: grid; gap: 6px; }
+  .msg { display: grid; grid-template-columns: 110px 1fr; gap: 12px; align-items: center; font-size: 13px; }
+  .msg .who { font-size: 12px; font-weight: 600; text-align: right; color: var(--muted); }
+  .msg .bar { border-radius: 8px; padding: 7px 12px; background: var(--surface); border: 1px solid var(--border); }
+  .msg.sse .bar { border-left: 4px solid var(--primary); }
+  .msg.get .bar { border-left: 4px solid var(--green); }
+  .msg .bar b { font-family: 'Fira Code', monospace; font-weight: 500; }
+
+  .callout {
+    border-left: 4px solid var(--primary); background: var(--primary-light);
+    border-radius: 8px; padding: 12px 16px; font-size: 14px; margin-top: 16px;
+  }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .card { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); padding: 14px 16px; }
+  .card ol { padding-left: 20px; font-size: 13.5px; }
+  .card ol li { margin: 3px 0; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 10px; }
+
+  @media (max-width: 720px) {
+    main { padding: 20px 16px 48px; }
+    header nav { display: none; }
+    .agent-wrap, .two, .phases { grid-template-columns: 1fr; }
+    .step { grid-template-columns: 28px 1fr; }
+    .step .time { grid-column: 2; }
+    .msg { grid-template-columns: 1fr; gap: 2px; }
+    .msg .who { text-align: left; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>ETF Atlas<span>챗봇 답변 아키텍처</span></h1>
+  <nav>
+    <a href="#overview">전체 구조</a>
+    <a href="#orchestrator">오케스트레이터</a>
+    <a href="#skills">스킬</a>
+    <a href="#roles">Agent · Tool · Skill</a>
+    <a href="#flow">이벤트 흐름</a>
+    <a href="#extend">확장</a>
+  </nav>
+</header>
+
+<main>
+  <section id="overview">
+    <h2>전체 구조</h2>
+    <p class="lead">레이아웃 에이전트가 화면을 영역(슬롯)으로 먼저 나누고, 각 영역은 등록된 스킬이 채웁니다. 프런트는 완료된 영역부터 가져와 그립니다.</p>
+
+    <div class="layer fe">
+      <div class="layer-title"><span class="dot"></span>Frontend · React</div>
+      <div class="row">
+        <div class="box"><div class="name">ChatPage</div><div class="desc">질문 전송, SSE 수신, 대화 목록</div></div>
+        <div class="box"><div class="name">AnswerView</div><div class="desc">레이아웃 트리(column · row · slot)를 그리고 영역마다 스켈레톤 표시</div></div>
+        <div class="box"><div class="name">SlotView</div><div class="desc">완료 알림을 받으면 영역 내용을 GET으로 가져온다</div></div>
+        <div class="box"><div class="name">DataTable · ChartView</div><div class="desc">차트 레지스트리(ECharts, 지연 로딩). 못 그리면 표로 대체</div></div>
+      </div>
+    </div>
+
+    <div class="arrow both"><span>SSE <code>layout</code> · <code>slot</code> · <code>slot_delta</code></span><span class="line"></span><span><code>GET /chat/logs/{id}/slots/{sid}</code></span></div>
+
+    <div class="layer orch">
+      <div class="layer-title"><span class="dot"></span>Orchestrator · AnswerService</div>
+      <div class="row">
+        <div class="box"><div class="name">ChatMemory.refine <span class="llm">LLM</span></div><div class="desc">대화 맥락으로 질문을 독립 문장으로</div></div>
+        <div class="box agent"><div class="name">Planner <span class="llm">LLM</span></div><div class="desc">화면을 슬롯으로 설계. 도구 없이 구조화된 출력만. 스키마는 레지스트리에서 생성</div></div>
+        <div class="box"><div class="name">Slot runner</div><div class="desc">독립 슬롯은 병렬, 해설 슬롯은 그 뒤에. 끝나는 대로 저장하고 알린다</div></div>
+        <div class="box"><div class="name">EntityResolver</div><div class="desc">ETF·종목 이름 → 코드. 한 답변 안에서 공유</div></div>
+      </div>
+    </div>
+
+    <div class="arrow"><span><code>skill.run(args, display, ctx)</code></span><span class="line"></span><span>dataset · view · summary</span></div>
+
+    <div class="layer skills">
+      <div class="layer-title"><span class="dot"></span>Skill registry</div>
+      <div class="row">
+        <div class="box"><div class="name">DataSkill ×7</div><div class="desc">DB에서 결정적으로 데이터를 만든다. LLM 없음</div></div>
+        <div class="box"><div class="name">narrative <span class="llm">LLM</span></div><div class="desc">앞 슬롯 요약만 받아 해설을 흘려보낸다</div></div>
+        <div class="box agent"><div class="name">agent → ChatService <span class="llm">LLM</span></div><div class="desc">기존 tool-calling 에이전트. 도구 10개로 그래프를 조회해 마크다운 답변</div></div>
+      </div>
+    </div>
+
+    <div class="arrow"><span>Cypher (읽기)</span><span class="line"></span><span></span></div>
+
+    <div class="layer data">
+      <div class="layer-title"><span class="dot"></span>Data</div>
+      <div class="row">
+        <div class="box"><div class="name">PostgreSQL + Apache AGE</div><div class="desc">ETF · Stock · Company · Tag · Price 그래프</div></div>
+        <div class="box"><div class="name">chat_logs · chat_slots</div><div class="desc">질문, 화면 레이아웃, 영역별 내용과 요약</div></div>
+        <div class="box"><div class="name">pgvector</div><div class="desc">agent가 참고하는 few-shot 코드 예시</div></div>
+      </div>
+    </div>
+
+    <div class="legend">
+      <span><span class="llm">LLM</span> 모델을 호출하는 곳</span>
+      <span style="border:1.5px dashed var(--red);border-radius:4px;padding:0 6px;color:var(--red)">AGENT</span><span>스스로 판단하는 에이전트</span>
+    </div>
+  </section>
+
+  <section id="orchestrator">
+    <h2>오케스트레이터</h2>
+    <p class="lead">특정 스킬을 모르는 실행기입니다. 스킬이 늘어도 바뀌지 않습니다.</p>
+    <div class="steps">
+      <div class="step"><div><div class="t">질문 재작성</div><div class="d">이전 대화가 있을 때만. "이거 구성종목은?" → "KODEX 반도체 구성종목은?"</div></div><div class="time">~0.5초</div></div>
+      <div class="step"><div><div class="t">레이아웃 설계 (Planner)</div><div class="d">줄 목록, 줄마다 슬롯 1~3개. 슬롯마다 <code>skill</code> · <code>display</code> · <code>args</code>. 실패하면 agent 슬롯 하나로</div></div><div class="time">2~6초</div></div>
+      <div class="step"><div><div class="t">레이아웃 전송</div><div class="d">슬롯에 <code>s1</code>, <code>s2</code>… id를 붙여 저장하고 SSE <code>layout</code>으로 보낸다. 프런트는 빈 자리를 그린다</div></div><div class="time">즉시</div></div>
+      <div class="step"><div><div class="t">슬롯 실행</div><div class="d">끝나는 슬롯마다 <code>chat_slots</code>에 저장하고 SSE <code>slot {id, complete}</code>
+        <div class="phases">
+          <div class="phase"><b>1단계</b> · 독립 슬롯을 동시에 (슬롯마다 DB 세션)</div>
+          <div class="phase"><b>2단계</b> · <code>after_others</code> 슬롯(해설)이 1단계 요약을 받아 실행</div>
+        </div></div></div><div class="time">데이터 0.1초<br>해설 2~3초</div></div>
+      <div class="step"><div><div class="t">답변 텍스트</div><div class="d">화면 전체를 텍스트로 옮겨 SSE <code>answer</code>. 대화 기억과 관리자 검수에 쓴다</div></div><div class="time">즉시</div></div>
+    </div>
+    <div class="callout">ETF·종목 질문은 7~10초, agent 슬롯으로 가는 질문은 15~45초. 데이터 영역은 레이아웃이 나오자마자 채워집니다.</div>
+  </section>
+
+  <section id="skills">
+    <h2>스킬</h2>
+    <p class="lead">화면 한 영역을 채우는 기능 단위. 이름 · 설명 · 인자 스키마 · 지원하는 표시 방식 · 실행 함수를 가집니다.</p>
+
+    <h3>DataSkill — DB에서 결정적으로</h3>
+    <div class="skill-grid">
+      <div class="skill"><div class="name">price_trend</div><div class="chips"><span class="chip">line</span><span class="chip">candlestick</span><span class="chip">table</span></div><div class="desc">ETF 가격 추이. 여럿이면 누적 수익률로</div></div>
+      <div class="skill"><div class="name">stock_trend</div><div class="chips"><span class="chip">line</span><span class="chip">candlestick</span><span class="chip">table</span></div><div class="desc">개별 종목 가격 추이 (같은 베이스)</div></div>
+      <div class="skill"><div class="name">period_returns</div><div class="chips"><span class="chip">bar</span><span class="chip">table</span></div><div class="desc">1일 ~ 1년 기간별 수익률</div></div>
+      <div class="skill"><div class="name">etf_compare</div><div class="chips"><span class="chip">table</span></div><div class="desc">기본 정보 비교표, 행마다 우열 강조</div></div>
+      <div class="skill"><div class="name">etf_profile</div><div class="chips"><span class="chip">radar</span><span class="chip">table</span></div><div class="desc">전체 ETF 대비 백분위 점수 5개 축</div></div>
+      <div class="skill"><div class="name">holdings</div><div class="chips"><span class="chip">treemap</span><span class="chip">donut</span><span class="chip">bar</span><span class="chip">table</span></div><div class="desc">구성종목 비중 (도넛은 상위 7 + 기타)</div></div>
+      <div class="skill"><div class="name">stock_holders</div><div class="chips"><span class="chip">bar</span><span class="chip">table</span></div><div class="desc">종목을 많이 담은 ETF 순위</div></div>
+    </div>
+
+    <h3 style="margin-top:18px">LLM을 쓰는 스킬</h3>
+    <div class="agent-wrap">
+      <div class="skill"><div class="name">narrative <span class="llm">LLM</span></div><div class="chips"><span class="chip text">text</span></div>
+        <div class="desc">다른 슬롯이 끝난 뒤, 그 요약만 받아 해설을 토큰 단위로 흘려보낸다. 숫자는 요약에 있는 것만 쓴다</div></div>
+      <div class="skill" style="border-color:#fecaca"><div class="name">agent <span class="llm">LLM</span></div><div class="chips"><span class="chip text">markdown</span></div>
+        <div class="desc">스킬로 표현할 수 없는 질문(테마별 목록, 유사 ETF, 비중 변화…)과 레이아웃 설계 실패 시. 안에서 <b>ChatService</b> 에이전트를 돌린다</div>
+        <div class="tools" style="margin-top:8px">
+          <h3 style="font-size:12.5px;margin:0">ChatService의 도구 10개</h3>
+          <ul>
+            <li>etf_search</li><li>stock_search</li><li>list_tags</li><li>get_etf_info</li>
+            <li>find_similar_etfs</li><li>get_holdings_changes</li><li>get_etf_prices</li><li>get_stock_prices</li>
+            <li>compare_etfs</li><li>graph_query</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="roles">
+    <h2>Agent · Tool · Skill</h2>
+    <p class="lead">누가 고르고, 결과가 어디로 가는지가 다릅니다.</p>
+    <div class="table-wrap">
+      <table>
+        <tr><th>구분</th><th>하는 일</th><th>고르는 쪽</th><th>결과를 받는 쪽</th><th>LLM</th></tr>
+        <tr><td><b>Planner</b> (agent)</td><td>화면을 슬롯으로 나눈다</td><td>오케스트레이터가 항상 실행</td><td>오케스트레이터</td><td>1회, 도구 없음</td></tr>
+        <tr><td><b>Skill</b></td><td>슬롯 하나를 채운다</td><td>Planner</td><td><b>프런트</b> (dataset · view · 텍스트)</td><td>데이터 스킬은 없음</td></tr>
+        <tr><td><b>ChatService</b> (agent)</td><td>도구를 반복 호출해 답을 만든다</td><td><code>agent</code> 스킬</td><td><code>agent</code> 스킬 (마크다운)</td><td>여러 번 (최대 15)</td></tr>
+        <tr><td><b>Tool</b></td><td>DB 조회 함수</td><td>ChatService의 LLM</td><td><b>LLM</b> (문자열 JSON)</td><td>없음</td></tr>
+      </table>
+    </div>
+    <div class="callout">데이터 스킬의 숫자는 LLM을 거치지 않습니다. LLM에는 단위를 붙인 짧은 <code>summary</code>만 넘어가고, 화면의 표·차트는 DB 원시값으로 그립니다.</div>
+  </section>
+
+  <section id="flow">
+    <h2>이벤트 흐름</h2>
+    <p class="lead">"KODEX 200과 TIGER 200 비교해줘" — <code>POST /api/chat/message/stream</code></p>
+    <div class="seq">
+      <div class="msg sse"><div class="who">서버 → 프런트</div><div class="bar"><b>session</b> · <b>status</b> {planning}</div></div>
+      <div class="msg sse"><div class="who">서버 → 프런트</div><div class="bar"><b>layout</b> {chat_log_id, column[ row[s1 표, s2 레이더], s3 라인, s4 해설 ]} → 스켈레톤</div></div>
+      <div class="msg sse"><div class="who">서버 → 프런트</div><div class="bar"><b>slot</b> {s1, complete} · {s2, complete} · {s3, complete}</div></div>
+      <div class="msg get"><div class="who">프런트 → 서버</div><div class="bar"><b>GET</b> /chat/logs/{id}/slots/s1 · s2 · s3 → 표 · 레이더 · 라인 차트</div></div>
+      <div class="msg sse"><div class="who">서버 → 프런트</div><div class="bar"><b>slot_delta</b> {s4, "두 ETF 모두…"} ×N → 해설이 글자 단위로</div></div>
+      <div class="msg sse"><div class="who">서버 → 프런트</div><div class="bar"><b>slot</b> {s4, complete} · <b>answer</b> · <b>chat_log_id</b> · [DONE]</div></div>
+    </div>
+    <div class="callout">지난 대화를 열 때도 같은 GET으로 영역을 채우므로, 실시간 화면과 기록 화면이 렌더링 경로를 공유합니다.</div>
+  </section>
+
+  <section id="extend">
+    <h2>확장</h2>
+    <p class="lead">확장 지점은 둘이고 서로 모릅니다. 오케스트레이터 · SSE 프로토콜 · 저장 구조는 바뀌지 않습니다.</p>
+    <div class="two">
+      <div class="card">
+        <h3>스킬 추가 — 무엇을 가져올지</h3>
+        <ol>
+          <li><code>services/answer/skills/</code>에 스킬 클래스 (DataSkill이면 <code>fetch()</code>만)</li>
+          <li><code>REGISTRY</code>에 한 줄</li>
+          <li>Planner의 출력 스키마와 프롬프트에 자동 반영</li>
+        </ol>
+      </div>
+      <div class="card">
+        <h3>차트 추가 — 어떻게 그릴지</h3>
+        <ol>
+          <li>백엔드 <code>schemas.py</code>에 view 모델</li>
+          <li>프런트 <code>types/api.ts</code>의 <code>DataView</code></li>
+          <li><code>charts.ts</code>의 <code>BUILDERS</code>에 빌더 하나</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+</main>
+</body>
+</html>

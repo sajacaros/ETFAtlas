@@ -45,10 +45,13 @@ class SkillResult:
     message: Optional[str] = None  # empty/failed일 때 그 영역에 보여줄 문구
     # 대상을 하나로 정하지 못해 사용자에게 되묻는 결과. 오케스트레이터는 이때 해설 같은 뒤 슬롯을 돌리지 않는다
     clarify: bool = False
+    # 다른 슬롯이 '@이름.순위'로 참조할 수 있는 대상 목록 [{code, name}], 순위 순. 스킬의 exports가 무엇인지 정한다
+    exports: List[Dict[str, str]] = field(default_factory=list)
 
     def event(self) -> Dict[str, Any]:
         return {"type": "result", "status": self.status, "content": self.content,
-                "summary": self.summary, "message": self.message, "clarify": self.clarify}
+                "summary": self.summary, "message": self.message, "clarify": self.clarify,
+                "exports": self.exports}
 
 
 def empty(message: str) -> SkillResult:
@@ -58,12 +61,13 @@ def empty(message: str) -> SkillResult:
 def data_result(
     dataset: Dataset, view: BaseModel, summary: str,
     sources: Optional[List[Source]] = None, notes: Optional[List[str]] = None,
+    exports: Optional[List[Dict[str, str]]] = None,
 ) -> SkillResult:
     try:
         content = DataContent(dataset=dataset, view=view, sources=sources or [], notes=notes or [])
     except ValidationError as e:  # 스킬 버그 — 깨진 데이터를 보내지 않는다
         return SkillResult(status="failed", summary="", message=f"결과 형식 오류: {e.errors()[0]['msg']}")
-    return SkillResult(status="complete", content=content.model_dump(), summary=summary)
+    return SkillResult(status="complete", content=content.model_dump(), summary=summary, exports=exports or [])
 
 
 def choice_result(question: str, header: List[str], rows: List[List[str]], footer: str = "") -> SkillResult:
@@ -105,6 +109,9 @@ class Skill:
     displays: ClassVar[Tuple[str, ...]]
     # True면 다른 슬롯이 모두 끝난 뒤, 그 요약(context.related)을 받아 실행한다
     after_others: ClassVar[bool] = False
+    # 결과로 내보내는 대상 목록의 설명 (예: "ETF 목록, 그 종목 비중 높은 순"). 비어 있으면 참조할 수 없는 스킬이다.
+    # 내보내는 쪽은 결과의 exports에 {code, name}을 순위 순으로 담는다
+    exports: ClassVar[str] = ""
 
     async def run(self, args: BaseModel, display: str, ctx: SkillContext) -> AsyncIterator[Dict[str, Any]]:
         raise NotImplementedError

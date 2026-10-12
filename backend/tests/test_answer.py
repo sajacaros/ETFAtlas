@@ -506,3 +506,115 @@ def test_lookthrough_asks_about_an_ambiguous_etf_but_takes_an_exact_stock(lookth
     assert rows == {"삼성전자": 100}
     with pytest.raises(AmbiguousETF):
         lookthrough([("반도체", 50), ("삼성전자", 50)])
+
+
+# --- 슬롯 간 참조 ---
+
+def test_refs_resolve_ranks_and_expand_ranges_in_lists():
+    from app.services.answer import refs
+    exports = {"rank": [{"code": "448100", "name": "WON 200"}, {"code": "069500", "name": "KODEX 200"},
+                        {"code": "102110", "name": "TIGER 200"}]}
+    args = {"etf": "@rank.1", "etfs": ["@rank.2-3", "KODEX 반도체"], "top": 10, "note": "rank.1"}
+    assert refs.refs_in(args) == {"rank"}
+    assert refs.resolve(args, exports) == {
+        "etf": "448100", "etfs": ["069500", "102110", "KODEX 반도체"], "top": 10, "note": "rank.1"}
+    assert refs.describe({"etf": "@rank.1"}, exports, {"rank": "삼성전자 비중 순위"}) == [
+        "'삼성전자 비중 순위' 1위: WON 200(448100)"]
+    with pytest.raises(refs.RefError, match="하나만"):
+        refs.resolve({"etf": "@rank.1-2"}, exports)
+    with pytest.raises(refs.RefError, match="3개뿐"):
+        refs.resolve({"etf": "@rank.4"}, exports)
+
+
+def _plan_steps(*slots):
+    return build_plan_model(REGISTRY).model_validate({"rows": [{"slots": list(slots)}]})
+
+
+RANK = {"skill": "stock_holders", "name": "rank", "title": "순위", "display": "bar", "args": {"stock": "삼성전자"}}
+
+
+def test_plan_turns_references_into_dependencies():
+    rows = to_rows(_plan_steps(RANK, {"skill": "holdings", "title": "구성", "display": "table",
+                                      "args": {"etf": "@rank.1"}}))
+    rank, holdings = rows[0]
+    assert (rank.name, rank.depends_on) == ("rank", [])
+    assert holdings.depends_on == ["s1"]
+
+
+@pytest.mark.parametrize("slots, error", [
+    ([{"skill": "holdings", "title": "구성", "display": "table", "args": {"etf": "@nope.1"}}], "name이 'nope'인 슬롯이 없습니다"),
+    ([{**RANK, "skill": "etf_compare", "display": "table", "args": {"etfs": ["A", "B"]}},
+      {"skill": "holdings", "title": "구성", "display": "table", "args": {"etf": "@rank.1"}}], "내보내지 않습니다"),
+    ([{"skill": "holdings", "name": "a", "title": "가", "display": "table", "args": {"etf": "@b.1"}},
+      {"skill": "holdings", "name": "b", "title": "나", "display": "table", "args": {"etf": "@a.1"}}], "순환"),
+])
+def test_plan_rejects_bad_references(slots, error):
+    with pytest.raises(Exception, match=error):
+        _plan_steps(*slots)
+
+
+class EtfArgs(BaseModel):
+    etf: str
+
+
+class Exporting(DataSkillStub):
+    exports = "ETF 목록"
+
+    async def run(self, args, display, ctx):
+        yield {**data_result(Dataset(fields=[DataField(key="a", label="a")], rows=[{"a": 1}]), LineView(x="a", y=["a"]),
+                             "순위요약", exports=[{"code": "448100", "name": "WON 200"}]).event(),
+               "exports": [{"code": "448100", "name": "WON 200"}]}
+
+
+class Receiving(Skill):
+    name = "recv"
+    description = "받은 인자를 그대로 요약"
+    Args = EtfArgs
+    displays = ("table",)
+    seen = []
+
+    async def run(self, args, display, ctx):
+        Receiving.seen.append((args.etf, list(ctx.related)))
+        yield data_result(Dataset(fields=[DataField(key="a", label="a")], rows=[{"a": 1}]), LineView(x="a", y=["a"]),
+                          f"받음 {args.etf}").event()
+
+
+def _ref_slot(id, skill, args, name=None, depends_on=(), title=""):
+    return PlannedSlot(id=id, skill=skill, title=title or id, display="table", args=args, name=name,
+                       depends_on=list(depends_on))
+
+
+def test_stream_runs_a_referencing_slot_after_its_target_with_the_code(monkeypatch):
+    Receiving.seen = []
+    rows = [[_ref_slot("s1", "exp", NoArgs(), name="rank", title="순위"),
+             _ref_slot("s2", "recv", EtfArgs(etf="@rank.1"), depends_on=["s1"])]]
+    service = _service(monkeypatch, rows, {"exp": Exporting(), "recv": Receiving()})
+    events = _collect(service)
+
+    assert Receiving.seen == [("448100", [("순위", "순위요약")])]
+    assert service._store.saved == {"s1": "complete", "s2": "complete"}
+    order = [e["data"]["id"] for e in events if e["type"] == "slot" and e["data"]["status"] == "running"]
+    assert order == ["s1", "s2"]
+
+
+def test_stream_skips_a_referencing_slot_when_its_target_has_nothing(monkeypatch):
+    Receiving.seen = []
+    rows = [[_ref_slot("s1", "broken", NoArgs(), name="rank", title="순위"),
+             _ref_slot("s2", "recv", EtfArgs(etf="@rank.1"), depends_on=["s1"])]]
+    service = _service(monkeypatch, rows, {**REG, "recv": Receiving()})
+    events = _collect(service)
+    assert Receiving.seen == []
+    assert service._store.saved == {"s1": "failed", "s2": "empty"}
+    assert any(e["type"] == "slot" and e["data"].get("message") == "'순위' 영역의 결과가 없어 채우지 못했습니다"
+               for e in events)
+
+
+def test_stock_holders_exports_etfs_in_rank_order(monkeypatch):
+    from app.services.answer.skills import stock_holders as mod
+    monkeypatch.setattr(mod, "node", lambda graph, cypher, params: [
+        {"code": "448100", "name": "WON 200", "weight": 35.24, "expense_ratio": 0.05, "date": "2026-10-08"},
+        {"code": "069500", "name": "KODEX 200", "weight": 34.9, "expense_ratio": 0.15, "date": "2026-10-08"},
+    ])
+    skill = REGISTRY["stock_holders"]
+    result = skill.fetch(skill.Args(stock="삼성전자"), "bar", None, FakeStockResolver())
+    assert result.exports == [{"code": "448100", "name": "WON 200"}, {"code": "069500", "name": "KODEX 200"}]

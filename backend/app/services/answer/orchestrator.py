@@ -15,6 +15,7 @@ import asyncio
 import logging
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from ...database import SessionLocal
@@ -22,6 +23,7 @@ from ...models.chat import ChatSlot
 from ...utils.time import utcnow
 from ..ai_config import load_ai_config
 from ..chat_memory import ChatMemory, ConversationContext
+from . import refs
 from .planner import PlannedSlot, Planner, layout_tree
 from .resolver import EntityResolver
 from .skills import REGISTRY
@@ -126,55 +128,96 @@ class AnswerService:
         self, slots: List[PlannedSlot], question: str, context: ConversationContext,
         chat_log_id: int, stop: asyncio.Event, results: Dict[str, Dict[str, Any]],
     ) -> AsyncIterator[Dict[str, Any]]:
-        """독립 슬롯은 동시에, after_others 슬롯은 그 뒤에 앞 슬롯들의 요약을 받아 실행한다.
+        """슬롯은 의존하는 슬롯이 끝나기를 기다렸다가 돌고, 서로 의존하지 않는 슬롯은 동시에 돈다.
+        의존: '@이름.순위'로 참조한 슬롯, after_others 스킬은 after_others가 아닌 슬롯 전부.
         중지는 스킬이 ctx.stop을 보고 스스로 멈추고, 아직 시작하지 않은 슬롯은 stopped로 마감한다."""
         queue: asyncio.Queue = asyncio.Queue()
         done = object()
         resolver = EntityResolver()
+        finished = {s.id: asyncio.Event() for s in slots}
+        by_id = {s.id: s for s in slots}
+        names = {s.name: s.id for s in slots if s.name}
 
-        async def run_slot(slot: PlannedSlot, related: List) -> None:
-            ctx = SkillContext(
-                question=question, conversation=context, session_factory=self._session_factory,
-                resolver=resolver, ai_config=self._config, stop=stop, related=related,
-            )
-            await queue.put(_slot_event(slot.id, "running"))
-            result: Dict[str, Any] = {"status": "failed", "message": "결과가 없습니다"}
-            try:
-                async for event in self._registry[slot.skill].run(slot.args, slot.display, ctx):
-                    kind = event["type"]
-                    if kind == "result":
-                        result = event
-                    elif kind == "delta":
-                        await queue.put(_event("slot_delta", {"id": slot.id, "text": event["text"]}))
-                    else:
-                        await queue.put(_event(kind, {**event["data"], "slot_id": slot.id}))
-            except Exception:
-                logger.exception("Slot %s (%s) failed", slot.id, slot.skill)
-                result = {"status": "failed", "message": "이 영역을 채우지 못했습니다"}
+        def deps_of(slot: PlannedSlot) -> List[str]:
+            deps = list(slot.depends_on)
+            if self._registry[slot.skill].after_others:
+                deps += [s.id for s in slots if not self._registry[s.skill].after_others and s.id not in deps]
+            return deps
+
+        async def finish(slot: PlannedSlot, result: Dict[str, Any], announce: Optional[str] = None) -> None:
             results[slot.id] = result
             await asyncio.to_thread(self._store.save, chat_log_id, slot.id, result)
-            await queue.put(_slot_event(slot.id, result["status"], result.get("message")))
+            await queue.put(_slot_event(slot.id, result["status"], announce))
 
-        def related_of(group: List[PlannedSlot]) -> List:
-            return [(s.title, results[s.id].get("summary") or results[s.id].get("message") or "")
-                    for s in group if s.id in results]
+        def blocked(slot: PlannedSlot, deps: List[str]) -> Optional[Dict[str, Any]]:
+            """의존한 슬롯 결과로는 돌 수 없으면 그 슬롯에 남길 결과."""
+            if stop.is_set():
+                return {"status": "stopped", "message": "중지했습니다"}
+            # 대상을 정하지 못해 되묻는 슬롯이 있으면 뒤 슬롯은 쓸 거리가 없다 — 사용자의 답을 기다린다
+            if any(results.get(d, {}).get("clarify") for d in deps):
+                return {"status": "empty", "message": "대상을 정하면 이어서 보여 드립니다"}
+            for d in slot.depends_on:  # 참조한 슬롯은 결과가 있어야 한다 (after_others는 실패 문구도 해설한다)
+                if results.get(d, {}).get("status") != "complete":
+                    title = by_id[d].title if d in by_id else d
+                    return {"status": "empty", "message": f"'{title}' 영역의 결과가 없어 채우지 못했습니다"}
+            return None
+
+        async def run_slot(slot: PlannedSlot) -> None:
+            try:
+                deps = deps_of(slot)
+                for d in deps:
+                    if d in finished:
+                        await finished[d].wait()
+                stopped_or_empty = blocked(slot, deps)
+                if stopped_or_empty:
+                    status = stopped_or_empty["status"]
+                    await finish(slot, stopped_or_empty, None if status == "stopped" else stopped_or_empty["message"])
+                    return
+
+                args, ref_notes = slot.args, []
+                if slot.depends_on:
+                    exports = {n: results.get(i, {}).get("exports") or [] for n, i in names.items()}
+                    titles = {n: by_id[i].title for n, i in names.items()}
+                    dumped = slot.args.model_dump()
+                    try:
+                        args = type(slot.args).model_validate(refs.resolve(dumped, exports))
+                        ref_notes = refs.describe(dumped, exports, titles)
+                    except (refs.RefError, ValidationError) as e:
+                        logger.warning("Slot %s could not use referenced results: %s", slot.id, e)
+                        message = str(e) if isinstance(e, refs.RefError) else "앞 영역의 결과를 이 영역에 쓸 수 없습니다"
+                        await finish(slot, {"status": "empty", "message": message}, message)
+                        return
+
+                related = [(by_id[d].title, results[d].get("summary") or results[d].get("message") or "")
+                           for d in deps if d in results]
+                ctx = SkillContext(
+                    question=question, conversation=context, session_factory=self._session_factory,
+                    resolver=resolver, ai_config=self._config, stop=stop, related=related,
+                )
+                await queue.put(_slot_event(slot.id, "running"))
+                result: Dict[str, Any] = {"status": "failed", "message": "결과가 없습니다"}
+                try:
+                    async for event in self._registry[slot.skill].run(args, slot.display, ctx):
+                        kind = event["type"]
+                        if kind == "result":
+                            result = event
+                        elif kind == "delta":
+                            await queue.put(_event("slot_delta", {"id": slot.id, "text": event["text"]}))
+                        else:
+                            await queue.put(_event(kind, {**event["data"], "slot_id": slot.id}))
+                except Exception:
+                    logger.exception("Slot %s (%s) failed", slot.id, slot.skill)
+                    result = {"status": "failed", "message": "이 영역을 채우지 못했습니다"}
+                content = result.get("content")
+                if ref_notes and content and content.get("type") == "data":  # 어느 대상을 받아 그렸는지 남긴다
+                    content["notes"] = [*ref_notes, *content.get("notes", [])]
+                await finish(slot, result, result.get("message"))
+            finally:
+                finished[slot.id].set()
 
         async def drive() -> None:
             try:
-                first = [s for s in slots if not self._registry[s.skill].after_others]
-                later = [s for s in slots if self._registry[s.skill].after_others]
-                await asyncio.gather(*(run_slot(s, []) for s in first))
-                # 대상을 정하지 못해 되묻는 슬롯이 있으면 해설은 쓸 거리가 없다 — 사용자의 답을 기다린다
-                asking = any(results.get(s.id, {}).get("clarify") for s in first)
-                if later and not stop.is_set() and not asking:
-                    related = related_of(first)
-                    await asyncio.gather(*(run_slot(s, related) for s in later))
-                for s in slots:  # 중지했거나 되묻느라 시작하지 않은 슬롯
-                    if s.id not in results:
-                        status, message = ("empty", "대상을 정하면 이어서 보여 드립니다") if asking else ("stopped", "중지했습니다")
-                        results[s.id] = {"status": status, "message": message}
-                        await asyncio.to_thread(self._store.save, chat_log_id, s.id, results[s.id])
-                        await queue.put(_slot_event(s.id, status, message if asking else None))
+                await asyncio.gather(*(run_slot(s) for s in slots))
             finally:
                 await queue.put(done)
 

@@ -18,6 +18,7 @@ class StockHoldersSkill(DataSkill):
     description = "개별 종목을 많이 담은 ETF 순위: 그 종목의 비중이 높은 순서로 ETF와 비중, 총보수. '삼성전자를 가장 많이 보유한 ETF' 같은 질문에"
     Args = StockHoldersArgs
     displays = ("bar", "table")
+    exports = "ETF 목록, 그 종목 비중 높은 순"
 
     def fetch(self, args: StockHoldersArgs, display: str, db: Session, resolver: EntityResolver) -> SkillResult:
         stock = resolver.stock(db, args.stock)
@@ -48,4 +49,5 @@ class StockHoldersSkill(DataSkill):
         )
         notes = ["ETF마다 비중 상위 30개 종목까지만 수집하므로, 그 밖에서 담은 ETF는 빠집니다"]
         sources = [Source(label="ETF 구성종목", as_of=holders[0].get("date"))]
-        return data_result(dataset, view, summary, sources, notes)
+        return data_result(dataset, view, summary, sources, notes,
+                           exports=[{"code": h["code"], "name": h["name"]} for h in holders])

@@ -89,6 +89,7 @@ class PortfolioLookthroughSkill(DataSkill):
     )
     Args = PortfolioLookthroughArgs
     displays = ("treemap", "bar", "donut", "table")
+    exports = "종목 목록, 포트폴리오 합산 비중 높은 순 (구성 미확인 ETF·기타 제외)"
 
     def fetch(self, args: PortfolioLookthroughArgs, display: str, db: Session, resolver: EntityResolver) -> SkillResult:
         # 같은 자산이 두 번 나오면 비중을 더한다
@@ -190,4 +191,6 @@ class PortfolioLookthroughSkill(DataSkill):
             Source(label=f"{e['name']} 구성종목", as_of=max((h.get("date") or "" for h in holdings[code]), default="") or None)
             for code, e in etfs.items() if code in holdings
         ]
-        return data_result(dataset, view, summary, sources, notes)
+        exports = [{"code": x.stock_code, "name": x.stock_name} for x in named
+                   if not x.stock_name.endswith("(구성 미확인)")]
+        return data_result(dataset, view, summary, sources, notes, exports=exports)

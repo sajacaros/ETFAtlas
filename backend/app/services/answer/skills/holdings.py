@@ -23,6 +23,7 @@ class HoldingsSkill(DataSkill):
     )
     Args = HoldingsArgs
     displays = ("treemap", "donut", "bar", "table")
+    exports = "종목 목록, ETF 내 비중 높은 순 (상위 30개)"
 
     def fetch(self, args: HoldingsArgs, display: str, db: Session, resolver: EntityResolver) -> SkillResult:
         etf = resolver.etf(db, args.etf)
@@ -68,4 +69,5 @@ class HoldingsSkill(DataSkill):
             + f" (합계 {shown_sum:.2f}%)"
         )
         sources = [Source(label=f"{etf['name']} 구성종목", as_of=shown[0].get("date"))]
-        return data_result(dataset, view, summary, sources)
+        return data_result(dataset, view, summary, sources,
+                           exports=[{"code": h["code"], "name": h["name"]} for h in holdings])

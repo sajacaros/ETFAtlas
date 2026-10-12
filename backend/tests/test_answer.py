@@ -253,3 +253,90 @@ def test_stock_holders_ranks_etfs_by_weight(monkeypatch):
     assert calls == [{"code": "005930", "top": 5}]
     assert result.content["view"] == {"kind": "bar", "x": "name", "y": ["weight"], "horizontal": True}
     assert "WON 200 35.21%" in result.summary
+
+
+# --- 포트폴리오 합산 ---
+
+class FakePortfolioResolver:
+    ETFS = {"KODEX 200": {"code": "069500", "name": "KODEX 200"}, "KODEX 반도체": {"code": "091160", "name": "KODEX 반도체"}}
+    STOCKS = {"삼성전자": {"code": "005930", "name": "삼성전자"}}
+
+    def etf(self, db, name):
+        return self.ETFS.get(name)
+
+    def stock(self, db, name):
+        return self.STOCKS.get(name)
+
+
+@pytest.fixture
+def lookthrough(monkeypatch):
+    from app.services.answer.skills import portfolio_lookthrough as mod
+    queries = []
+
+    def fake_node(graph, cypher, params):
+        queries.append(cypher)
+        return [
+            {"etf": "069500", "stock_code": "005930", "stock_name": "삼성전자", "weight": 30.0, "date": "2026-10-07"},
+            {"etf": "069500", "stock_code": "000660", "stock_name": "SK하이닉스", "weight": 20.0, "date": "2026-10-07"},
+            {"etf": "091160", "stock_code": "005930", "stock_name": "삼성전자", "weight": 25.0, "date": "2026-10-06"},
+            {"etf": "091160", "stock_code": "000660", "stock_name": "SK하이닉스", "weight": 25.0, "date": "2026-10-06"},
+            {"etf": "091160", "stock_code": "042700", "stock_name": "한미반도체", "weight": 50.0, "date": "2026-10-06"},
+        ]
+
+    unlisted = {"360750": {"code": "360750", "name": "TIGER 미국S&P500"}}
+    monkeypatch.setattr(mod, "node", fake_node)
+    monkeypatch.setattr(mod, "_unlisted_etf", lambda db, asset: unlisted.get(asset))
+    skill = REGISTRY["portfolio_lookthrough"]
+
+    def run(items, display="table", top=15):
+        args = skill.Args(items=[{"asset": a, "allocation": w} for a, w in items], top=top)
+        return skill.fetch(args, display, None, FakePortfolioResolver())
+
+    run.queries = queries
+    return run
+
+
+def test_lookthrough_sums_etf_holdings_and_direct_stocks(lookthrough):
+    result = lookthrough([("KODEX 200", 40), ("360750", 30), ("KODEX 반도체", 20), ("삼성전자", 10)])
+    rows = {r["name"]: r for r in result.content["dataset"]["rows"]}
+
+    assert len(lookthrough.queries) == 1  # ETF가 여러 개여도 구성종목 조회는 한 번
+    # 40×30% + 20×25% + 직접 10
+    assert rows["삼성전자"]["weight"] == 27.0
+    assert rows["삼성전자"]["via"] == "KODEX 200 12.00 · 직접 10.00 · KODEX 반도체 5.00"
+    assert rows["SK하이닉스"]["weight"] == 13.0
+    assert rows["TIGER 미국S&P500 (구성 미확인)"] == {
+        "name": "TIGER 미국S&P500 (구성 미확인)", "code": None, "weight": 30.0, "via": "구성 미확인 30.00"}
+    # KODEX 200의 나머지 50%(30위 밖·현금) × 40%
+    assert rows["기타"]["weight"] == 20.0
+    assert sum(r["weight"] for r in rows.values()) == pytest.approx(100)
+    assert any("TIGER 미국S&P500(360750)" in n for n in result.content["notes"])
+    assert "삼성전자 27.00%" in result.summary
+
+
+def test_lookthrough_normalizes_weights_and_reports_missing(lookthrough):
+    result = lookthrough([("KODEX 반도체", 15), ("삼성전자", 5), ("없는ETF", 10)])
+    rows = {r["name"]: r["weight"] for r in result.content["dataset"]["rows"]}
+
+    # 찾은 항목만 100%로 환산: 반도체 75%, 삼성전자 25%
+    assert rows["삼성전자"] == pytest.approx(75 * 0.25 + 25)
+    assert "기타" not in rows
+    notes = result.content["notes"]
+    assert "찾지 못해 계산에서 뺀 항목: 없는ETF" in notes
+    assert "입력 비중 합계 20.00%를 100%로 맞춰 계산했습니다" in notes
+
+
+def test_lookthrough_donut_folds_the_tail_into_others(lookthrough, monkeypatch):
+    from app.services.answer.skills import portfolio_lookthrough as mod
+    monkeypatch.setattr(mod, "node", lambda graph, cypher, params: [
+        {"etf": "091160", "stock_code": f"{i:06d}", "stock_name": f"종목{i}", "weight": 10.0, "date": "2026-10-06"}
+        for i in range(10)
+    ])
+    rows = lookthrough([("KODEX 반도체", 100)], display="donut").content["dataset"]["rows"]
+    assert len(rows) == mod.DONUT_MAX_SLICES
+    assert rows[-1]["name"] == "기타" and rows[-1]["weight"] == 30.0
+
+
+def test_lookthrough_is_empty_when_nothing_resolves(lookthrough):
+    result = lookthrough([("없는ETF", 100)])
+    assert result.status == "empty"

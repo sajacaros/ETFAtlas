@@ -96,6 +96,7 @@ class MySkill(DataSkill):
 | `etf_compare` | table | 기본 정보 비교표 (행마다 서식·우열 강조) |
 | `etf_profile` | radar, table | 전체 ETF 대비 백분위 점수: 저보수, 규모, 1주 수익률, 1주 시총 증감, 분산도 |
 | `holdings` | treemap, donut, bar, table | 구성종목 비중 (도넛은 상위 7개 + 기타) |
+| `portfolio_lookthrough` | treemap, bar, donut, table | 포트폴리오(ETF·종목과 비중)의 종목별 합산 비중. ETF는 구성종목으로 풀어 비중을 곱해 더하고(`domain/composition.py`와 같은 계산), 직접 담은 종목은 그대로 더한다. 구성종목 데이터가 없는 ETF(해외 ETF 등)는 ETF 한 행으로, ETF 안의 30위 밖·현금은 기타로 둔다 |
 | `stock_trend` | line, candlestick, table | 개별 종목 가격 추이 (`price_trend`와 같은 베이스) |
 | `stock_holders` | bar, table | 종목을 많이 담은 ETF 순위 |
 | `narrative` | text | 앞 슬롯 요약을 바탕으로 한 해설 (토큰 스트리밍) |

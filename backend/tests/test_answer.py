@@ -311,6 +311,7 @@ def test_lookthrough_sums_etf_holdings_and_direct_stocks(lookthrough):
     assert rows["기타"]["weight"] == 20.0
     assert sum(r["weight"] for r in rows.values()) == pytest.approx(100)
     assert any("TIGER 미국S&P500(360750)" in n for n in result.content["notes"])
+    assert not any(n.startswith("이름으로 찾은 항목") for n in result.content["notes"])  # 이름·코드가 그대로 맞았다
     assert "삼성전자 27.00%" in result.summary
 
 
@@ -335,6 +336,13 @@ def test_lookthrough_donut_folds_the_tail_into_others(lookthrough, monkeypatch):
     rows = lookthrough([("KODEX 반도체", 100)], display="donut").content["dataset"]["rows"]
     assert len(rows) == mod.DONUT_MAX_SLICES
     assert rows[-1]["name"] == "기타" and rows[-1]["weight"] == 30.0
+
+
+def test_lookthrough_notes_names_resolved_to_a_different_etf(lookthrough, monkeypatch):
+    # 'K반도체TOP2+'처럼 접두어가 빠진 이름은 다른 운용사 ETF로 잡힐 수 있어 사용자에게 보여준다
+    monkeypatch.setitem(FakePortfolioResolver.ETFS, "반도체", {"code": "091160", "name": "KODEX 반도체"})
+    notes = lookthrough([("반도체", 100)]).content["notes"]
+    assert "이름으로 찾은 항목: 반도체 → KODEX 반도체(091160)" in notes
 
 
 def test_lookthrough_is_empty_when_nothing_resolves(lookthrough):

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from ....domain.composition import ETFAllocation, aggregate_composition
 from ....models.etf import ETF
 from ...graph_service import GraphService
-from ..resolver import EntityResolver
+from ..resolver import EntityResolver, _normalize
 from ..schemas import BarView, DataField, Dataset, DonutView, Source, TableView, TreemapView
 from .base import DataSkill, SkillResult, data_result, empty
 from .common import node
@@ -19,7 +19,10 @@ SAFE_CODE_RE = re.compile(r"[0-9A-Z]{6}")  # 쿼리 문자열에 직접 넣으�
 
 
 class PortfolioItem(BaseModel):
-    asset: str = Field(description="포트폴리오에 담은 ETF 또는 종목의 이름이나 6자리 코드")
+    asset: str = Field(description=(
+        "포트폴리오에 담은 ETF 또는 종목의 이름이나 6자리 코드. 사용자가 쓴 이름을 앞뒤 접두어(1Q, ACE 등)까지 "
+        "한 글자도 빼거나 바꾸지 말고 그대로 적는다 — 접두어가 빠지면 다른 운용사의 같은 이름 ETF로 계산된다"
+    ))
     allocation: float = Field(gt=0, le=100, description="이 자산에 배분한 포트폴리오 비중(%). 사용자가 준 표의 비중 열")
 
 
@@ -72,6 +75,7 @@ class PortfolioLookthroughSkill(DataSkill):
         stocks: Dict[str, Dict] = {}
         unlisted: Dict[str, Dict] = {}
         missing: List[str] = []
+        resolved: List[str] = []  # 적힌 이름과 다른 대상으로 찾은 항목 (사용자가 확인할 수 있게 notes에 남긴다)
         for item in args.items:
             for kind, found in (
                 ("etf", lambda: resolver.etf(db, item.asset)),
@@ -83,6 +87,8 @@ class PortfolioLookthroughSkill(DataSkill):
                     bucket = {"etf": etfs, "stock": stocks, "unlisted": unlisted}[kind]
                     entry = bucket.setdefault(entity["code"], {**entity, "allocation": 0.0})
                     entry["allocation"] += item.allocation
+                    if entity["code"] != item.asset.strip().upper() and _normalize(entity["name"]) != _normalize(item.asset):
+                        resolved.append(f"{item.asset} → {entity['name']}({entity['code']})")
                     break
             else:
                 missing.append(item.asset)
@@ -149,6 +155,8 @@ class PortfolioLookthroughSkill(DataSkill):
         if unknown:
             names = ", ".join(f"{e['name']}({e['code']})" for e in unknown)
             notes.append(f"구성종목 데이터가 없어 ETF 단위로 표시: {names}")
+        if resolved:
+            notes.append(f"이름으로 찾은 항목: {', '.join(resolved)}")
         if missing:
             notes.append(f"찾지 못해 계산에서 뺀 항목: {', '.join(missing)}")
         total = sum(a.weight for a in allocations)

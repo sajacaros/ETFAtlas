@@ -348,3 +348,133 @@ def test_lookthrough_notes_names_resolved_to_a_different_etf(lookthrough, monkey
 def test_lookthrough_is_empty_when_nothing_resolves(lookthrough):
     result = lookthrough([("없는ETF", 100)])
     assert result.status == "empty"
+
+
+# --- 대상을 정하지 못할 때 되묻기 ---
+
+@pytest.fixture
+def fake_etf_graph(monkeypatch):
+    """resolver가 ETF 이름 후보를 찾을 때 쓰는 그래프. 순자산 큰 순으로 돌려준다."""
+    import json
+    from app.services import graph_service
+    from app.services.answer import resolver as resolver_mod
+    etfs = [
+        {"code": "396500", "name": "TIGER 반도체TOP10", "net_assets": 9_5642_0000_0000},
+        {"code": "091160", "name": "KODEX 반도체", "net_assets": 2_0000_0000_0000},
+        {"code": "0210A0", "name": "ACE K반도체TOP2+", "net_assets": 5000_0000_0000},
+        {"code": "0182R0", "name": "1Q K반도체TOP2+", "net_assets": 1000_0000_0000},
+    ]
+    calls = []
+
+    class FakeGraph:
+        parse_agtype = staticmethod(graph_service.GraphService.parse_agtype)
+
+        def __init__(self, db):
+            pass
+
+        def execute_cypher(self, cypher, params, raise_errors=False):
+            calls.append(params)
+            if "code" in params:
+                return [{"result": json.dumps(e)} for e in etfs if e["code"] == params["code"]]
+            return [{"result": json.dumps(e)} for e in etfs
+                    if params["query"] in e["name"].replace(" ", "").lower()]
+
+    monkeypatch.setattr(resolver_mod, "GraphService", FakeGraph)
+    return calls
+
+
+def test_resolver_asks_instead_of_guessing_between_etfs(fake_etf_graph):
+    from app.services.answer.resolver import AmbiguousETF, EntityResolver
+    r = EntityResolver()
+    with pytest.raises(AmbiguousETF) as exc:
+        r.etf(None, "K반도체TOP2+")
+    assert [c["code"] for c in exc.value.candidates] == ["0210A0", "0182R0"]
+    # 정확히 같은 이름이나 후보 하나, 코드는 그대로 정한다
+    assert r.etf(None, "1Q K반도체TOP2+") == {"code": "0182R0", "name": "1Q K반도체TOP2+"}
+    assert r.etf(None, "TOP10") == {"code": "396500", "name": "TIGER 반도체TOP10"}
+    assert r.etf(None, "091160")["name"] == "KODEX 반도체"
+    # 애매하다는 판단도 캐시해 같은 답변의 다른 슬롯은 다시 조회하지 않는다
+    calls = len(fake_etf_graph)
+    with pytest.raises(AmbiguousETF):
+        r.etf(None, "K반도체TOP2+")
+    assert len(fake_etf_graph) == calls
+
+
+def test_data_skill_turns_an_ambiguous_etf_into_a_question(fake_etf_graph):
+    from app.services.answer.resolver import EntityResolver
+    from app.services.answer.skills.base import SkillContext
+
+    async def run():
+        ctx = SkillContext(question="q", conversation=ConversationContext(), session_factory=lambda: _Closable(),
+                           resolver=EntityResolver(), ai_config=None, stop=asyncio.Event())
+        skill = REGISTRY["holdings"]
+        return [e async for e in skill.run(skill.Args(etf="반도체"), "treemap", ctx)]
+
+    result = asyncio.run(run())[-1]
+    assert result["clarify"] is True
+    assert result["content"]["type"] == "markdown"
+    text = result["summary"]
+    assert "'반도체'에 해당하는 ETF가 여러 개입니다" in text
+    # 번호를 붙여 다음 턴의 "두 번째 거"를 풀 수 있게 한다
+    assert "| 1 | TIGER 반도체TOP10 | 396500 | 9조 5,642억원 |" in text
+    assert "| 4 | 1Q K반도체TOP2+ | 0182R0 |" in text
+
+
+class _Closable:
+    def close(self):
+        pass
+
+
+def test_stream_waits_for_the_answer_instead_of_narrating(monkeypatch):
+    from app.services.answer.skills.base import choice_result
+
+    class Asking(DataSkillStub):
+        async def run(self, args, display, ctx):
+            yield choice_result("어느 ETF인가요?", ["ETF"], [["A"], ["B"]]).event()
+
+    service = _service(monkeypatch, [[_slot("s1", "ask")], [_slot("s2", "narr", "해설")]], {**REG, "ask": Asking()})
+    events = _collect(service)
+    assert service._store.saved == {"s1": "complete", "s2": "empty"}
+    assert not any(e["type"] == "slot_delta" for e in events)
+    assert "| 2 | B |" in events[-1]["data"]["answer"]
+
+
+def test_object_particle_follows_the_last_syllable():
+    from app.services.answer.skills.common import object_particle
+    assert [object_particle(w) for w in ("구성종목", "수익률 추이", "가격", "원익IPS")] == ["을", "를", "을", "을(를)"]
+
+
+def test_etf_choice_lists_holders_and_asks(monkeypatch):
+    from app.services.answer.skills import etf_choice as mod
+    monkeypatch.setattr(mod, "node", lambda graph, cypher, params: [
+        {"code": f"{i:06d}", "name": f"ETF{i}", "weight": 20.0 - i} for i in range(12)
+    ])
+
+    class Resolver:
+        def stock(self, db, name):
+            return {"code": "240810", "name": "원익IPS"}
+
+    skill = REGISTRY["etf_choice"]
+    result = skill.fetch(skill.Args(stock="원익IPS", purpose="구성종목"), "markdown", None, Resolver())
+    assert result.clarify
+    assert "원익IPS을(를) 담은 ETF가 12개입니다. 어느 ETF의 구성종목을 볼까요?" in result.summary
+    assert "| 1 | ETF0 | 000000 | 20.00% |" in result.summary
+    assert "| 11 |" not in result.summary  # 상위 10개만
+    assert "비중 상위 10개입니다" in result.summary
+
+
+def test_lookthrough_asks_about_an_ambiguous_etf_but_takes_an_exact_stock(lookthrough, monkeypatch):
+    from app.services.answer.resolver import AmbiguousETF
+    from app.services.answer.skills import portfolio_lookthrough as mod
+
+    def ambiguous_etf(self, db, name):
+        if name in ("반도체", "삼성전자"):
+            raise AmbiguousETF(name, [{"code": "091160", "name": "KODEX 반도체"}])
+        return FakePortfolioResolver.ETFS.get(name)
+
+    monkeypatch.setattr(FakePortfolioResolver, "etf", ambiguous_etf)
+    # 'KODEX 삼성전자…'처럼 이름에 종목명이 든 ETF가 여럿이어도 같은 이름의 종목이면 종목이다
+    rows = {r["name"]: r["weight"] for r in lookthrough([("삼성전자", 100)]).content["dataset"]["rows"]}
+    assert rows == {"삼성전자": 100}
+    with pytest.raises(AmbiguousETF):
+        lookthrough([("반도체", 50), ("삼성전자", 50)])

@@ -1,5 +1,5 @@
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
 from sqlalchemy import func
@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from ....domain.composition import ETFAllocation, aggregate_composition
 from ....models.etf import ETF
 from ...graph_service import GraphService
-from ..resolver import EntityResolver, _normalize
+from ..resolver import AmbiguousETF, EntityResolver, _normalize
 from ..schemas import BarView, DataField, Dataset, DonutView, Source, TableView, TreemapView
 from .base import DataSkill, SkillResult, data_result, empty
 from .common import node
@@ -58,6 +58,28 @@ def _holdings(db: Session, codes: List[str]) -> Dict[str, List[Dict]]:
     return result
 
 
+def _find(db: Session, resolver: EntityResolver, asset: str) -> Optional[Tuple[str, Dict]]:
+    """자산을 ETF → 그래프 밖 ETF → 종목 순서로 찾는다 (ETF 코드가 다른 ETF의 구성종목 노드로 잡히지 않게).
+    ETF 이름이 애매하면 정확히 같은 이름의 종목일 때만 종목으로 보고, 아니면 되묻는다."""
+    try:
+        etf = resolver.etf(db, asset)
+    except AmbiguousETF:
+        unlisted = _unlisted_etf(db, asset)
+        if unlisted:
+            return "unlisted", unlisted
+        stock = resolver.stock(db, asset)
+        if stock and _normalize(stock["name"]) == _normalize(asset):
+            return "stock", stock
+        raise
+    if etf:
+        return "etf", etf
+    unlisted = _unlisted_etf(db, asset)
+    if unlisted:
+        return "unlisted", unlisted
+    stock = resolver.stock(db, asset)
+    return ("stock", stock) if stock else None
+
+
 class PortfolioLookthroughSkill(DataSkill):
     name = "portfolio_lookthrough"
     description = (
@@ -69,7 +91,6 @@ class PortfolioLookthroughSkill(DataSkill):
     displays = ("treemap", "bar", "donut", "table")
 
     def fetch(self, args: PortfolioLookthroughArgs, display: str, db: Session, resolver: EntityResolver) -> SkillResult:
-        # 자산별로 ETF → 그래프 밖 ETF → 종목 순서로 찾는다 (ETF 코드가 다른 ETF의 구성종목 노드로 잡히지 않게).
         # 같은 자산이 두 번 나오면 비중을 더한다
         etfs: Dict[str, Dict] = {}
         stocks: Dict[str, Dict] = {}
@@ -77,21 +98,16 @@ class PortfolioLookthroughSkill(DataSkill):
         missing: List[str] = []
         resolved: List[str] = []  # 적힌 이름과 다른 대상으로 찾은 항목 (사용자가 확인할 수 있게 notes에 남긴다)
         for item in args.items:
-            for kind, found in (
-                ("etf", lambda: resolver.etf(db, item.asset)),
-                ("unlisted", lambda: _unlisted_etf(db, item.asset)),
-                ("stock", lambda: resolver.stock(db, item.asset)),
-            ):
-                entity = found()
-                if entity is not None:
-                    bucket = {"etf": etfs, "stock": stocks, "unlisted": unlisted}[kind]
-                    entry = bucket.setdefault(entity["code"], {**entity, "allocation": 0.0})
-                    entry["allocation"] += item.allocation
-                    if entity["code"] != item.asset.strip().upper() and _normalize(entity["name"]) != _normalize(item.asset):
-                        resolved.append(f"{item.asset} → {entity['name']}({entity['code']})")
-                    break
-            else:
+            found = _find(db, resolver, item.asset)
+            if found is None:
                 missing.append(item.asset)
+                continue
+            kind, entity = found
+            bucket = {"etf": etfs, "stock": stocks, "unlisted": unlisted}[kind]
+            entry = bucket.setdefault(entity["code"], {**entity, "allocation": 0.0})
+            entry["allocation"] += item.allocation
+            if entity["code"] != item.asset.strip().upper() and _normalize(entity["name"]) != _normalize(item.asset):
+                resolved.append(f"{item.asset} → {entity['name']}({entity['code']})")
         if not (etfs or stocks or unlisted):
             return empty(f"포트폴리오 항목을 찾지 못했습니다: {', '.join(missing)}")
 

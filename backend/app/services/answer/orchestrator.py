@@ -164,14 +164,17 @@ class AnswerService:
                 first = [s for s in slots if not self._registry[s.skill].after_others]
                 later = [s for s in slots if self._registry[s.skill].after_others]
                 await asyncio.gather(*(run_slot(s, []) for s in first))
-                if later and not stop.is_set():
+                # 대상을 정하지 못해 되묻는 슬롯이 있으면 해설은 쓸 거리가 없다 — 사용자의 답을 기다린다
+                asking = any(results.get(s.id, {}).get("clarify") for s in first)
+                if later and not stop.is_set() and not asking:
                     related = related_of(first)
                     await asyncio.gather(*(run_slot(s, related) for s in later))
-                for s in slots:  # 중지로 시작하지 못한 슬롯
+                for s in slots:  # 중지했거나 되묻느라 시작하지 않은 슬롯
                     if s.id not in results:
-                        results[s.id] = {"status": "stopped", "message": "중지했습니다"}
+                        status, message = ("empty", "대상을 정하면 이어서 보여 드립니다") if asking else ("stopped", "중지했습니다")
+                        results[s.id] = {"status": status, "message": message}
                         await asyncio.to_thread(self._store.save, chat_log_id, s.id, results[s.id])
-                        await queue.put(_slot_event(s.id, "stopped"))
+                        await queue.put(_slot_event(s.id, status, message if asking else None))
             finally:
                 await queue.put(done)
 

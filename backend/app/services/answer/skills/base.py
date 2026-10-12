@@ -17,8 +17,11 @@ from sqlalchemy.orm import Session
 
 from ...ai_config import AIConfig
 from ...chat_memory import ConversationContext
-from ..resolver import EntityResolver
+from ..resolver import CANDIDATE_LIMIT, AmbiguousETF, EntityResolver
 from ..schemas import DataContent, Dataset, Source, TextContent
+from .common import format_value
+
+CHOICES_SHOWN = 10  # 되물을 때 보여주는 후보 수
 
 
 @dataclass
@@ -40,10 +43,12 @@ class SkillResult:
     # 다른 슬롯(요약 텍스트)과 대화 기억에 넘기는 짧은 텍스트. 숫자는 여기서만 LLM에 전달된다
     summary: str = ""
     message: Optional[str] = None  # empty/failed일 때 그 영역에 보여줄 문구
+    # 대상을 하나로 정하지 못해 사용자에게 되묻는 결과. 오케스트레이터는 이때 해설 같은 뒤 슬롯을 돌리지 않는다
+    clarify: bool = False
 
     def event(self) -> Dict[str, Any]:
         return {"type": "result", "status": self.status, "content": self.content,
-                "summary": self.summary, "message": self.message}
+                "summary": self.summary, "message": self.message, "clarify": self.clarify}
 
 
 def empty(message: str) -> SkillResult:
@@ -59,6 +64,32 @@ def data_result(
     except ValidationError as e:  # 스킬 버그 — 깨진 데이터를 보내지 않는다
         return SkillResult(status="failed", summary="", message=f"결과 형식 오류: {e.errors()[0]['msg']}")
     return SkillResult(status="complete", content=content.model_dump(), summary=summary)
+
+
+def choice_result(question: str, header: List[str], rows: List[List[str]], footer: str = "") -> SkillResult:
+    """후보를 번호 붙인 표로 보여주고 되묻는다. 본문이 그대로 답변 텍스트(대화 기억)에 들어가므로
+    다음 턴의 "두 번째 거" 같은 답을 질문 재작성이 풀 수 있다."""
+    def cell(v: str) -> str:
+        return str(v).replace("|", "\\|")
+
+    lines = [f"**{question}**", "", "| 번호 | " + " | ".join(header) + " |", "|---:|" + "---|" * len(header)]
+    lines += [f"| {i} | " + " | ".join(cell(v) for v in row) + " |" for i, row in enumerate(rows, 1)]
+    lines += ["", (footer + " " if footer else "") + "번호나 이름으로 알려 주세요."]
+    text = "\n".join(lines)
+    return SkillResult(status="complete", content=TextContent(type="markdown", text=text).model_dump(),
+                       summary=text, clarify=True)
+
+
+def ambiguous_etf_result(e: AmbiguousETF) -> SkillResult:
+    shown = e.candidates[:CHOICES_SHOWN]
+    total = f"{CANDIDATE_LIMIT}개 이상" if len(e.candidates) >= CANDIDATE_LIMIT else f"{len(e.candidates)}개"
+    footer = f"후보 {total} 중 순자산 상위 {len(shown)}개입니다." if len(e.candidates) > len(shown) else ""
+    return choice_result(
+        f"'{e.name}'에 해당하는 ETF가 여러 개입니다. 어느 ETF인가요?",
+        ["ETF", "코드", "순자산"],
+        [[c["name"], c["code"], format_value(c.get("net_assets"), "krw")] for c in shown],
+        footer,
+    )
 
 
 def text_result(text: str, kind: str = "text") -> SkillResult:
@@ -91,6 +122,8 @@ class DataSkill(Skill):
             db = ctx.session_factory()
             try:
                 return self.fetch(args, display, db, ctx.resolver)
+            except AmbiguousETF as e:  # 어느 스킬이든 ETF 이름이 애매하면 고르지 않고 되묻는다
+                return ambiguous_etf_result(e)
             finally:
                 db.close()
 

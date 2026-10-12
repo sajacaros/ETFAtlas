@@ -14,6 +14,14 @@ class ETFListArgs(BaseModel):
     etfs: List[str] = Field(min_length=1, max_length=5, description=ETF_NAMES_DESCRIPTION)
 
 
+def object_particle(word: str) -> str:
+    """목적격 조사: 마지막 글자가 한글이면 받침으로 을/를을 고르고, 영문·숫자로 끝나면 '을(를)'."""
+    last = word.strip()[-1:] if word.strip() else ""
+    if not ("가" <= last <= "힣"):
+        return "을(를)"
+    return "을" if (ord(last) - ord("가")) % 28 else "를"
+
+
 def missing_notes(missing: List[str]) -> List[str]:
     return [f"찾지 못한 ETF: {', '.join(missing)}"] if missing else []
 

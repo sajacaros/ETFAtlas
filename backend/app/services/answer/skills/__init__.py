@@ -3,6 +3,7 @@ from typing import Dict
 
 from .agent import AgentSkill
 from .base import Skill
+from .etf_choice import ETFChoiceSkill
 from .etf_compare import ETFCompareSkill
 from .etf_profile import ETFProfileSkill
 from .holdings import HoldingsSkill
@@ -24,6 +25,7 @@ REGISTRY: Dict[str, Skill] = {
         PortfolioLookthroughSkill(),
         StockTrendSkill(),
         StockHoldersSkill(),
+        ETFChoiceSkill(),
         NarrativeSkill(),
         AgentSkill(),
     )

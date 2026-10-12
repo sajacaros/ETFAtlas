@@ -455,12 +455,40 @@ def test_etf_choice_lists_holders_and_asks(monkeypatch):
             return {"code": "240810", "name": "원익IPS"}
 
     skill = REGISTRY["etf_choice"]
-    result = skill.fetch(skill.Args(stock="원익IPS", purpose="구성종목"), "markdown", None, Resolver())
+    result = skill.fetch(skill.Args(by="stock", condition="원익IPS", purpose="구성종목"), "markdown", None, Resolver())
     assert result.clarify
     assert "원익IPS을(를) 담은 ETF가 12개입니다. 어느 ETF의 구성종목을 볼까요?" in result.summary
     assert "| 1 | ETF0 | 000000 | 20.00% |" in result.summary
     assert "| 11 |" not in result.summary  # 상위 10개만
     assert "비중 상위 10개입니다" in result.summary
+
+
+def test_etf_choice_by_theme_prefers_the_tag_then_names(monkeypatch):
+    from app.services.answer.skills import etf_choice as mod
+    queries = []
+
+    def fake_node(graph, cypher, params):
+        queries.append((cypher.split()[1], params))
+        if "Tag" in cypher:
+            return [] if params["query"] == "ai" else [{"code": "396500", "name": "TIGER 반도체TOP10", "net_assets": 9_5642_0000_0000}]
+        return [{"code": "0093A0", "name": "RISE AI반도체TOP10", "net_assets": 1000_0000_0000}]
+
+    monkeypatch.setattr(mod, "node", fake_node)
+    skill = REGISTRY["etf_choice"]
+    result = skill.fetch(skill.Args(by="theme", condition="반도체 ETF", purpose="구성종목"), "markdown", None, None)
+    assert queries[0][1] == {"query": "반도체"}  # 'ETF'는 떼고 찾는다
+    assert "'반도체' ETF가 1개입니다." in result.summary
+    assert "| 1 | TIGER 반도체TOP10 | 396500 | 9조 5,642억원 |" in result.summary
+    # 태그가 없으면 이름에 든 단어로
+    result = skill.fetch(skill.Args(by="theme", condition="AI", purpose="수익률 추이"), "markdown", None, None)
+    assert "'AI' ETF가 1개입니다. 어느 ETF의 수익률 추이를 볼까요?" in result.summary
+
+
+def test_etf_choice_requires_the_kind_of_condition():
+    # 둘 중 하나를 고르는 제약을 스키마로 드러내 플래너가 빈 인자를 내지 않게 한다
+    with pytest.raises(Exception):
+        REGISTRY["etf_choice"].Args(condition="반도체", purpose="구성종목")
+    assert REGISTRY["etf_choice"].Args.model_json_schema()["required"] == ["by", "condition", "purpose"]
 
 
 def test_lookthrough_asks_about_an_ambiguous_etf_but_takes_an_exact_stock(lookthrough, monkeypatch):

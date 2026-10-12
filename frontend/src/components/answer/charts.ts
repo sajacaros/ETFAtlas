@@ -8,6 +8,8 @@ import { axisFormatter, formatValue } from './format'
 
 export interface ChartTheme {
   palette: string[]
+  tileText: string  // 색칠한 칸(트리맵) 위의 글씨
+  other: string  // '기타' 칸: 다른 칸보다 눈에 덜 띄게
   text: string
   muted: string
   border: string
@@ -109,8 +111,13 @@ const bar: Builder<'bar'> = (view, content, theme) => {
   }
 }
 
-const nameValue = (rows: DataRow[], name: string, value: string) =>
-  rows.map((r) => ({ name: String(r[name]), value: num(r[value]) ?? 0 }))
+const OTHER = '기타'
+
+const nameValue = (rows: DataRow[], name: string, value: string, theme: ChartTheme) =>
+  rows.map((r) => {
+    const d = { name: String(r[name]), value: num(r[value]) ?? 0 }
+    return d.name === OTHER ? { ...d, itemStyle: { color: theme.other } } : d
+  })
 
 const donut: Builder<'donut'> = (view, content, theme) => {
   const format = fieldOf(content, view.value).format
@@ -127,7 +134,7 @@ const donut: Builder<'donut'> = (view, content, theme) => {
       },
       labelLine: { length: 8, length2: 6 },
       labelLayout: { hideOverlap: true },
-      data: nameValue(content.dataset.rows, view.name, view.value).map((d) => (
+      data: nameValue(content.dataset.rows, view.name, view.value, theme).map((d) => (
         d.value < 3 ? { ...d, label: { show: false }, labelLine: { show: false } } : d
       )),
     }],
@@ -142,14 +149,14 @@ const treemap: Builder<'treemap'> = (view, content, theme) => {
     series: [{
       type: 'treemap', roam: false, nodeClick: false, breadcrumb: { show: false },
       width: '100%', height: '100%', top: 0, left: 0,
-      // 칸 색이 밝든 어둡든 읽히도록 흰 글씨에 그림자
+      // 칸 색이 밝든 어둡든 읽히도록 글씨에 그림자
       label: {
         formatter: (p: { name: string; value: number }) => `${p.name}\n${formatValue(p.value, format)}`,
-        fontSize: 12, color: '#fff', textShadowColor: 'rgba(0,0,0,0.85)', textShadowBlur: 3,
+        fontSize: 12, color: theme.tileText, textShadowColor: 'rgba(0,0,0,0.85)', textShadowBlur: 3,
       },
       itemStyle: { borderColor: theme.border, borderWidth: 1, gapWidth: 1 },
       levels: [{ color: theme.palette, colorMappingBy: 'index' }],
-      data: nameValue(content.dataset.rows, view.name, view.value),
+      data: nameValue(content.dataset.rows, view.name, view.value, theme),
     }],
   }
 }

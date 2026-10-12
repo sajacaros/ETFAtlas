@@ -3,9 +3,11 @@ import type { DataContent } from '@/types/api'
 import { useTheme } from '@/hooks/useTheme'
 import { buildChartOption, CHART_HEIGHT, DEFAULT_CHART_HEIGHT, type ChartTheme } from './charts'
 
-// 계열 색: 기본 테마는 구분이 잘 되는 색, 게임보이 테마는 초록 계열에서 밝기 차이가 큰 순서로
+// 계열 색: 기본 테마는 구분이 잘 되는 색.
+// 게임보이 테마는 검은 바탕에서 눈이 부시지 않게 어두운 초록·청록·올리브를 번갈아 쓴다
+// (바탕 대비 1.7~3:1, 테마 초록 글씨 대비 4.5:1 이상)
 const PALETTE = ['#4f46e5', '#f59e0b', '#10b981', '#ef4444', '#06b6d4', '#8b5cf6', '#ec4899', '#84cc16']
-const GAMEBOY_PALETTE = ['#22ff55', '#f0fdf4', '#15803d', '#a3e635', '#86efac', '#166534', '#4ade80', '#65a30d']
+const GAMEBOY_PALETTE = ['#27683d', '#3a5328', '#224f43', '#366339', '#384224', '#1e3e2e', '#315d28', '#2b5a56']
 
 /** CSS 변수(`221 83% 53%`)를 ECharts가 읽는 색으로 */
 function cssColor(name: string): string {
@@ -16,6 +18,8 @@ function cssColor(name: string): string {
 function chartTheme(theme: string): ChartTheme {
   return {
     palette: theme === 'gameboy' ? GAMEBOY_PALETTE : PALETTE,
+    tileText: theme === 'gameboy' ? cssColor('--foreground') : '#fff',
+    other: theme === 'gameboy' ? '#333333' : '#6b7280',
     text: cssColor('--foreground'),
     muted: cssColor('--muted-foreground'),
     border: cssColor('--border'),

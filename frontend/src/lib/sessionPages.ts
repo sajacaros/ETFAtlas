@@ -26,3 +26,30 @@ export function appendPage(prev: SessionListState, page: ChatSessionPage): Sessi
   const ids = new Set(prev.items.map((s) => s.id))
   return { items: [...prev.items, ...page.items.filter((s) => !ids.has(s.id))], nextCursor: page.next_cursor }
 }
+
+export interface SessionGroup {
+  label: string
+  items: ChatSessionSummary[]
+}
+
+/** 최근 활동 날짜로 묶는다 (오늘·어제·지난 7일·지난 30일·그 이전). 목록이 이미 최근 순이라 묶음도 그 순서다. */
+export function groupByDate(items: ChatSessionSummary[], now: Date = new Date()): SessionGroup[] {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const day = 24 * 60 * 60 * 1000
+  const label = (s: ChatSessionSummary) => {
+    const t = new Date(s.updated_at.endsWith('Z') ? s.updated_at : s.updated_at + 'Z').getTime()  // 서버는 UTC를 시간대 없이 보낸다
+    if (t >= today) return '오늘'
+    if (t >= today - day) return '어제'
+    if (t >= today - 7 * day) return '지난 7일'
+    if (t >= today - 30 * day) return '지난 30일'
+    return '이전'
+  }
+  const groups: SessionGroup[] = []
+  for (const s of items) {
+    const l = label(s)
+    const last = groups[groups.length - 1]
+    if (last?.label === l) last.items.push(s)
+    else groups.push({ label: l, items: [s] })
+  }
+  return groups
+}

@@ -1,8 +1,9 @@
 """
-Python 코드 예제 임베딩 DAG
+챗봇 예제 임베딩 DAG
 
-DB에서 status='active'(승인됨, 미임베딩)인 레코드를 찾아 임베딩 생성 후 status='embedded'로 전환.
-수동 트리거 전용 — 초기 시드 적재 후 또는 새 예제 추가 시 실행.
+code_examples(agent 해결 절차)와 layout_examples(레이아웃 플래너 화면 설계)에서
+status='active'(승인됨, 미임베딩)인 레코드를 찾아 임베딩 생성 후 status='embedded'로 전환.
+수동 트리거 전용 — 초기 시드 적재(마이그레이션 포함) 후 또는 새 예제 추가 시 실행.
 """
 
 import logging
@@ -16,6 +17,7 @@ from age_utils import get_db_connection, load_ai_config
 log = logging.getLogger(__name__)
 
 BATCH_SIZE = 50
+TABLES = ("code_examples", "layout_examples")  # 쿼리 문자열에 직접 들어가는 고정 이름
 
 default_args = {
     "owner": "etf-atlas",
@@ -29,7 +31,7 @@ default_args = {
 dag = DAG(
     "embed_code_examples",
     default_args=default_args,
-    description="승인된 코드 예제 중 미임베딩 건 임베딩 (수동 트리거)",
+    description="승인된 코드·레이아웃 예제 중 미임베딩 건 임베딩 (수동 트리거)",
     schedule=None,
     catchup=False,
     tags=["embedding", "manual"],
@@ -61,26 +63,28 @@ def _generalize_questions(client, model, questions):
     return results
 
 
-def embed_and_load():
+def embed_and_load(table):
     """DB에서 미임베딩 레코드 조회 -> 일반화 -> 배치 임베딩 -> UPDATE."""
     from openai import OpenAI
+
+    assert table in TABLES
 
     conn = get_db_connection()
     cur = conn.cursor()
     try:
         # 승인됨(active) 상태의 미임베딩 예제 조회
         cur.execute(
-            "SELECT id, question, question_generalized FROM code_examples "
+            f"SELECT id, question, question_generalized FROM {table} "
             "WHERE status = 'active' "
             "ORDER BY id"
         )
         rows = cur.fetchall()
 
         if not rows:
-            log.info("No unembedded active examples found. Nothing to do.")
+            log.info("No unembedded active rows in %s. Nothing to do.", table)
             return
 
-        log.info("Found %d unembedded examples to process.", len(rows))
+        log.info("Found %d unembedded rows in %s to process.", len(rows), table)
 
         # 관리자 페이지 설정이 우선, 비어 있는 항목은 환경변수 (임베딩은 768차원 모델)
         ai = load_ai_config(conn)
@@ -97,13 +101,13 @@ def embed_and_load():
             gen_questions = _generalize_questions(client, ai["llm_model"], [r[1] for r in needs_generalization])
             for (row_id, _, _), gen_q in zip(needs_generalization, gen_questions):
                 cur.execute(
-                    "UPDATE code_examples SET question_generalized = %s WHERE id = %s",
+                    f"UPDATE {table} SET question_generalized = %s WHERE id = %s",
                     (gen_q, row_id),
                 )
             conn.commit()
             # 다시 조회하여 최신 question_generalized 반영
             cur.execute(
-                "SELECT id, question, question_generalized FROM code_examples "
+                f"SELECT id, question, question_generalized FROM {table} "
                 "WHERE status = 'active' "
                 "ORDER BY id"
             )
@@ -123,14 +127,14 @@ def embed_and_load():
             for row_id, emb in zip(ids, embeddings):
                 emb_str = "[" + ",".join(str(v) for v in emb) + "]"
                 cur.execute(
-                    "UPDATE code_examples SET embedding = %s::vector, status = 'embedded' WHERE id = %s",
+                    f"UPDATE {table} SET embedding = %s::vector, status = 'embedded' WHERE id = %s",
                     (emb_str, row_id),
                 )
 
             log.info("Embedded batch %d-%d (%d items)", i + 1, i + len(batch), len(batch))
 
         conn.commit()
-        log.info("Successfully embedded %d code examples.", len(rows))
+        log.info("Successfully embedded %d rows in %s.", len(rows), table)
     except Exception:
         conn.rollback()
         raise
@@ -139,8 +143,10 @@ def embed_and_load():
         conn.close()
 
 
-PythonOperator(
-    task_id="embed_code_examples",
-    python_callable=embed_and_load,
-    dag=dag,
-)
+for _table in TABLES:
+    PythonOperator(
+        task_id=f"embed_{_table}",
+        python_callable=embed_and_load,
+        op_kwargs={"table": _table},
+        dag=dag,
+    )

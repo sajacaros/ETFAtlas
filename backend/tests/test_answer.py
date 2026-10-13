@@ -1,10 +1,13 @@
 import asyncio
+import importlib.util
+import json
+from pathlib import Path
 
 import pytest
 from pydantic import BaseModel
 
 from app.services.answer import orchestrator as orch
-from app.services.answer.planner import PlannedSlot, build_plan_model, layout_tree, to_rows
+from app.services.answer.planner import PlannedSlot, build_plan_model, examples_prompt, layout_tree, to_rows
 from app.services.answer.schemas import DataField, Dataset, LineView
 from app.services.answer.skills import REGISTRY
 from app.services.answer.skills import holdings as holdings_mod
@@ -641,3 +644,49 @@ def test_stock_holders_exports_etfs_in_rank_order(monkeypatch):
     skill = REGISTRY["stock_holders"]
     result = skill.fetch(skill.Args(stocks=["삼성전자"]), "bar", None, FakeStockResolver())
     assert result.exports == [{"code": "448100", "name": "WON 200"}, {"code": "069500", "name": "KODEX 200"}]
+
+
+# --- 레이아웃 예시 ---
+
+def _layout_seeds():
+    path = Path(__file__).parent.parent / "migrations/versions/0013_layout_examples.py"
+    spec = importlib.util.spec_from_file_location("layout_examples_migration", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.SEEDS
+
+
+@pytest.mark.parametrize("seed", _layout_seeds(), ids=lambda s: s["question"])
+def test_layout_seed_plans_pass_planner_validation(seed):
+    rows = to_rows(build_plan_model(REGISTRY).model_validate(seed["plan"]))
+    assert rows
+
+
+def test_examples_prompt_uses_generalized_question_and_one_line_plan():
+    plan = {"rows": [{"slots": [{"skill": "stock_holders", "title": "t", "display": "bar",
+                                 "args": {"stocks": ["<종목1>", "<종목2>"]}}]}]}
+    text = examples_prompt([{"id": 1, "question": "테스와 원익IPS를 많이 담은 ETF", "question_generalized": "특정 종목 2개를 많이 담은 ETF",
+                             "plan": json.dumps(plan, indent=2)}])
+    assert "Q: 특정 종목 2개를 많이 담은 ETF\n" in text
+    assert json.dumps(plan, ensure_ascii=False) in text
+    assert "테스" not in text
+
+
+def test_planner_plans_without_examples_when_search_fails(monkeypatch):
+    from app.services.answer import planner as planner_mod
+
+    class FakeAgent:
+        prompt = None
+
+        async def run(self, prompt):
+            FakeAgent.prompt = prompt
+            raise RuntimeError("stop here")
+
+    def broken_search(question):
+        raise RuntimeError("embedding down")
+
+    planner = planner_mod.Planner.__new__(planner_mod.Planner)
+    planner._agent, planner._find_examples = FakeAgent(), broken_search
+    rows = asyncio.run(planner.plan("질문", ConversationContext()))
+    assert FakeAgent.prompt == "## 질문\n질문"
+    assert rows[0][0].skill == "agent"

@@ -1,3 +1,4 @@
+import json
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -12,6 +13,7 @@ from ..services.graph_service import GraphService
 from ..services.member_service import MemberNotFoundError, MemberService, SelfActionError
 from ..models.chat import ChatLog, ChatLogStatus
 from ..models.code_example import CodeExample
+from ..models.layout_example import LayoutExample
 from ..models.discord_setting import DiscordSetting
 from ..models.ai_setting import AISetting
 from ..services.ai_config import AI_CONFIG_FIELDS, SECRET_FIELDS, load_ai_config, stored_value
@@ -22,6 +24,8 @@ from ..utils.time import utcnow
 from ..schemas.chat import (
     CodeExampleCreate,
     CodeExampleUpdate,
+    LayoutExampleCreate,
+    LayoutExampleUpdate,
     ReviewRequest,
     EmbedRequest,
     ETFTagsUpdate,
@@ -214,6 +218,148 @@ async def archive_code_example(
     )
     db.commit()
     return {"id": example.id, "status": "active", "has_embedding": False}
+
+
+# === Layout Example CRUD (챗봇 레이아웃 플래너의 few-shot 예시) ===
+
+def _layout_example_json(item: LayoutExample) -> dict:
+    return {
+        "id": item.id,
+        "question": item.question,
+        "question_generalized": item.question_generalized,
+        "plan": item.plan,
+        "description": item.description,
+        "status": item.status,
+        "has_embedding": item.embedding is not None,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+    }
+
+
+def _checked_plan(plan: str) -> str:
+    """플래너 출력 스키마(스킬·인자·display·참조)로 검증하고 보기 좋게 다시 쓴다. 틀리면 400."""
+    from ..services.answer.planner import build_plan_model
+    from ..services.answer.skills import REGISTRY
+
+    try:
+        checked = build_plan_model(REGISTRY).model_validate(json.loads(plan))
+    except ValueError as e:  # JSONDecodeError, ValidationError 모두 ValueError
+        raise HTTPException(status_code=400, detail=f"레이아웃 계획이 올바르지 않습니다: {e}")
+    # 키를 스키마 순서(skill, name, title, display, args)로 맞추고, 적지 않은 기본값은 넣지 않는다
+    return json.dumps(checked.model_dump(exclude_unset=True), ensure_ascii=False, indent=2)
+
+
+def _embed_layout_example(db: Session, example: LayoutExample) -> None:
+    """일반화 질문으로 임베딩한다. 실패하면 active로 두어 embed_code_examples DAG가 다시 처리하게 한다."""
+    embedding_service = EmbeddingService(db)
+    example.question_generalized = embedding_service.generalize_question(example.question)
+    try:
+        emb = embedding_service.get_embedding(example.question_generalized)
+        emb_str = "[" + ",".join(str(v) for v in emb) + "]"
+        db.execute(
+            text("UPDATE layout_examples SET embedding = :emb\\:\\:vector, status = 'embedded' WHERE id = :id"),
+            {"emb": emb_str, "id": example.id},
+        )
+    except Exception as e:
+        logger.warning(f"Layout example embedding failed: {e}")
+        db.execute(
+            text("UPDATE layout_examples SET embedding = NULL, status = 'active' WHERE id = :id"),
+            {"id": example.id},
+        )
+
+
+@router.get("/layout-examples")
+async def list_layout_examples(
+    status: str = Query(None),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    admin_id: int = Depends(get_admin_user_id),
+):
+    query = db.query(LayoutExample)
+    if status:
+        query = query.filter(LayoutExample.status == status)
+    total = query.count()
+    items = query.order_by(LayoutExample.id.desc()).offset(skip).limit(limit).all()
+    return {"items": [_layout_example_json(item) for item in items], "total": total}
+
+
+@router.get("/layout-examples/search")
+async def search_similar_layout_examples(
+    q: str = Query(..., min_length=1),
+    top_k: int = Query(5, ge=1, le=20),
+    generalize: bool = Query(False),
+    db: Session = Depends(get_db),
+    admin_id: int = Depends(get_admin_user_id),
+):
+    """유사도 기반 레이아웃 예시 검색 (임베딩 테스트용)."""
+    embedding_service = EmbeddingService(db)
+    query_generalized = embedding_service.generalize_question(q) if generalize else None
+    results = embedding_service.find_similar_layout_examples(query_generalized or q, top_k=top_k, max_distance=1.0)
+    return {"query": q, "query_generalized": query_generalized, "results": results}
+
+
+@router.post("/layout-examples")
+async def create_layout_example(
+    body: LayoutExampleCreate,
+    db: Session = Depends(get_db),
+    admin_id: int = Depends(get_admin_user_id),
+):
+    example = LayoutExample(
+        question=body.question, plan=_checked_plan(body.plan), description=body.description,
+        created_by=admin_id, status="active",
+    )
+    db.add(example)
+    db.flush()
+    _embed_layout_example(db, example)
+    db.commit()
+    db.refresh(example)
+    return _layout_example_json(example)
+
+
+@router.put("/layout-examples/{example_id}")
+async def update_layout_example(
+    example_id: int,
+    body: LayoutExampleUpdate,
+    db: Session = Depends(get_db),
+    admin_id: int = Depends(get_admin_user_id),
+):
+    """수정. 질문이 바뀌면 다시 임베딩한다."""
+    example = db.query(LayoutExample).filter(LayoutExample.id == example_id).first()
+    if not example:
+        raise HTTPException(status_code=404, detail="Layout example not found")
+    question_changed = body.question is not None and body.question != example.question
+    if question_changed:
+        example.question = body.question
+    if body.plan is not None:
+        example.plan = _checked_plan(body.plan)
+    if body.description is not None:
+        example.description = body.description
+    example.updated_at = utcnow()
+    if question_changed:
+        _embed_layout_example(db, example)
+    db.commit()
+    db.refresh(example)
+    return _layout_example_json(example)
+
+
+@router.delete("/layout-examples/{example_id}")
+async def archive_layout_example(
+    example_id: int,
+    db: Session = Depends(get_db),
+    admin_id: int = Depends(get_admin_user_id),
+):
+    """임베딩 제거 + active로 되돌림 — 검색 대상에서 제외, DAG 재실행 시 재임베딩."""
+    example = db.query(LayoutExample).filter(LayoutExample.id == example_id).first()
+    if not example:
+        raise HTTPException(status_code=404, detail="Layout example not found")
+    db.execute(
+        text("UPDATE layout_examples SET embedding = NULL, status = 'active', updated_at = :now WHERE id = :id"),
+        {"now": utcnow(), "id": example.id},
+    )
+    db.commit()
+    db.refresh(example)
+    return _layout_example_json(example)
 
 
 # === Chat Log Review ===
@@ -491,7 +637,7 @@ async def test_discord_webhook(
 
 # === AI(LLM/임베딩) 접속 설정 ===
 
-# code_examples.embedding 컬럼이 vector(768)이라 다른 차원의 임베딩 모델은 쓸 수 없다
+# code_examples·layout_examples.embedding 컬럼이 vector(768)이라 다른 차원의 임베딩 모델은 쓸 수 없다
 EMBEDDING_DIM = 768
 
 

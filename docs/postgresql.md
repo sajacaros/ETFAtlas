@@ -270,6 +270,7 @@ engine = create_engine(
 | chat_sessions | 챗봇 대화 세션 | 제목, 오래된 턴 요약(`summary`, `summarized_until_log_id`). 회원 삭제 시 CASCADE (0007) |
 | chat_logs | 챗봇 대화 로그 | 피드백/검수 상태, 세션(`session_id`), 재작성 질문(`refined_question`), 실행 과정(`steps` JSONB). 회원 삭제 시 user_id만, 세션 삭제 시 session_id만 NULL (0006~0008) |
 | code_examples | 챗봇 코드 예제 | pgvector 768차원, ivfflat |
+| layout_examples | 레이아웃 플래너 화면 설계 예제 | pgvector 768차원 (0013, 시드 포함) |
 
 ## 스키마 마이그레이션 (Alembic)
 
@@ -290,6 +291,7 @@ RDB 스키마 변경은 `backend/migrations/versions/`의 Alembic 리비전으�
 | 0006 | `password_resets` (비밀번호 재설정 링크). 회원 삭제 시 `chat_logs.user_id`(NULL 허용으로 변경)와 `code_examples.created_by`는 `ON DELETE SET NULL` |
 | 0007 | `chat_sessions` (챗봇 세션·요약), `chat_logs.session_id`(세션 삭제 시 `SET NULL`)·`refined_question` |
 | 0008 | `chat_logs.steps` (실행 과정 JSONB, 세션을 다시 열 때 표시) |
+| 0013 | `layout_examples` (레이아웃 플래너 few-shot 예시) + 시드 예시 18개 |
 
 새 리비전 만들기 (모델을 고친 뒤, DB가 떠 있는 상태에서):
 

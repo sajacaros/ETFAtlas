@@ -5,7 +5,7 @@ import { useToast } from '@/hooks/use-toast'
 import { adminApi } from '@/lib/api'
 import { copyText } from '@/lib/clipboard'
 import type {
-  AdminCodeExample, AdminChatLog, AdminETFTag, AdminDiscordSettings, AdminInvitation, AdminMember,
+  AdminCodeExample, AdminLayoutExample, AdminExampleSearch, AdminChatLog, AdminETFTag, AdminDiscordSettings, AdminInvitation, AdminMember,
   AdminAISettings, AdminAISettingField, AdminAITestResult,
 } from '@/types/api'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -82,6 +82,7 @@ export default function AdminPage() {
       <Tabs defaultValue="code-examples">
         <TabsList>
           <TabsTrigger value="code-examples">코드 예제</TabsTrigger>
+          <TabsTrigger value="layout-examples">레이아웃 예제</TabsTrigger>
           <TabsTrigger value="chat-logs">채팅 로그</TabsTrigger>
           <TabsTrigger value="etf-tags">ETF 태그</TabsTrigger>
           <TabsTrigger value="notifications">알림</TabsTrigger>
@@ -90,7 +91,10 @@ export default function AdminPage() {
           <TabsTrigger value="invitations">멤버 초대</TabsTrigger>
         </TabsList>
         <TabsContent value="code-examples">
-          <CodeExamplesTab />
+          <ExamplesTab kind={CODE_EXAMPLES} />
+        </TabsContent>
+        <TabsContent value="layout-examples">
+          <ExamplesTab kind={LAYOUT_EXAMPLES} />
         </TabsContent>
         <TabsContent value="chat-logs">
           <ChatLogsTab />
@@ -905,24 +909,70 @@ function ETFTagsTab() {
   )
 }
 
-// ============ Code Examples Tab ============
+// ============ Code / Layout Examples Tab ============
 
-interface SearchResult {
+type SearchResult = AdminExampleSearch['results'][number]
+
+// 코드 예제와 레이아웃 예제는 본문(code / plan)만 다르다
+interface ExampleItem {
   id: number
   question: string
   question_generalized: string | null
+  body: string
   description: string | null
-  distance: number
+  status: string
+  created_at: string | null
 }
 
-function CodeExamplesTab() {
+interface ExampleForm { question: string; body: string; description: string }
+
+interface ExampleKind {
+  noun: string
+  bodyLabel: string
+  bodyPlaceholder: string
+  list: (status?: string) => Promise<{ items: ExampleItem[]; total: number }>
+  create: (form: ExampleForm) => Promise<unknown>
+  update: (id: number, form: ExampleForm) => Promise<unknown>
+  archive: (id: number) => Promise<unknown>
+  search: (q: string, topK: number, generalize: boolean) => Promise<AdminExampleSearch>
+}
+
+const CODE_EXAMPLES: ExampleKind = {
+  noun: '코드 예제',
+  bodyLabel: 'Code',
+  bodyPlaceholder: '코드를 입력하세요',
+  list: async (status) => {
+    const res = await adminApi.listCodeExamples(status)
+    return { items: res.items.map((i: AdminCodeExample) => ({ ...i, body: i.code })), total: res.total }
+  },
+  create: (f) => adminApi.createCodeExample({ question: f.question, code: f.body, description: f.description }),
+  update: (id, f) => adminApi.updateCodeExample(id, { question: f.question, code: f.body, description: f.description }),
+  archive: (id) => adminApi.archiveCodeExample(id),
+  search: (q, k, g) => adminApi.searchSimilarExamples(q, k, g),
+}
+
+const LAYOUT_EXAMPLES: ExampleKind = {
+  noun: '레이아웃 예제',
+  bodyLabel: 'Plan (JSON — 대상 이름은 <종목>, <종목1> 같은 자리표시자로)',
+  bodyPlaceholder: '{"rows": [{"slots": [{"skill": "stock_holders", "title": "...", "display": "bar", "args": {"stocks": ["<종목>"]}}]}]}',
+  list: async (status) => {
+    const res = await adminApi.listLayoutExamples(status)
+    return { items: res.items.map((i: AdminLayoutExample) => ({ ...i, body: i.plan })), total: res.total }
+  },
+  create: (f) => adminApi.createLayoutExample({ question: f.question, plan: f.body, description: f.description }),
+  update: (id, f) => adminApi.updateLayoutExample(id, { question: f.question, plan: f.body, description: f.description }),
+  archive: (id) => adminApi.archiveLayoutExample(id),
+  search: (q, k, g) => adminApi.searchSimilarLayoutExamples(q, k, g),
+}
+
+function ExamplesTab({ kind }: { kind: ExampleKind }) {
   const { toast } = useToast()
-  const [items, setItems] = useState<AdminCodeExample[]>([])
+  const [items, setItems] = useState<ExampleItem[]>([])
   const [total, setTotal] = useState(0)
   const [statusFilter, setStatusFilter] = useState('')
   const [loading, setLoading] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
-  const [editItem, setEditItem] = useState<AdminCodeExample | null>(null)
+  const [editItem, setEditItem] = useState<ExampleItem | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<SearchResult[] | null>(null)
   const [searching, setSearching] = useState(false)
@@ -932,15 +982,15 @@ function CodeExamplesTab() {
   const fetchItems = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await adminApi.listCodeExamples(statusFilter || undefined)
+      const res = await kind.list(statusFilter || undefined)
       setItems(res.items)
       setTotal(res.total)
     } catch {
-      toast({ title: '코드 예제 목록 조회 실패', variant: 'destructive' })
+      toast({ title: `${kind.noun} 목록 조회 실패`, variant: 'destructive' })
     } finally {
       setLoading(false)
     }
-  }, [statusFilter, toast])
+  }, [kind, statusFilter, toast])
 
   useEffect(() => {
     fetchItems()
@@ -948,30 +998,32 @@ function CodeExamplesTab() {
 
   const handleArchive = useCallback(async (id: number) => {
     try {
-      await adminApi.archiveCodeExample(id)
+      await kind.archive(id)
       toast({ title: '아카이브 처리되었습니다' })
       fetchItems()
     } catch {
       toast({ title: '아카이브 실패', variant: 'destructive' })
     }
-  }, [fetchItems, toast])
+  }, [kind, fetchItems, toast])
 
-  const handleSave = useCallback(async (form: { question: string; code: string; description: string }) => {
+  const handleSave = useCallback(async (form: ExampleForm) => {
     try {
       if (editItem) {
-        await adminApi.updateCodeExample(editItem.id, form)
+        await kind.update(editItem.id, form)
         toast({ title: '수정되었습니다' })
       } else {
-        await adminApi.createCodeExample(form)
+        await kind.create(form)
         toast({ title: '추가되었습니다' })
       }
       setDialogOpen(false)
       setEditItem(null)
       fetchItems()
-    } catch {
-      toast({ title: '저장 실패', variant: 'destructive' })
+    } catch (e) {
+      // 레이아웃 계획 검증 오류(400)는 문구가 문자열로 온다
+      const detail = (e as { response?: { data?: { detail?: unknown } } }).response?.data?.detail
+      toast({ title: '저장 실패', description: typeof detail === 'string' ? detail : undefined, variant: 'destructive' })
     }
-  }, [editItem, fetchItems, toast])
+  }, [kind, editItem, fetchItems, toast])
 
   const handleSearch = useCallback(async () => {
     if (!searchQuery.trim()) {
@@ -981,7 +1033,7 @@ function CodeExamplesTab() {
     }
     setSearching(true)
     try {
-      const res = await adminApi.searchSimilarExamples(searchQuery.trim(), 5, generalize)
+      const res = await kind.search(searchQuery.trim(), 5, generalize)
       setSearchResults(res.results)
       setQueryGeneralized(res.query_generalized)
     } catch {
@@ -989,7 +1041,7 @@ function CodeExamplesTab() {
     } finally {
       setSearching(false)
     }
-  }, [searchQuery, generalize, toast])
+  }, [kind, searchQuery, generalize, toast])
 
   return (
     <div className="space-y-4">
@@ -1154,7 +1206,8 @@ function CodeExamplesTab() {
         </TableBody>
       </Table>
 
-      <CodeExampleDialog
+      <ExampleDialog
+        kind={kind}
         open={dialogOpen}
         onOpenChange={(open) => { setDialogOpen(open); if (!open) setEditItem(null) }}
         editItem={editItem}
@@ -1164,16 +1217,18 @@ function CodeExamplesTab() {
   )
 }
 
-function CodeExampleDialog({
+function ExampleDialog({
+  kind,
   open,
   onOpenChange,
   editItem,
   onSave,
 }: {
+  kind: ExampleKind
   open: boolean
   onOpenChange: (open: boolean) => void
-  editItem: AdminCodeExample | null
-  onSave: (form: { question: string; code: string; description: string }) => void
+  editItem: ExampleItem | null
+  onSave: (form: ExampleForm) => Promise<void>
 }) {
   const [question, setQuestion] = useState('')
   const [code, setCode] = useState('')
@@ -1183,21 +1238,21 @@ function CodeExampleDialog({
   useEffect(() => {
     if (open) {
       setQuestion(editItem?.question || '')
-      setCode(editItem?.code || '')
+      setCode(editItem?.body || '')
       setDescription(editItem?.description || '')
     }
   }, [open, editItem])
 
   const hasChanges = editItem
     ? question !== editItem.question ||
-      code !== editItem.code ||
+      code !== editItem.body ||
       description !== (editItem.description ?? '')
     : true // 추가 모드에서는 항상 활성화
 
   const handleSubmit = async () => {
     if (!question.trim() || !code.trim()) return
     setSaving(true)
-    await onSave({ question, code, description })
+    await onSave({ question, body: code, description })
     setSaving(false)
   }
 
@@ -1205,9 +1260,9 @@ function CodeExampleDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{editItem ? '코드 예제 수정' : '코드 예제 추가'}</DialogTitle>
+          <DialogTitle>{editItem ? `${kind.noun} 수정` : `${kind.noun} 추가`}</DialogTitle>
           <DialogDescription>
-            {editItem ? '코드 예제를 수정합니다.' : '새 코드 예제를 추가합니다.'}
+            {editItem ? `${kind.noun}를 수정합니다.` : `새 ${kind.noun}를 추가합니다.`}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
@@ -1221,12 +1276,12 @@ function CodeExampleDialog({
             />
           </div>
           <div>
-            <Label htmlFor="code">Code</Label>
+            <Label htmlFor="code">{kind.bodyLabel}</Label>
             <Textarea
               id="code"
               value={code}
               onChange={(e) => setCode(e.target.value)}
-              placeholder="코드를 입력하세요"
+              placeholder={kind.bodyPlaceholder}
               rows={8}
               className="font-mono text-sm"
             />

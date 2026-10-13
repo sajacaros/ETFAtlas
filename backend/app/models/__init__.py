@@ -5,6 +5,7 @@ from .ticker_price import TickerPrice
 from .collection_run import CollectionRun
 from .chat import ChatLog, ChatLogStatus, ChatSession, ChatSlot
 from .code_example import CodeExample
+from .layout_example import LayoutExample
 from .role import Role, UserRole
 from .discord_setting import DiscordSetting
 from .ai_setting import AISetting
@@ -25,6 +26,7 @@ __all__ = [
     "ChatSession",
     "ChatSlot",
     "CodeExample",
+    "LayoutExample",
     "Role",
     "UserRole",
     "DiscordSetting",

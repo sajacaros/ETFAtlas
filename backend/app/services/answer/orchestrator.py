@@ -24,7 +24,7 @@ from ...utils.time import utcnow
 from ..ai_config import load_ai_config
 from ..chat_memory import ChatMemory, ConversationContext
 from . import refs
-from .planner import PlannedSlot, Planner, layout_tree
+from .planner import PlannedSlot, Planner, find_layout_examples, layout_tree
 from .resolver import EntityResolver
 from .skills import REGISTRY
 from .skills.base import Skill, SkillContext
@@ -100,6 +100,13 @@ class AnswerService:
         self._planner = planner
         self._store = SlotStore(session_factory)
 
+    def _layout_examples(self, question: str) -> List[Dict[str, Any]]:
+        db = self._session_factory()
+        try:
+            return find_layout_examples(db, question)
+        finally:
+            db.close()
+
     async def stream(
         self, message: str, context: ConversationContext, chat_log_id: int, stop: asyncio.Event,
     ) -> AsyncIterator[Dict[str, Any]]:
@@ -113,7 +120,7 @@ class AnswerService:
             return
 
         yield _event("status", {"stage": "planning"})
-        planner = self._planner or Planner(self._config, self._registry)
+        planner = self._planner or Planner(self._config, self._registry, find_examples=self._layout_examples)
         rows = await planner.plan(question, context)
         slots = [s for row in rows for s in row]
         await asyncio.to_thread(self._store.create, chat_log_id, slots)

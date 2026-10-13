@@ -68,6 +68,18 @@ class CodeExampleUpdate(BaseModel):
     description: Optional[str] = None
 
 
+class LayoutExampleCreate(BaseModel):
+    question: str
+    plan: str  # 플래너 출력 형식의 JSON 문자열 {"rows": [{"slots": [...]}]}
+    description: Optional[str] = None
+
+
+class LayoutExampleUpdate(BaseModel):
+    question: Optional[str] = None
+    plan: Optional[str] = None
+    description: Optional[str] = None
+
+
 class ETFTagsUpdate(BaseModel):
     tags: Optional[list[str]] = None  # None: 수동 지정 해제, []: 태그 없음으로 고정
 

@@ -10,7 +10,7 @@ AGE 수집 공용 로직은 `airflow/dags/age_utils.py`에 모여 있다.
 | `age_tagging` | `age_tagging.py` | `0 3 * * 6` (토 03:00 KST) | AGE | 신규 ETF 태깅 (`full_rebuild`로 전체 재태깅) |
 | `rdb_sync_metadata` | `sync_metadata_rdb.py` | `30 8 * * 1-5` (평일 08:30 KST) | RDB | `etfs` 코드/이름 동기화 |
 | `rdb_realtime_prices` | `realtime_prices_rdb.py` | `*/10 9-15 * * 1-5` | RDB | 장중 현재가 + 포트폴리오 스냅샷 |
-| `embed_code_examples` | `embed_code_examples.py` | 수동 | RDB (pgvector) | 챗봇 코드 예제 임베딩 |
+| `embed_code_examples` | `embed_code_examples.py` | 수동 | RDB (pgvector) | 챗봇 코드·레이아웃 예제 임베딩 |
 
 ### 데이터 소스
 
@@ -207,7 +207,7 @@ check_market_open → collect_prices → update_snapshots
 
 ## 5. embed_code_examples (pgvector)
 
-수동 트리거 전용. `code_examples`에서 `status='active'`(승인됨, 미임베딩) 레코드를 찾아 질문을 LLM(`LLM_MODEL`)으로 일반화한 뒤, `EMBEDDING_MODEL`(기본 `embedding-gemma-300m`, 768차원)로 임베딩을 생성하고 `status='embedded'`로 전환한다.
+수동 트리거 전용. `code_examples`(agent 해결 절차)와 `layout_examples`(레이아웃 플래너 화면 설계)에서 테이블마다 태스크 하나씩(`embed_code_examples`, `embed_layout_examples`), `status='active'`(승인됨, 미임베딩) 레코드를 찾아 질문을 LLM(`LLM_MODEL`)으로 일반화한 뒤, `EMBEDDING_MODEL`(기본 `embedding-gemma-300m`, 768차원)로 임베딩을 생성하고 `status='embedded'`로 전환한다.
 
 ---
 
@@ -224,6 +224,7 @@ check_market_open → collect_prices → update_snapshots
 | `kis_tokens` | KIS를 호출하는 모든 DAG | - | KIS 접근 토큰 캐시 |
 | `market_calendar` | rdb_realtime_prices | check_market_open | 개장일 여부 캐시 (하루 1회) |
 | `code_examples` | embed_code_examples | embed_code_examples | 챗봇 few-shot 코드 예제 (vector(768)) |
+| `layout_examples` | embed_code_examples | embed_layout_examples | 레이아웃 플래너 few-shot 화면 설계 예제 (vector(768)) |
 
 ### Apache AGE
 

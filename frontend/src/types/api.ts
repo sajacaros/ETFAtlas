@@ -30,6 +30,30 @@ export interface AdminCodeExampleList {
   total: number
 }
 
+// 챗봇 레이아웃 플래너의 few-shot 예시. plan은 플래너 출력 형식의 JSON 문자열
+export interface AdminLayoutExample {
+  id: number
+  question: string
+  question_generalized: string | null
+  plan: string
+  description: string | null
+  status: string
+  has_embedding: boolean
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface AdminLayoutExampleList {
+  items: AdminLayoutExample[]
+  total: number
+}
+
+export interface AdminExampleSearch {
+  query: string
+  query_generalized: string | null
+  results: Array<{ id: number; question: string; question_generalized: string | null; description: string | null; distance: number }>
+}
+
 export interface AdminChatLog {
   id: number
   user_id: number | null

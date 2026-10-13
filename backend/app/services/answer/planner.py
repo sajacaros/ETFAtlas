@@ -3,16 +3,19 @@
 LLM에게는 재귀 트리 대신 '줄(row) 목록, 줄마다 슬롯 1~3개'라는 평평한 구조를 받는다 (작은 모델도 안정적으로 채운다).
 프런트로 보내는 레이아웃은 column/row/slot 트리로 바꾼다.
 """
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Annotated, Any, Dict, List, Literal, Optional, Union
+from typing import Annotated, Any, Callable, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, create_model, model_validator
 from pydantic_ai import Agent
+from sqlalchemy.orm import Session
 
 from ..ai_config import AIConfig
 from ..chat_memory import ConversationContext
+from ..embedding_service import EmbeddingService
 from .llm import NO_THINKING, build_model
 from .refs import refs_in
 from .schemas import slot_type
@@ -44,10 +47,17 @@ PLANNER_PROMPT = """당신은 ETF Atlas 챗봇의 화면 설계 담당입니다.
 7. title은 영역 위에 표시할 짧은 제목입니다 (예: "3개월 수익률 추이").
 8. 한 슬롯의 결과(예: 순위 1위 ETF)를 다른 슬롯의 대상으로 써야 하면, 결과를 내보내는 슬롯에 name(짧은 영문)을 붙이고
    다른 슬롯의 인자에 '@name.1'(1위), '@name.1-3'(1~3위, 목록 인자에서만)을 적으세요.
-   예: 삼성전자를 가장 많이 담은 ETF와 그 구성종목 → stock_holders(name="rank") + holdings(etf="@rank.1").
-   여러 종목을 함께 많이 담은 ETF는 종목마다 슬롯을 나누지 말고 stock_holders 하나에 종목을 모두 적으세요.
-   아직 모르는 대상을 '삼성전자 비중 1위 ETF' 같은 설명 문구로 적지 마세요. 내보내는 결과가 있는 스킬만 참조할 수 있습니다.
+   예: <종목>을 가장 많이 담은 ETF와 그 구성종목 → stock_holders(name="rank") + holdings(etf="@rank.1").
+   아직 모르는 대상을 '<종목> 비중 1위 ETF' 같은 설명 문구로 적지 마세요. 내보내는 결과가 있는 스킬만 참조할 수 있습니다.
+9. '참고 화면 설계 예시'가 주어지면, 질문 유형이 같을 때 그 슬롯 구성(스킬·인자 모양·name·참조)과 설명을 따르세요.
+   꺾쇠로 감싼 자리표시자(<…>)만 현재 질문의 값으로 바꾸고, 개수·기간 같은 값은 현재 질문에 맞추세요.
+   name과 '@이름.순위' 참조는 자리표시자가 아닙니다 — 실제 이름으로 바꾸지 말고 그대로 쓰세요. 유형이 다르면 예시를 무시하세요.
 """
+
+# 레이아웃 예시 검색 기준. code_examples와 따로 둔다 — evals/run_layout_eval.py로 정밀도·재현율과 계획 통과율을 보고 정한다
+EXAMPLES_TOP_K = 3
+EXAMPLES_MAX_DISTANCE = 0.35
+EXAMPLES_SIMILARITY_GAP = 0.05
 
 
 @dataclass
@@ -180,8 +190,33 @@ def layout_tree(rows: List[List[PlannedSlot]]) -> Dict[str, Any]:
     return {"type": "column", "children": children}
 
 
+def find_layout_examples(db: Session, question: str) -> List[Dict[str, Any]]:
+    """질문과 유형이 비슷한 화면 설계 예시. 예시는 고유명사를 뺀 일반화 질문으로 임베딩되어 있어 검색 질의도 일반화한다."""
+    service = EmbeddingService(db)
+    return service.find_similar_layout_examples(
+        service.generalize_question(question), top_k=EXAMPLES_TOP_K,
+        max_distance=EXAMPLES_MAX_DISTANCE, similarity_gap=EXAMPLES_SIMILARITY_GAP,
+    )
+
+
+def examples_prompt(examples: List[Dict[str, Any]]) -> str:
+    parts = ["## 참고 화면 설계 예시"]
+    for ex in examples:
+        try:  # 프롬프트 길이를 줄이려 한 줄로 다시 쓴다
+            plan = json.dumps(json.loads(ex["plan"]), ensure_ascii=False)
+        except (TypeError, ValueError):
+            plan = ex["plan"]
+        why = f"\n설명: {ex['description']}" if ex.get("description") else ""
+        parts.append(f"Q: {ex.get('question_generalized') or ex['question']}{why}\n{plan}")
+    return "\n\n".join(parts)
+
+
 class Planner:
-    def __init__(self, config: AIConfig, registry: Dict[str, Skill] = REGISTRY):
+    def __init__(
+        self, config: AIConfig, registry: Dict[str, Skill] = REGISTRY,
+        find_examples: Optional[Callable[[str], List[Dict[str, Any]]]] = None,
+    ):
+        self._find_examples = find_examples
         self._agent = Agent(
             build_model(config),
             output_type=build_plan_model(registry),
@@ -191,9 +226,14 @@ class Planner:
         )
 
     async def plan(self, question: str, context: ConversationContext) -> List[List[PlannedSlot]]:
-        prompt = f"## 질문\n{question}"
+        parts = []
+        examples = await self._examples(question)
+        if examples:
+            parts.append(examples_prompt(examples))
         if not context.is_empty():
-            prompt = f"## 이전 대화 (참고용)\n{context.render()}\n\n{prompt}"
+            parts.append(f"## 이전 대화 (참고용)\n{context.render()}")
+        parts.append(f"## 질문\n{question}")
+        prompt = "\n\n".join(parts)
         try:
             result = await self._agent.run(prompt)
             rows = to_rows(result.output)
@@ -201,3 +241,15 @@ class Planner:
             logger.exception("Layout planning failed; falling back to the agent skill")
             return fallback_rows(question)
         return rows or fallback_rows(question)
+
+    async def _examples(self, question: str) -> List[Dict[str, Any]]:
+        if self._find_examples is None:
+            return []
+        try:
+            examples = await asyncio.to_thread(self._find_examples, question)
+        except Exception:  # 예시 없이도 설계할 수 있다
+            logger.exception("Layout example search failed; planning without examples")
+            return []
+        if examples:
+            logger.info("Layout examples for %r: %s", question, [ex["id"] for ex in examples])
+        return examples

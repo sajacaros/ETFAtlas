@@ -29,6 +29,8 @@ import type {
   SlotStatus,
   MatchedCodeExample,
   AdminCodeExampleList,
+  AdminLayoutExampleList,
+  AdminExampleSearch,
   AdminChatLogList,
   AdminETFTag,
   AdminETFTagList,
@@ -463,8 +465,32 @@ export const adminApi = {
     return data
   },
   searchSimilarExamples: async (q: string, topK = 5, generalize = false) => {
-    const { data } = await api.get<{ query: string; query_generalized: string | null; results: Array<{ id: number; question: string; question_generalized: string | null; description: string | null; distance: number }> }>(
+    const { data } = await api.get<AdminExampleSearch>(
       '/admin/code-examples/search', { params: { q, top_k: topK, generalize } }
+    )
+    return data
+  },
+  listLayoutExamples: async (status?: string, skip = 0, limit = 50) => {
+    const params: Record<string, string | number> = { skip, limit }
+    if (status) params.status = status
+    const { data } = await api.get<AdminLayoutExampleList>('/admin/layout-examples', { params })
+    return data
+  },
+  createLayoutExample: async (body: { question: string; plan: string; description?: string }) => {
+    const { data } = await api.post('/admin/layout-examples', body)
+    return data
+  },
+  updateLayoutExample: async (id: number, body: { question?: string; plan?: string; description?: string }) => {
+    const { data } = await api.put(`/admin/layout-examples/${id}`, body)
+    return data
+  },
+  archiveLayoutExample: async (id: number) => {
+    const { data } = await api.delete(`/admin/layout-examples/${id}`)
+    return data
+  },
+  searchSimilarLayoutExamples: async (q: string, topK = 5, generalize = false) => {
+    const { data } = await api.get<AdminExampleSearch>(
+      '/admin/layout-examples/search', { params: { q, top_k: topK, generalize } }
     )
     return data
   },

@@ -67,6 +67,19 @@ class EmbeddingService:
         similarity_gap: 1등과의 유사도 차이 허용 범위 (0.05 = 5%).
             1등 유사도 대비 이 값 이상 떨어지면 제외.
         """
+        return self._find_similar("code_examples", "code", question, top_k, max_distance, similarity_gap)
+
+    def find_similar_layout_examples(
+        self, question: str, top_k: int = 3, max_distance: float = 0.35,
+        similarity_gap: float = 0.05,
+    ) -> List[Dict[str, Any]]:
+        """질문과 유사한 화면 설계 예시(슬롯 계획) 검색. 인자는 find_similar_code_examples와 같다."""
+        return self._find_similar("layout_examples", "plan", question, top_k, max_distance, similarity_gap)
+
+    def _find_similar(
+        self, table: str, body: str, question: str, top_k: int, max_distance: float, similarity_gap: float,
+    ) -> List[Dict[str, Any]]:
+        """table/body는 코드에서만 넘기는 고정 이름이다 (쿼리 문자열에 직접 들어간다)."""
         try:
             emb = self.get_embedding(question)
         except Exception as e:
@@ -75,9 +88,9 @@ class EmbeddingService:
 
         emb_str = "[" + ",".join(str(v) for v in emb) + "]"
         query = text(
-            "SELECT id, question, question_generalized, code, description, "
+            f"SELECT id, question, question_generalized, {body}, description, "
             "embedding <=> :emb\\:\\:vector AS distance "
-            "FROM code_examples "
+            f"FROM {table} "
             "WHERE status = 'embedded' "
             "AND embedding <=> :emb\\:\\:vector < :max_dist "
             "ORDER BY embedding <=> :emb\\:\\:vector "
@@ -92,7 +105,7 @@ class EmbeddingService:
                     "id": r.id,
                     "question": r.question,
                     "question_generalized": r.question_generalized,
-                    "code": r.code,
+                    body: getattr(r, body),
                     "description": r.description,
                     "distance": round(r.distance, 4),
                 }
@@ -107,6 +120,6 @@ class EmbeddingService:
                 ]
             return results
         except Exception as e:
-            logger.warning(f"code_examples pgvector search failed: {e}")
+            logger.warning(f"{table} pgvector search failed: {e}")
             return []
 

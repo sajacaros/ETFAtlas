@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, type CSSProperties } from 'react'
 import { ETFLink } from '@/components/ETFInfo'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/use-toast'
@@ -115,6 +115,17 @@ export default function AdminPage() {
   )
 }
 
+// 비밀값 입력칸. type="password"로 두면 크롬이 로그인 폼으로 보고, 탭을 옮겨 칸이 사라질 때
+// "비밀번호 저장" 창을 띄운다. 일반 텍스트 칸에 글자만 가려서 비밀번호 관리자가 무시하게 한다.
+const SECRET_INPUT_PROPS = {
+  type: 'text',
+  autoComplete: 'off',
+  spellCheck: false,
+  'data-1p-ignore': true,
+  'data-lpignore': 'true',
+  style: { WebkitTextSecurity: 'disc' } as CSSProperties,
+} as const
+
 // ============ Discord Settings Tab ============
 
 function DiscordSettingsTab() {
@@ -202,8 +213,7 @@ function DiscordSettingsTab() {
         </p>
         <Input
           id="discord-webhook"
-          type="password"
-          autoComplete="off"
+          {...SECRET_INPUT_PROPS}
           value={webhookUrl}
           onChange={(e) => setWebhookUrl(e.target.value)}
           placeholder="새 주소 입력 — 비워 두면 기존 주소 유지"
@@ -366,8 +376,7 @@ function AISettingsTab() {
                 </div>
                 <Input
                   id={id}
-                  type={field.secret ? 'password' : 'text'}
-                  autoComplete="off"
+                  {...(field.secret ? SECRET_INPUT_PROPS : { type: 'text', autoComplete: 'off' })}
                   value={drafts[field.name] ?? ''}
                   onChange={(e) => setDrafts((d) => ({ ...d, [field.name]: e.target.value }))}
                   placeholder={`${field.placeholder} — 비워 두면 기존 값 유지`}

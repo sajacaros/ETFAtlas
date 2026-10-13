@@ -12,6 +12,7 @@ import asyncio
 import json
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Set
 
@@ -117,16 +118,12 @@ async def execute(question: str, rows) -> List[str]:
 
 async def run_one(item: Dict, config, seeds: Dict[int, Set[str]], sem: asyncio.Semaphore) -> Dict:
     async with sem:
-        found: List[Dict] = []
-        lookups = planner_mod.data_lookups(SessionLocal)  # 서비스와 같은 연결, 예시 검색만 기록하게 감싼다
-
-        def find(question: str) -> List[Dict]:
-            found.extend(lookups["find_examples"](question))
-            return found
-
-        planner = Planner(config, **{**lookups, "find_examples": find})
+        planner = Planner(config, **planner_mod.data_lookups(SessionLocal))  # 서비스와 같은 연결
+        started = time.monotonic()
         with capture_run_messages() as messages:
             rows = await planner.plan(item["q"], ConversationContext())
+        seconds = time.monotonic() - started
+        found = planner.last_examples  # 선택기를 거쳐 실제로 넣은 예시
         slots = [{"skill": s.skill, "name": s.name, "title": s.title, "display": s.display, "args": s.args.model_dump()}
                  for r in rows for s in r]
         retries = sum(isinstance(p, RetryPromptPart) for m in messages for p in getattr(m, "parts", []))
@@ -140,7 +137,7 @@ async def run_one(item: Dict, config, seeds: Dict[int, Set[str]], sem: asyncio.S
         allowed = allowed_skills(item)
         relevant_seeds = [i for i, sk in seeds.items() if sk and sk <= allowed]
         return {
-            "q": item["q"], "ok": not problems, "problems": problems, "retries": retries,
+            "q": item["q"], "ok": not problems, "problems": problems, "retries": retries, "seconds": seconds,
             "fallback": fallback,
             "examples": [(e["id"], e["distance"], seeds.get(e["id"], set()) <= allowed) for e in found],
             "relevant_seeds": relevant_seeds,
@@ -176,7 +173,8 @@ def report(results: List[Dict]) -> None:
     print("\n== 요약")
     print(f"  통과 {sum(r['ok'] for r in results)}/{n} ({sum(r['ok'] for r in results) / n:.0%}), "
           f"질문 단위 전부 통과 {sum(all(r['ok'] for r in runs) for runs in by_q.values())}/{len(by_q)}")
-    print(f"  재시도 평균 {sum(r['retries'] for r in results) / n:.2f}, agent 폴백 {sum(r['fallback'] for r in results)}")
+    print(f"  재시도 평균 {sum(r['retries'] for r in results) / n:.2f}, agent 폴백 {sum(r['fallback'] for r in results)}, "
+          f"설계 시간 평균 {sum(r['seconds'] for r in results) / n:.1f}초 (동시 실행 중이라 실제보다 길다)")
     print(f"  넣은 예시 {len(injected)}개 중 유형 맞음 {sum(e[2] for e in injected)}, 무관 {sum(not e[2] for e in injected)}; "
           f"맞는 시드가 있는데 못 넣은 실행 {sum(1 for r in results if r['relevant_seeds'] and not any(e[2] for e in r['examples']))}")
 
@@ -207,7 +205,10 @@ def main() -> None:
     parser.add_argument("--top-k", type=int, help="예시 검색 기준을 바꿔 본다 (planner.EXAMPLES_*)")
     parser.add_argument("--max-distance", type=float)
     parser.add_argument("--gap", type=float)
+    parser.add_argument("--no-selector", action="store_true", help="예시 선택기 없이 거리 기준으로만 넣는다")
     args = parser.parse_args()
+    if args.no_selector:
+        planner_mod.EXAMPLE_SELECTOR = False
     for attr, value in (("EXAMPLES_TOP_K", args.top_k), ("EXAMPLES_MAX_DISTANCE", args.max_distance),
                         ("EXAMPLES_SIMILARITY_GAP", args.gap)):
         if value is not None:

@@ -61,6 +61,16 @@ PLANNER_PROMPT = f"""당신은 ETF Atlas 챗봇의 화면 설계 담당입니다
 EXAMPLES_TOP_K = 3
 EXAMPLES_MAX_DISTANCE = 0.35
 EXAMPLES_SIMILARITY_GAP = 0.05
+# 예시 선택기: 임베딩은 표현이 비슷한 예시를 넓게 후보로 뽑고(유형이 달라도), LLM이 질문 유형이 같은 것만 고른다
+EXAMPLE_SELECTOR = True
+EXAMPLE_CANDIDATES = 8
+EXAMPLE_CANDIDATE_MAX_DISTANCE = 0.45
+
+SELECTOR_PROMPT = """한국 ETF 챗봇의 화면 설계 예시 중에서, 사용자 질문과 같은 유형의 예시를 고릅니다.
+유형이 같다는 것은 같은 스킬 조합과 같은 방식(순위 결과를 넘기는 참조, 슬롯 나누기, 되묻기 등)으로 화면을 짜야 한다는 뜻입니다.
+종목·ETF 이름이나 숫자(상위 몇 개, 기간)가 달라도 유형은 같을 수 있고, 단어가 비슷해도 화면 구성이 다르면 다른 유형입니다.
+같은 유형이 없으면 빈 목록을 내세요. 최대 {top_k}개, 가장 잘 맞는 것부터."""
+
 # 실행 결과를 보고 한 번 다시 설계할 때 덧붙이는 규칙
 REPLAN_RULES = """
 ## 다시 설계
@@ -309,10 +319,11 @@ def data_errors(plan: BaseModel, is_etf_name: Callable[[str], bool]) -> List[str
 def find_layout_examples(db: Session, question: str) -> List[Dict[str, Any]]:
     """질문과 유형이 비슷한 화면 설계 예시. 예시는 고유명사를 뺀 일반화 질문으로 임베딩되어 있어 검색 질의도 일반화한다."""
     service = EmbeddingService(db)
-    return service.find_similar_layout_examples(
-        service.generalize_question(question), top_k=EXAMPLES_TOP_K,
-        max_distance=EXAMPLES_MAX_DISTANCE, similarity_gap=EXAMPLES_SIMILARITY_GAP,
-    )
+    if EXAMPLE_SELECTOR:  # 선택기가 고를 후보: 넓게, 1위와의 거리 차이로 자르지 않는다
+        params = {"top_k": EXAMPLE_CANDIDATES, "max_distance": EXAMPLE_CANDIDATE_MAX_DISTANCE, "similarity_gap": 0}
+    else:
+        params = {"top_k": EXAMPLES_TOP_K, "max_distance": EXAMPLES_MAX_DISTANCE, "similarity_gap": EXAMPLES_SIMILARITY_GAP}
+    return service.find_similar_layout_examples(service.generalize_question(question), **params)
 
 
 def examples_prompt(examples: List[Dict[str, Any]]) -> str:
@@ -331,6 +342,10 @@ def examples_prompt(examples: List[Dict[str, Any]]) -> str:
 class ReplanDeps:
     previous: List[List[Dict[str, Any]]]  # 이전 계획 (줄 → 슬롯 step)
     editable: Set[str]  # 바꿔도 되는 슬롯 id: 고칠 수 있는 실패, 그 결과를 받는 슬롯, 해설
+
+
+class ExampleChoice(BaseModel):
+    ids: List[int] = Field(default_factory=list, description="고른 예시 번호 (잘 맞는 순, 없으면 빈 목록)")
 
 
 def _step_dict(slot: PlannedSlot) -> Dict[str, Any]:
@@ -387,6 +402,18 @@ def results_prompt(slots: List[PlannedSlot], results: Dict[str, Dict[str, Any]],
     return "\n".join(lines)
 
 
+def _example_line(i: int, ex: Dict[str, Any]) -> str:
+    try:
+        plan = json.loads(ex["plan"])
+        steps = [s for row in plan["rows"] for s in row["slots"]]
+        shape = " + ".join(s["skill"] for s in steps if s["skill"] != "narrative")
+        uses_refs = any(refs_in(s.get("args", {})) for s in steps)
+    except (TypeError, ValueError, KeyError):
+        shape, uses_refs = "?", False
+    why = f" / {ex['description']}" if ex.get("description") else ""
+    return f"[{i}] {ex.get('question_generalized') or ex['question']}{why} / 스킬: {shape}{' (참조)' if uses_refs else ''}"
+
+
 class Planner:
     def __init__(
         self, config: AIConfig, registry: Dict[str, Skill] = REGISTRY,
@@ -402,6 +429,8 @@ class Planner:
                             model_settings=NO_THINKING, retries=2)
         self._replanner = Agent(build_model(config), output_type=plan_model, deps_type=ReplanDeps,
                                 instructions=instructions + REPLAN_RULES, model_settings=NO_THINKING, retries=2)
+        self._selector = Agent(build_model(config), output_type=ExampleChoice,
+                               instructions=SELECTOR_PROMPT.format(top_k=EXAMPLES_TOP_K), model_settings=NO_THINKING, retries=1)
 
         async def check_data(output):
             if is_etf_name is not None:
@@ -459,10 +488,25 @@ class Planner:
         if self._find_examples is None:
             return []
         try:
-            examples = await asyncio.to_thread(self._find_examples, question)
+            candidates = await asyncio.to_thread(self._find_examples, question)
         except Exception:  # 예시 없이도 설계할 수 있다
             logger.exception("Layout example search failed; planning without examples")
             return []
+        examples = await self._select(question, candidates) if EXAMPLE_SELECTOR else candidates
         if examples:
             logger.info("Layout examples for %r: %s", question, [ex["id"] for ex in examples])
         return examples
+
+    async def _select(self, question: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """후보 중 질문 유형이 같은 예시만. 고르지 못하면 거리 기준으로만 거른다."""
+        if not candidates:
+            return []
+        listing = "\n".join(_example_line(i, ex) for i, ex in enumerate(candidates, 1))
+        try:
+            result = await self._selector.run(f"## 질문\n{question}\n\n## 예시 후보\n{listing}")
+            picked = [candidates[i - 1] for i in dict.fromkeys(result.output.ids) if 1 <= i <= len(candidates)]
+            return picked[:EXAMPLES_TOP_K]
+        except Exception:
+            logger.exception("Example selection failed; using the nearest examples")
+            near = [ex for ex in candidates if ex["distance"] < EXAMPLES_MAX_DISTANCE]
+            return [ex for ex in near if ex["distance"] - near[0]["distance"] <= EXAMPLES_SIMILARITY_GAP][:EXAMPLES_TOP_K]

@@ -957,3 +957,44 @@ def test_a_stock_name_in_an_etf_slot_is_a_fixable_failure_not_a_question(fake_et
     result = asyncio.run(run())[-1]
     assert (result["status"], result["retryable"], result["clarify"]) == ("empty", True, False)
     assert "ETF가 아니라 개별 종목입니다" in result["message"]
+
+
+def _selector_planner(choose):
+    from app.services.answer import planner as planner_mod
+
+    class FakeSelector:
+        async def run(self, prompt):
+            ids = choose(prompt)
+
+            class Result:
+                output = planner_mod.ExampleChoice(ids=ids)
+            return Result()
+
+    planner = planner_mod.Planner.__new__(planner_mod.Planner)
+    planner._selector = FakeSelector()
+    return planner
+
+
+CANDIDATES = [{"id": 10 + i, "question": f"q{i}", "question_generalized": f"g{i}", "description": "",
+               "plan": json.dumps({"rows": [{"slots": [{"skill": "holdings", "args": {"etf": "<ETF>"}}]}]}),
+               "distance": d} for i, d in enumerate([0.10, 0.12, 0.30, 0.40])]
+
+
+def test_example_selector_keeps_valid_unique_choices_up_to_the_limit():
+    planner = _selector_planner(lambda prompt: [4, 4, 9, 2, 1, 3])
+    picked = asyncio.run(planner._select("질문", CANDIDATES))
+    assert [ex["id"] for ex in picked] == [13, 11, 10]  # 범위 밖 번호·중복은 버리고 최대 3개
+
+
+def test_example_selector_lists_candidates_with_their_skills():
+    seen = []
+    planner = _selector_planner(lambda prompt: seen.append(prompt) or [])
+    assert asyncio.run(planner._select("질문", CANDIDATES)) == []
+    assert "[1] g0" in seen[0] and "스킬: holdings" in seen[0]
+
+
+def test_example_selector_falls_back_to_distance_when_it_fails():
+    def broken(prompt):
+        raise RuntimeError("LLM down")
+    picked = asyncio.run(_selector_planner(broken)._select("질문", CANDIDATES))
+    assert [ex["id"] for ex in picked] == [10, 11]  # 0.35 안이고 1위와 0.05 차이 안

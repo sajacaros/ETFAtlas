@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { AlertCircle, BarChart3, Table2 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { MARKDOWN_PLUGINS } from '@/lib/markdown'
 import type { DataContent, LayoutNode, SlotContent, SlotState } from '@/types/api'
 import { chatApi } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -80,7 +80,7 @@ function SlotView({ chatLogId, node, state }: { chatLogId: number; node: SlotNod
       ? <DataSlot content={content} display={node.display} />
       : (
         <div className={PROSE}>
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{content.text}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS}>{content.text}</ReactMarkdown>
           {state.status === 'running' && <span className="inline-block w-1.5 h-4 align-middle bg-foreground/60 animate-pulse" />}
         </div>
       )

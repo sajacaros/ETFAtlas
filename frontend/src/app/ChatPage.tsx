@@ -15,7 +15,7 @@ import type {
 } from '@/types/api'
 import { AnswerView } from '@/components/answer/AnswerView'
 import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { MARKDOWN_PLUGINS } from '@/lib/markdown'
 
 const EXAMPLE_QUESTIONS = [
   '삼성전자를 가장 많이 보유한 ETF는?',
@@ -361,7 +361,7 @@ export default function ChatPage() {
                         <span className="whitespace-pre-wrap">{msg.content}</span>
                       ) : (
                         <div className="prose prose-sm dark:prose-invert max-w-none prose-table:text-sm prose-td:px-2 prose-td:py-1 prose-th:px-2 prose-th:py-1 prose-th:text-left">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS}>
                             {msg.content}
                           </ReactMarkdown>
                         </div>

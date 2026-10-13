@@ -1,12 +1,14 @@
 import asyncio
 import importlib.util
 import json
+import re
 from pathlib import Path
 
 import pytest
 from pydantic import BaseModel
 
 from app.services.answer import orchestrator as orch
+from app.services.answer import refs
 from app.services.answer.planner import PlannedSlot, build_plan_model, examples_prompt, layout_tree, to_rows
 from app.services.answer.schemas import DataField, Dataset, LineView
 from app.services.answer.skills import REGISTRY
@@ -572,11 +574,36 @@ def test_plan_turns_references_into_dependencies():
       {"skill": "holdings", "title": "구성", "display": "table", "args": {"etf": "@rank.1"}}], "내보내지 않습니다"),
     ([{"skill": "holdings", "name": "a", "title": "가", "display": "table", "args": {"etf": "@b.1"}},
       {"skill": "holdings", "name": "b", "title": "나", "display": "table", "args": {"etf": "@a.1"}}], "순환"),
+    # 펼치면 인자 개수 제한(최대 5개)을 넘는다
+    ([RANK, {"skill": "period_returns", "title": "수익률", "display": "bar", "args": {"etfs": ["@rank.1-10"]}}],
+     "'etfs' 인자가 맞지 않습니다"),
+    ([RANK, {"skill": "period_returns", "title": "수익률", "display": "bar", "args": {"etfs": ["@rank.1-3", "@rank.4-6"]}}],
+     "'etfs' 인자가 맞지 않습니다"),
+    ([RANK, {"skill": "holdings", "title": "구성", "display": "table", "args": {"etf": "@rank.1-3"}}], "하나만 들어가는 인자"),
+    ([RANK, {"skill": "holdings", "title": "구성", "display": "table", "args": {"etf": "@rank.3-1"}}], "범위가 잘못됐습니다"),
 ])
 def test_plan_rejects_bad_references(slots, error):
     with pytest.raises(Exception, match=error):
         _plan_steps(*slots)
 
+
+
+def test_plan_reports_all_reference_errors_at_once():
+    """재시도 한 번에 모두 고칠 수 있게 — name 누락과 범위 초과를 함께 알려 준다."""
+    no_name = {**RANK, "name": None}
+    with pytest.raises(Exception) as e:
+        _plan_steps(no_name, {"skill": "period_returns", "title": "수익률", "display": "bar", "args": {"etfs": ["@rank.1-10"]}},
+                    {"skill": "holdings", "title": "구성", "display": "table", "args": {"etf": "@rank.1-2"}})
+    message = str(e.value)
+    assert "오류 4개를 모두 고치세요" in message
+    assert message.count("name이 'rank'인 슬롯이 없습니다") == 2
+    assert "'etfs' 인자가 맞지 않습니다" in message
+    assert "하나만 들어가는 인자" in message
+
+
+@pytest.mark.parametrize("etfs", [["@rank.1-5"], ["@rank.1-2", "KODEX 200", "@rank.3-4"], ["@rank.1"]])
+def test_plan_accepts_references_that_fit_after_expansion(etfs):
+    _plan_steps(RANK, {"skill": "period_returns", "title": "수익률", "display": "bar", "args": {"etfs": etfs}})
 
 
 class EtfArgs(BaseModel):
@@ -690,3 +717,59 @@ def test_planner_plans_without_examples_when_search_fails(monkeypatch):
     rows = asyncio.run(planner.plan("질문", ConversationContext()))
     assert FakeAgent.prompt == "## 질문\n질문"
     assert rows[0][0].skill == "agent"
+
+
+@pytest.mark.parametrize("items, hint", [
+    (["@rank.1-10"], '슬롯 2개에 각각 ["@rank.1-5"], ["@rank.6-10"]'),
+    (["KODEX 200", "@rank.1-10"], '슬롯당 순위는 4개까지입니다. 이 스킬 슬롯들이 받는 1~10위를 모두 합쳐, 기존 슬롯 대신 슬롯 3개에 각각 '
+                                  '["KODEX 200", "@rank.1-4"], ["KODEX 200", "@rank.5-8"], ["KODEX 200", "@rank.9-10"]'),
+    (["@rank.1-3", "@rank.4-6"], '슬롯 2개에 각각 ["@rank.1-5"], ["@rank.6"]'),
+    (["A", "B", "C", "D", "E", "@rank.1"], "자리가 없습니다"),
+    (["@a.1-3", "@b.1-3"], "여럿으로 나눠"),
+])
+def test_split_hint_counts_named_items(items, hint):
+    assert hint in refs.split_hint(items, 5)
+
+
+def test_range_error_suggests_split_that_fits():
+    with pytest.raises(Exception, match=re.escape('["KODEX 200", "@rank.1-4"], ["KODEX 200", "@rank.5-8"], ["KODEX 200", "@rank.9-10"]')):
+        _plan_steps(RANK, {"skill": "period_returns", "title": "수익률", "display": "bar",
+                           "args": {"etfs": ["KODEX 200", "@rank.1-10"]}})
+
+
+def test_range_error_splits_ranks_of_all_slots_of_the_skill():
+    """첫 슬롯만 보고 '@rank.1-4', '@rank.5'를 제안하면 5위가 옆 슬롯으로 밀려 또 넘친다 — 전체 1~10위를 다시 나눈다."""
+    with pytest.raises(Exception, match=re.escape('1~10위를 모두 합쳐, 기존 슬롯 대신 슬롯 3개에 각각 ["KODEX 200", "@rank.1-4"]')):
+        _plan_steps(RANK,
+                    {"skill": "period_returns", "title": "가", "display": "bar", "args": {"etfs": ["@rank.1-5", "KODEX 200"]}},
+                    {"skill": "period_returns", "title": "나", "display": "bar", "args": {"etfs": ["@rank.6-10"]}})
+
+
+@pytest.mark.parametrize("slots", [
+    # KODEX 200이 넘친 슬롯이 아니라 옆 슬롯에 있어도, 어느 슬롯이 넘쳐도 같은 안내
+    [["@rank.1-4", "KODEX 200"], ["@rank.5-10"]],
+    [["@rank.1-5"], ["@rank.6-10", "KODEX 200"]],
+    # 5위가 빠진 채 넘쳐도 1~10위를 빠짐없이 나눈다
+    [["@rank.1-4", "KODEX 200"], ["@rank.6-10", "KODEX 200"]],
+])
+def test_range_error_hint_is_the_same_whichever_slot_overflows(slots):
+    steps = [{"skill": "period_returns", "title": f"t{i}", "display": "bar", "args": {"etfs": etfs}} for i, etfs in enumerate(slots)]
+    with pytest.raises(Exception, match=re.escape('슬롯 3개에 각각 ["KODEX 200", "@rank.1-4"], ["KODEX 200", "@rank.5-8"], ["KODEX 200", "@rank.9-10"]')):
+        _plan_steps(RANK, *steps)
+
+
+def _returns(*etf_lists):
+    return [{"skill": "period_returns", "title": f"t{i}", "display": "bar", "args": {"etfs": etfs}} for i, etfs in enumerate(etf_lists)]
+
+
+def test_plan_rejects_ranks_skipped_between_ranges():
+    with pytest.raises(Exception, match="5위를 빠뜨렸습니다"):
+        _plan_steps(RANK, *_returns(["@rank.1-4", "KODEX 200"], ["@rank.6-10"]))
+
+
+@pytest.mark.parametrize("etf_lists", [
+    (["@rank.1", "@rank.3"],),              # 한 순위씩 고른 건 일부러 고른 것
+    (["@rank.1-4", "KODEX 200"], ["@rank.5-8"]),
+])
+def test_plan_accepts_ranks_without_gaps_or_picked_one_by_one(etf_lists):
+    _plan_steps(RANK, *_returns(*etf_lists))

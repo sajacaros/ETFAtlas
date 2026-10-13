@@ -4,6 +4,7 @@
 참조는 어느 스킬의 어느 문자열 인자에든 쓸 수 있고, 오케스트레이터가 실행 직전에 그 대상의 코드로 바꾼다.
 참조가 있는 슬롯은 참조한 슬롯이 끝난 뒤에 돈다.
 """
+import json
 import re
 from typing import Any, Dict, List, Set
 
@@ -65,6 +66,66 @@ def resolve(args: Dict[str, Any], exports: Dict[str, List[Dict[str, str]]]) -> D
         return value
 
     return sub(args)
+
+
+def expanded(args: Dict[str, Any]) -> Dict[str, Any]:
+    """실행 때 참조가 펼쳐질 모양 (계획 검증용). 범위 참조는 끝 순위만큼의 항목이 된다 —
+    앞 슬롯의 결과가 그보다 적으면 실행 때는 더 짧아지므로, 인자 개수 제한은 이 최대치로 검사한다."""
+    ends: Dict[str, int] = {}
+    for s in _walk(args):
+        m = REF_RE.match(s.strip())
+        if m:
+            ends[m.group(1)] = max(ends.get(m.group(1), 0), int(m.group(3) or m.group(2)))
+    placeholder = {"code": "000000", "name": ""}
+    return resolve(args, {name: [placeholder] * end for name, end in ends.items()})
+
+
+def rank_gaps(values: List[Any]) -> Dict[str, List[int]]:
+    """범위 참조('@rank.1-4')로 나눠 담은 순위 사이에 빠진 순위 {이름: [순위]}.
+    '1위와 3위'처럼 한 순위씩 고른 참조만 있으면 일부러 고른 것으로 보고 묻지 않는다."""
+    by_name: Dict[str, List[re.Match]] = {}
+    for v in values:
+        m = REF_RE.match(v.strip()) if isinstance(v, str) else None
+        if m and int(m.group(2)) <= int(m.group(3) or m.group(2)):  # 거꾸로 된 범위는 따로 알린다
+            by_name.setdefault(m.group(1), []).append(m)
+    gaps = {}
+    for name, matches in by_name.items():
+        if not any(m.group(3) for m in matches):
+            continue
+        ranks = {r for m in matches for r in range(int(m.group(2)), int(m.group(3) or m.group(2)) + 1)}
+        missing = [r for r in range(min(ranks), max(ranks) + 1) if r not in ranks]
+        if missing:
+            gaps[name] = missing
+    return gaps
+
+
+def split_hint(items: List[Any], max_items: int) -> str:
+    """펼치면 max_items를 넘는 목록 인자를 슬롯 여럿으로 나누는 방법 (플래너에게 돌려줄 문구).
+    이름으로 적은 항목은 슬롯마다 넣는다고 보고, 남은 자리만큼 순위를 나눈다.
+    예: ['KODEX 200', '@rank.1-10'], 5 → '@rank.1-4', '@rank.5-8', '@rank.9-10' (슬롯마다 'KODEX 200' 포함)."""
+    fixed = list(dict.fromkeys(v for v in items if not (isinstance(v, str) and REF_RE.match(v.strip()))))
+    matches = [REF_RE.match(v.strip()) for v in items if isinstance(v, str) and REF_RE.match(v.strip())]
+    names = {m.group(1) for m in matches}
+    if len(names) != 1:
+        return "범위를 줄이거나 같은 스킬 슬롯을 여럿으로 나눠 담으세요"
+    name = names.pop()
+    # 빠진 순위가 있으면 실수로 보고 처음~끝 순위를 빠짐없이 나눈다 (빠진 채로 나누라고 하면 그대로 굳는다)
+    first = min(int(m.group(2)) for m in matches)
+    last = max(int(m.group(3) or m.group(2)) for m in matches)
+    ranks = list(range(first, last + 1))
+    room = max_items - len(fixed)
+    if room < 1:
+        return f"이름으로 적은 항목이 {len(fixed)}개라 순위를 넣을 자리가 없습니다. 항목을 줄이세요"
+    chunks = [ranks[i:i + room] for i in range(0, len(ranks), room)]
+    # 순위만 보여 주면 이름으로 적은 항목을 빼먹고 옮겨 적는다 — 슬롯마다 넣을 목록 전체를 보여 준다
+    lists = ", ".join(
+        json.dumps([*fixed, f"@{name}.{c[0]}" if len(c) == 1 else f"@{name}.{c[0]}-{c[-1]}"], ensure_ascii=False)
+        for c in chunks
+    )
+    keep = f" 이름으로 적은 {', '.join(repr(v) for v in fixed)}는 슬롯마다 넣어 슬롯당 순위는 {room}개까지입니다." if fixed else ""
+    span = f"{ranks[0]}~{ranks[-1]}위" if len(ranks) > 1 else f"{ranks[0]}위"
+    return (f"한 슬롯에 {max_items}개까지입니다.{keep} 이 스킬 슬롯들이 받는 {span}를 모두 합쳐, "
+            f"기존 슬롯 대신 슬롯 {len(chunks)}개에 각각 {lists}를 담으세요")
 
 
 def describe(args: Dict[str, Any], exports: Dict[str, List[Dict[str, str]]], titles: Dict[str, str]) -> List[str]:

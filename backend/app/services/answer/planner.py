@@ -9,7 +9,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Annotated, Any, Callable, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field, create_model, model_validator
+from pydantic import BaseModel, Field, ValidationError, create_model, model_validator
 from pydantic_ai import Agent
 from sqlalchemy.orm import Session
 
@@ -17,7 +17,7 @@ from ..ai_config import AIConfig
 from ..chat_memory import ConversationContext
 from ..embedding_service import EmbeddingService
 from .llm import NO_THINKING, build_model
-from .refs import refs_in
+from .refs import RefError, expanded, rank_gaps, refs_in, split_hint
 from .schemas import slot_type
 from .skills import FALLBACK_SKILL, REGISTRY
 from .skills.base import Skill
@@ -90,27 +90,44 @@ def build_plan_model(registry: Dict[str, Skill]) -> type[BaseModel]:
     Row = create_model("Row", slots=(List[Step], Field(min_length=1, max_length=MAX_SLOTS_PER_ROW)))
 
     def check_refs(plan):
-        """참조 오류는 여기서 막는다 — 메시지가 플래너에게 그대로 돌아가 다시 쓰게 한다."""
+        """참조 오류는 여기서 막는다 — 메시지가 플래너에게 그대로 돌아가 다시 쓰게 한다.
+        재시도 횟수가 적어 오류를 하나씩 알려 주면 다 고치기 전에 바닥난다 — 찾은 오류를 모두 모아 한 번에 보낸다."""
         steps = [step for row in plan.rows for step in row.slots]
+        errors: List[str] = []
         named = {}
         for step in steps:
             if step.name:
                 if step.name in named:
-                    raise ValueError(f"슬롯 이름 '{step.name}'이 두 번 쓰였습니다")
-                named[step.name] = step
+                    errors.append(f"슬롯 이름 '{step.name}'이 두 번 쓰였습니다")
+                else:
+                    named[step.name] = step
         graph = {}
         for step in steps:
             refs = refs_in(step.args.model_dump())
+            ok = []
             for ref in refs:
                 target = named.get(ref)
                 if target is None:
-                    raise ValueError(f"'@{ref}' 참조: name이 '{ref}'인 슬롯이 없습니다")
-                if target is step:
-                    raise ValueError(f"슬롯 '{ref}'가 자기 자신을 참조합니다")
-                if not registry[target.skill].exports:
-                    raise ValueError(f"'@{ref}' 참조: {target.skill} 스킬은 참조할 결과를 내보내지 않습니다")
-            graph[id(step)] = [id(named[r]) for r in refs]
-        _check_cycles(graph)
+                    errors.append(f"{_label(step)}의 '@{ref}' 참조: name이 '{ref}'인 슬롯이 없습니다. "
+                                  f"참조할 슬롯에 name=\"{ref}\"를 붙이세요")
+                elif target is step:
+                    errors.append(f"{_label(step)}이 자기 자신('{ref}')을 참조합니다")
+                elif not registry[target.skill].exports:
+                    errors.append(f"{_label(step)}의 '@{ref}' 참조: {target.skill} 스킬은 참조할 결과를 내보내지 않습니다")
+                else:
+                    ok.append(ref)
+            if refs:  # 펼친 모양은 참조 문법만으로 정해진다 — 대상 슬롯이 틀려도 함께 알려 준다
+                error = _expanded_error(step, steps)
+                if error:
+                    errors.append(error)
+            graph[id(step)] = [id(named[r]) for r in ok]
+        errors += _gap_errors(steps)
+        if _has_cycle(graph):
+            errors.append("슬롯들이 서로를 참조해 순환합니다")
+        if len(errors) == 1:
+            raise ValueError(errors[0])
+        if errors:
+            raise ValueError(f"오류 {len(errors)}개를 모두 고치세요:\n" + "\n".join(f"{i}. {e}" for i, e in enumerate(errors, 1)))
         return plan
 
     return create_model(
@@ -119,21 +136,77 @@ def build_plan_model(registry: Dict[str, Skill]) -> type[BaseModel]:
     )
 
 
-def _check_cycles(graph: Dict[int, List[int]]) -> None:
+def _label(step: BaseModel) -> str:
+    return f"{step.skill} 슬롯 '{step.title}'"
+
+
+def _expanded_error(step: BaseModel, steps: List[BaseModel]) -> Optional[str]:
+    """참조를 펼친 뒤에도 인자가 맞는지 (예: 최대 5개인 목록에 '@rank.1-10'을 넣으면 10개가 된다). 맞으면 None."""
+    try:
+        type(step.args).model_validate(expanded(step.args.model_dump()))
+    except RefError as e:
+        return f"{_label(step)}: {e}"
+    except ValidationError as e:
+        err = e.errors()[0]
+        field = ".".join(str(p) for p in err["loc"])
+        hint = "'@이름.1-N'은 N개 항목이 됩니다. 범위를 줄이거나 같은 스킬 슬롯을 여럿으로 나눠 담으세요"
+        if err["type"] == "too_long":  # 이 질문에 맞는 분할을 계산해 준다 (이름으로 적은 항목이 자리를 차지한다)
+            # 이 슬롯만 보고 나누면 넘친 순위가 옆 슬롯으로 밀려 또 넘친다 — 같은 스킬 슬롯들의 순위와
+            # 이름으로 적은 항목을 모두 합쳐 다시 나눈다. 어느 슬롯이 넘쳐도 같은 안내가 나와야 재시도가 수렴한다
+            siblings = [v for other in steps if other.skill == step.skill
+                        for v in _at(other.args.model_dump(), err["loc"]) or []]
+            hint = split_hint(siblings, err["ctx"]["max_length"])
+        return f"{_label(step)}의 참조를 펼치면 '{field}' 인자가 맞지 않습니다: {err['msg']}. {hint}"
+    return None
+
+
+def _gap_errors(steps: List[BaseModel]) -> List[str]:
+    """같은 스킬 슬롯들이 범위 참조로 나눠 담은 순위에 빈 곳이 있으면 (예: '@rank.1-4' + '@rank.6-10'은 5위가 빠진다)."""
+    errors = []
+    by_skill: Dict[str, List[Any]] = {}
+    for step in steps:
+        by_skill.setdefault(step.skill, []).extend(_strings(step.args.model_dump()))
+    for skill, values in by_skill.items():
+        for name, missing in rank_gaps(values).items():
+            listed = ", ".join(f"{r}위" for r in missing)
+            errors.append(f"{skill} 슬롯들이 '@{name}' 순위를 나눠 담으면서 {listed}를 빠뜨렸습니다. 빠짐없이 이어지게 나누세요")
+    return errors
+
+
+def _strings(value: Any) -> List[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [s for v in value.values() for s in _strings(v)]
+    if isinstance(value, list):
+        return [s for v in value for s in _strings(v)]
+    return []
+
+
+def _at(value: Any, loc: tuple) -> Any:
+    for key in loc:
+        try:
+            value = value[key]
+        except (KeyError, IndexError, TypeError):
+            return None
+    return value
+
+
+def _has_cycle(graph: Dict[int, List[int]]) -> bool:
     state: Dict[int, int] = {}  # 1: 방문 중, 2: 끝남
 
-    def visit(node: int) -> None:
+    def visit(node: int) -> bool:
         if state.get(node) == 1:
-            raise ValueError("슬롯들이 서로를 참조해 순환합니다")
+            return True
         if state.get(node) == 2:
-            return
+            return False
         state[node] = 1
-        for nxt in graph.get(node, []):
-            visit(nxt)
+        if any(visit(nxt) for nxt in graph.get(node, [])):
+            return True
         state[node] = 2
+        return False
 
-    for node in graph:
-        visit(node)
+    return any(visit(node) for node in graph)
 
 
 def skill_catalog(registry: Dict[str, Skill]) -> str:

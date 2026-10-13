@@ -10,6 +10,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
 import { chatApi, type ChatStage } from '@/lib/api'
+import { appendPage, mergeFirstPage, type SessionListState } from '@/lib/sessionPages'
 import type {
   ChatSessionDetail, ChatSessionSummary, ChatStep, LayoutNode, MatchedCodeExample, SlotState,
 } from '@/types/api'
@@ -72,7 +73,9 @@ function formatSentAt(d: Date): string {
 }
 
 export default function ChatPage() {
-  const [sessions, setSessions] = useState<ChatSessionSummary[]>([])
+  const [sessionPages, setSessionPages] = useState<SessionListState>({ items: [], nextCursor: null })
+  const sessions = sessionPages.items
+  const [loadingMore, setLoadingMore] = useState(false)
   const [sessionId, setSessionId] = useState<number | null>(null)
   const [messages, setMessages] = useState<DisplayMessage[]>([])
   // 답변을 만드는 중인 대화들 — 세션마다 따로 돌고, 다른 세션을 보는 동안에도 이어진다 (서버는 답변이 끝나야 저장한다)
@@ -96,9 +99,21 @@ export default function ChatPage() {
 
   const refreshSessions = useCallback(async () => {
     try {
-      setSessions(await chatApi.listSessions())
+      const first = await chatApi.listSessions()
+      setSessionPages((prev) => mergeFirstPage(prev, first))
     } catch { /* 목록은 다음 갱신 때 다시 시도 */ }
   }, [])
+
+  const loadMoreSessions = useCallback(async () => {
+    if (!sessionPages.nextCursor || loadingMore) return
+    setLoadingMore(true)
+    try {
+      const page = await chatApi.listSessions(sessionPages.nextCursor)
+      setSessionPages((prev) => appendPage(prev, page))
+    } catch { /* 다시 스크롤하면 다시 시도한다 */ } finally {
+      setLoadingMore(false)
+    }
+  }, [sessionPages.nextCursor, loadingMore])
 
   useEffect(() => {
     refreshSessions()
@@ -146,6 +161,8 @@ export default function ChatPage() {
     setDeleteTarget(null)
     try {
       await chatApi.deleteSession(id)
+      // 첫 페이지 밖(스크롤로 불러온) 세션은 다시 받아도 빠지지 않으므로 직접 뺀다
+      setSessionPages((prev) => ({ ...prev, items: prev.items.filter((s) => s.id !== id) }))
     } finally {
       if (id === sessionId) startNewChat()
       refreshSessions()
@@ -154,7 +171,7 @@ export default function ChatPage() {
 
   const renameSession = async (id: number, title: string) => {
     const updated = await chatApi.renameSession(id, title)
-    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, title: updated.title } : s)))
+    setSessionPages((prev) => ({ ...prev, items: prev.items.map((s) => (s.id === id ? { ...s, title: updated.title } : s)) }))
   }
 
   const sendMessage = async (text: string) => {
@@ -271,6 +288,9 @@ export default function ChatPage() {
       onOpen={openSession}
       onRename={renameSession}
       onDelete={setDeleteTarget}
+      hasMore={sessionPages.nextCursor !== null}
+      loadingMore={loadingMore}
+      onLoadMore={loadMoreSessions}
     />
   )
 
@@ -477,7 +497,7 @@ export default function ChatPage() {
 }
 
 function SessionList({
-  sessions, activeId, runningIds, onNew, onOpen, onRename, onDelete,
+  sessions, activeId, runningIds, onNew, onOpen, onRename, onDelete, hasMore, loadingMore, onLoadMore,
 }: {
   sessions: ChatSessionSummary[]
   activeId: number | null
@@ -486,9 +506,26 @@ function SessionList({
   onOpen: (id: number) => void
   onRename: (id: number, title: string) => Promise<void>
   onDelete: (session: ChatSessionSummary) => void
+  hasMore: boolean
+  loadingMore: boolean
+  onLoadMore: () => void
 }) {
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editTitle, setEditTitle] = useState('')
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const endRef = useRef<HTMLDivElement>(null)
+
+  // 목록 끝이 보이면 다음 페이지 — 불러온 뒤에도 끝이 보이면(목록이 짧으면) 다시 불러온다
+  useEffect(() => {
+    const end = endRef.current
+    if (!end || !hasMore || loadingMore) return
+    const observer = new IntersectionObserver(
+      (entries) => { if (entries.some((e) => e.isIntersecting)) onLoadMore() },
+      { root: scrollRef.current, rootMargin: '0px 0px 120px 0px' },
+    )
+    observer.observe(end)
+    return () => observer.disconnect()
+  }, [hasMore, loadingMore, onLoadMore, sessions.length])
 
   const submitRename = async () => {
     const title = editTitle.trim()
@@ -502,7 +539,7 @@ function SessionList({
         <Plus className="w-4 h-4 mr-1" />
         새 대화
       </Button>
-      <div className="flex-1 overflow-y-auto space-y-0.5">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-0.5">
         {sessions.length === 0 && (
           <p className="text-xs text-muted-foreground text-center py-4">대화 기록이 없습니다</p>
         )}
@@ -561,6 +598,11 @@ function SessionList({
               </button>
             </div>
           ),
+        )}
+        {hasMore && (
+          <div ref={endRef} className="flex justify-center py-2 text-muted-foreground" aria-label="이전 대화 불러오는 중">
+            {loadingMore && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+          </div>
         )}
       </div>
     </>

@@ -506,6 +506,6 @@ agent.run_stream_events(prompt, usage_limits=UsageLimits(request_limit=15))
 {"type": "chat_log_id", "data": {"chat_log_id": 345}}
 ```
 
-세션 API: `GET /api/chat/sessions`(최근 활동 순), `GET /api/chat/sessions/{id}`(전체 대화·실행 과정 + 요약), `PATCH /api/chat/sessions/{id}`(`{title}`), `DELETE /api/chat/sessions/{id}`. 다른 사용자의 세션은 `404`.
+세션 API: `GET /api/chat/sessions`(최근 활동 순, 커서 페이징 — `limit` 기본 30, 응답 `{items, next_cursor}`의 `next_cursor`를 다음 요청의 `cursor`로. 커서는 마지막 항목의 `(updated_at, id)`이고 `null`이면 마지막 페이지. 대화 목록은 끝까지 스크롤하면 다음 페이지를 불러온다), `GET /api/chat/sessions/{id}`(전체 대화·실행 과정 + 요약), `PATCH /api/chat/sessions/{id}`(`{title}`), `DELETE /api/chat/sessions/{id}`. 다른 사용자의 세션은 `404`.
 
 프론트엔드에서 각 스텝을 접이식 UI로 표시하여 에이전트의 도구 호출 과정을 실시간으로 확인 가능합니다.

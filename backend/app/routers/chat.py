@@ -1,10 +1,12 @@
 import asyncio
 import json
 import logging
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import AsyncIterator, List, Optional
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..services.answer import AnswerService
@@ -295,24 +297,43 @@ async def stop_message(
 
 # --- Sessions ---
 
+def session_cursor(session: ChatSession) -> str:
+    """세션 목록의 다음 페이지 위치: 마지막 항목의 (updated_at, id). 같은 시각에 바뀐 세션도 id로 순서가 정해진다."""
+    return f"{session.updated_at.isoformat()}_{session.id}"
+
+
+def parse_session_cursor(cursor: str) -> tuple[datetime, int]:
+    try:
+        updated_at, session_id = cursor.rsplit("_", 1)
+        return datetime.fromisoformat(updated_at), int(session_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid cursor")
+
+
 @router.get("/sessions")
 async def list_sessions(
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(30, ge=1, le=100),
+    cursor: Optional[str] = Query(None, description="이전 응답의 next_cursor — 그 다음(더 오래된) 세션부터"),
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
 ):
-    """내 대화 세션 목록 (최근 활동 순)."""
-    sessions = (
-        db.query(ChatSession)
-        .filter(ChatSession.user_id == user_id)
-        .order_by(ChatSession.updated_at.desc(), ChatSession.id.desc())
-        .limit(limit)
-        .all()
-    )
-    return [
-        {"id": s.id, "title": s.title, "created_at": s.created_at.isoformat(), "updated_at": s.updated_at.isoformat()}
-        for s in sessions
-    ]
+    """내 대화 세션 목록 (최근 활동 순), 커서 페이징. next_cursor가 null이면 마지막 페이지."""
+    query = db.query(ChatSession).filter(ChatSession.user_id == user_id)
+    if cursor:
+        updated_at, session_id = parse_session_cursor(cursor)
+        query = query.filter(or_(
+            ChatSession.updated_at < updated_at,
+            and_(ChatSession.updated_at == updated_at, ChatSession.id < session_id),
+        ))
+    sessions = query.order_by(ChatSession.updated_at.desc(), ChatSession.id.desc()).limit(limit + 1).all()
+    page = sessions[:limit]
+    return {
+        "items": [
+            {"id": s.id, "title": s.title, "created_at": s.created_at.isoformat(), "updated_at": s.updated_at.isoformat()}
+            for s in page
+        ],
+        "next_cursor": session_cursor(page[-1]) if len(sessions) > limit else None,
+    }
 
 
 @router.get("/sessions/{session_id}")

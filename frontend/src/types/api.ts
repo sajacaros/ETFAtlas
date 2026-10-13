@@ -329,6 +329,11 @@ export interface ChatSessionSummary {
   updated_at: string
 }
 
+export interface ChatSessionPage {
+  items: ChatSessionSummary[]
+  next_cursor: string | null  // null이면 마지막 페이지
+}
+
 export interface ChatSessionMessage {
   id: number
   question: string

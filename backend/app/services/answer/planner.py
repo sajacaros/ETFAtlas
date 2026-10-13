@@ -7,10 +7,10 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Annotated, Any, Callable, Dict, List, Literal, Optional, Union
+from typing import Annotated, Any, Callable, Dict, List, Literal, Optional, Set, Union
 
 from pydantic import BaseModel, Field, ValidationError, create_model, model_validator
-from pydantic_ai import Agent, ModelRetry
+from pydantic_ai import Agent, ModelRetry, RunContext
 from sqlalchemy.orm import Session
 
 from ..ai_config import AIConfig
@@ -61,6 +61,15 @@ PLANNER_PROMPT = f"""당신은 ETF Atlas 챗봇의 화면 설계 담당입니다
 EXAMPLES_TOP_K = 3
 EXAMPLES_MAX_DISTANCE = 0.35
 EXAMPLES_SIMILARITY_GAP = 0.05
+# 실행 결과를 보고 한 번 다시 설계할 때 덧붙이는 규칙
+REPLAN_RULES = """
+## 다시 설계
+이전 계획을 실행했더니 일부 슬롯이 비었습니다. 슬롯마다 실행 결과가 적혀 있습니다.
+- '고칠 수 있음'으로 표시된 슬롯만 고치세요. 실패 이유를 보고 대상의 종류(ETF인지 개별 종목인지), 스킬, 인자가 맞았는지 다시 보세요.
+  스킬·인자·표시 방식·제목을 바꿀 수 있습니다.
+- 나머지 슬롯은 그대로 두세요. 줄과 슬롯의 배치(순서, 개수)도 바꾸지 마세요 — 이미 화면에 그려져 있습니다.
+- 사용자가 말한 이름을 다른 대상으로 바꾸거나 추측하지 마세요. 고칠 방법이 없으면 그 슬롯을 agent 슬롯으로 바꾸세요.
+"""
 
 
 @dataclass
@@ -318,44 +327,133 @@ def examples_prompt(examples: List[Dict[str, Any]]) -> str:
     return "\n\n".join(parts)
 
 
+@dataclass
+class ReplanDeps:
+    previous: List[List[Dict[str, Any]]]  # 이전 계획 (줄 → 슬롯 step)
+    editable: Set[str]  # 바꿔도 되는 슬롯 id: 고칠 수 있는 실패, 그 결과를 받는 슬롯, 해설
+
+
+def _step_dict(slot: PlannedSlot) -> Dict[str, Any]:
+    step = {"skill": slot.skill, "title": slot.title, "display": slot.display, "args": slot.args.model_dump()}
+    return {**({"name": slot.name} if slot.name else {}), **step}
+
+
+def _same_step(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
+    """그대로 둬야 하는 슬롯이 바뀌지 않았는지 — 제목만 다듬은 것은 봐준다."""
+    return all(a.get(k) == b.get(k) for k in ("skill", "name", "display", "args"))
+
+
+def replan_errors(plan: BaseModel, deps: ReplanDeps) -> List[str]:
+    """다시 설계한 계획이 화면 배치와 고치면 안 되는 슬롯을 지켰는지."""
+    rows = [[s.model_dump() for s in row.slots] for row in plan.rows]
+    if [len(r) for r in rows] != [len(r) for r in deps.previous]:
+        return ["줄과 슬롯의 배치(순서, 개수)를 이전 계획과 같게 두세요. 고칠 수 있는 슬롯 자리에서만 바꾸세요"]
+    errors, n = [], 0
+    for new_row, old_row in zip(rows, deps.previous):
+        for new, old in zip(new_row, old_row):
+            n += 1
+            if f"s{n}" not in deps.editable and not _same_step(new, old):
+                errors.append(f"s{n} 슬롯 '{old['title']}'은(는) 결과가 이미 화면에 있습니다. 이전 계획 그대로 두세요")
+    return errors
+
+
+def editable_slots(slots: List[PlannedSlot], results: Dict[str, Dict[str, Any]], registry: Dict[str, Skill]) -> Set[str]:
+    """다시 설계에서 바꿔도 되는 슬롯: 고칠 수 있는 실패, 그 결과를 (참조로 이어서) 받는 슬롯, 해설 같은 after_others."""
+    editable = {s.id for s in slots if results.get(s.id, {}).get("retryable")}
+    changed = True
+    while changed:
+        changed = False
+        for s in slots:
+            if s.id not in editable and set(s.depends_on) & editable:
+                editable.add(s.id)
+                changed = True
+    return editable | {s.id for s in slots if registry[s.skill].after_others}
+
+
+def results_prompt(slots: List[PlannedSlot], results: Dict[str, Dict[str, Any]], editable: Set[str]) -> str:
+    lines = ["## 이전 계획과 실행 결과"]
+    for s in slots:
+        r = results.get(s.id)
+        if r is None:
+            outcome = "아직 실행 전"
+        elif r.get("retryable"):
+            outcome = f"고칠 수 있음 — {r.get('message')}"
+        elif r.get("status") == "complete":
+            outcome = "완료"
+        else:
+            outcome = f"비었음 — {r.get('message')}" + (" (앞 슬롯을 고치면 다시 실행됨)" if s.id in editable else "")
+        lines.append(f"- {s.id} {json.dumps(_step_dict(s), ensure_ascii=False)}\n  → {outcome}")
+    lines.append("\n위 계획에서 '고칠 수 있음' 슬롯만 고친 전체 계획을 내세요.")
+    return "\n".join(lines)
+
+
 class Planner:
     def __init__(
         self, config: AIConfig, registry: Dict[str, Skill] = REGISTRY,
         find_examples: Optional[Callable[[str], List[Dict[str, Any]]]] = None,
         is_etf_name: Optional[Callable[[str], bool]] = None,
     ):
+        self._registry = registry
         self._find_examples = find_examples
-        self._agent = Agent(
-            build_model(config),
-            output_type=build_plan_model(registry),
-            instructions=f"{PLANNER_PROMPT}\n{skill_catalog(registry)}",
-            model_settings=NO_THINKING,
-            retries=2,
-        )
-        if is_etf_name is not None:
-            @self._agent.output_validator
-            async def check_data(output):
+        self.last_examples: List[Dict[str, Any]] = []  # 마지막 설계에 넣은 예시 (다시 설계와 평가에서 쓴다)
+        plan_model = build_plan_model(registry)
+        instructions = f"{PLANNER_PROMPT}\n{skill_catalog(registry)}"
+        self._agent = Agent(build_model(config), output_type=plan_model, instructions=instructions,
+                            model_settings=NO_THINKING, retries=2)
+        self._replanner = Agent(build_model(config), output_type=plan_model, deps_type=ReplanDeps,
+                                instructions=instructions + REPLAN_RULES, model_settings=NO_THINKING, retries=2)
+
+        async def check_data(output):
+            if is_etf_name is not None:
                 errors = await asyncio.to_thread(data_errors, output, is_etf_name)
                 if errors:  # 스키마 검증 오류와 같이, 이유를 플래너에게 돌려줘 다시 쓰게 한다
                     raise ModelRetry("\n".join(errors))
-                return output
+            return output
+
+        async def check_replan(ctx: RunContext[ReplanDeps], output):
+            errors = replan_errors(output, ctx.deps)
+            if errors:
+                raise ModelRetry("\n".join(errors))
+            return await check_data(output)
+
+        self._agent.output_validator(check_data)
+        self._replanner.output_validator(check_replan)
 
     async def plan(self, question: str, context: ConversationContext) -> List[List[PlannedSlot]]:
-        parts = []
-        examples = await self._examples(question)
-        if examples:
-            parts.append(examples_prompt(examples))
-        if not context.is_empty():
-            parts.append(f"## 이전 대화 (참고용)\n{context.render()}")
-        parts.append(f"## 질문\n{question}")
-        prompt = "\n\n".join(parts)
+        self.last_examples = await self._examples(question)
         try:
-            result = await self._agent.run(prompt)
+            result = await self._agent.run(self._prompt(question, context))
             rows = to_rows(result.output)
         except Exception:
             logger.exception("Layout planning failed; falling back to the agent skill")
             return fallback_rows(question)
         return rows or fallback_rows(question)
+
+    async def replan(
+        self, question: str, context: ConversationContext, rows: List[List[PlannedSlot]], results: Dict[str, Dict[str, Any]],
+    ) -> Optional[List[List[PlannedSlot]]]:
+        """실행 결과를 보고 고칠 수 있는 슬롯만 다시 설계한다. 배치는 그대로라 슬롯 id가 유지된다. 실패하면 None."""
+        slots = [s for row in rows for s in row]
+        editable = editable_slots(slots, results, self._registry)
+        deps = ReplanDeps(previous=[[_step_dict(s) for s in row] for row in rows], editable=editable)
+        prompt = self._prompt(question, context, extra=results_prompt(slots, results, editable))
+        try:
+            result = await self._replanner.run(prompt, deps=deps)
+            return to_rows(result.output) or None
+        except Exception:
+            logger.exception("Replanning failed; keeping the first plan")
+            return None
+
+    def _prompt(self, question: str, context: ConversationContext, extra: str = "") -> str:
+        parts = []
+        if self.last_examples:
+            parts.append(examples_prompt(self.last_examples))
+        if not context.is_empty():
+            parts.append(f"## 이전 대화 (참고용)\n{context.render()}")
+        parts.append(f"## 질문\n{question}")
+        if extra:
+            parts.append(extra)
+        return "\n\n".join(parts)
 
     async def _examples(self, question: str) -> List[Dict[str, Any]]:
         if self._find_examples is None:

@@ -324,7 +324,8 @@ export const tagsApi = {
 
 // Chat
 // 준비 단계: 질문 재작성(맥락이 있을 때만) → 화면 설계 → (agent 영역) 참고 예시 검색 → 에이전트 실행
-export type ChatStage = 'refining' | 'planning' | 'searching_examples' | 'thinking'
+// replanning: 실행 결과를 보고 비어 있는 영역을 다시 설계하는 중, filling: 다시 설계한 영역을 채우는 중
+export type ChatStage = 'refining' | 'planning' | 'searching_examples' | 'thinking' | 'replanning' | 'filling'
 
 export interface ChatStreamHandlers {
   onSession?: (session: { session_id: number; title: string }) => void

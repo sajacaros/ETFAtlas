@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from ...graph_service import GraphService
 from ..resolver import EntityResolver
 from ..schemas import CandlestickView, DataField, Dataset, LineView, Source, TableView
-from .base import DataSkill, SkillResult, data_result, empty
+from .base import DataSkill, SkillResult, data_result, empty, not_found
 from .common import PERIOD_DAYS, ETFListArgs, missing_notes, pct_change
 
 
@@ -41,7 +41,7 @@ class PriceTrendBase(DataSkill):
     def fetch(self, args, display: str, db: Session, resolver: EntityResolver) -> SkillResult:
         found, missing = self.targets(args, db, resolver)
         if not found:
-            return empty(f"찾지 못한 {self.target}: {', '.join(missing)}")
+            return not_found(f"찾지 못한 {self.target}: {', '.join(missing)}")
         graph = GraphService(db)
         names = {e["code"]: e["name"] for e in found}
         series: Dict[str, List[Dict]] = {}

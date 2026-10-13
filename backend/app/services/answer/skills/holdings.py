@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from ...graph_service import GraphService
 from ..resolver import EntityResolver
 from ..schemas import BarView, DataField, Dataset, DonutView, Source, TableView, TreemapView
-from .base import DataSkill, SkillResult, data_result, empty
+from .base import DataSkill, SkillResult, data_result, empty, not_found
 from .common import node
 
 DONUT_MAX_SLICES = 8  # 넘으면 나머지를 '기타'로 묶는다
@@ -28,7 +28,7 @@ class HoldingsSkill(DataSkill):
     def fetch(self, args: HoldingsArgs, display: str, db: Session, resolver: EntityResolver) -> SkillResult:
         etf = resolver.etf(db, args.etf)
         if etf is None:
-            return empty(f"ETF를 찾지 못했습니다: {args.etf}")
+            return not_found(f"ETF를 찾지 못했습니다: {args.etf}")
         holdings = node(
             GraphService(db),
             "MATCH (e:ETF {code: $code})-[h:CURRENT_HOLDS]->(s:Stock) "

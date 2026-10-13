@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from ...graph_service import GraphService
 from ..resolver import EntityResolver
 from ..schemas import DataField, Dataset, RadarView, Source, TableView
-from .base import DataSkill, SkillResult, data_result, empty
+from .base import DataSkill, SkillResult, data_result, empty, not_found
 from .common import ETF_NAMES_DESCRIPTION, ETFListArgs, format_value, missing_notes, node
 
 # (축 이름, 지표, 원값 서식, 좋은 방향)
@@ -44,7 +44,7 @@ class ETFProfileSkill(DataSkill):
     def fetch(self, args: ProfileArgs, display: str, db: Session, resolver: EntityResolver) -> SkillResult:
         found, missing = resolver.etfs(db, args.etfs)
         if not found:
-            return empty(f"ETF를 찾지 못했습니다: {', '.join(missing)}")
+            return not_found(f"ETF를 찾지 못했습니다: {', '.join(missing)}")
         graph = GraphService(db)
         universe: Dict[str, Dict] = {
             e["code"]: e

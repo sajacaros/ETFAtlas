@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from ...graph_service import GraphService
 from ..resolver import EntityResolver
 from ..schemas import BarView, DataField, Dataset, Source, TableView
-from .base import DataSkill, SkillResult, data_result, empty
+from .base import DataSkill, SkillResult, data_result, empty, not_found
 from .common import ETFListArgs, missing_notes, pct_change
 
 PERIODS = [("1일", 1), ("1주", 7), ("1개월", 30), ("3개월", 90), ("6개월", 180), ("1년", 365)]
@@ -29,7 +29,7 @@ class PeriodReturnsSkill(DataSkill):
     def fetch(self, args: ETFListArgs, display: str, db: Session, resolver: EntityResolver) -> SkillResult:
         found, missing = resolver.etfs(db, args.etfs)
         if not found:
-            return empty(f"ETF를 찾지 못했습니다: {', '.join(missing)}")
+            return not_found(f"ETF를 찾지 못했습니다: {', '.join(missing)}")
         graph = GraphService(db)
         names = {e["code"]: e["name"] for e in found}
         series = {}

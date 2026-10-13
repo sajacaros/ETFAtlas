@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from ...graph_service import GraphService
 from ..resolver import EntityResolver, _normalize
-from .base import CHOICES_SHOWN, DataSkill, SkillResult, choice_result, empty
+from .base import CHOICES_SHOWN, DataSkill, SkillResult, choice_result, empty, not_found
 from .common import format_value, node, object_particle
 
 
@@ -61,13 +61,13 @@ class ETFChoiceSkill(DataSkill):
             etfs = _theme_etfs(db, theme)
             if not etfs:
                 resolver.etf(db, args.condition)  # 테마가 아니라 관리하지 않는 ETF의 이름이면 UnmanagedETF로 그렇다고 알린다
-                return empty(f"'{theme}'에 해당하는 ETF를 찾지 못했습니다")
+                return not_found(f"'{theme}'에 해당하는 ETF를 찾지 못했습니다")
             subject, metric = f"'{theme}' ETF가", "순자산"
             rows = [[e["name"], e["code"], format_value(e.get("net_assets"), "krw")] for e in etfs]
         else:
             stock = resolver.stock(db, args.condition)
             if stock is None:
-                return empty(f"종목을 찾지 못했습니다: {args.condition}")
+                return not_found(f"종목을 찾지 못했습니다: {args.condition}")
             etfs = node(
                 GraphService(db),
                 "MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock {code: $code}) "

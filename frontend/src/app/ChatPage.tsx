@@ -227,7 +227,9 @@ export default function ChatPage() {
       onAnswer: (answer) => finish(answer),
       onError: (error) => finish(`죄송합니다. 오류가 발생했습니다: ${error}`),
       onLayout: ({ chat_log_id, layout }) => {
-        answerScreen = { chatLogId: chat_log_id, layout, slots: {} }
+        // 같은 답변의 레이아웃이 다시 오면(비어 있던 영역을 다시 설계) 이미 채운 영역은 그대로 둔다 — 다시 채울 영역은 running부터 다시 온다
+        const slots = answerScreen?.chatLogId === chat_log_id ? answerScreen.slots : {}
+        answerScreen = { chatLogId: chat_log_id, layout, slots }
         updateStream({ answer: answerScreen })
       },
       onSlot: ({ id, status, message }) => updateSlot(id, (prev) => ({ ...prev, status, message })),
@@ -599,6 +601,8 @@ function MatchedExamplesView({ examples }: { examples: MatchedCodeExample[] }) {
 const STAGE_LABELS: Record<ChatStage, string> = {
   refining: '질문 이해 중...',
   planning: '화면 구성 중...',
+  replanning: '빈 영역 다시 구성 중...',
+  filling: '답변 채우는 중...',
   searching_examples: '예시 찾는 중...',
   thinking: '생각 중...',
 }
@@ -610,6 +614,7 @@ function streamingStatus(steps: ChatStep[], stage: ChatStage | null, isStopping:
     const names = running.flatMap((s) => s.tool_calls.map((tc) => tc.name)).join(', ')
     return `Step ${running[0].step_number} 실행 중... [${names}]`
   }
+  if (stage === 'replanning') return STAGE_LABELS.replanning
   if (answer) {
     const states = Object.values(answer.slots)
     const total = countSlots(answer.layout)

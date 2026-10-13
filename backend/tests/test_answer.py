@@ -166,6 +166,9 @@ class MemoryStore:
     def create(self, chat_log_id, slots):
         self.saved.update({s.id: "pending" for s in slots})
 
+    def replace(self, chat_log_id, slots):
+        self.saved.update({s.id: "pending" for s in slots})
+
     def save(self, chat_log_id, slot_id, result):
         self.saved[slot_id] = result["status"]
 
@@ -838,3 +841,119 @@ def test_planner_rejects_a_theme_that_is_an_etf_name(slot, errors):
 def test_plan_rejects_a_name_nobody_references():
     with pytest.raises(Exception, match="name 'rank'을 붙였지만 '@rank.순위'로 받는 슬롯이 없습니다"):
         _plan_steps(RANK)
+
+
+# --- 실행 결과를 보고 다시 설계 ---
+
+class Lookup(Skill):
+    """이름이 '맞는이름'일 때만 찾는다. 못 찾으면 고칠 수 있는 실패."""
+    name = "lookup"
+    description = "이름으로 찾기"
+    Args = EtfArgs
+    displays = ("table",)
+    runs = []
+
+    async def run(self, args, display, ctx):
+        from app.services.answer.skills.base import not_found
+        Lookup.runs.append(args.etf)
+        if args.etf != "맞는이름":
+            yield not_found(f"찾지 못했습니다: {args.etf}").event()
+            return
+        yield text_result(f"찾음 {args.etf}").event()
+
+
+class ReplanningPlanner(FakePlanner):
+    def __init__(self, rows, fixed_rows):
+        super().__init__(rows)
+        self.fixed_rows = fixed_rows
+        self.replanned_with = None
+
+    async def replan(self, question, context, rows, results):
+        self.replanned_with = {i: (r["status"], r.get("retryable", False)) for i, r in results.items()}
+        return self.fixed_rows
+
+
+def _lookup(id, etf, title="찾기"):
+    return PlannedSlot(id=id, skill="lookup", title=title, display="table", args=EtfArgs(etf=etf))
+
+
+REPLAN_REG = {"lookup": Lookup(), "data": DataSkillStub(), "narr": EchoNarrative()}
+
+
+def _replan_service(monkeypatch, rows, fixed_rows):
+    service = _service(monkeypatch, rows, REPLAN_REG)
+    service._planner = ReplanningPlanner(rows, fixed_rows)
+    return service
+
+
+def test_replans_a_slot_that_can_be_fixed_before_the_narrative(monkeypatch):
+    Lookup.runs = []
+    rows = [[_lookup("s1", "틀린이름"), _slot("s2", "data", "다른")], [_slot("s3", "narr", "해설")]]
+    fixed = [[_lookup("s1", "맞는이름"), _slot("s2", "data", "다른")], [_slot("s3", "narr", "해설")]]
+    service = _replan_service(monkeypatch, rows, fixed)
+    events = _collect(service)
+
+    # 해설은 다시 설계하기 전에 돌지 않았고, 그대로인 슬롯(s2)은 다시 돌지 않는다
+    assert service._planner.replanned_with == {"s1": ("empty", True), "s2": ("complete", False)}
+    assert Lookup.runs == ["틀린이름", "맞는이름"]
+    kinds = [e["type"] for e in events]
+    assert kinds.count("layout") == 2
+    assert {"stage": "replanning"} in [e["data"] for e in events if e["type"] == "status"]
+    narrative = next(e for e in events if e["type"] == "answer")["data"]["answer"]
+    assert "찾음 맞는이름" in narrative and service._store.saved["s1"] == "complete"
+    assert sum(1 for e in events if e["type"] == "slot" and e["data"] == {"id": "s2", "status": "running"}) == 1
+
+
+def test_does_not_replan_failures_that_a_new_plan_cannot_fix(monkeypatch):
+    rows = [[_slot("s1", "data", "가")], [_slot("s2", "narr", "해설")]]
+    service = _replan_service(monkeypatch, rows, rows)
+    _collect(service)
+    assert service._planner.replanned_with is None
+
+
+def test_keeps_the_first_results_when_replanning_gives_nothing(monkeypatch):
+    Lookup.runs = []
+    rows = [[_lookup("s1", "틀린이름")], [_slot("s2", "narr", "해설")]]
+    service = _replan_service(monkeypatch, rows, None)
+    events = _collect(service)
+    assert Lookup.runs == ["틀린이름"]
+    assert [e["type"] for e in events].count("layout") == 1
+    assert service._store.saved == {"s1": "empty", "s2": "complete"}
+
+
+def test_replan_must_keep_the_layout_and_the_slots_that_worked():
+    from app.services.answer.planner import ReplanDeps, editable_slots, replan_errors
+
+    rank = {**RANK, "args": {"stocks": ["삼성전자"], "top": 10}}
+    holdings = {"skill": "holdings", "title": "구성", "display": "table", "args": {"etf": "@rank.1", "top": 10}}
+    first = _plan_steps(rank, holdings)
+    slots = to_rows(first)[0]
+    results = {"s1": {"status": "empty", "retryable": True}, "s2": {"status": "empty"}}
+    editable = editable_slots(slots, results, REGISTRY)
+    assert editable == {"s1", "s2"}  # 고칠 수 있는 슬롯과 그 결과를 받는 슬롯
+    previous = [[s.model_dump() for s in row.slots] for row in first.rows]
+
+    deps = ReplanDeps(previous=previous, editable={"s1"})
+    changed = {**holdings, "args": {"etf": "@rank.2", "top": 10}}
+    assert "이전 계획 그대로 두세요" in replan_errors(_plan_steps(rank, changed), deps)[0]
+    assert replan_errors(_plan_steps({**rank, "args": {"stocks": ["삼성전자우"], "top": 10}}, holdings), deps) == []
+    assert "배치" in replan_errors(build_plan_model(REGISTRY).model_validate(
+        {"rows": [{"slots": [rank]}, {"slots": [holdings]}]}), deps)[0]
+
+
+def test_a_stock_name_in_an_etf_slot_is_a_fixable_failure_not_a_question(fake_etf_graph, monkeypatch):
+    from app.services.answer.resolver import EntityResolver
+    from app.services.answer.skills.base import SkillContext
+
+    resolver = EntityResolver()
+    monkeypatch.setattr(resolver, "stock", lambda db, name: {"code": "005380", "name": "반도체"} if name == "반도체" else None)
+
+    async def run():
+        ctx = SkillContext(question="q", conversation=ConversationContext(), session_factory=lambda: _Closable(),
+                           resolver=resolver, ai_config=None, stop=asyncio.Event())
+        skill = REGISTRY["holdings"]
+        return [e async for e in skill.run(skill.Args(etf="반도체"), "treemap", ctx)]
+
+    result = asyncio.run(run())[-1]
+    assert (result["status"], result["retryable"], result["clarify"]) == ("empty", True, False)
+    assert "ETF가 아니라 개별 종목입니다" in result["message"]

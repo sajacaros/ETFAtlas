@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from ...graph_service import GraphService
 from ..resolver import EntityResolver
 from ..schemas import BarView, DataField, Dataset, Source, TableView
-from .base import DataSkill, SkillResult, data_result, empty
+from .base import DataSkill, SkillResult, data_result, empty, not_found
 from .common import node, object_particle
 
 SAFE_CODE_RE = re.compile(r"[0-9A-Z]{6}")  # 쿼리 문자열에 직접 넣으므로 코드 모양만 허용
@@ -35,7 +35,7 @@ class StockHoldersSkill(DataSkill):
         stocks, missing = resolver.stocks(db, args.stocks)
         stocks = [s for s in stocks if SAFE_CODE_RE.fullmatch(s["code"])]
         if not stocks:
-            return empty(f"종목을 찾지 못했습니다: {', '.join(args.stocks)}")
+            return not_found(f"종목을 찾지 못했습니다: {', '.join(args.stocks)}")
         holders = _rank(db, stocks)[:args.top]
         names = ", ".join(s["name"] for s in stocks)
         if not holders:

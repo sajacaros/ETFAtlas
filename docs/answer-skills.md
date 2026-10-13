@@ -4,11 +4,12 @@
 레이아웃 에이전트가 먼저 화면을 나눠 보내고, 각 영역은 스킬이 채우는 대로 하나씩 표시된다.
 
 ```
-질문 → 질문 재작성(맥락이 있을 때) → 비슷한 레이아웃 예시 검색 → 레이아웃 설계(LLM 1회)
+질문 → 질문 재작성(맥락이 있을 때) → 비슷한 레이아웃 예시 검색 → 레이아웃 설계(LLM)
      → SSE layout: 프런트가 빈 영역(스켈레톤)을 그린다
-     → 슬롯 실행: 의존하는 슬롯이 끝나면 돈다. 서로 의존하지 않는 슬롯은 동시에
-       (의존 = '@이름.순위'로 참조한 슬롯, narrative 같은 after_others 슬롯은 나머지 슬롯 전부)
+     → 데이터 슬롯 실행: 의존하는 슬롯이 끝나면 돈다. 서로 의존하지 않는 슬롯은 동시에 (의존 = '@이름.순위'로 참조한 슬롯)
      → SSE slot {id, status: complete}: 프런트가 GET으로 그 영역 내용을 가져와 채운다
+     → (고칠 수 있는 실패가 있으면) 한 번 다시 설계 → SSE layout 다시 → 바뀐 슬롯과 그 결과를 받는 슬롯만 다시 실행
+     → narrative 같은 after_others 슬롯 (데이터 슬롯 전부가 끝난 뒤)
      → SSE answer: 화면 전체를 텍스트로 옮긴 것 (대화 기억·관리자 검수용)
 ```
 
@@ -26,9 +27,9 @@
 | 이벤트 | data | 비고 |
 |---|---|---|
 | `session` | `{session_id, title}` | |
-| `status` | `{stage: refining \| planning \| searching_examples \| thinking}` | 뒤의 둘은 agent 슬롯 |
+| `status` | `{stage: refining \| planning \| replanning \| filling \| searching_examples \| thinking}` | replanning·filling은 다시 설계, 뒤의 둘은 agent 슬롯 |
 | `refined_question` | `{question}` | |
-| `layout` | `{chat_log_id, layout}` | 슬롯 이벤트보다 항상 먼저 |
+| `layout` | `{chat_log_id, layout}` | 슬롯 이벤트보다 항상 먼저. 다시 설계하면 한 번 더 온다 (같은 슬롯 id, 이미 채운 영역은 그대로) |
 | `slot` | `{id, status, message?}` | `running` → `complete \| empty \| failed \| stopped` |
 | `slot_delta` | `{id, text}` | 텍스트 슬롯의 조각 |
 | `step_start` / `step` / `matched_examples` | 기존 형식 + `slot_id` | agent 슬롯의 실행 과정 |
@@ -132,6 +133,20 @@ class MySkill(DataSkill):
 - 관리자 페이지 "레이아웃 예제" 탭에서 추가·수정·아카이브하고 유사도 검색을 시험한다. 저장할 때 계획을 플래너 출력 스키마(스킬·인자·display·참조)로 검증해, 틀리면 거부한다.
 - 시드 예시는 마이그레이션 `0013`이 넣는다 (질문 유형마다 하나씩 18개 — 한 유형에 몰리면 무관한 질문에도 그 예시가 붙는다). 임베딩은 `embed_code_examples` DAG가 채운다 (배포 후 한 번 수동 실행).
 
+## 실행 결과를 보고 다시 설계하기
+
+플래너는 데이터를 보기 전에 화면을 짠다. 그래서 대상의 종류를 잘못 골랐거나(ETF를 종목 스킬에, 종목을 ETF 스킬에)
+참조한 순위가 결과보다 많으면 영역이 빈다. 데이터 슬롯이 끝난 뒤 이런 실패가 있으면 플래너가 한 번 다시 설계한다 (Reflexion처럼
+스스로 비판하는 게 아니라, plan-and-execute의 재계획처럼 실행 결과를 보고 고친다).
+
+- 스킬은 계획을 고치면 나아질 수 있는 실패를 `not_found()`(`SkillResult.retryable`)로 낸다: 이름을 찾지 못함, 종목 이름이 ETF 자리에 들어감
+  (ETF 이름이 애매하지만 정확히 같은 종목이 있을 때 — 되묻지 않는다). 실행 중 참조 오류(결과가 3개뿐인데 5위)도 고칠 수 있는 실패다.
+- 관리하지 않는 ETF, 데이터 없음, 되묻기, 일부 대상만 못 찾음은 다시 설계하지 않는다 — 다시 짜도 결과가 같다.
+- 다시 설계는 한 번만. 고칠 수 있는 슬롯, 그 결과를 받는 슬롯, 해설만 바꿀 수 있고 배치(줄·슬롯 개수)와 이미 채운 슬롯은 그대로여야 한다
+  (`planner.replan_errors`가 막는다). 그래서 슬롯 id가 유지되고, 프런트는 다시 온 layout에서 이미 채운 영역을 그대로 둔다.
+- 다시 설계가 실패하면 첫 계획의 결과를 그대로 쓴다. 해설은 다시 설계와 재실행이 끝난 뒤에 돈다.
+
+
 ## 평가 (`backend/evals/`)
 
 플래너 프롬프트·스킬 설명·레이아웃 예시·검색 기준을 바꾸면 평가 세트로 판정한다. 특정 질문 몇 개로 보면 그 질문에 맞춘 변경(오버피팅)을 걸러내지 못한다.
@@ -144,6 +159,9 @@ docker cp backend/evals etf-atlas-backend:/tmp/evals
 docker exec -w /app -e PYTHONPATH=/app etf-atlas-backend python /tmp/evals/run_layout_eval.py --reps 3
 # 검색 기준을 바꿔 보기: --top-k 1 --max-distance 0.30 --gap 1 / 거리표: --distances
 ```
+
+- `replan_eval.json`, `run_replan_eval.py`: 일부러 틀린 첫 계획을 주고 서비스 흐름(실행 → 다시 설계 → 재실행 → 해설)으로 돌린다.
+  다시 설계해야 할 때만 하는지, 고친 뒤 원하는 스킬이 완료되는지 본다.
 
 LLM 출력은 실행마다 달라서 같은 설정에서도 통과율이 몇 % 오르내린다. 비교는 여러 번(`--reps`) 돌려서 한다.
 

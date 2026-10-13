@@ -8,7 +8,7 @@ from ....domain.composition import ETFAllocation, aggregate_composition
 from ...graph_service import GraphService
 from ..resolver import AmbiguousETF, EntityResolver, UnmanagedETF, _normalize
 from ..schemas import BarView, DataField, Dataset, DonutView, Source, TableView, TreemapView
-from .base import DataSkill, SkillResult, data_result, empty
+from .base import DataSkill, SkillResult, data_result, not_found
 from .common import node
 
 DONUT_MAX_SLICES = 8  # 넘으면 나머지를 '기타'로 묶는다
@@ -97,7 +97,7 @@ class PortfolioLookthroughSkill(DataSkill):
             if entity["code"] != item.asset.strip().upper() and _normalize(entity["name"]) != _normalize(item.asset):
                 resolved.append(f"{item.asset} → {entity['name']}({entity['code']})")
         if not (etfs or stocks or unlisted):
-            return empty(f"포트폴리오 항목을 찾지 못했습니다: {', '.join(missing)}")
+            return not_found(f"포트폴리오 항목을 찾지 못했습니다: {', '.join(missing)}")
 
         holdings = _holdings(db, list(etfs))
         no_holdings = [e for code, e in etfs.items() if code not in holdings]

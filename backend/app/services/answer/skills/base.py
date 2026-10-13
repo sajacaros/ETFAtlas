@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from ...ai_config import AIConfig
 from ...chat_memory import ConversationContext
-from ..resolver import CANDIDATE_LIMIT, AmbiguousETF, EntityResolver, UnmanagedETF
+from ..resolver import CANDIDATE_LIMIT, AmbiguousETF, EntityResolver, UnmanagedETF, _normalize
 from ..schemas import DataContent, Dataset, Source, TextContent
 from .common import format_value
 
@@ -47,15 +47,23 @@ class SkillResult:
     clarify: bool = False
     # 다른 슬롯이 '@이름.순위'로 참조할 수 있는 대상 목록 [{code, name}], 순위 순. 스킬의 exports가 무엇인지 정한다
     exports: List[Dict[str, str]] = field(default_factory=list)
+    # 계획을 고치면 나아질 수 있는 실패 (이름을 찾지 못함 등). 오케스트레이터가 플래너에게 한 번 다시 설계하게 한다.
+    # 관리하지 않는 ETF·데이터 없음처럼 다시 설계해도 같은 결과면 False
+    retryable: bool = False
 
     def event(self) -> Dict[str, Any]:
         return {"type": "result", "status": self.status, "content": self.content,
                 "summary": self.summary, "message": self.message, "clarify": self.clarify,
-                "exports": self.exports}
+                "exports": self.exports, "retryable": self.retryable}
 
 
 def empty(message: str) -> SkillResult:
     return SkillResult(status="empty", summary=message, message=message)
+
+
+def not_found(message: str) -> SkillResult:
+    """인자로 받은 대상(이름)을 찾지 못했다 — 다른 스킬이나 인자로 다시 설계하면 나아질 수 있다."""
+    return SkillResult(status="empty", summary=message, message=message, retryable=True)
 
 
 def data_result(
@@ -82,6 +90,11 @@ def choice_result(question: str, header: List[str], rows: List[List[str]], foote
     text = "\n".join(lines)
     return SkillResult(status="complete", content=TextContent(type="markdown", text=text).model_dump(),
                        summary=text, clarify=True)
+
+
+def _is_stock_name(db: Session, resolver: EntityResolver, name: str) -> bool:
+    stock = resolver.stock(db, name)
+    return bool(stock) and _normalize(stock["name"]) == _normalize(name)
 
 
 def ambiguous_etf_result(e: AmbiguousETF) -> SkillResult:
@@ -134,6 +147,8 @@ class DataSkill(Skill):
             try:
                 return self.fetch(args, display, db, ctx.resolver)
             except AmbiguousETF as e:  # 어느 스킬이든 ETF 이름이 애매하면 고르지 않고 되묻는다
+                if _is_stock_name(db, ctx.resolver, e.name):  # 종목 이름을 ETF 자리에 넣은 것 — 설계를 고칠 일이다
+                    return not_found(f"'{e.name}'은(는) ETF가 아니라 개별 종목입니다")
                 return ambiguous_etf_result(e)
             except UnmanagedETF as e:  # 상장 ETF지만 관리 대상이 아니면 '찾지 못했다'가 아니라 그렇다고 알린다
                 return unmanaged_etf_result(e)

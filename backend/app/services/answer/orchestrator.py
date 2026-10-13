@@ -54,6 +54,29 @@ def _related_text(result: Dict[str, Any]) -> str:
     return "\n".join([text, *(f"(참고) {n}" for n in notes)]) if notes else text
 
 
+def needs_replan(slots: List[PlannedSlot], results: Dict[str, Dict[str, Any]], stop: asyncio.Event) -> bool:
+    """고칠 수 있는 실패가 있고, 중지·되묻기 중이 아니면 다시 설계한다."""
+    if stop.is_set() or any(r.get("clarify") for r in results.values()):
+        return False
+    return any(results.get(s.id, {}).get("retryable") for s in slots)
+
+
+def _rerun_ids(old: List[PlannedSlot], new: List[PlannedSlot], results: Dict[str, Dict[str, Any]]) -> set:
+    """다시 실행할 슬롯: 계획이 바뀐 슬롯, 고칠 수 있다고 했던 슬롯, 그 결과를 (참조로 이어서) 받는 슬롯."""
+    before = {s.id: s for s in old}
+    rerun = {s.id for s in new if s.id not in before or (s.skill, s.args, s.display) != (
+        before[s.id].skill, before[s.id].args, before[s.id].display) or results.get(s.id, {}).get("retryable")}
+    rerun = {i for i in rerun if results.get(i, {}).get("status") != "complete" or i not in before}
+    changed = True
+    while changed:
+        changed = False
+        for s in new:
+            if s.id not in rerun and set(s.depends_on) & rerun:
+                rerun.add(s.id)
+                changed = True
+    return rerun
+
+
 def answer_text(slots: List[PlannedSlot], results: Dict[str, Dict[str, Any]]) -> str:
     """화면을 텍스트로: 텍스트 슬롯은 본문, 데이터 슬롯은 요약."""
     parts = []
@@ -76,6 +99,19 @@ class SlotStore:
         try:
             db.add_all(ChatSlot(chat_log_id=chat_log_id, slot_id=s.id, skill=s.skill, status="pending",
                                 updated_at=utcnow()) for s in slots)
+            db.commit()
+        finally:
+            db.close()
+
+    def replace(self, chat_log_id: int, slots: List[PlannedSlot]) -> None:
+        """다시 설계해 다시 실행할 슬롯: 스킬을 바꾸고 결과를 비운다."""
+        db = self._session_factory()
+        try:
+            for s in slots:
+                row = db.get(ChatSlot, (chat_log_id, s.id))
+                if row is not None:
+                    row.skill, row.status, row.content, row.summary, row.message = s.skill, "pending", None, None, None
+                    row.updated_at = utcnow()
             db.commit()
         finally:
             db.close()
@@ -127,29 +163,57 @@ class AnswerService:
         await asyncio.to_thread(self._store.create, chat_log_id, slots)
         yield _event("layout", {"chat_log_id": chat_log_id, "layout": layout_tree(rows)})
 
+        # 데이터 슬롯 → (고칠 수 있는 실패가 있으면) 한 번 다시 설계해 그 슬롯만 다시 실행 → 해설 같은 after_others 슬롯
         results: Dict[str, Dict[str, Any]] = {}
-        async for event in self._run_slots(slots, question, context, chat_log_id, stop, results):
+        data = [s for s in slots if not self._registry[s.skill].after_others]
+        async for event in self._run_slots(data, question, context, chat_log_id, stop, results, all_slots=slots):
+            yield event
+
+        if needs_replan(slots, results, stop) and hasattr(planner, "replan"):
+            yield _event("status", {"stage": "replanning"})
+            new_rows = await planner.replan(question, context, rows, results)
+            if new_rows:
+                rows, rerun = new_rows, _rerun_ids(slots, [s for row in new_rows for s in row], results)
+                slots = [s for row in rows for s in row]
+                if rerun:
+                    again = [s for s in slots if s.id in rerun]
+                    logger.info("Replanned slots %s", sorted(rerun))
+                    await asyncio.to_thread(self._store.replace, chat_log_id, again)
+                    for s in again:
+                        results.pop(s.id, None)
+                    yield _event("layout", {"chat_log_id": chat_log_id, "layout": layout_tree(rows)})
+                    yield _event("status", {"stage": "filling"})
+                    data_again = [s for s in again if not self._registry[s.skill].after_others]
+                    async for event in self._run_slots(data_again, question, context, chat_log_id, stop, results,
+                                                       all_slots=slots):
+                        yield event
+
+        later = [s for s in slots if self._registry[s.skill].after_others]
+        async for event in self._run_slots(later, question, context, chat_log_id, stop, results, all_slots=slots):
             yield event
         yield _event("answer", {"answer": answer_text(slots, results)})
 
     async def _run_slots(
         self, slots: List[PlannedSlot], question: str, context: ConversationContext,
         chat_log_id: int, stop: asyncio.Event, results: Dict[str, Dict[str, Any]],
+        all_slots: Optional[List[PlannedSlot]] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
-        """슬롯은 의존하는 슬롯이 끝나기를 기다렸다가 돌고, 서로 의존하지 않는 슬롯은 동시에 돈다.
+        """slots를 실행한다. 슬롯은 의존하는 슬롯이 끝나기를 기다렸다가 돌고, 서로 의존하지 않는 슬롯은 동시에 돈다.
         의존: '@이름.순위'로 참조한 슬롯, after_others 스킬은 after_others가 아닌 슬롯 전부.
+        all_slots는 화면의 슬롯 전부 — 이번에 돌지 않는 슬롯의 결과는 results에 이미 있다.
         중지는 스킬이 ctx.stop을 보고 스스로 멈추고, 아직 시작하지 않은 슬롯은 stopped로 마감한다."""
+        all_slots = all_slots or slots
         queue: asyncio.Queue = asyncio.Queue()
         done = object()
         resolver = EntityResolver()
         finished = {s.id: asyncio.Event() for s in slots}
-        by_id = {s.id: s for s in slots}
-        names = {s.name: s.id for s in slots if s.name}
+        by_id = {s.id: s for s in all_slots}
+        names = {s.name: s.id for s in all_slots if s.name}
 
         def deps_of(slot: PlannedSlot) -> List[str]:
             deps = list(slot.depends_on)
             if self._registry[slot.skill].after_others:
-                deps += [s.id for s in slots if not self._registry[s.skill].after_others and s.id not in deps]
+                deps += [s.id for s in all_slots if not self._registry[s.skill].after_others and s.id not in deps]
             return deps
 
         async def finish(slot: PlannedSlot, result: Dict[str, Any], announce: Optional[str] = None) -> None:
@@ -193,7 +257,8 @@ class AnswerService:
                     except (refs.RefError, ValidationError) as e:
                         logger.warning("Slot %s could not use referenced results: %s", slot.id, e)
                         message = str(e) if isinstance(e, refs.RefError) else "앞 영역의 결과를 이 영역에 쓸 수 없습니다"
-                        await finish(slot, {"status": "empty", "message": message}, message)
+                        # 참조 범위를 고치면 나아질 수 있다 (예: 결과가 3개뿐인데 5위를 참조)
+                        await finish(slot, {"status": "empty", "message": message, "retryable": True}, message)
                         return
 
                 related = [(by_id[d].title, _related_text(results[d])) for d in deps if d in results]

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from ...graph_service import GraphService
 from ..resolver import EntityResolver
 from ..schemas import DataField, Dataset, Source, TableView
-from .base import DataSkill, SkillResult, data_result, empty
+from .base import DataSkill, SkillResult, data_result, not_found
 from .common import ETF_NAMES_DESCRIPTION, ETFListArgs, format_value, missing_notes, node
 
 DIVIDEND_CYCLE = {0: "분배 없음", 1: "월", 3: "분기", 6: "반기", 12: "연"}
@@ -38,7 +38,7 @@ class ETFCompareSkill(DataSkill):
     def fetch(self, args: CompareArgs, display: str, db: Session, resolver: EntityResolver) -> SkillResult:
         found, missing = resolver.etfs(db, args.etfs)
         if not found:
-            return empty(f"ETF를 찾지 못했습니다: {', '.join(missing)}")
+            return not_found(f"ETF를 찾지 못했습니다: {', '.join(missing)}")
         graph = GraphService(db)
         infos = {}
         for etf in found:

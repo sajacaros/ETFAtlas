@@ -131,6 +131,21 @@ class MySkill(DataSkill):
 - 관리자 페이지 "레이아웃 예제" 탭에서 추가·수정·아카이브하고 유사도 검색을 시험한다. 저장할 때 계획을 플래너 출력 스키마(스킬·인자·display·참조)로 검증해, 틀리면 거부한다.
 - 시드 예시는 마이그레이션 `0013`이 넣는다 (질문 유형마다 하나씩 18개 — 한 유형에 몰리면 무관한 질문에도 그 예시가 붙는다). 임베딩은 `embed_code_examples` DAG가 채운다 (배포 후 한 번 수동 실행).
 
+## 평가 (`backend/evals/`)
+
+플래너 프롬프트·스킬 설명·레이아웃 예시·검색 기준을 바꾸면 평가 세트로 판정한다. 특정 질문 몇 개로 보면 그 질문에 맞춘 변경(오버피팅)을 걸러내지 못한다.
+
+- `layout_eval.json`: 질문 유형별 평가 질문과 기대(필수 스킬, 허용 스킬, 참조로 받아야 할 순위, 들어가야 할 이름, 표시 방식). 레이아웃 예시 시드와 대상·문장이 겹치지 않게 유지한다 — 겹치면 외운 답을 재는 셈이다.
+- `run_layout_eval.py`: 백엔드 컨테이너 안에서 실제 LLM·DB로 돌린다. 계획을 채점하고, 넣은 예시가 질문 유형에 맞았는지(정밀도)와 맞는 예시를 못 넣은 경우(재현율)를 함께 낸다. `expect_message` 항목은 슬롯을 실행해 안내 문구까지 본다.
+
+```bash
+docker cp backend/evals etf-atlas-backend:/tmp/evals
+docker exec -w /app -e PYTHONPATH=/app etf-atlas-backend python /tmp/evals/run_layout_eval.py --reps 3
+# 검색 기준을 바꿔 보기: --top-k 1 --max-distance 0.30 --gap 1 / 거리표: --distances
+```
+
+LLM 출력은 실행마다 달라서 같은 설정에서도 통과율이 몇 % 오르내린다. 비교는 여러 번(`--reps`) 돌려서 한다.
+
 
 ## 대상을 정하지 못할 때: 되묻기
 

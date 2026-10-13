@@ -11,9 +11,9 @@ from .common import format_value, node, object_particle
 
 class ETFChoiceArgs(BaseModel):
     by: Literal["stock", "theme"] = Field(description=(
-        "ETF를 고르는 조건의 종류. stock: 종목이 조건('원익IPS가 들어간 ETF'), theme: 테마·이름 일부('반도체 ETF', '2차전지 ETF')"
+        "ETF를 고르는 조건의 종류. stock: 어떤 종목을 담은 ETF, theme: 업종·테마 이름이나 ETF 이름의 일부"
     ))
-    condition: str = Field(description="조건 값. by=stock이면 개별 주식 종목 이름 또는 6자리 코드, by=theme이면 그 단어 (예: '반도체')")
+    condition: str = Field(description="조건 값. by=stock이면 개별 주식 종목 이름 또는 6자리 코드, by=theme이면 그 단어")
     purpose: str = Field(description="ETF를 고른 뒤 보여줄 것 (예: '구성종목', '수익률 추이')")
 
 
@@ -47,10 +47,9 @@ class ETFChoiceSkill(DataSkill):
     name = "etf_choice"
     description = (
         "ETF 하나를 정해야 답할 수 있는데(구성종목·가격 추이·수익률 등) 대상이 조건으로만 주어져 여러 ETF가 해당할 때 "
-        "후보 목록을 보여주고 어느 ETF를 볼지 되묻는다. 종목 조건('원익IPS가 들어간 ETF')은 by=stock, "
-        "테마·이름 일부('반도체 ETF', '2차전지 ETF')는 by=theme. "
+        "후보 목록을 보여주고 어느 ETF를 볼지 되묻는다. 어떤 종목을 담은 ETF면 by=stock, 업종·테마 이름이면 by=theme. "
         "이 슬롯 하나만 만든다(다른 스킬·narrative·agent를 붙이지 않는다). "
-        "'반도체 ETF 어떤 게 있어?'처럼 ETF 목록 자체를 묻는 질문이나 '원익IPS를 많이 담은 ETF는?'(stock_holders)에는 쓰지 않는다"
+        "ETF 목록 자체를 묻거나 종목을 많이 담은 ETF 순위를 묻는 질문, ETF 상품 이름이 주어진 질문에는 쓰지 않는다"
     )
     Args = ETFChoiceArgs
     displays = ("markdown",)

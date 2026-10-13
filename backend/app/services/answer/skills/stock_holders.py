@@ -24,7 +24,7 @@ class StockHoldersSkill(DataSkill):
     name = "stock_holders"
     description = (
         "개별 종목을 많이 담은 ETF 순위: 그 종목의 비중이 높은 순서로 ETF와 비중, 총보수. "
-        "'삼성전자를 가장 많이 보유한 ETF' 같은 질문에. 종목이 여러 개면 "
+        "어떤 종목을 가장 많이 보유한 ETF를 묻는 질문에. 종목이 여러 개면 "
         "슬롯을 종목마다 나누지 말고 이 슬롯 하나에 모두 넣는다 — 종목들의 비중 합계 순으로 매기고 종목별 비중을 함께 보여준다"
     )
     Args = StockHoldersArgs

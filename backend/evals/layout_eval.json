@@ -1,0 +1,65 @@
+{
+  "_comment": [
+    "레이아웃 플래너 평가 세트. 레이아웃 예시(layout_examples 시드)와 대상·문장이 겹치지 않게 유지한다 — 겹치면 외운 답을 재는 셈이다.",
+    "must: 반드시 있어야 하는 스킬 (각 항목은 'a|b' 대안). allowed: must 외에 써도 되는 스킬 (narrative는 늘 허용).",
+    "cover: {스킬: N} 그 스킬 슬롯들이 참조로 1~N위를 빠짐없이 받아야 한다. names: 어느 슬롯 인자엔가 들어 있어야 하는 이름.",
+    "together: stock_holders 슬롯 하나에 함께 들어 있어야 하는 종목들. display: {스킬: 표시 방식}.",
+    "expect_message: 슬롯을 실제로 실행해 어느 영역의 문구·요약·주석엔가 이 문자열이 나와야 한다 (관리하지 않는 대상 안내 등).",
+    "계획 채점 항목의 ETF는 관리하는(그래프에 있는) ETF만 쓴다 — 관리하지 않는 ETF는 expect_message 항목으로 따로 본다."
+  ],
+  "items": [
+    {"q": "HANARO Fn조선해운 구성종목 알려줘", "must": ["holdings"], "names": ["HANARO Fn조선해운"]},
+    {"q": "kodex 배당가치 뭐 담고 있어?", "must": ["holdings"]},
+    {"q": "SOL 조선TOP3플러스 상위 5개 종목 도넛으로", "must": ["holdings"], "display": {"holdings": "donut"}},
+    {"q": "KODEX 반도체 구성종목 트리맵으로 보여줘", "must": ["holdings"], "display": {"holdings": "treemap"}},
+
+    {"q": "TIGER 2차전지테마랑 KODEX 2차전지산업 뭐가 나아?", "must": ["etf_compare|etf_profile"], "allowed": ["period_returns", "price_trend"]},
+    {"q": "KODEX 은행, KODEX 자동차, TIGER 헬스케어 보수랑 규모 비교", "must": ["etf_compare"], "allowed": ["etf_profile", "period_returns"]},
+    {"q": "RISE 200, KODEX 200, TIGER 200 중에 종합적으로 뭐가 좋아?", "must": ["etf_profile|etf_compare"], "allowed": ["etf_compare", "etf_profile", "period_returns", "price_trend"]},
+
+    {"q": "KODEX 코스닥150 6개월 차트", "must": ["price_trend"], "allowed": ["period_returns"]},
+    {"q": "KODEX 배당가치 일봉 보여줘", "must": ["price_trend"], "display": {"price_trend": "candlestick"}},
+    {"q": "TIGER 200 최근 1년 봉차트", "must": ["price_trend"], "display": {"price_trend": "candlestick"}},
+    {"q": "PLUS K방산이랑 SOL 조선TOP3플러스 3개월 수익률 추이 비교", "must": ["price_trend"], "allowed": ["period_returns"]},
+    {"q": "TIGER 반도체TOP10 기간별 수익률", "must": ["period_returns|price_trend"]},
+
+    {"q": "현대차 주가 한 달 추이", "must": ["stock_trend"]},
+    {"q": "에코프로비엠이랑 포스코퓨처엠 주가 비교", "must": ["stock_trend"]},
+
+    {"q": "한화에어로스페이스 제일 많이 담은 ETF 어디야", "must": ["stock_holders"], "names": ["한화에어로스페이스"]},
+    {"q": "Which ETFs hold the most Hyundai Motor?", "must": ["stock_holders"]},
+    {"q": "하이닉스 젤 많이 든 etf 뭐임", "must": ["stock_holders"]},
+    {"q": "에코프로비엠이랑 포스코퓨처엠 둘 다 많이 들고 있는 ETF 찾아줘", "must": ["stock_holders"], "together": ["에코프로비엠", "포스코퓨처엠"]},
+    {"q": "현대차, 기아 합쳐서 비중 높은 ETF", "must": ["stock_holders"], "together": ["현대차", "기아"]},
+    {"q": "HD현대중공업, 한화에어로스페이스, 두산에너빌리티 셋 다 많이 담은 ETF", "must": ["stock_holders"], "together": ["HD현대중공업", "한화에어로스페이스", "두산에너빌리티"]},
+
+    {"q": "셀트리온 비중 1등 ETF 구성종목 보여줘", "must": ["stock_holders", "holdings"], "cover": {"holdings": 1}},
+    {"q": "NAVER랑 카카오 합산 비중 제일 높은 ETF의 구성 종목", "must": ["stock_holders", "holdings"], "cover": {"holdings": 1}, "together": ["NAVER", "카카오"]},
+    {"q": "KB금융 많이 담은 ETF 1위의 최근 수익률", "must": ["stock_holders", "period_returns|price_trend"], "cover": {"period_returns|price_trend": 1}},
+    {"q": "LG에너지솔루션 비중 상위 6개 ETF 수익률 비교", "must": ["stock_holders", "period_returns|price_trend"], "cover": {"period_returns|price_trend": 6}},
+    {"q": "두산에너빌리티 비중 top 12 ETF 수익률 전부", "must": ["stock_holders", "period_returns|price_trend"], "cover": {"period_returns|price_trend": 12}},
+    {"q": "삼성바이오로직스 많이 담은 ETF 상위 2개 구성종목 각각", "must": ["stock_holders", "holdings"], "cover": {"holdings": 2}},
+    {"q": "셀트리온 비중 상위 5개 ETF를 TIGER 헬스케어랑 같이 가격 추이 비교", "must": ["stock_holders", "price_trend"], "allowed": ["period_returns"], "cover": {"price_trend": 5}, "names": ["TIGER 헬스케어"]},
+    {"q": "현대차 비중 상위 7개 ETF와 KODEX 자동차 기간별 수익률 비교", "must": ["stock_holders", "period_returns|price_trend"], "cover": {"period_returns|price_trend": 7}, "names": ["KODEX 자동차"]},
+    {"q": "KODEX 2차전지산업 비중 1위 종목의 주가 추이", "must": ["holdings", "stock_trend"], "cover": {"stock_trend": 1}},
+    {"q": "PLUS K방산 상위 3개 종목 주가 비교", "must": ["holdings", "stock_trend"], "cover": {"stock_trend": 3}},
+
+    {"q": "방산 ETF 구성종목 보여줘", "must": ["etf_choice"]},
+    {"q": "2차전지 ETF 수익률 추이", "must": ["etf_choice"]},
+    {"q": "에코프로비엠 들어간 ETF 구성종목", "must": ["etf_choice"]},
+
+    {"q": "ACE 미국나스닥100 40%, KODEX 200 60% 담으면 종목 비중 어떻게 돼?", "must": ["portfolio_lookthrough"]},
+    {"q": "TIGER 반도체TOP10 50 KODEX 2차전지산업 30 KODEX 은행 20 이렇게 들고 있으면 겹치는 종목?", "must": ["portfolio_lookthrough"]},
+
+    {"q": "삼성자산운용 ETF 몇 개야?", "must": ["agent"]},
+    {"q": "조선 태그 붙은 ETF 목록 다 보여줘", "must": ["agent"]},
+    {"q": "KODEX 200이랑 비슷한 ETF 추천", "must": ["agent"]},
+    {"q": "KODEX 200 구성종목 비중이 지난달이랑 어떻게 바뀌었어?", "must": ["agent"]},
+    {"q": "오늘 날씨 어때?", "must": ["agent"]},
+
+    {"q": "kodex 레버리지 뭐 담고 있어?", "must": [], "allowed": ["holdings", "etf_choice"], "expect_message": "관리하지 않는 ETF"},
+    {"q": "TIGER 미국S&P500 3개월 수익률 추이", "must": [], "allowed": ["price_trend", "period_returns"], "expect_message": "관리하지 않는 ETF"},
+    {"q": "ACE KRX금현물이랑 KODEX 200 비교해줘", "must": [], "allowed": ["etf_compare", "etf_profile", "period_returns", "price_trend"], "expect_message": "관리하지 않는 ETF"},
+    {"q": "122630 구성종목", "must": [], "allowed": ["holdings"], "expect_message": "관리하지 않는 ETF"}
+  ]
+}

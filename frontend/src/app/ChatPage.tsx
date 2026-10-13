@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect, useCallback, KeyboardEvent } from 'react'
-import { createPortal } from 'react-dom'
 import {
-  Send, Square, Loader2, MessageCircle, ChevronRight, Trash2, BookOpen, Plus, Pencil, Check, X, History, CornerDownRight,
+  Send, Square, Loader2, MessageCircle, ChevronLeft, ChevronRight, Trash2, BookOpen, Plus, Pencil, Check, X, History, CornerDownRight,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -16,7 +15,6 @@ import type {
   ChatSessionDetail, ChatSessionSummary, ChatStep, LayoutNode, MatchedCodeExample, SlotState,
 } from '@/types/api'
 import { AnswerView } from '@/components/answer/AnswerView'
-import { useSidebarSlot } from '@/components/SidebarSlot'
 import ReactMarkdown from 'react-markdown'
 import { MARKDOWN_PLUGINS } from '@/lib/markdown'
 
@@ -85,7 +83,7 @@ export default function ChatPage() {
   const [input, setInput] = useState('')
   const [isLoadingSession, setIsLoadingSession] = useState(false)
   const [showSessions, setShowSessions] = useState(false)
-  const sidebarSlot = useSidebarSlot()  // 데스크톱 사이드바가 펼쳐져 있으면 대화 목록을 거기에 둔다
+  const [sessionsCollapsed, setSessionsCollapsed] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<ChatSessionSummary | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -298,8 +296,19 @@ export default function ChatPage() {
 
   return (
     <div className="flex gap-4 h-[calc(100dvh-6.5rem)] lg:h-[calc(100dvh-4rem)]">
-      {/* Sessions (desktop, 사이드바 메뉴 아래) */}
-      {sidebarSlot && createPortal(sessionList, sidebarSlot)}
+      {/* Sessions (desktop) */}
+      <div className="hidden md:flex shrink-0">
+        {!sessionsCollapsed && <aside className="w-64 flex flex-col border-r pr-3">{sessionList}</aside>}
+        <button
+          type="button"
+          onClick={() => setSessionsCollapsed((v) => !v)}
+          className="self-center ml-1 h-20 w-6 flex items-center justify-center rounded-md border bg-background text-muted-foreground hover:text-foreground hover:bg-muted"
+          aria-label={sessionsCollapsed ? '대화 목록 펼치기' : '대화 목록 접기'}
+          title={sessionsCollapsed ? '대화 목록 펼치기' : '대화 목록 접기'}
+        >
+          {sessionsCollapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
+        </button>
+      </div>
 
       <div className="flex-1 min-w-0 flex flex-col relative">
         {/* Header */}
@@ -309,8 +318,7 @@ export default function ChatPage() {
               <MessageCircle className="w-6 h-6" />
               ETF 챗봇
             </h1>
-            {/* 사이드바에 목록이 없을 때(모바일·사이드바 접힘) 쓰는 버튼 */}
-            <div className={`flex gap-1 ${sidebarSlot ? 'lg:hidden' : ''}`}>
+            <div className="flex gap-1 md:hidden">
               <Button variant="ghost" size="sm" onClick={() => setShowSessions((v) => !v)}>
                 <History className="w-4 h-4 mr-1" />
                 대화 목록
@@ -324,7 +332,7 @@ export default function ChatPage() {
 
         {/* Sessions (mobile) */}
         {showSessions && (
-          <div className={`${sidebarSlot ? 'lg:hidden' : ''} absolute inset-x-0 top-12 z-10 max-h-[60%] flex flex-col rounded-md border bg-background p-2 shadow-lg`}>
+          <div className="md:hidden absolute inset-x-0 top-12 z-10 max-h-[60%] flex flex-col rounded-md border bg-background p-2 shadow-lg">
             {sessionList}
           </div>
         )}
@@ -582,8 +590,8 @@ function SessionList({
                     )}
                     {/* 데스크톱에서는 올렸을 때만 제목 끝에 겹쳐 보인다 — 제목 자리를 줄이거나 줄을 다시 나누지 않게 */}
                     <div
-                      className={`flex shrink-0 items-center lg:absolute lg:inset-y-0 lg:right-1 lg:hidden lg:rounded-r-lg lg:pl-3 lg:group-hover:flex lg:group-focus-within:flex ${
-                        s.id === activeId ? 'lg:bg-accent' : 'lg:bg-muted'
+                      className={`flex shrink-0 items-center md:absolute md:inset-y-0 md:right-1 md:hidden md:rounded-r-lg md:pl-3 md:group-hover:flex md:group-focus-within:flex ${
+                        s.id === activeId ? 'md:bg-accent' : 'md:bg-muted'
                       }`}
                     >
                       <button

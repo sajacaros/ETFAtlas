@@ -235,8 +235,12 @@ def test_resolver_strips_characters_that_could_break_the_query():
 
 
 class FakeStockResolver:
-    def stock(self, db, name):
-        return {"code": "005930", "name": "삼성전자"}
+    STOCKS = {"삼성전자": {"code": "005930", "name": "삼성전자"},
+              "테스": {"code": "095610", "name": "테스"}, "원익IPS": {"code": "240810", "name": "원익IPS"}}
+
+    def stocks(self, db, names):
+        found = [self.STOCKS[n] for n in names if n in self.STOCKS]
+        return found, [n for n in names if n not in self.STOCKS]
 
 
 def test_stock_holders_ranks_etfs_by_weight(monkeypatch):
@@ -244,15 +248,33 @@ def test_stock_holders_ranks_etfs_by_weight(monkeypatch):
     calls = []
 
     def fake_node(graph, cypher, params):
-        calls.append(params)
-        return [{"code": "448100", "name": "WON 200", "weight": 35.21, "expense_ratio": 0.05, "date": "2026-10-07"}]
+        calls.append(cypher)
+        return [{"code": "448100", "name": "WON 200", "stock": "005930", "weight": 35.21, "expense_ratio": 0.05,
+                 "date": "2026-10-07"}]
 
     monkeypatch.setattr(mod, "node", fake_node)
     skill = REGISTRY["stock_holders"]
-    result = skill.fetch(skill.Args(stock="삼성전자", top=5), "bar", None, FakeStockResolver())
-    assert calls == [{"code": "005930", "top": 5}]
-    assert result.content["view"] == {"kind": "bar", "x": "name", "y": ["weight"], "horizontal": True}
+    result = skill.fetch(skill.Args(stocks=["삼성전자"], top=5), "bar", None, FakeStockResolver())
+    assert "IN ['005930']" in calls[0]
+    assert result.content["view"] == {"kind": "bar", "x": "name", "y": ["w_005930"], "horizontal": True, "stacked": False}
     assert "WON 200 35.21%" in result.summary
+
+
+def test_stock_holders_ranks_etfs_by_combined_weight(monkeypatch):
+    from app.services.answer.skills import stock_holders as mod
+    monkeypatch.setattr(mod, "node", lambda graph, cypher, params: [
+        {"code": "A", "name": "한 종목만", "stock": "095610", "weight": 6.0, "expense_ratio": 0.4, "date": "2026-10-07"},
+        {"code": "B", "name": "둘 다", "stock": "095610", "weight": 4.0, "expense_ratio": 0.3, "date": "2026-10-07"},
+        {"code": "B", "name": "둘 다", "stock": "240810", "weight": 3.5, "expense_ratio": 0.3, "date": "2026-10-07"},
+    ])
+    skill = REGISTRY["stock_holders"]
+    result = skill.fetch(skill.Args(stocks=["테스", "원익IPS"]), "bar", None, FakeStockResolver())
+    assert result.exports == [{"code": "B", "name": "둘 다"}, {"code": "A", "name": "한 종목만"}]
+    view = result.content["view"]
+    assert (view["y"], view["stacked"]) == (["w_095610", "w_240810"], True)
+    rows = result.content["dataset"]["rows"]
+    assert (rows[0]["total"], rows[1]["w_240810"]) == (7.5, None)
+    assert "둘 다 합계 7.50%(테스 4.00%, 원익IPS 3.50%" in result.summary
 
 
 # --- 포트폴리오 합산 ---
@@ -530,7 +552,7 @@ def _plan_steps(*slots):
     return build_plan_model(REGISTRY).model_validate({"rows": [{"slots": list(slots)}]})
 
 
-RANK = {"skill": "stock_holders", "name": "rank", "title": "순위", "display": "bar", "args": {"stock": "삼성전자"}}
+RANK = {"skill": "stock_holders", "name": "rank", "title": "순위", "display": "bar", "args": {"stocks": ["삼성전자"]}}
 
 
 def test_plan_turns_references_into_dependencies():
@@ -551,6 +573,7 @@ def test_plan_turns_references_into_dependencies():
 def test_plan_rejects_bad_references(slots, error):
     with pytest.raises(Exception, match=error):
         _plan_steps(*slots)
+
 
 
 class EtfArgs(BaseModel):
@@ -612,9 +635,9 @@ def test_stream_skips_a_referencing_slot_when_its_target_has_nothing(monkeypatch
 def test_stock_holders_exports_etfs_in_rank_order(monkeypatch):
     from app.services.answer.skills import stock_holders as mod
     monkeypatch.setattr(mod, "node", lambda graph, cypher, params: [
-        {"code": "448100", "name": "WON 200", "weight": 35.24, "expense_ratio": 0.05, "date": "2026-10-08"},
-        {"code": "069500", "name": "KODEX 200", "weight": 34.9, "expense_ratio": 0.15, "date": "2026-10-08"},
+        {"code": "448100", "name": "WON 200", "stock": "005930", "weight": 35.24, "expense_ratio": 0.05, "date": "2026-10-08"},
+        {"code": "069500", "name": "KODEX 200", "stock": "005930", "weight": 34.9, "expense_ratio": 0.15, "date": "2026-10-08"},
     ])
     skill = REGISTRY["stock_holders"]
-    result = skill.fetch(skill.Args(stock="삼성전자"), "bar", None, FakeStockResolver())
+    result = skill.fetch(skill.Args(stocks=["삼성전자"]), "bar", None, FakeStockResolver())
     assert result.exports == [{"code": "448100", "name": "WON 200"}, {"code": "069500", "name": "KODEX 200"}]

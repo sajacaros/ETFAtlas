@@ -42,6 +42,7 @@ class BarView(BaseModel):
     x: str
     y: list[str]
     horizontal: bool = False
+    stacked: bool = False  # 계열을 한 막대에 쌓는다 (막대 길이 = 합계)
 
 
 class DonutView(BaseModel):
@@ -93,7 +94,7 @@ def slot_type(display: str) -> str:
 def _view_keys(view: BaseModel) -> list[str]:
     keys: list[str] = []
     for name, value in view:
-        if name in ("kind", "orientation", "horizontal", "max"):
+        if name in ("kind", "orientation", "horizontal", "stacked", "max"):
             continue
         if isinstance(value, list):
             keys.extend(value)

@@ -100,7 +100,7 @@ class MySkill(DataSkill):
 | `holdings` | treemap, donut, bar, table | 구성종목 비중 (도넛은 상위 7개 + 기타) |
 | `portfolio_lookthrough` | treemap, bar, donut, table | 포트폴리오(ETF·종목과 비중)의 종목별 합산 비중. ETF는 구성종목으로 풀어 비중을 곱해 더하고(`domain/composition.py`와 같은 계산), 직접 담은 종목은 그대로 더한다. 구성종목 데이터가 없는 ETF(해외 ETF 등)는 ETF 한 행으로, ETF 안의 30위 밖·현금은 기타로 둔다 |
 | `stock_trend` | line, candlestick, table | 개별 종목 가격 추이 (`price_trend`와 같은 베이스) |
-| `stock_holders` | bar, table | 종목을 많이 담은 ETF 순위 |
+| `stock_holders` | bar, table | 종목을 많이 담은 ETF 순위. 종목을 여러 개(최대 5개) 받으면 ETF마다 그 종목들의 비중을 더해 합계 순으로 매기고, 막대는 종목별 비중을 쌓는다 (상위 30개 밖 종목은 0%) |
 | `etf_choice` | markdown | ETF 하나가 필요한데 조건만 있어 여러 ETF가 해당할 때 후보를 보여 주고 되묻는다. `by=stock`(원익IPS가 들어간 ETF, 그 종목 비중 순) 또는 `by=theme`(반도체 ETF, 같은 이름의 태그가 있으면 그 태그, 없으면 이름에 그 단어가 든 ETF를 순자산 순으로) |
 | `narrative` | text | 앞 슬롯 요약을 바탕으로 한 해설 (토큰 스트리밍) |
 | `agent` | markdown | 기존 tool-calling 에이전트. 다른 스킬로 안 되는 질문과 레이아웃 설계 실패 시 폴백 |
@@ -110,7 +110,7 @@ class MySkill(DataSkill):
 한 슬롯의 결과를 다른 슬롯의 대상으로 쓸 수 있다. 예: "삼성전자를 가장 많이 보유한 ETF와 그 구성종목".
 
 ```json
-{"skill": "stock_holders", "name": "rank", "args": {"stock": "삼성전자"}}
+{"skill": "stock_holders", "name": "rank", "args": {"stocks": ["삼성전자"]}}
 {"skill": "holdings", "args": {"etf": "@rank.1"}}
 ```
 
@@ -118,7 +118,8 @@ class MySkill(DataSkill):
 - 오케스트레이터는 참조한 슬롯이 끝난 뒤, 참조를 그 슬롯이 내보낸 대상의 코드로 바꿔 실행한다 (`refs.py`). 무엇을 받았는지는 영역의 notes에 남긴다 ("'삼성전자 비중 상위 ETF' 1위: WON 200(448100)").
 - 참조한 슬롯이 결과를 못 냈거나 되묻는 중이면, 참조하는 슬롯은 돌지 않고 그 이유를 표시한다.
 - 없는 이름, 결과를 내보내지 않는 스킬, 순환 참조는 플래너 출력 검증에서 거부되어 플래너가 다시 쓴다.
-- 내보내는 스킬: `stock_holders`(ETF, 그 종목 비중 순), `holdings`(종목, ETF 내 비중 순), `portfolio_lookthrough`(종목, 합산 비중 순).
+- 내보내는 스킬: `stock_holders`(ETF, 그 종목 비중 순 — 여러 종목이면 비중 합계 순), `holdings`(종목, ETF 내 비중 순), `portfolio_lookthrough`(종목, 합산 비중 순).
+
 
 ## 대상을 정하지 못할 때: 되묻기
 

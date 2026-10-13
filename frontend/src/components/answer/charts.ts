@@ -103,6 +103,7 @@ const bar: Builder<'bar'> = (view, content, theme) => {
     yAxis: view.horizontal ? categories : values,
     series: view.y.map((key) => ({
       type: 'bar', name: fieldOf(content, key).label, data: rows.map((r) => num(r[key])), barMaxWidth: 28,
+      ...(view.stacked ? { stack: 'total' } : {}),
       // 계열이 하나이고 음수가 섞이면 상승·하락 색으로
       ...(single && signed
         ? { itemStyle: { color: (p: { value: number }) => (p.value < 0 ? theme.down : theme.up) } }

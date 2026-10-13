@@ -348,7 +348,7 @@ export interface Dataset {
 export type DataView =
   | { kind: 'table'; orientation: 'list' | 'compare' }
   | { kind: 'line'; x: string; y: string[] }
-  | { kind: 'bar'; x: string; y: string[]; horizontal: boolean }
+  | { kind: 'bar'; x: string; y: string[]; horizontal: boolean; stacked?: boolean }
   | { kind: 'donut'; name: string; value: string }
   | { kind: 'treemap'; name: string; value: string }
   | { kind: 'radar'; axis: string; series: string[]; max: number }

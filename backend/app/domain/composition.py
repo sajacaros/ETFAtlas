@@ -36,9 +36,9 @@ def normalize_weights(allocations: list[ETFAllocation]) -> dict[str, float]:
     return {a.code: a.weight * 100 / total for a in allocations if a.weight > 0}
 
 
-def aggregate_composition(allocations: list[ETFAllocation]) -> list[StockExposure]:
-    """겹치는 종목은 합산해 포트폴리오 비중 내림차순으로 반환."""
-    normalized = normalize_weights(allocations)
+def aggregate_composition(allocations: list[ETFAllocation], normalize: bool = True) -> list[StockExposure]:
+    """겹치는 종목은 합산해 포트폴리오 비중 내림차순으로 반환. normalize=False면 입력 비중을 100%로 환산하지 않고 그대로 쓴다."""
+    normalized = normalize_weights(allocations) if normalize else {a.code: a.weight for a in allocations if a.weight > 0}
     stocks: dict[str, StockExposure] = {}
     for a in allocations:
         etf_weight = normalized.get(a.code)

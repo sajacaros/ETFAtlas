@@ -41,6 +41,15 @@ def test_aggregate_sums_overlapping_stocks_and_sorts():
     assert result[2].weight == pytest.approx(2.0)
 
 
+def test_aggregate_keeps_input_weights_without_normalize():
+    allocations = [
+        ETFAllocation("SEMI", "반도체", 30, [_h("005930", "삼성전자", 25)]),
+        ETFAllocation("DIV", "고배당", 10, [_h("005930", "삼성전자", 10)]),
+    ]
+    # 반도체 30% × 25% + 고배당 10% × 10% (합계 40%를 100%로 늘리지 않는다)
+    assert aggregate_composition(allocations, normalize=False)[0].weight == pytest.approx(7.5 + 1.0)
+
+
 def test_aggregate_skips_zero_weight_holdings():
     allocations = [ETFAllocation("A", "a", 10, [_h("1", "x", 0), _h("2", "y", None), _h("3", "z", 5)])]
     assert [s.stock_code for s in aggregate_composition(allocations)] == ["3"]

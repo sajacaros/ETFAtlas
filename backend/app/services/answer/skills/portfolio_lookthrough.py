@@ -29,6 +29,10 @@ class PortfolioLookthroughArgs(BaseModel):
         min_length=1, max_length=50, description="포트폴리오 구성. 사용자가 준 표나 목록의 각 행 (ETF와 개별 종목이 섞여도 된다)",
     )
     top: int = Field(15, ge=5, le=50, description="보여줄 상위 종목 수")
+    normalize: bool = Field(True, description=(
+        "입력 비중 합계를 100%로 환산할지. 기본값 true (예: 합계 40%면 각 비중을 2.5배). "
+        "사용자가 입력한 비중 그대로(환산하지 말고) 보고 싶다고 할 때만 false"
+    ))
 
 
 def _holdings(db: Session, codes: List[str]) -> Dict[str, List[Dict]]:
@@ -72,6 +76,7 @@ class PortfolioLookthroughSkill(DataSkill):
     description = (
         "포트폴리오(여러 ETF·종목과 각 비중)의 종목별 합산 비중. ETF는 구성종목으로 풀어 비중을 곱해 더하고, "
         "직접 담은 종목은 그대로 더한다. 사용자가 비중이 적힌 표·목록을 주고 구성종목 비율·겹치는 종목·실제 노출을 물을 때. "
+        "입력 비중 합계가 100%가 아니면 100%로 환산해 계산하고(normalize), 종목마다 소속 ETF별 기여분도 함께 보여준다. "
         "ETF별 holdings 슬롯을 여러 개 만드는 대신 이 슬롯 하나로 처리한다"
     )
     Args = PortfolioLookthroughArgs
@@ -120,7 +125,8 @@ class PortfolioLookthroughSkill(DataSkill):
                 {"stock_code": code, "stock_name": s["name"], "weight": 100},
             ]))
 
-        exposures = aggregate_composition(allocations)
+        total = sum(a.weight for a in allocations)
+        exposures = aggregate_composition(allocations, normalize=args.normalize)
         named = [x for x in exposures if x.stock_code != OTHER]
         top = min(args.top, DONUT_MAX_SLICES - 1) if display == "donut" else args.top
         shown = named[:top]
@@ -133,8 +139,8 @@ class PortfolioLookthroughSkill(DataSkill):
             }
             for x in shown
         ]
-        # 표시하지 않은 종목과 ETF 안의 30위 밖·현금을 합친 값. 모든 행의 합이 100이 된다
-        rest = round(100 - sum(x.weight for x in shown), 2)
+        # 표시하지 않은 종목과 ETF 안의 30위 밖·현금을 합친 값. 모든 행의 합이 100(환산하지 않으면 입력 비중 합계)이 된다
+        rest = round((100 if args.normalize else total) - sum(x.weight for x in shown), 2)
         if rest > 0.005:
             rows.append({"name": "기타", "code": None, "weight": rest,
                          "via": f"상위 {len(shown)}개 밖 종목, ETF 구성 30위 밖·현금"})
@@ -163,9 +169,9 @@ class PortfolioLookthroughSkill(DataSkill):
             notes.append(f"이름으로 찾은 항목: {', '.join(resolved)}")
         if missing:
             notes.append(f"찾지 못해 계산에서 뺀 항목: {', '.join(missing)}")
-        total = sum(a.weight for a in allocations)
         if abs(total - 100) > 0.05:
-            notes.append(f"입력 비중 합계 {total:.2f}%를 100%로 맞춰 계산했습니다")
+            notes.append(f"입력 비중 합계 {total:.2f}%를 100%로 맞춰 계산했습니다" if args.normalize
+                         else f"입력 비중 합계 {total:.2f}%를 환산하지 않고 그대로 계산했습니다")
         if etfs:
             notes.append("ETF 구성종목은 비중 상위 30개 기준입니다")
 

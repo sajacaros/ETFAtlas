@@ -26,6 +26,7 @@ import {
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import DocDialog, { DOC_PAGES, type DocPage } from '@/components/DocDialog'
+import { SidebarSlotContext } from '@/components/SidebarSlot'
 import { cn } from '@/lib/utils'
 
 const COLLAPSED_KEY = 'sidebar-collapsed'
@@ -93,10 +94,12 @@ function SidebarBody({
   collapsed,
   onToggleCollapse,
   onOpenDoc,
+  slotRef,
 }: {
   collapsed: boolean
   onToggleCollapse?: () => void
   onOpenDoc: (doc: DocPage) => void
+  slotRef?: (el: HTMLDivElement | null) => void
 }) {
   const { user, logout } = useAuth()
   const { hasNew } = useNotification()
@@ -148,7 +151,7 @@ function SidebarBody({
         )}
       </div>
 
-      <nav className={cn('flex-1 overflow-y-auto px-3 py-2', collapsed && 'px-2')}>
+      <nav className={cn('shrink-0 px-3 py-2', collapsed && 'px-2')}>
         {!collapsed && (
           <div className="px-2.5 pb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
             메뉴
@@ -177,6 +180,9 @@ function SidebarBody({
           </>
         )}
       </nav>
+
+      {/* 페이지가 채우는 자리 (비어 있으면 아래 항목을 바닥으로 미는 여백) */}
+      <div ref={slotRef} className={cn('flex min-h-0 flex-1 flex-col px-3', collapsed && 'hidden')} />
 
       <div className={cn('space-y-0.5 px-3 pb-2', collapsed && 'px-2')}>
         {collapsed ? (
@@ -259,6 +265,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   const location = useLocation()
   const [openDoc, setOpenDoc] = useState<DocPage | null>(null)
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [slot, setSlot] = useState<HTMLDivElement | null>(null)
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return localStorage.getItem(COLLAPSED_KEY) === '1'
@@ -297,6 +304,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
           collapsed={collapsed}
           onToggleCollapse={toggleCollapse}
           onOpenDoc={setOpenDoc}
+          slotRef={setSlot}
         />
       </aside>
 
@@ -336,7 +344,9 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       </DialogPrimitive.Root>
 
       <div className={cn('transition-[padding] duration-200', collapsed ? 'lg:pl-[68px]' : 'lg:pl-60')}>
-        <main className="w-full max-w-[1600px] px-4 py-6 lg:px-8 lg:py-8">{children}</main>
+        <SidebarSlotContext.Provider value={collapsed ? null : slot}>
+          <main className="w-full max-w-[1600px] px-4 py-6 lg:px-8 lg:py-8">{children}</main>
+        </SidebarSlotContext.Provider>
       </div>
 
       <DocDialog doc={openDoc} onClose={() => setOpenDoc(null)} />

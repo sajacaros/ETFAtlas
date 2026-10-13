@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback, KeyboardEvent } from 'react'
+import { createPortal } from 'react-dom'
 import {
-  Send, Square, Loader2, MessageCircle, ChevronLeft, ChevronRight, Trash2, BookOpen, Plus, Pencil, Check, X, History, CornerDownRight,
+  Send, Square, Loader2, MessageCircle, ChevronRight, Trash2, BookOpen, Plus, Pencil, Check, X, History, CornerDownRight,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -15,6 +16,7 @@ import type {
   ChatSessionDetail, ChatSessionSummary, ChatStep, LayoutNode, MatchedCodeExample, SlotState,
 } from '@/types/api'
 import { AnswerView } from '@/components/answer/AnswerView'
+import { useSidebarSlot } from '@/components/SidebarSlot'
 import ReactMarkdown from 'react-markdown'
 import { MARKDOWN_PLUGINS } from '@/lib/markdown'
 
@@ -83,7 +85,7 @@ export default function ChatPage() {
   const [input, setInput] = useState('')
   const [isLoadingSession, setIsLoadingSession] = useState(false)
   const [showSessions, setShowSessions] = useState(false)
-  const [sessionsCollapsed, setSessionsCollapsed] = useState(false)
+  const sidebarSlot = useSidebarSlot()  // 데스크톱 사이드바가 펼쳐져 있으면 대화 목록을 거기에 둔다
   const [deleteTarget, setDeleteTarget] = useState<ChatSessionSummary | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -296,19 +298,8 @@ export default function ChatPage() {
 
   return (
     <div className="flex gap-4 h-[calc(100dvh-6.5rem)] lg:h-[calc(100dvh-4rem)]">
-      {/* Sessions (desktop) */}
-      <div className="hidden md:flex shrink-0">
-        {!sessionsCollapsed && <aside className="w-72 flex flex-col border-r pr-3">{sessionList}</aside>}
-        <button
-          type="button"
-          onClick={() => setSessionsCollapsed((v) => !v)}
-          className="self-center ml-1 h-20 w-6 flex items-center justify-center rounded-md border bg-background text-muted-foreground hover:text-foreground hover:bg-muted"
-          aria-label={sessionsCollapsed ? '대화 목록 펼치기' : '대화 목록 접기'}
-          title={sessionsCollapsed ? '대화 목록 펼치기' : '대화 목록 접기'}
-        >
-          {sessionsCollapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
-        </button>
-      </div>
+      {/* Sessions (desktop, 사이드바 메뉴 아래) */}
+      {sidebarSlot && createPortal(sessionList, sidebarSlot)}
 
       <div className="flex-1 min-w-0 flex flex-col relative">
         {/* Header */}
@@ -318,7 +309,8 @@ export default function ChatPage() {
               <MessageCircle className="w-6 h-6" />
               ETF 챗봇
             </h1>
-            <div className="flex gap-1 md:hidden">
+            {/* 사이드바에 목록이 없을 때(모바일·사이드바 접힘) 쓰는 버튼 */}
+            <div className={`flex gap-1 ${sidebarSlot ? 'lg:hidden' : ''}`}>
               <Button variant="ghost" size="sm" onClick={() => setShowSessions((v) => !v)}>
                 <History className="w-4 h-4 mr-1" />
                 대화 목록
@@ -332,7 +324,7 @@ export default function ChatPage() {
 
         {/* Sessions (mobile) */}
         {showSessions && (
-          <div className="md:hidden absolute inset-x-0 top-12 z-10 max-h-[60%] flex flex-col rounded-md border bg-background p-2 shadow-lg">
+          <div className={`${sidebarSlot ? 'lg:hidden' : ''} absolute inset-x-0 top-12 z-10 max-h-[60%] flex flex-col rounded-md border bg-background p-2 shadow-lg`}>
             {sessionList}
           </div>
         )}
@@ -535,18 +527,21 @@ function SessionList({
 
   return (
     <>
-      <Button variant="outline" size="sm" className="w-full mb-2" onClick={onNew}>
-        <Plus className="w-4 h-4 mr-1" />
+      <button
+        onClick={onNew}
+        className="flex h-9 w-full shrink-0 items-center gap-3 rounded-lg px-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+      >
+        <Plus className="h-[18px] w-[18px] shrink-0" />
         새 대화
-      </Button>
-      <div ref={scrollRef} className="flex-1 overflow-y-auto thin-scrollbar">
+      </button>
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto thin-scrollbar">
         {sessions.length === 0 && (
           <p className="text-xs text-muted-foreground text-center py-4">대화 기록이 없습니다</p>
         )}
         {groupByDate(sessions).map((group) => (
-          <section key={group.label} className="mb-3">
-            <h3 className="px-2 pt-1 pb-1 text-[11px] font-medium text-muted-foreground">{group.label}</h3>
-            <div className="space-y-0.5">
+          <section key={group.label}>
+            <h3 className="px-2.5 pb-1 pt-4 text-[11px] font-semibold text-muted-foreground/70">{group.label}</h3>
+            <div className="space-y-px">
               {group.items.map((s) =>
                 editingId === s.id ? (
                   <div key={s.id} className="flex items-center gap-1 px-1 py-0.5">
@@ -571,22 +566,26 @@ function SessionList({
                 ) : (
                   <div
                     key={s.id}
-                    className={`group flex items-start gap-1 rounded-md px-2 py-1.5 text-sm ${
-                      s.id === activeId ? 'bg-muted font-medium' : 'hover:bg-muted/60'
+                    className={`group relative flex h-8 items-center gap-1 rounded-lg px-2.5 text-[13px] transition-colors ${
+                      s.id === activeId ? 'bg-accent text-accent-foreground font-medium' : 'text-foreground/80 hover:bg-muted hover:text-foreground'
                     }`}
                   >
                     <button
                       onClick={() => onOpen(s.id)}
-                      className="flex-1 min-w-0 text-left line-clamp-2 break-words leading-snug"
+                      className="flex-1 min-w-0 text-left truncate"
                       title={s.title}
                     >
                       {s.title}
                     </button>
                     {runningIds.has(s.id) && (
-                      <Loader2 className="w-3 h-3 mt-1 shrink-0 animate-spin text-muted-foreground" aria-label="답변 생성 중" />
+                      <Loader2 className="w-3 h-3 shrink-0 animate-spin text-muted-foreground" aria-label="답변 생성 중" />
                     )}
-                    {/* 데스크톱에서는 올렸을 때만 보인다 — 평소에는 자리도 비워 제목을 넓게 쓴다 */}
-                    <div className="flex shrink-0 md:hidden md:group-hover:flex md:group-focus-within:flex">
+                    {/* 데스크톱에서는 올렸을 때만 제목 끝에 겹쳐 보인다 — 제목 자리를 줄이거나 줄을 다시 나누지 않게 */}
+                    <div
+                      className={`flex shrink-0 items-center lg:absolute lg:inset-y-0 lg:right-1 lg:hidden lg:rounded-r-lg lg:pl-3 lg:group-hover:flex lg:group-focus-within:flex ${
+                        s.id === activeId ? 'lg:bg-accent' : 'lg:bg-muted'
+                      }`}
+                    >
                       <button
                         onClick={() => { setEditingId(s.id); setEditTitle(s.title) }}
                         className="p-1 text-muted-foreground hover:text-foreground"

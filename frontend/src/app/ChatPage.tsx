@@ -296,8 +296,8 @@ export default function ChatPage() {
 
   return (
     <div className="flex gap-4 h-[calc(100dvh-6.5rem)] lg:h-[calc(100dvh-4rem)]">
-      {/* Sessions (desktop) */}
-      <div className="hidden md:flex shrink-0">
+      {/* Sessions (desktop) — 페이지 왼쪽 여백까지 당겨 사이드바에 붙인다 */}
+      <div className="hidden md:flex shrink-0 -ml-2 lg:-ml-6">
         {!sessionsCollapsed && <aside className="w-64 flex flex-col border-r pr-3">{sessionList}</aside>}
         <button
           type="button"

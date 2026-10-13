@@ -49,7 +49,8 @@ class ETFChoiceSkill(DataSkill):
         "ETF 하나를 정해야 답할 수 있는데(구성종목·가격 추이·수익률 등) 대상이 조건으로만 주어져 여러 ETF가 해당할 때 "
         "후보 목록을 보여주고 어느 ETF를 볼지 되묻는다. 어떤 종목을 담은 ETF면 by=stock, 업종·테마 이름이면 by=theme. "
         "이 슬롯 하나만 만든다(다른 스킬·narrative·agent를 붙이지 않는다). "
-        "ETF 목록 자체를 묻거나 종목을 많이 담은 ETF 순위를 묻는 질문, ETF 상품 이름이 주어진 질문에는 쓰지 않는다"
+        "ETF 목록 자체를 묻거나 종목을 많이 담은 ETF 순위를 묻는 질문, ETF 상품 이름이 주어진 질문에는 쓰지 않는다. "
+        "'가장 많이 담은 ETF', 'N위 ETF'처럼 순위로 대상이 정해지면 되묻지 않고 순위 스킬과 참조('@이름.순위')를 쓴다"
     )
     Args = ETFChoiceArgs
     displays = ("markdown",)

@@ -146,3 +146,9 @@ def _unmanaged_etf(db: Session, code: Optional[str], query: str) -> Optional[Dic
     else:
         row = db.query(ETF).filter(func.lower(func.replace(ETF.name, " ", "")) == query).first()
     return {"code": row.code, "name": row.name} if row else None
+
+
+def is_etf_name(db: Session, name: str) -> bool:
+    """상장 ETF(관리 여부와 상관없이) 중 이름이 정확히 같은 것이 있는지 (공백·대소문자 무시)."""
+    query = _normalize(name)
+    return bool(query) and db.query(ETF.id).filter(func.lower(func.replace(ETF.name, " ", "")) == query).first() is not None

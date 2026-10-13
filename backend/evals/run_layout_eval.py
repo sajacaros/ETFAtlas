@@ -118,16 +118,13 @@ async def execute(question: str, rows) -> List[str]:
 async def run_one(item: Dict, config, seeds: Dict[int, Set[str]], sem: asyncio.Semaphore) -> Dict:
     async with sem:
         found: List[Dict] = []
+        lookups = planner_mod.data_lookups(SessionLocal)  # 서비스와 같은 연결, 예시 검색만 기록하게 감싼다
 
         def find(question: str) -> List[Dict]:
-            db = SessionLocal()
-            try:
-                found.extend(planner_mod.find_layout_examples(db, question))
-                return found
-            finally:
-                db.close()
+            found.extend(lookups["find_examples"](question))
+            return found
 
-        planner = Planner(config, find_examples=find)
+        planner = Planner(config, **{**lookups, "find_examples": find})
         with capture_run_messages() as messages:
             rows = await planner.plan(item["q"], ConversationContext())
         slots = [{"skill": s.skill, "name": s.name, "title": s.title, "display": s.display, "args": s.args.model_dump()}

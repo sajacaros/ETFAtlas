@@ -815,3 +815,26 @@ def test_related_text_carries_notes_to_the_narrative():
     result = {"summary": "KODEX 200: 1일 -3.83%", "content": {"notes": ["찾지 못한 ETF: ACE KRX금현물(관리하지 않는 ETF)"]}}
     assert orch._related_text(result) == "KODEX 200: 1일 -3.83%\n(참고) 찾지 못한 ETF: ACE KRX금현물(관리하지 않는 ETF)"
     assert orch._related_text({"message": "결과 없음"}) == "결과 없음"
+
+
+def _choice(condition, by="theme"):
+    return {"skill": "etf_choice", "title": "선택", "display": "markdown",
+            "args": {"by": by, "condition": condition, "purpose": "구성종목"}}
+
+
+@pytest.mark.parametrize("slot, errors", [
+    (_choice("PLUS K방산"), 1),          # 상품 이름을 테마로 되물으면 안 된다
+    (_choice("방산"), 0),
+    (_choice("PLUS K방산", by="stock"), 0),  # 종목 조건은 이름 검사 대상이 아니다
+])
+def test_planner_rejects_a_theme_that_is_an_etf_name(slot, errors):
+    from app.services.answer.planner import data_errors
+    found = data_errors(_plan_steps(slot), lambda name: name == "PLUS K방산")
+    assert len(found) == errors
+    if errors:
+        assert "ETF 상품 이름입니다" in found[0]
+
+
+def test_plan_rejects_a_name_nobody_references():
+    with pytest.raises(Exception, match="name 'rank'을 붙였지만 '@rank.순위'로 받는 슬롯이 없습니다"):
+        _plan_steps(RANK)

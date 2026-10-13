@@ -10,13 +10,14 @@ from dataclasses import dataclass, field
 from typing import Annotated, Any, Callable, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, ValidationError, create_model, model_validator
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ModelRetry
 from sqlalchemy.orm import Session
 
 from ..ai_config import AIConfig
 from ..chat_memory import ConversationContext
 from ..embedding_service import EmbeddingService
 from .llm import NO_THINKING, build_model
+from .resolver import is_etf_name
 from .refs import RefError, expanded, rank_gaps, refs_in, split_hint
 from .schemas import slot_type
 from .skills import FALLBACK_SKILL, REGISTRY
@@ -123,6 +124,12 @@ def build_plan_model(registry: Dict[str, Skill]) -> type[BaseModel]:
                 if error:
                     errors.append(error)
             graph[id(step)] = [id(named[r]) for r in ok]
+        # name은 결과를 넘기려고 붙인다 — 받는 슬롯이 없으면 그 슬롯을 빠뜨린 것이다
+        referenced = {r for step in steps for r in refs_in(step.args.model_dump())}
+        for name, step in named.items():
+            if name not in referenced:
+                errors.append(f"{_label(step)}에 name '{name}'을 붙였지만 '@{name}.순위'로 받는 슬롯이 없습니다. "
+                              "그 결과를 받아야 할 슬롯을 만들거나, 넘길 필요가 없으면 name을 지우세요")
         errors += _gap_errors(steps)
         if _has_cycle(graph):
             errors.append("슬롯들이 서로를 참조해 순환합니다")
@@ -265,6 +272,31 @@ def layout_tree(rows: List[List[PlannedSlot]]) -> Dict[str, Any]:
     return {"type": "column", "children": children}
 
 
+def data_lookups(session_factory: Callable[[], Session]) -> Dict[str, Callable]:
+    """플래너가 DB를 보는 함수들 — Planner(**data_lookups(...))로 넘긴다. 부를 때마다 세션을 따로 연다 (스레드에서 돈다)."""
+    def with_session(fn):
+        def call(*args):
+            db = session_factory()
+            try:
+                return fn(db, *args)
+            finally:
+                db.close()
+        return call
+
+    return {"find_examples": with_session(find_layout_examples), "is_etf_name": with_session(is_etf_name)}
+
+
+def data_errors(plan: BaseModel, is_etf_name: Callable[[str], bool]) -> List[str]:
+    """스키마로는 알 수 없고 데이터를 봐야 아는 계획 오류."""
+    errors = []
+    for step in (step for row in plan.rows for step in row.slots):
+        # 테마로 되묻는데 그 '테마'가 상장 ETF의 정확한 이름이면, 대상이 이미 정해진 것이다
+        if step.skill == "etf_choice" and step.args.by == "theme" and is_etf_name(step.args.condition):
+            errors.append(f"{_label(step)}: '{step.args.condition}'은(는) 테마가 아니라 ETF 상품 이름입니다. "
+                          "되묻지 말고 그 이름을 데이터 스킬의 인자에 그대로 적으세요")
+    return errors
+
+
 def find_layout_examples(db: Session, question: str) -> List[Dict[str, Any]]:
     """질문과 유형이 비슷한 화면 설계 예시. 예시는 고유명사를 뺀 일반화 질문으로 임베딩되어 있어 검색 질의도 일반화한다."""
     service = EmbeddingService(db)
@@ -290,6 +322,7 @@ class Planner:
     def __init__(
         self, config: AIConfig, registry: Dict[str, Skill] = REGISTRY,
         find_examples: Optional[Callable[[str], List[Dict[str, Any]]]] = None,
+        is_etf_name: Optional[Callable[[str], bool]] = None,
     ):
         self._find_examples = find_examples
         self._agent = Agent(
@@ -299,6 +332,13 @@ class Planner:
             model_settings=NO_THINKING,
             retries=2,
         )
+        if is_etf_name is not None:
+            @self._agent.output_validator
+            async def check_data(output):
+                errors = await asyncio.to_thread(data_errors, output, is_etf_name)
+                if errors:  # 스키마 검증 오류와 같이, 이유를 플래너에게 돌려줘 다시 쓰게 한다
+                    raise ModelRetry("\n".join(errors))
+                return output
 
     async def plan(self, question: str, context: ConversationContext) -> List[List[PlannedSlot]]:
         parts = []

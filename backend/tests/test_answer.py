@@ -286,9 +286,13 @@ def test_stock_holders_ranks_etfs_by_combined_weight(monkeypatch):
 
 class FakePortfolioResolver:
     ETFS = {"KODEX 200": {"code": "069500", "name": "KODEX 200"}, "KODEX 반도체": {"code": "091160", "name": "KODEX 반도체"}}
+    UNMANAGED = {"360750": {"code": "360750", "name": "TIGER 미국S&P500"}}  # 상장 ETF지만 그래프에 없다
     STOCKS = {"삼성전자": {"code": "005930", "name": "삼성전자"}}
 
     def etf(self, db, name):
+        from app.services.answer.resolver import UnmanagedETF
+        if name in self.UNMANAGED:
+            raise UnmanagedETF(self.UNMANAGED[name])
         return self.ETFS.get(name)
 
     def stock(self, db, name):
@@ -310,9 +314,7 @@ def lookthrough(monkeypatch):
             {"etf": "091160", "stock_code": "042700", "stock_name": "한미반도체", "weight": 50.0, "date": "2026-10-06"},
         ]
 
-    unlisted = {"360750": {"code": "360750", "name": "TIGER 미국S&P500"}}
     monkeypatch.setattr(mod, "node", fake_node)
-    monkeypatch.setattr(mod, "_unlisted_etf", lambda db, asset: unlisted.get(asset))
     skill = REGISTRY["portfolio_lookthrough"]
 
     def run(items, display="table", top=15):
@@ -407,6 +409,10 @@ def fake_etf_graph(monkeypatch):
                     if params["query"] in e["name"].replace(" ", "").lower()]
 
     monkeypatch.setattr(resolver_mod, "GraphService", FakeGraph)
+    # 상장 ETF 목록(RDB)에만 있는 ETF — 관리하지 않는다
+    unmanaged = {"122630": {"code": "122630", "name": "KODEX 레버리지"}}
+    monkeypatch.setattr(resolver_mod, "_unmanaged_etf", lambda db, code, query: unmanaged.get(code) or next(
+        (e for e in unmanaged.values() if e["name"].replace(" ", "").lower() == query), None))
     return calls
 
 
@@ -425,6 +431,36 @@ def test_resolver_asks_instead_of_guessing_between_etfs(fake_etf_graph):
     with pytest.raises(AmbiguousETF):
         r.etf(None, "K반도체TOP2+")
     assert len(fake_etf_graph) == calls
+
+
+def test_resolver_tells_unmanaged_etfs_apart_from_unknown_names(fake_etf_graph):
+    from app.services.answer.resolver import EntityResolver, UnmanagedETF
+    r = EntityResolver()
+    for name in ("kodex 레버리지", "122630"):
+        with pytest.raises(UnmanagedETF) as exc:
+            r.etf(None, name)
+        assert exc.value.etf == {"code": "122630", "name": "KODEX 레버리지"}
+    assert r.etf(None, "없는ETF") is None
+    found, missing = r.etfs(None, ["091160", "KODEX 레버리지", "없는ETF"])
+    assert [e["code"] for e in found] == ["091160"]
+    assert missing == ["KODEX 레버리지(관리하지 않는 ETF)", "없는ETF"]
+    with pytest.raises(UnmanagedETF):  # 하나만 물었으면 단일 ETF와 같은 안내
+        r.etfs(None, ["KODEX 레버리지"])
+
+
+def test_data_skill_says_an_etf_is_not_managed(fake_etf_graph):
+    from app.services.answer.resolver import EntityResolver
+    from app.services.answer.skills.base import SkillContext
+
+    async def run():
+        ctx = SkillContext(question="q", conversation=ConversationContext(), session_factory=lambda: _Closable(),
+                           resolver=EntityResolver(), ai_config=None, stop=asyncio.Event())
+        skill = REGISTRY["holdings"]
+        return [e async for e in skill.run(skill.Args(etf="KODEX 레버리지"), "treemap", ctx)]
+
+    result = asyncio.run(run())[-1]
+    assert result["status"] == "empty"
+    assert result["message"].startswith("ETF Atlas에서 관리하지 않는 ETF입니다: KODEX 레버리지(122630)")
 
 
 def test_data_skill_turns_an_ambiguous_etf_into_a_question(fake_etf_graph):
@@ -773,3 +809,9 @@ def test_plan_rejects_ranks_skipped_between_ranges():
 ])
 def test_plan_accepts_ranks_without_gaps_or_picked_one_by_one(etf_lists):
     _plan_steps(RANK, *_returns(*etf_lists))
+
+
+def test_related_text_carries_notes_to_the_narrative():
+    result = {"summary": "KODEX 200: 1일 -3.83%", "content": {"notes": ["찾지 못한 ETF: ACE KRX금현물(관리하지 않는 ETF)"]}}
+    assert orch._related_text(result) == "KODEX 200: 1일 -3.83%\n(참고) 찾지 못한 ETF: ACE KRX금현물(관리하지 않는 ETF)"
+    assert orch._related_text({"message": "결과 없음"}) == "결과 없음"

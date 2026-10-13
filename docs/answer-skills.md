@@ -146,6 +146,12 @@ docker exec -w /app -e PYTHONPATH=/app etf-atlas-backend python /tmp/evals/run_l
 
 LLM 출력은 실행마다 달라서 같은 설정에서도 통과율이 몇 % 오르내린다. 비교는 여러 번(`--reps`) 돌려서 한다.
 
+## 관리하지 않는 ETF
+
+상장 ETF 전체는 RDB `etfs`에 있고, ETF Atlas가 관리하는 ETF(수집 DAG의 유니버스 조건을 통과한 국내 주식형)만 그래프에 있다.
+리졸버는 그래프에 없는 ETF가 `etfs`에 코드나 정확한 이름으로 있으면 `UnmanagedETF`를 내고, 모든 데이터 스킬은 '찾지 못했다'가 아니라
+"ETF Atlas에서 관리하지 않는 ETF입니다: KODEX 레버리지(122630)"로 알린다. 여러 ETF를 받는 스킬은 주석에 "(관리하지 않는 ETF)"를 붙이고,
+`portfolio_lookthrough`는 구성종목 없이 ETF 한 행으로 둔다. 해설 슬롯은 앞 영역의 요약과 주석을 함께 받는다.
 
 ## 대상을 정하지 못할 때: 되묻기
 

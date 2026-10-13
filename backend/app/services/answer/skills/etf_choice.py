@@ -59,6 +59,7 @@ class ETFChoiceSkill(DataSkill):
             theme = _theme_word(args.condition)
             etfs = _theme_etfs(db, theme)
             if not etfs:
+                resolver.etf(db, args.condition)  # 테마가 아니라 관리하지 않는 ETF의 이름이면 UnmanagedETF로 그렇다고 알린다
                 return empty(f"'{theme}'에 해당하는 ETF를 찾지 못했습니다")
             subject, metric = f"'{theme}' ETF가", "순자산"
             rows = [[e["name"], e["code"], format_value(e.get("net_assets"), "krw")] for e in etfs]

@@ -2,13 +2,11 @@ import re
 from typing import Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ....domain.composition import ETFAllocation, aggregate_composition
-from ....models.etf import ETF
 from ...graph_service import GraphService
-from ..resolver import AmbiguousETF, EntityResolver, _normalize
+from ..resolver import AmbiguousETF, EntityResolver, UnmanagedETF, _normalize
 from ..schemas import BarView, DataField, Dataset, DonutView, Source, TableView, TreemapView
 from .base import DataSkill, SkillResult, data_result, empty
 from .common import node
@@ -33,13 +31,6 @@ class PortfolioLookthroughArgs(BaseModel):
     top: int = Field(15, ge=5, le=50, description="보여줄 상위 종목 수")
 
 
-def _unlisted_etf(db: Session, asset: str) -> Optional[Dict]:
-    """그래프에 없는 ETF (해외 ETF 등 구성종목을 수집하지 않는 ETF). {code, name} 또는 None."""
-    key = asset.strip()
-    row = db.query(ETF).filter((ETF.code == key.upper()) | (func.lower(ETF.name) == key.lower())).first()
-    return {"code": row.code, "name": row.name} if row else None
-
-
 def _holdings(db: Session, codes: List[str]) -> Dict[str, List[Dict]]:
     """ETF 코드 → 구성종목 [{stock_code, stock_name, weight, date}]. 한 번의 쿼리로 가져온다."""
     codes = [c for c in codes if SAFE_CODE_RE.fullmatch(c)]
@@ -59,23 +50,19 @@ def _holdings(db: Session, codes: List[str]) -> Dict[str, List[Dict]]:
 
 
 def _find(db: Session, resolver: EntityResolver, asset: str) -> Optional[Tuple[str, Dict]]:
-    """자산을 ETF → 그래프 밖 ETF → 종목 순서로 찾는다 (ETF 코드가 다른 ETF의 구성종목 노드로 잡히지 않게).
+    """자산을 ETF(관리하지 않는 ETF 포함) → 종목 순서로 찾는다 (ETF 코드가 다른 ETF의 구성종목 노드로 잡히지 않게).
     ETF 이름이 애매하면 정확히 같은 이름의 종목일 때만 종목으로 보고, 아니면 되묻는다."""
     try:
         etf = resolver.etf(db, asset)
+    except UnmanagedETF as e:  # 관리하지 않는 ETF(해외 ETF 등)는 구성종목 없이 ETF 한 행으로
+        return "unlisted", e.etf
     except AmbiguousETF:
-        unlisted = _unlisted_etf(db, asset)
-        if unlisted:
-            return "unlisted", unlisted
         stock = resolver.stock(db, asset)
         if stock and _normalize(stock["name"]) == _normalize(asset):
             return "stock", stock
         raise
     if etf:
         return "etf", etf
-    unlisted = _unlisted_etf(db, asset)
-    if unlisted:
-        return "unlisted", unlisted
     stock = resolver.stock(db, asset)
     return ("stock", stock) if stock else None
 

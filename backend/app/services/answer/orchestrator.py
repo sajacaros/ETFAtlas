@@ -46,6 +46,14 @@ def _slot_event(slot_id: str, status: str, message: Optional[str] = None) -> Dic
     return _event("slot", data)
 
 
+def _related_text(result: Dict[str, Any]) -> str:
+    """뒤 슬롯(해설)에 넘기는 앞 영역의 내용: 요약과, 화면에 함께 표시되는 주석
+    (관리하지 않는 ETF·데이터 기간 같은 사실은 주석에만 있어 빠뜨리면 해설이 엉뚱하게 설명한다)."""
+    text = result.get("summary") or result.get("message") or ""
+    notes = (result.get("content") or {}).get("notes") or []
+    return "\n".join([text, *(f"(참고) {n}" for n in notes)]) if notes else text
+
+
 def answer_text(slots: List[PlannedSlot], results: Dict[str, Dict[str, Any]]) -> str:
     """화면을 텍스트로: 텍스트 슬롯은 본문, 데이터 슬롯은 요약."""
     parts = []
@@ -195,8 +203,7 @@ class AnswerService:
                         await finish(slot, {"status": "empty", "message": message}, message)
                         return
 
-                related = [(by_id[d].title, results[d].get("summary") or results[d].get("message") or "")
-                           for d in deps if d in results]
+                related = [(by_id[d].title, _related_text(results[d])) for d in deps if d in results]
                 ctx = SkillContext(
                     question=question, conversation=context, session_factory=self._session_factory,
                     resolver=resolver, ai_config=self._config, stop=stop, related=related,

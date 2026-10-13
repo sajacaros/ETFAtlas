@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from ...ai_config import AIConfig
 from ...chat_memory import ConversationContext
-from ..resolver import CANDIDATE_LIMIT, AmbiguousETF, EntityResolver
+from ..resolver import CANDIDATE_LIMIT, AmbiguousETF, EntityResolver, UnmanagedETF
 from ..schemas import DataContent, Dataset, Source, TextContent
 from .common import format_value
 
@@ -96,6 +96,10 @@ def ambiguous_etf_result(e: AmbiguousETF) -> SkillResult:
     )
 
 
+def unmanaged_etf_result(e: UnmanagedETF) -> SkillResult:
+    return empty(f"ETF Atlas에서 관리하지 않는 ETF입니다: {e.etf['name']}({e.etf['code']}). 구성종목·가격 데이터가 없습니다")
+
+
 def text_result(text: str, kind: str = "text") -> SkillResult:
     return SkillResult(status="complete", content=TextContent(type=kind, text=text).model_dump(), summary=text)
 
@@ -131,6 +135,8 @@ class DataSkill(Skill):
                 return self.fetch(args, display, db, ctx.resolver)
             except AmbiguousETF as e:  # 어느 스킬이든 ETF 이름이 애매하면 고르지 않고 되묻는다
                 return ambiguous_etf_result(e)
+            except UnmanagedETF as e:  # 상장 ETF지만 관리 대상이 아니면 '찾지 못했다'가 아니라 그렇다고 알린다
+                return unmanaged_etf_result(e)
             finally:
                 db.close()
 

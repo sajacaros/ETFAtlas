@@ -1132,7 +1132,7 @@ def _split_discord_messages(header: str, blocks: list[str], limit: int = DISCORD
 
 
 def send_discord_notification(date_str: str):
-    """admin 유저의 즐겨찾기 기반 비중변화를 디스코드로 발송."""
+    """관리자 페이지에서 지정한 ETF들의 직전 영업일 대비 비중변화를 디스코드로 발송."""
     import httpx
     import json
 
@@ -1150,34 +1150,14 @@ def send_discord_notification(date_str: str):
             return
         threshold = settings['threshold']
 
-        # RDB에서 admin user_id 조회
+        # 관리자 페이지에서 지정한 알림 대상 ETF
         rdb_cur = conn.cursor()
-        rdb_cur.execute(
-            "SELECT ur.user_id FROM user_roles ur "
-            "JOIN roles r ON r.id = ur.role_id "
-            "WHERE r.name = 'admin'"
-        )
-        admin_ids = [row[0] for row in rdb_cur.fetchall()]
+        rdb_cur.execute("SELECT etf_code, etf_name FROM discord_watch_etfs ORDER BY created_at, etf_code")
+        watches = [{'etf_code': code, 'etf_name': name} for code, name in rdb_cur.fetchall()]
         rdb_cur.close()
 
-        if not admin_ids:
-            log.info("No admin users found — skipping Discord notification")
-            return
-
-        # AGE에서 admin 유저의 WATCHES 조회
-        watches = []
-        for uid in admin_ids:
-            results = execute_cypher(cur, """
-                MATCH (u:User {user_id: $user_id})-[:WATCHES]->(e:ETF)
-                RETURN {user_id: u.user_id, etf_code: e.code, etf_name: e.name}
-            """, {'user_id': uid})
-            for row in results:
-                if row[0]:
-                    data = json.loads(_parse_age_value(row[0]))
-                    watches.append(data)
-
         if not watches:
-            log.info("No admin watches found — skipping Discord notification")
+            log.info("No Discord watch ETFs configured — skipping Discord notification")
             return
 
         # ETF별 비중변화 수집

@@ -107,6 +107,11 @@ export interface AdminDiscordSettings {
   configured: boolean  // false: 웹에서 저장한 적 없음 (DAG는 서버 환경변수 사용)
 }
 
+export interface AdminDiscordWatchETF {
+  etf_code: string
+  etf_name: string
+}
+
 export interface AdminInvitation {
   id: number
   token: string

@@ -35,6 +35,7 @@ import type {
   AdminETFTag,
   AdminETFTagList,
   AdminDiscordSettings,
+  AdminDiscordWatchETF,
   AdminAISettings,
   AdminAISettingField,
   AdminAITestResult,
@@ -530,6 +531,18 @@ export const adminApi = {
   // webhook_url: undefined면 기존 주소 유지, ''면 삭제
   updateDiscordSettings: async (body: { enabled: boolean; threshold: number; webhook_url?: string }) => {
     const { data } = await api.put<AdminDiscordSettings>('/admin/settings/discord', body)
+    return data
+  },
+  getDiscordWatchETFs: async () => {
+    const { data } = await api.get<AdminDiscordWatchETF[]>('/admin/settings/discord/etfs')
+    return data
+  },
+  addDiscordWatchETF: async (etfCode: string) => {
+    const { data } = await api.post<AdminDiscordWatchETF[]>('/admin/settings/discord/etfs', { etf_code: etfCode })
+    return data
+  },
+  removeDiscordWatchETF: async (etfCode: string) => {
+    const { data } = await api.delete<AdminDiscordWatchETF[]>(`/admin/settings/discord/etfs/${etfCode}`)
     return data
   },
   testDiscordWebhook: async () => {

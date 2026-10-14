@@ -2,10 +2,10 @@ import { useState, useCallback, useEffect, type CSSProperties } from 'react'
 import { ETFLink } from '@/components/ETFInfo'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/use-toast'
-import { adminApi } from '@/lib/api'
+import { adminApi, etfsApi } from '@/lib/api'
 import { copyText } from '@/lib/clipboard'
 import type {
-  AdminCodeExample, AdminLayoutExample, AdminExampleSearch, AdminChatLog, AdminETFTag, AdminDiscordSettings, AdminInvitation, AdminMember,
+  AdminCodeExample, AdminLayoutExample, AdminExampleSearch, AdminChatLog, AdminETFTag, AdminDiscordSettings, AdminDiscordWatchETF, AdminInvitation, AdminMember,
   AdminAISettings, AdminAISettingField, AdminAITestResult,
 } from '@/types/api'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -201,7 +201,7 @@ function DiscordSettingsTab() {
   return (
     <div className="max-w-xl space-y-6 py-2">
       <p className="text-sm text-muted-foreground">
-        매일 수집이 끝나면 관리자가 즐겨찾기한 ETF 중 일주일 전보다 구성종목 비중이 기준값보다 크게 바뀐 종목을 디스코드로 보냅니다.
+        매일 수집이 끝나면 아래 알림 대상 ETF 중 직전 영업일보다 구성종목 비중이 기준값보다 크게 바뀐 종목을 디스코드로 보냅니다.
         메시지가 2,000자를 넘으면 나눠서 보냅니다.
       </p>
 
@@ -252,6 +252,135 @@ function DiscordSettingsTab() {
           </Button>
         )}
       </div>
+
+      <DiscordWatchETFs />
+    </div>
+  )
+}
+
+function DiscordWatchETFs() {
+  const { toast } = useToast()
+  const [etfs, setEtfs] = useState<AdminDiscordWatchETF[] | null>(null)
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<{ code: string; name: string }[]>([])
+  const [searching, setSearching] = useState(false)
+  const [busy, setBusy] = useState<string | null>(null)  // 추가·삭제 중인 ETF 코드
+
+  useEffect(() => {
+    adminApi.getDiscordWatchETFs()
+      .then(setEtfs)
+      .catch(() => toast({ title: '알림 대상 ETF 조회 실패', variant: 'destructive' }))
+  }, [toast])
+
+  useEffect(() => {
+    const q = query.trim()
+    if (!q) {
+      setResults([])
+      return
+    }
+    let stale = false
+    setSearching(true)
+    const timer = setTimeout(() => {
+      etfsApi.searchUniverse(q, 20)
+        .then((r) => { if (!stale) setResults(r.map(({ code, name }) => ({ code, name }))) })
+        .catch(() => { if (!stale) setResults([]) })
+        .finally(() => { if (!stale) setSearching(false) })
+    }, 250)
+    return () => { stale = true; clearTimeout(timer) }
+  }, [query])
+
+  const add = async (code: string) => {
+    setBusy(code)
+    try {
+      setEtfs(await adminApi.addDiscordWatchETF(code))
+      setQuery('')
+    } catch {
+      toast({ title: 'ETF 추가 실패', variant: 'destructive' })
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const remove = async (code: string) => {
+    setBusy(code)
+    try {
+      setEtfs(await adminApi.removeDiscordWatchETF(code))
+    } catch {
+      toast({ title: 'ETF 삭제 실패', variant: 'destructive' })
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const watched = new Set(etfs?.map((e) => e.etf_code))
+
+  return (
+    <div className="space-y-3 border-t pt-6">
+      <div>
+        <Label htmlFor="discord-etf-search">알림 대상 ETF</Label>
+        <p className="text-sm text-muted-foreground">추가·삭제하면 바로 반영됩니다.</p>
+      </div>
+
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Input
+          id="discord-etf-search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="ETF 이름 또는 코드 검색"
+          className="pl-9"
+        />
+        {query.trim() && (
+          <div className="absolute z-50 w-full mt-1 border rounded-md max-h-60 overflow-y-auto bg-background shadow-md">
+            {searching && results.length === 0 && (
+              <p className="text-xs text-muted-foreground px-3 py-2">검색 중...</p>
+            )}
+            {!searching && results.length === 0 && (
+              <p className="text-xs text-muted-foreground px-3 py-2">검색 결과가 없습니다</p>
+            )}
+            {results.map((r) => (
+              <button
+                key={r.code}
+                type="button"
+                className="w-full text-left px-3 py-2 hover:bg-muted text-sm flex items-center gap-3 disabled:opacity-50"
+                onClick={() => add(r.code)}
+                disabled={watched.has(r.code) || busy !== null}
+              >
+                <span className="font-mono text-muted-foreground">{r.code}</span>
+                <span className="flex-1 truncate">{r.name}</span>
+                {watched.has(r.code)
+                  ? <Check className="h-4 w-4 text-muted-foreground" />
+                  : busy === r.code ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {etfs === null ? (
+        <div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin" /></div>
+      ) : etfs.length === 0 ? (
+        <p className="text-sm text-muted-foreground">알림 대상 ETF가 없습니다. 위에서 검색해 추가하세요.</p>
+      ) : (
+        <ul className="divide-y border rounded-md">
+          {etfs.map((e) => (
+            <li key={e.etf_code} className="flex items-center gap-3 px-3 py-2 text-sm">
+              <span className="font-mono text-muted-foreground">{e.etf_code}</span>
+              <ETFLink code={e.etf_code} name={e.etf_name} className="flex-1 truncate">{e.etf_name}</ETFLink>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => remove(e.etf_code)}
+                disabled={busy !== null}
+                aria-label={`${e.etf_name} 삭제`}
+              >
+                {busy === e.etf_code ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }

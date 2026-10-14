@@ -54,7 +54,7 @@ RDB JOIN으로도 가능하지만, 그래프는 관계 탐색이 직관적이고
 
 | 라벨 | 속성 | 생성 주체 | 설명 |
 |------|------|-----------|------|
-| ETF | code, name, expense_ratio, description, base_index, listed_date, net_assets, close_price, return_1d, return_1w, return_1m, market_cap_change_1w, updated_at, manual_tags, tagged_at | DAG: collect_universe_and_prices, update_etf_returns. manual_tags는 관리자 페이지, tagged_at은 age_tagging | ETF 종목. manual_tags(태그 이름 리스트)가 있으면 age_tagging이 자동 태깅 대신 그 값을 쓴다 (빈 리스트 = 태그 없음 고정). tagged_at(`YYYY-MM-DD`)은 자동 태깅된 날짜로, 없으면 다음 age_tagging의 태깅 대상 |
+| ETF | code, name, expense_ratio, description, base_index, listed_date, net_assets, close_price, return_1d, return_1w, return_1m, market_cap_change_1w, component_count, active, updated_at, manual_tags, tagged_at | DAG: collect_universe_and_prices, update_etf_returns. manual_tags는 관리자 페이지, tagged_at은 age_tagging | ETF 종목. component_count는 KIS가 알려 주는 전체 구성종목 수(현금·선물 포함), active는 액티브 여부(KIS 분류). manual_tags(태그 이름 리스트)가 있으면 age_tagging이 자동 태깅 대신 그 값을 쓴다 (빈 리스트 = 태그 없음 고정). tagged_at(`YYYY-MM-DD`)은 자동 태깅된 날짜로, 없으면 다음 age_tagging의 태깅 대상 |
 | Stock | code, name, is_etf | DAG: collect_holdings | 보유 종목 (ETF인 경우 is_etf=true). 주식 이름은 KIS `hts_kor_isnm` |
 | Company | name | DAG: collect_universe_and_prices | 운용사 (삼성자산운용 등) |
 | Tag | name | DAG: age_tagging | 테마/분류 태그 (반도체, AI 등). ETF별 태그는 관리자 페이지에서 수동 지정 가능 |
@@ -67,7 +67,7 @@ RDB JOIN으로도 가능하지만, 그래프는 관계 탐색이 직관적이고
 |------|------|------|------|
 | MANAGED_BY | ETF → Company | - | 운용사 관계 |
 | CURRENT_HOLDS | ETF → Stock | date, weight, shares | 현재 보유종목. ETF별로 가장 최근 수집일의 HOLDS를 복사한 것 (ETF당 최대 30개). 현재 구성종목 조회는 모두 이 관계를 쓴다 |
-| HOLDS | ETF → Stock | date, weight, shares | 보유종목 이력 (날짜별 스냅샷). KIS API 호출 시점 구성종목을 최근 거래일 날짜로 저장, shares는 평가금액/현재가 추정치. KIS 제약으로 ETF당 비중 상위 30개까지만. 보유종목 변화·비중 이력 비교에만 쓴다 |
+| HOLDS | ETF → Stock | date, weight, shares | 보유종목 이력 (날짜별 스냅샷). 개장일에만 수집해 그날(공시일) 날짜로 저장 — 직전 거래일 장 마감 기준 보유, shares는 평가금액/현재가 추정치. KIS 제약으로 ETF당 비중 상위 30개까지만. 보유종목 변화·비중 이력 비교에만 쓴다 |
 | TAGGED | ETF → Tag | - | 테마/분류 태그 |
 | HAS_PRICE | ETF/Stock → Price | - | 일별 가격 연결 |
 | WATCHES | User → ETF | added_at | 즐겨찾기 |

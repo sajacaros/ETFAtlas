@@ -1,14 +1,17 @@
-# 검색 및 추천 로직
+# 검색 로직
 
 ## ETF 검색
 
-### 엔드포인트
+ETF 검색은 두 가지다.
 
-`GET /etfs/search?q={query}&limit={limit}`
+| 엔드포인트 | 대상 | 쓰는 곳 |
+|---|---|---|
+| `GET /api/etfs/search/universe?q=` | AGE 유니버스 ETF (이름·코드 포함 여부, 순자산 큰 순, 페이지) | 홈 화면 검색 |
+| `GET /api/etfs/search?q=` | RDB `etfs` 전체 상장 ETF | 포트폴리오 종목 추가 다이얼로그 |
 
-### 검색 로직 (etf_service.py)
+### 전체 ETF 검색 (etf_service.py)
 
-이름/코드 부분 일치(공백 제거 포함) 또는 pg_trgm 유사도로 후보를 찾고, 매칭 종류별 우선순위로 정렬한다:
+이름/코드 부분 일치(공백 제거 포함), 띄어 쓴 단어가 순서와 상관없이 모두 포함("time 나스닥" → "TIME 미국나스닥100액티브"), 또는 pg_trgm 유사도로 후보를 찾고, 매칭 종류별 우선순위로 정렬한다 (요약):
 
 ```sql
 WHERE e.name ILIKE :like_q OR e.code ILIKE :like_q
@@ -23,13 +26,15 @@ ORDER BY
         WHEN REPLACE(e.name, ' ', '') ILIKE :starts_stripped THEN 4
         WHEN e.name ILIKE :like_q THEN 5                         -- 이름 부분 일치
         WHEN REPLACE(e.name, ' ', '') ILIKE :like_stripped THEN 6
-        ELSE 7                                                   -- 유사도 매칭만
+        WHEN <모든 단어 포함> THEN 7
+        ELSE 8                                                   -- 유사도 매칭만
     END,
-    e.name                                                       -- 동순위는 이름순
+    similarity(LOWER(e.name), LOWER(:q)) DESC,
+    e.name
 LIMIT :lim
 ```
 
-> `etfs` 테이블은 code/name만 가진다 (순자산 등은 AGE ETF 노드). 이전 코드는 동순위 정렬에 존재하지 않는 `etfs.net_assets`를 썼으나 `e.name`으로 수정되었다.
+> `etfs` 테이블은 code/name만 가진다 (순자산 등은 AGE ETF 노드).
 
 | 단계 | 연산자 | 대소문자 | 설명 |
 |------|--------|----------|------|
@@ -47,94 +52,38 @@ CREATE INDEX idx_etfs_code_trgm ON etfs USING GIN (code gin_trgm_ops);
 
 | 검색어 | 매칭 방식 | 결과 예 |
 |--------|----------|---------|
-| `KODEX` | 코드 ILIKE | KODEX 200, KODEX 반도체 등 |
-| `로봇` | 이름 ILIKE | KODEX 로봇산업, TIGER 로보틱스AI 등 |
+| `KODEX` | 이름 접두 일치 | KODEX 200, KODEX 반도체 등 |
+| `로봇` | 이름 부분 일치 | KODEX 로봇산업, TIGER 로보틱스AI 등 |
 | `반도채` (오타) | pg_trgm 유사도 | 반도체 관련 ETF |
-
-## 종목(Stock) 검색
-
-### 엔드포인트
-
-`GET /stocks/search?q={query}&limit={limit}`
-
-### 검색 로직 (stocks.py)
-
-SQLAlchemy ORM의 `ilike`를 사용한 단순 패턴 매칭:
-
-```python
-Stock.code.ilike(f"%{q}%") | Stock.name.ilike(f"%{q}%")
-```
-
-pg_trgm은 사용하지 않는다.
-
-## 역추적: 종목 → ETF
-
-### 엔드포인트
-
-`GET /stocks/{code}/etfs`
-
-특정 종목을 보유한 ETF 목록을 비중 순으로 반환한다. `etf_holdings` 테이블 JOIN 조회.
 
 ## 유사 ETF 탐색
 
-### 엔드포인트
+`GET /api/etfs/{code}/similar?min_overlap={n}` (graph_service.py `find_similar_etfs`)
 
-`GET /etfs/{code}/similar?min_overlap={n}`
-
-### 검색 로직 (graph_service.py)
-
-Apache AGE 그래프에서 Cypher 쿼리로 보유종목 중복도를 계산한다:
+공통 보유종목(`CURRENT_HOLDS`)마다 두 ETF 비중 중 작은 값을 더해 유사도를 구하고, 기준 ETF의 비중 합으로 나눠 %로 정규화한다.
+상위 30개만 저장해 비중 합이 100%가 아니기 때문이다. 공통 종목 수가 `min_overlap`(기본 5) 이상인 ETF 중 상위 5개.
 
 ```cypher
-MATCH (e1:ETF {code: $etf_code})-[:CURRENT_HOLDS]->(s:Stock)<-[:CURRENT_HOLDS]-(e2:ETF)
+MATCH (e1:ETF {code: $etf_code})-[h1:CURRENT_HOLDS]->(s:Stock)<-[h2:CURRENT_HOLDS]-(e2:ETF)
 WHERE e1 <> e2
-WITH e2, COUNT(s) as overlap
+WITH e2, COUNT(s) as overlap,
+     SUM(CASE WHEN h1.weight < h2.weight THEN h1.weight ELSE h2.weight END) as similarity
 WHERE overlap >= $min_overlap
-RETURN e2.code as etf_code, overlap
-ORDER BY overlap DESC
-LIMIT 10
+RETURN {etf_code: e2.code, name: e2.name, overlap: overlap, similarity: similarity}
+ORDER BY similarity DESC
+LIMIT 5
 ```
-
-각 ETF의 현재 보유종목(`CURRENT_HOLDS`) 기준으로, 두 ETF가 공통으로 보유한 종목 수(overlap)가 `min_overlap`(기본 5) 이상인 ETF를 반환.
-
-## AI 추천 (ETFRecommenderAgent)
-
-### 엔드포인트
-
-| 엔드포인트 | 메서드 | 설명 |
-|-----------|--------|------|
-| `/ai/recommend` | POST | 쿼리 기반 ETF 분석 |
-| `/ai/signals` | GET | 워치리스트 기반 시그널 |
-| `/ai/insights` | GET | 전체 시장 인사이트 |
-
-### 모멘텀 분석 (recommender.py)
-
-최근 5일 종가 기반으로 매매 시그널을 생성한다:
-
-| 조건 | 시그널 | 신뢰도 |
-|------|--------|--------|
-| 5일간 +5% 이상 | BUY | 0.5 + 변동률/20 (최대 0.8) |
-| 5일간 -5% 이상 | SELL | 0.5 + |변동률|/20 (최대 0.8) |
-| -5% ~ +5% | HOLD | 0.5 (고정) |
-
-### 인사이트 생성
-
-시그널을 집계하여 요약 정보를 생성한다:
-- 상승 모멘텀 ETF 그룹 → 분할 매수 제안
-- 하락 주의 ETF 그룹 → 리스크 관리 제안
 
 ## 프론트엔드 검색 흐름
 
 ### 홈페이지 (HomePage.tsx)
 
-탭 기반 검색 UI:
-- **ETF 탭**: `etfsApi.search(query)` → ETF 목록 표시 → 클릭 시 상세 페이지 이동
-- **종목 탭**: `stocksApi.search(query)` → 종목 목록 표시 → 클릭 시 해당 종목 보유 ETF 조회
+- 검색어가 있으면 유니버스 검색, 없으면 선택한 태그로 목록을 띄운다 (즐겨찾기 · 정렬 태그 · 액티브/패시브 · 테마 태그)
+- 항목을 펼치면 구성종목을, 클릭하면 상세 페이지로 이동
 
 ### 종목 추가 다이얼로그 (AddTickerDialog.tsx)
 
 포트폴리오에 종목 추가 시 사용:
-- 2글자 이상 입력 시 자동 검색 (최대 5건)
+- 2글자 이상 입력 시 전체 ETF 검색 (최대 50건)
 - `CASH` 입력 시 현금으로 즉시 인식
-- 검색 결과를 오버레이 드롭다운으로 표시 (레이아웃 유지)
 - 선택 시 코드 및 이름 확정 → 비중/수량 입력

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ETF Atlas Architecture</title>
+<title>ETF Atlas Chatbot Architecture</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -172,67 +172,85 @@
     .msg { grid-template-columns: 1fr; gap: 2px; }
     .msg .who { text-align: left; }
   }
+
+  /* 레이아웃 모형 */
+  .mock { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); padding: 12px; display: grid; gap: 8px; }
+  .mock-row { display: grid; gap: 8px; }
+  .mock-row.c1 { grid-template-columns: 1fr; }
+  .mock-row.c2 { grid-template-columns: 1fr 1fr; }
+  .mock-slot { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; background: var(--bg); }
+  .mock-slot b { display: block; font-size: 12px; margin-bottom: 4px; }
+  .mock-slot .sk { height: 8px; border-radius: 4px; background: #e2e8f0; margin-top: 5px; }
+  .mock-slot .sk.chart { height: 46px; }
+  .mock-slot.text { border: 0; background: transparent; padding: 4px 2px; }
+  .mock-slot .tag { font-family: 'Fira Code', monospace; font-size: 11px; color: var(--muted); }
+  .kv { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+  pre.tree {
+    font-family: 'Fira Code', monospace; font-size: 12px; line-height: 1.6;
+    background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px; overflow-x: auto; margin: 0;
+  }
+  ul.plain { padding-left: 18px; font-size: 13.5px; }
+  ul.plain li { margin: 4px 0; }
+  @media (max-width: 720px) { .kv { grid-template-columns: 1fr; } .mock-row.c2 { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
 <header>
-  <h1>ETF Atlas<span>챗봇 답변 아키텍처</span></h1>
+  <h1>ETF Atlas<span>챗봇 아키텍처</span></h1>
   <nav>
-    <a href="#overview">전체 구조</a>
-    <a href="#orchestrator">오케스트레이터</a>
+    <a href="#overview">한눈에</a>
+    <a href="#query">질의 처리</a>
     <a href="#skills">스킬</a>
-    <a href="#roles">Agent · Tool · Skill</a>
-    <a href="#flow">이벤트 흐름</a>
-    <a href="#extend">확장</a>
+    <a href="#layout">레이아웃</a>
+    <a href="#events">이벤트</a>
   </nav>
 </header>
 
 <main>
   <section id="overview">
-    <h2>전체 구조</h2>
-    <p class="lead">레이아웃 에이전트가 화면을 영역(슬롯)으로 먼저 나누고, 각 영역은 등록된 스킬이 채웁니다. 프런트는 완료된 영역부터 가져와 그립니다.</p>
+    <h2>한눈에</h2>
+    <p class="lead">질문이 들어오면 먼저 <b>화면을 설계</b>하고, 화면의 각 영역(슬롯)을 <b>스킬</b>이 채웁니다. 숫자는 DB에서 바로 오고, LLM은 설계와 해설만 맡습니다.</p>
 
     <div class="layer fe">
       <div class="layer-title"><span class="dot"></span>Frontend · React</div>
       <div class="row">
         <div class="box"><div class="name">ChatPage</div><div class="desc">질문 전송, SSE 수신, 대화 목록</div></div>
-        <div class="box"><div class="name">AnswerView</div><div class="desc">레이아웃 트리(column · row · slot)를 그리고 영역마다 스켈레톤 표시</div></div>
-        <div class="box"><div class="name">SlotView</div><div class="desc">완료 알림을 받으면 영역 내용을 GET으로 가져온다</div></div>
-        <div class="box"><div class="name">DataTable · ChartView</div><div class="desc">차트 레지스트리(ECharts, 지연 로딩). 못 그리면 표로 대체</div></div>
+        <div class="box"><div class="name">AnswerView</div><div class="desc">레이아웃 트리를 격자로 그리고 영역마다 스켈레톤</div></div>
+        <div class="box"><div class="name">SlotView</div><div class="desc">완료된 영역의 내용을 가져와 차트·표·텍스트로</div></div>
       </div>
     </div>
 
-    <div class="arrow both"><span>SSE <code>layout</code> · <code>slot</code> · <code>slot_delta</code></span><span class="line"></span><span><code>GET /chat/logs/{id}/slots/{sid}</code></span></div>
+    <div class="arrow both"><span>SSE 이벤트</span><span class="line"></span><span>영역 내용 GET</span></div>
 
     <div class="layer orch">
       <div class="layer-title"><span class="dot"></span>Orchestrator · AnswerService</div>
       <div class="row">
-        <div class="box"><div class="name">ChatMemory.refine <span class="llm">LLM</span></div><div class="desc">대화 맥락으로 질문을 독립 문장으로</div></div>
-        <div class="box agent"><div class="name">Planner <span class="llm">LLM</span></div><div class="desc">화면을 슬롯으로 설계. 도구 없이 구조화된 출력만. 스키마는 레지스트리에서 생성</div></div>
-        <div class="box"><div class="name">Slot runner</div><div class="desc">독립 슬롯은 병렬, 해설 슬롯은 그 뒤에. 끝나는 대로 저장하고 알린다</div></div>
-        <div class="box"><div class="name">EntityResolver</div><div class="desc">ETF·종목 이름 → 코드. 한 답변 안에서 공유</div></div>
+        <div class="box"><div class="name">질문 재작성 <span class="llm">LLM</span></div><div class="desc">이전 대화가 있을 때 독립된 질문으로</div></div>
+        <div class="box agent"><div class="name">Planner <span class="llm">LLM</span></div><div class="desc">화면을 줄·슬롯으로 설계. 도구 없이 구조화된 출력</div></div>
+        <div class="box"><div class="name">Slot runner</div><div class="desc">의존 관계대로 슬롯을 병렬 실행, 끝나는 대로 저장·알림</div></div>
       </div>
     </div>
 
-    <div class="arrow"><span><code>skill.run(args, display, ctx)</code></span><span class="line"></span><span>dataset · view · summary</span></div>
+    <div class="arrow"><span><code>skill.run(args, display)</code></span><span class="line"></span><span>데이터 · 요약 · 텍스트</span></div>
 
     <div class="layer skills">
-      <div class="layer-title"><span class="dot"></span>Skill registry</div>
+      <div class="layer-title"><span class="dot"></span>Skills</div>
       <div class="row">
-        <div class="box"><div class="name">DataSkill ×7</div><div class="desc">DB에서 결정적으로 데이터를 만든다. LLM 없음</div></div>
-        <div class="box"><div class="name">narrative <span class="llm">LLM</span></div><div class="desc">앞 슬롯 요약만 받아 해설을 흘려보낸다</div></div>
-        <div class="box agent"><div class="name">agent → ChatService <span class="llm">LLM</span></div><div class="desc">기존 tool-calling 에이전트. 도구 10개로 그래프를 조회해 마크다운 답변</div></div>
+        <div class="box"><div class="name">데이터 스킬 ×9</div><div class="desc">그래프를 조회해 표·차트 데이터를 만든다. LLM 없음</div></div>
+        <div class="box"><div class="name">narrative <span class="llm">LLM</span></div><div class="desc">다른 영역의 요약만 보고 해설</div></div>
+        <div class="box agent"><div class="name">agent <span class="llm">LLM</span></div><div class="desc">스킬로 안 되는 질문을 도구 호출 에이전트로</div></div>
       </div>
     </div>
 
     <div class="arrow"><span>Cypher (읽기)</span><span class="line"></span><span></span></div>
 
     <div class="layer data">
-      <div class="layer-title"><span class="dot"></span>Data</div>
+      <div class="layer-title"><span class="dot"></span>Data · PostgreSQL</div>
       <div class="row">
-        <div class="box"><div class="name">PostgreSQL + Apache AGE</div><div class="desc">ETF · Stock · Company · Tag · Price 그래프</div></div>
-        <div class="box"><div class="name">chat_logs · chat_slots</div><div class="desc">질문, 화면 레이아웃, 영역별 내용과 요약</div></div>
-        <div class="box"><div class="name">pgvector</div><div class="desc">agent가 참고하는 few-shot 코드 예시</div></div>
+        <div class="box"><div class="name">Apache AGE 그래프</div><div class="desc">ETF · Stock · Tag · Price · 보유 관계</div></div>
+        <div class="box"><div class="name">chat_logs · chat_slots</div><div class="desc">질문, 레이아웃, 영역별 내용과 요약</div></div>
+        <div class="box"><div class="name">pgvector</div><div class="desc">화면 설계 예시, 에이전트 few-shot 예시</div></div>
       </div>
     </div>
 
@@ -242,105 +260,119 @@
     </div>
   </section>
 
-  <section id="orchestrator">
-    <h2>오케스트레이터</h2>
-    <p class="lead">특정 스킬을 모르는 실행기입니다. 스킬이 늘어도 바뀌지 않습니다.</p>
+  <section id="query">
+    <h2>사용자 질의는 이렇게 처리됩니다</h2>
+    <p class="lead"><code>POST /api/chat/message/stream</code> 한 번에 아래 단계가 차례로 돌고, 진행 상황은 SSE로 바로 흘러갑니다.</p>
     <div class="steps">
       <div class="step"><div><div class="t">질문 재작성</div><div class="d">이전 대화가 있을 때만. "이거 구성종목은?" → "KODEX 반도체 구성종목은?"</div></div><div class="time">~0.5초</div></div>
-      <div class="step"><div><div class="t">레이아웃 설계 (Planner)</div><div class="d">줄 목록, 줄마다 슬롯 1~3개. 슬롯마다 <code>skill</code> · <code>display</code> · <code>args</code>. 실패하면 agent 슬롯 하나로</div></div><div class="time">2~6초</div></div>
-      <div class="step"><div><div class="t">레이아웃 전송</div><div class="d">슬롯에 <code>s1</code>, <code>s2</code>… id를 붙여 저장하고 SSE <code>layout</code>으로 보낸다. 프런트는 빈 자리를 그린다</div></div><div class="time">즉시</div></div>
-      <div class="step"><div><div class="t">슬롯 실행</div><div class="d">끝나는 슬롯마다 <code>chat_slots</code>에 저장하고 SSE <code>slot {id, complete}</code>
-        <div class="phases">
-          <div class="phase"><b>1단계</b> · 독립 슬롯을 동시에 (슬롯마다 DB 세션)</div>
-          <div class="phase"><b>2단계</b> · <code>after_others</code> 슬롯(해설)이 1단계 요약을 받아 실행</div>
-        </div></div></div><div class="time">데이터 0.1초<br>해설 2~3초</div></div>
-      <div class="step"><div><div class="t">답변 텍스트</div><div class="d">화면 전체를 텍스트로 옮겨 SSE <code>answer</code>. 대화 기억과 관리자 검수에 쓴다</div></div><div class="time">즉시</div></div>
+      <div class="step"><div><div class="t">설계 예시 찾기</div><div class="d">질문을 일반화("삼성전자" → "특정 종목")해 임베딩으로 비슷한 화면 설계 예시 후보를 뽑고, LLM이 그중 <b>질문 유형이 같은 것</b>만 고른다. 예시는 관리자 페이지에서 관리</div></div><div class="time"></div></div>
+      <div class="step"><div><div class="t">화면 설계 (Planner)</div><div class="d">줄 목록, 줄마다 슬롯 1~3개(전체 8개 이하). 슬롯마다 <code>skill</code> · <code>display</code> · <code>title</code> · <code>args</code>. 출력 스키마는 등록된 스킬에서 자동으로 만든다. 참조 오류·없는 ETF 이름 같은 문제는 한꺼번에 돌려줘 다시 쓰게 하고, 그래도 실패하면 <code>agent</code> 슬롯 하나로</div></div><div class="time">2~6초</div></div>
+      <div class="step"><div><div class="t">레이아웃 전송</div><div class="d">슬롯에 <code>s1</code>, <code>s2</code>… id를 붙여 저장하고 <code>layout</code> 이벤트로 보낸다. 프런트는 즉시 빈 자리를 그린다</div></div><div class="time">즉시</div></div>
+      <div class="step"><div><div class="t">데이터 슬롯 실행</div><div class="d">서로 의존하지 않는 슬롯은 동시에. 한 슬롯의 순위 결과를 다른 슬롯이 <code>@name.1</code>처럼 받아 쓰면 그 슬롯이 끝난 뒤에. 끝날 때마다 저장하고 <code>slot</code> 이벤트</div></div><div class="time">~0.1초씩</div></div>
+      <div class="step"><div><div class="t">한 번 다시 설계</div><div class="d">"ETF가 아니라 종목이었다"처럼 고칠 수 있는 이유로 빈 슬롯이 있으면, 실행 결과를 보여 주고 그 슬롯만 다시 설계·실행한다. 배치는 그대로</div></div><div class="time">필요할 때만</div></div>
+      <div class="step"><div><div class="t">해설</div><div class="d"><code>narrative</code> 슬롯이 앞 영역들의 요약만 받아 글자 단위로 흘려보낸다. 요약에 없는 숫자는 쓰지 않는다</div></div><div class="time">2~3초</div></div>
+      <div class="step"><div><div class="t">답변 텍스트</div><div class="d">화면 전체를 텍스트로 옮겨 <code>answer</code>로 보낸다. 다음 질문의 대화 맥락과 관리자 검수에 쓴다</div></div><div class="time">즉시</div></div>
     </div>
-    <div class="callout">ETF·종목 질문은 7~10초, agent 슬롯으로 가는 질문은 15~45초. 데이터 영역은 레이아웃이 나오자마자 채워집니다.</div>
+
+    <div class="two" style="margin-top:16px">
+      <div class="card">
+        <h3>되묻기</h3>
+        <p style="font-size:13.5px">"반도체 ETF 구성종목"처럼 대상이 여럿이면 하나를 골라 넣지 않고 <code>etf_choice</code> 슬롯이 후보를 보여 주며 묻습니다. 이름이 여러 ETF에 걸릴 때도 데이터 스킬이 같은 방식으로 되묻고, 그 뒤 슬롯은 답을 기다립니다.</p>
+      </div>
+      <div class="card">
+        <h3>중지</h3>
+        <p style="font-size:13.5px">사용자가 멈추면 실행 중인 스킬은 스스로 멈추고, 아직 시작하지 않은 슬롯은 "중지했습니다"로 마감합니다. 연결이 끊겨도 남은 슬롯을 멈춥니다.</p>
+      </div>
+    </div>
+    <div class="callout">데이터 영역은 레이아웃이 나오고 곧바로 채워집니다. 일반적인 ETF·종목 질문은 7~10초, <code>agent</code>로 가는 질문은 15~45초가 걸립니다.</div>
   </section>
 
   <section id="skills">
     <h2>스킬</h2>
-    <p class="lead">화면 한 영역을 채우는 기능 단위. 이름 · 설명 · 인자 스키마 · 지원하는 표시 방식 · 실행 함수를 가집니다.</p>
-
-    <h3>DataSkill — DB에서 결정적으로</h3>
-    <div class="skill-grid">
-      <div class="skill"><div class="name">price_trend</div><div class="chips"><span class="chip">line</span><span class="chip">candlestick</span><span class="chip">table</span></div><div class="desc">ETF 가격 추이. 여럿이면 누적 수익률로</div></div>
-      <div class="skill"><div class="name">stock_trend</div><div class="chips"><span class="chip">line</span><span class="chip">candlestick</span><span class="chip">table</span></div><div class="desc">개별 종목 가격 추이 (같은 베이스)</div></div>
-      <div class="skill"><div class="name">period_returns</div><div class="chips"><span class="chip">bar</span><span class="chip">table</span></div><div class="desc">1일 ~ 1년 기간별 수익률</div></div>
-      <div class="skill"><div class="name">etf_compare</div><div class="chips"><span class="chip">table</span></div><div class="desc">기본 정보 비교표, 행마다 우열 강조</div></div>
-      <div class="skill"><div class="name">etf_profile</div><div class="chips"><span class="chip">radar</span><span class="chip">table</span></div><div class="desc">전체 ETF 대비 백분위 점수 5개 축</div></div>
-      <div class="skill"><div class="name">holdings</div><div class="chips"><span class="chip">treemap</span><span class="chip">donut</span><span class="chip">bar</span><span class="chip">table</span></div><div class="desc">구성종목 비중 (도넛은 상위 7 + 기타)</div></div>
-      <div class="skill"><div class="name">stock_holders</div><div class="chips"><span class="chip">bar</span><span class="chip">table</span></div><div class="desc">종목을 많이 담은 ETF 순위</div></div>
-    </div>
-
-    <h3 style="margin-top:18px">LLM을 쓰는 스킬</h3>
-    <div class="agent-wrap">
-      <div class="skill"><div class="name">narrative <span class="llm">LLM</span></div><div class="chips"><span class="chip text">text</span></div>
-        <div class="desc">다른 슬롯이 끝난 뒤, 그 요약만 받아 해설을 토큰 단위로 흘려보낸다. 숫자는 요약에 있는 것만 쓴다</div></div>
-      <div class="skill" style="border-color:#fecaca"><div class="name">agent <span class="llm">LLM</span></div><div class="chips"><span class="chip text">markdown</span></div>
-        <div class="desc">스킬로 표현할 수 없는 질문(테마별 목록, 유사 ETF, 비중 변화…)과 레이아웃 설계 실패 시. 안에서 <b>ChatService</b> 에이전트를 돌린다</div>
-        <div class="tools" style="margin-top:8px">
-          <h3 style="font-size:12.5px;margin:0">ChatService의 도구 10개</h3>
-          <ul>
-            <li>etf_search</li><li>stock_search</li><li>list_tags</li><li>get_etf_info</li>
-            <li>find_similar_etfs</li><li>get_holdings_changes</li><li>get_etf_prices</li><li>get_stock_prices</li>
-            <li>compare_etfs</li><li>graph_query</li>
-          </ul>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section id="roles">
-    <h2>Agent · Tool · Skill</h2>
-    <p class="lead">누가 고르고, 결과가 어디로 가는지가 다릅니다.</p>
+    <p class="lead">화면 한 영역을 채우는 단위. 이름 · 설명 · 인자 스키마 · 지원하는 표시 방식 · 실행 함수를 가지고, 레지스트리에 올리면 Planner의 선택지에 바로 들어갑니다.</p>
     <div class="table-wrap">
       <table>
-        <tr><th>구분</th><th>하는 일</th><th>고르는 쪽</th><th>결과를 받는 쪽</th><th>LLM</th></tr>
-        <tr><td><b>Planner</b> (agent)</td><td>화면을 슬롯으로 나눈다</td><td>오케스트레이터가 항상 실행</td><td>오케스트레이터</td><td>1회, 도구 없음</td></tr>
-        <tr><td><b>Skill</b></td><td>슬롯 하나를 채운다</td><td>Planner</td><td><b>프런트</b> (dataset · view · 텍스트)</td><td>데이터 스킬은 없음</td></tr>
-        <tr><td><b>ChatService</b> (agent)</td><td>도구를 반복 호출해 답을 만든다</td><td><code>agent</code> 스킬</td><td><code>agent</code> 스킬 (마크다운)</td><td>여러 번 (최대 15)</td></tr>
-        <tr><td><b>Tool</b></td><td>DB 조회 함수</td><td>ChatService의 LLM</td><td><b>LLM</b> (문자열 JSON)</td><td>없음</td></tr>
+        <tr><th>스킬</th><th>하는 일</th><th>표시 방식</th></tr>
+        <tr><td><code>price_trend</code></td><td>ETF 가격 추이 (여럿이면 누적 수익률)</td><td>line · candlestick · table</td></tr>
+        <tr><td><code>stock_trend</code></td><td>개별 종목 가격 추이</td><td>line · candlestick · table</td></tr>
+        <tr><td><code>period_returns</code></td><td>1일 ~ 1년 기간별 수익률</td><td>bar · table</td></tr>
+        <tr><td><code>etf_compare</code></td><td>기본 정보 비교표</td><td>table</td></tr>
+        <tr><td><code>etf_profile</code></td><td>전체 ETF 대비 백분위 점수 5개 축</td><td>radar · table</td></tr>
+        <tr><td><code>holdings</code> ⇢</td><td>구성종목 비중 (상위 30개)</td><td>treemap · donut · bar · table</td></tr>
+        <tr><td><code>stock_holders</code> ⇢</td><td>종목을 많이 담은 ETF 순위 (여러 종목이면 비중 합)</td><td>bar · table</td></tr>
+        <tr><td><code>portfolio_lookthrough</code> ⇢</td><td>여러 ETF를 섞었을 때 종목별 합산 비중</td><td>treemap · bar · donut · table</td></tr>
+        <tr><td><code>etf_choice</code></td><td>대상 ETF가 여럿일 때 후보를 보여 주고 되묻기</td><td>markdown</td></tr>
+        <tr><td><code>narrative</code> <span class="llm">LLM</span></td><td>다른 영역이 끝난 뒤 해설</td><td>text</td></tr>
+        <tr><td><code>agent</code> <span class="llm">LLM</span></td><td>스킬로 표현할 수 없는 질문. 도구 10개(검색·정보·유사 ETF·비교·읽기 전용 Cypher)를 가진 tool-calling 에이전트가 마크다운으로 답한다</td><td>markdown</td></tr>
       </table>
     </div>
-    <div class="callout">데이터 스킬의 숫자는 LLM을 거치지 않습니다. LLM에는 단위를 붙인 짧은 <code>summary</code>만 넘어가고, 화면의 표·차트는 DB 원시값으로 그립니다.</div>
+    <p style="font-size:12.5px;color:var(--muted);margin-top:8px">⇢ 순위가 있는 결과를 내보내 다른 슬롯이 <code>@name.순위</code>로 받아 쓸 수 있는 스킬</p>
+    <div class="callout">데이터 스킬의 숫자는 LLM을 거치지 않습니다. LLM에는 단위를 붙인 짧은 요약만 넘어가고, 화면의 표·차트는 DB 값으로 그립니다.</div>
   </section>
 
-  <section id="flow">
-    <h2>이벤트 흐름</h2>
-    <p class="lead">"KODEX 200과 TIGER 200 비교해줘" — <code>POST /api/chat/message/stream</code></p>
+  <section id="layout">
+    <h2>레이아웃은 이렇게 처리됩니다</h2>
+    <p class="lead">LLM은 단순한 <b>줄 목록</b>을 내고, 서버가 이를 <b>트리</b>로 바꿔 보내면, 프런트가 트리를 <b>격자</b>로 그립니다.</p>
+
+    <div class="kv">
+      <div>
+        <h3>1. Planner의 출력 — 줄 목록</h3>
+        <pre class="tree">rows:
+  - slots: [etf_compare/table, etf_profile/radar]
+  - slots: [price_trend/line]
+  - slots: [narrative/text]</pre>
+        <p style="font-size:13px;color:var(--muted);margin-top:6px">재귀 트리 대신 평평한 구조라 작은 모델도 안정적으로 채웁니다.</p>
+      </div>
+      <div>
+        <h3>2. 서버가 보내는 레이아웃 트리</h3>
+        <pre class="tree">column
+├ row
+│ ├ slot s1  table  "기본 정보"
+│ └ slot s2  chart  "프로필"
+├ slot s3    chart  "가격 추이"
+└ slot s4    text   "해설"</pre>
+        <p style="font-size:13px;color:var(--muted);margin-top:6px">슬롯이 하나뿐인 줄은 row 없이 slot으로. 표시 방식은 스켈레톤 종류(chart · table · text · markdown)로 묶입니다.</p>
+      </div>
+    </div>
+
+    <h3 style="margin-top:20px">3. 프런트의 화면</h3>
+    <div class="kv">
+      <div class="mock">
+        <div class="mock-row c2">
+          <div class="mock-slot"><b>기본 정보</b><span class="tag">table</span><div class="sk"></div><div class="sk"></div><div class="sk"></div></div>
+          <div class="mock-slot"><b>프로필</b><span class="tag">radar</span><div class="sk chart"></div></div>
+        </div>
+        <div class="mock-row c1">
+          <div class="mock-slot"><b>가격 추이</b><span class="tag">line</span><div class="sk chart"></div></div>
+        </div>
+        <div class="mock-row c1">
+          <div class="mock-slot text"><b>해설</b><div class="sk"></div><div class="sk" style="width:70%"></div></div>
+        </div>
+      </div>
+      <ul class="plain">
+        <li><b>column</b>은 위에서 아래로 쌓고, <b>row</b>는 자식 수(1~3)만큼 열을 나눈 격자. 좁은 화면에서는 한 열로 접힙니다.</li>
+        <li>내용이 오기 전에는 슬롯 종류에 맞는 <b>스켈레톤</b>(차트 상자, 표 줄, 텍스트 줄)을 보여 줍니다.</li>
+        <li>데이터 영역은 테두리 있는 카드, 해설·마크다운은 테두리 없이 본문처럼.</li>
+        <li><code>slot complete</code>를 받으면 <code>GET /chat/logs/{id}/slots/{sid}</code>로 내용을 가져옵니다. 해설은 <code>slot_delta</code>로 흘려받은 글을 그대로 씁니다.</li>
+        <li>차트는 ECharts 빌더로 그리고, 언제든 <b>표로 보기</b>로 바꿀 수 있습니다. 모르는 차트이거나 그리지 못하면 같은 데이터를 표로.</li>
+        <li>영역 아래에는 주석(어느 대상을 받아 그렸는지 등)과 출처·기준일.</li>
+        <li>비었거나 실패한 영역은 그 자리에 이유만 표시하고, 나머지 영역은 그대로 둡니다.</li>
+      </ul>
+    </div>
+
+    <div class="callout">다시 설계해도 배치(줄과 슬롯의 순서·개수)는 바꾸지 않습니다. 바뀐 슬롯만 비우고 새 레이아웃을 보내므로 이미 그려진 영역은 흔들리지 않습니다. 지난 대화를 열 때도 같은 GET으로 영역을 채워, 실시간 화면과 기록 화면이 같은 경로로 그려집니다.</div>
+  </section>
+
+  <section id="events">
+    <h2>이벤트 흐름 예시</h2>
+    <p class="lead">"KODEX 200과 TIGER 200 비교해줘"</p>
     <div class="seq">
-      <div class="msg sse"><div class="who">서버 → 프런트</div><div class="bar"><b>session</b> · <b>status</b> {planning}</div></div>
-      <div class="msg sse"><div class="who">서버 → 프런트</div><div class="bar"><b>layout</b> {chat_log_id, column[ row[s1 표, s2 레이더], s3 라인, s4 해설 ]} → 스켈레톤</div></div>
-      <div class="msg sse"><div class="who">서버 → 프런트</div><div class="bar"><b>slot</b> {s1, complete} · {s2, complete} · {s3, complete}</div></div>
+      <div class="msg sse"><div class="who">서버 → 프런트</div><div class="bar"><b>status</b> {planning}</div></div>
+      <div class="msg sse"><div class="who">서버 → 프런트</div><div class="bar"><b>layout</b> {chat_log_id, column[row[s1 표, s2 레이더], s3 라인, s4 해설]} → 스켈레톤</div></div>
+      <div class="msg sse"><div class="who">서버 → 프런트</div><div class="bar"><b>slot</b> {s1 · s2 · s3, complete}</div></div>
       <div class="msg get"><div class="who">프런트 → 서버</div><div class="bar"><b>GET</b> /chat/logs/{id}/slots/s1 · s2 · s3 → 표 · 레이더 · 라인 차트</div></div>
       <div class="msg sse"><div class="who">서버 → 프런트</div><div class="bar"><b>slot_delta</b> {s4, "두 ETF 모두…"} ×N → 해설이 글자 단위로</div></div>
-      <div class="msg sse"><div class="who">서버 → 프런트</div><div class="bar"><b>slot</b> {s4, complete} · <b>answer</b> · <b>chat_log_id</b> · [DONE]</div></div>
-    </div>
-    <div class="callout">지난 대화를 열 때도 같은 GET으로 영역을 채우므로, 실시간 화면과 기록 화면이 렌더링 경로를 공유합니다.</div>
-  </section>
-
-  <section id="extend">
-    <h2>확장</h2>
-    <p class="lead">확장 지점은 둘이고 서로 모릅니다. 오케스트레이터 · SSE 프로토콜 · 저장 구조는 바뀌지 않습니다.</p>
-    <div class="two">
-      <div class="card">
-        <h3>스킬 추가 — 무엇을 가져올지</h3>
-        <ol>
-          <li><code>services/answer/skills/</code>에 스킬 클래스 (DataSkill이면 <code>fetch()</code>만)</li>
-          <li><code>REGISTRY</code>에 한 줄</li>
-          <li>Planner의 출력 스키마와 프롬프트에 자동 반영</li>
-        </ol>
-      </div>
-      <div class="card">
-        <h3>차트 추가 — 어떻게 그릴지</h3>
-        <ol>
-          <li>백엔드 <code>schemas.py</code>에 view 모델</li>
-          <li>프런트 <code>types/api.ts</code>의 <code>DataView</code></li>
-          <li><code>charts.ts</code>의 <code>BUILDERS</code>에 빌더 하나</li>
-        </ol>
-      </div>
+      <div class="msg sse"><div class="who">서버 → 프런트</div><div class="bar"><b>slot</b> {s4, complete} · <b>answer</b> · [DONE]</div></div>
     </div>
   </section>
 </main>

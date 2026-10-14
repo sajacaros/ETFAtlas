@@ -110,6 +110,8 @@ params: FID_COND_MRKT_DIV_CODE=J, FID_INPUT_ISCD={ETF코드}
 | nav (없으면 prdy_last_nav) | Price.nav | 최근 거래일 Price에만 저장 |
 | etf_ntas_ttam | ETF.net_assets, Price.net_assets | 원 단위로 저장. 값이 1억 미만이면 억원 단위로 보고 ×1억 (응답 단위 미확인이라 둔 방어 로직) |
 | lstn_stcn | (상장주수) | Price.market_cap = 종가 × 상장주수 |
+| etf_cnfg_issu_cnt | ETF.component_count | 전체 구성종목 수 (현금·선물 포함). 상위 30개만 받으므로 화면에 전체 수를 함께 표시 |
+| bstp_kor_isnm | ETF.active | 'ETF(Active/…)'면 true, '…복제…'면 false, 비면 미설정 |
 
 ### ETF 일별 시세 (국내주식기간별시세)
 
@@ -178,7 +180,7 @@ params: FID_COND_MRKT_DIV_CODE=J, FID_INPUT_ISCD={ETF코드}, FID_COND_SCR_DIV_C
 | hts_kor_isnm | Stock.name | string | ETF 종목이면 AGE ETF 노드 이름 우선 |
 | etf_cnfg_issu_rlim | HOLDS.weight | float | |
 | etf_vltn_amt / stck_prpr | HOLDS.shares | int | API에 수량 필드가 없어 역산한 **추정치** |
-| (수집 기준 거래일) | HOLDS.date | string | `YYYY-MM-DD` |
+| (수집한 개장일 = 공시일) | HOLDS.date | string | `YYYY-MM-DD`. 그날 공시된 구성(직전 거래일 장 마감 기준 보유) |
 
 `CURRENT_HOLDS`는 같은 속성(date, weight, shares)을 HOLDS에서 그대로 복사한다.
 
@@ -247,25 +249,12 @@ params: BASS_DT={YYYYMMDD}
 
 ---
 
-## 4. 포트폴리오 변화 감지
+## 4. 비중 변화
 
-별도 Change 노드나 변화 감지 태스크 없이, 조회 시점에 두 날짜의 HOLDS 스냅샷을 비교한다 (`GraphService.get_etf_holdings_changes`).
+두 수집일의 HOLDS를 비교해 신규 편입(added)·편출(removed)·비중 증가(increased)·감소(decreased)로 나눈다.
 
-### 로직
-
-```python
-current, actual_date = self._get_holdings_at(etf_code, base_date)     # 기준일 이하 최근 HOLDS
-previous, prev_actual = self._get_holdings_at(etf_code, prev_date)    # 1d: 이전 거래일, 1w: -7일, 1m: -30일
-
-for code in set(current) | set(previous):
-    if curr and not prev:   change_type = "added"
-    elif prev and not curr: change_type = "removed"
-    elif cw > pw:           change_type = "increased"
-    elif cw < pw:           change_type = "decreased"
-    else:                   change_type = "unchanged"
-```
-
-반환 필드: `stock_code`, `stock_name`, `change_type`, `current_weight`, `previous_weight`, `weight_change`.
+- **액티브 ETF 전체**: 수집 후 `sync_weight_changes` 태스크가 ETF별 직전 수집일과 비교해 `weight_changes` 테이블에 저장한다. 웹 비중 변화 화면(`/changes`)·메뉴 배지·디스코드가 이 결과를 읽는다 ([notify.md](notify.md))
+- **ETF 한 개**: ETF 상세 화면과 챗봇 도구는 조회 시점에 두 날짜를 비교한다 (`GraphService.get_etf_holdings_changes`)
 
 > KIS API는 과거 구성종목을 조회할 수 없으므로 비교 가능한 이력은 HOLDS 수집을 시작한 날부터 쌓인다.
 
@@ -278,7 +267,7 @@ for code in set(current) | set(previous):
 | 소스 | 제한 | 대응 |
 |------|------|------|
 | KIS 종목 마스터 파일 | cp949 고정폭 포맷 (KIS 공식 샘플 `kis_kospi_code_mst.py` 기준 행 끝 227자) | 227자 이하 행·그룹코드 `EF`가 아닌 행은 건너뜀 |
-| KIS Open API | 구성종목·ETF 현재가 날짜 지정 불가, 토큰 발급 1분 1회, 초당 20건, 일봉 호출당 100건, 휴장일조회 1일 1회 권장 | 최근 거래일로 기록, `kis_tokens` 캐시, 0.06초 간격 + 재시도, 100일 단위 페이지네이션, `market_calendar` 캐시 |
+| KIS Open API | 구성종목·ETF 현재가 날짜 지정 불가, 토큰 발급 1분 1회, 초당 20건, 일봉 호출당 100건, 휴장일조회 1일 1회 권장 | 구성종목은 개장일에 공시일로, 현재가는 최근 거래일로 기록, `kis_tokens` 캐시, 0.06초 간격 + 재시도, 100일 단위 페이지네이션, `market_calendar` 캐시 |
 | 네이버 증권 모바일 API | 비공식 API (사전 공지 없이 변경 가능) | 신규 ETF만 조회, 0.1초 간격, 실패 시 보수율 생략 |
 
 ### 에러 처리

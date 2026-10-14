@@ -275,7 +275,7 @@
   <h1>ETF Atlas <span>Story</span></h1>
   <div class="nav-controls">
     <button class="nav-btn" id="prevBtn" onclick="go(-1)">&larr;</button>
-    <span class="page-info" id="pageInfo">1 / 12</span>
+    <span class="page-info" id="pageInfo">1 / 10</span>
     <button class="nav-btn" id="nextBtn" onclick="go(1)">&rarr;</button>
   </div>
 </header>
@@ -290,553 +290,265 @@
   <h2 class="chapter-title">오프닝</h2>
   <div class="chapter-divider"></div>
 
-  <p>안녕하세요. 오늘은 기술 리서치 프로젝트로 진행한 <span class="hl-blue">ETF Atlas</span>를 소개하면서, 그 과정에서 사용한 기술과 부딪힌 문제들을 이야기하려 합니다.</p>
+  <p><span class="hl-blue">ETF Atlas</span>는 한국 ETF 데이터를 매일 모아 그래프로 쌓고, 자연어로 물으면 표와 차트로 답하는 웹 서비스입니다. 기술 리서치 프로젝트로 시작해, 실제로 매일 돌아가는 서비스 수준까지 만들었습니다.</p>
 
-  <h3 class="sub-title">문제 제기</h3>
-  <p>한국 증시에 상장된 ETF는 약 1,175개입니다. 그중 국내 주식형이면서 순자산 500억 원 이상인 것만 골라도 190개, 순자산 합계 약 156조 원이고, 이 ETF들이 담은 종목은 수천 건의 보유 관계를 이룹니다. 여기서 의미 있는 정보를 뽑으려면 <span class="hl-blue">관계를 탐색</span>해야 합니다.</p>
-  <p>"삼성전자를 가장 많이 보유한 ETF는?"이라는 질문은 관계형 DB라면 <span class="tech">JOIN</span> 여러 개에 <span class="tech">GROUP BY</span>, <span class="tech">ORDER BY</span>가 필요합니다. "KODEX 200과 비슷한 ETF는?"은 자기 조인과 집계가 겹칩니다. <span class="hl">쿼리가 복잡해질수록 성능과 가독성이 함께 떨어집니다.</span></p>
-  <p>여기에 욕심을 하나 더 냈습니다. 이런 질문을 개발자가 아닌 사람도 할 수 있으면 좋겠다는 것입니다. "삼성전자와 SK하이닉스가 많이 든 ETF를 수수료순으로 보여줘"라고 <span class="hl">자연어로 물으면 알아서 데이터를 찾아 답하는 챗봇</span>을 만들고 싶었습니다.</p>
+  <h3 class="sub-title">풀고 싶었던 문제</h3>
+  <p>상장 ETF는 약 1,175개이고, 그중 국내 주식형·순자산 500억 원 이상만 골라도 190개, 이들이 담은 종목은 수천 건의 보유 관계를 이룹니다. "삼성전자를 가장 많이 담은 ETF는?", "KODEX 200과 비슷한 ETF는?" 같은 질문은 모두 <span class="hl-blue">관계 탐색</span>입니다.</p>
+  <p>여기에 두 가지를 더 원했습니다. 개발자가 아니어도 <span class="hl">자연어로 묻고 화면으로 답을 받는 것</span>, 그리고 이 데이터가 <span class="hl">매일 자동으로 쌓이는 것</span>입니다.</p>
 
-  <div class="callout">복잡한 관계 탐색, 자연어 질의, 그리고 매일 쌓이는 시장 데이터의 자동 수집. 이 세 문제를 풀려고 고른 기술이 <strong>Apache AGE</strong>, <strong>LLM 에이전트 프레임워크</strong>, <strong>Apache Airflow</strong>입니다.</div>
-
-  <h3 class="sub-title">기술 선택 배경</h3>
-  <p>주제는 평소 관심 있던 ETF 투자로 잡았습니다. 실제 서비스에 가까운 도메인에서 써 봐야 리서치 결과가 의미 있다고 생각했기 때문입니다.</p>
-  <ul>
-    <li><span class="hl-blue">그래프 데이터베이스</span> &mdash; ETF 데이터는 본질적으로 관계 중심입니다. 별도 그래프 DB 대신 PostgreSQL 확장인 <span class="tech">Apache AGE</span>를 골랐습니다</li>
-    <li><span class="hl-purple">LLM 에이전트</span> &mdash; 처음에는 경량 프레임워크 <span class="tech">smolagents</span>의 CodeAgent로 시작했고, 지금은 <span class="tech">pydantic-ai</span> 기반 tool-calling 에이전트로 바꿨습니다. 이 전환이 오늘 이야기의 한 축입니다</li>
-    <li><span class="hl-green">데이터 파이프라인</span> &mdash; 배치 중심 워크로드라 Python 네이티브인 <span class="tech">Apache Airflow</span>(현재 3.x)를 선택했습니다</li>
-  </ul>
-  <p>데이터 소스는 <span class="hl">한국투자증권 KIS Open API</span>로 통일했습니다. 초기에는 KRX Open API와 pykrx를 함께 썼지만 지금은 모두 걷어냈습니다.</p>
-
-  <div class="callout">이 기술들이 실제 서비스 수준의 프로젝트에서 얼마나 쓸 만한지, 그리고 쓰다 보니 무엇을 바꾸게 됐는지를 순서대로 공유하겠습니다.</div>
+  <div class="callout">관계 탐색은 <strong>Apache AGE</strong>, 자연어 질의는 <strong>pydantic-ai 기반 LLM 에이전트</strong>, 자동 수집은 <strong>Apache Airflow</strong>로 풀었습니다. 데이터 소스는 <strong>한국투자증권 KIS Open API</strong>입니다.</div>
 </section>
 
-<!-- ═══════════════ Chapter 2: Apache AGE ═══════════════ -->
-<section class="chapter" data-title="Apache AGE 기술 소개">
+<!-- ═══════════════ Chapter 2: 기술 스택 ═══════════════ -->
+<section class="chapter" data-title="기술 스택">
   <div class="chapter-num">Chapter 02</div>
-  <h2 class="chapter-title">Apache AGE 기술 소개</h2>
+  <h2 class="chapter-title">기술 스택</h2>
   <div class="chapter-divider"></div>
 
-  <h3 class="sub-title">Apache AGE란?</h3>
-  <p><span class="hl-blue">Apache AGE</span>는 PostgreSQL에 그래프 데이터베이스 기능을 더하는 확장(Extension)입니다. 이름이 <span class="hl">"A Graph Extension"</span>의 약자입니다. 이 프로젝트는 PostgreSQL 18 위에 AGE 1.8.0을 올려 씁니다.</p>
-  <ul>
-    <li><strong>PostgreSQL 위에서 동작</strong> &mdash; 별도 DB 서버 없이 확장만 설치하면 됩니다</li>
-    <li><strong>Cypher 쿼리 지원</strong> &mdash; Neo4j에서 쓰던 Cypher 문법을 대부분 그대로 씁니다</li>
-    <li><strong>SQL과 Cypher 혼용</strong> &mdash; 관계형 테이블, 그래프, 그리고 pgvector 임베딩까지 한 DB에 둘 수 있습니다</li>
-  </ul>
-  <p>라이선스는 <span class="hl-green">Apache 2.0</span>입니다.</p>
-
-  <h3 class="sub-title">Neo4j vs Apache AGE</h3>
-  <div class="compare">
-    <div class="compare-card">
-      <h4>Neo4j</h4>
-      <ul>
-        <li>전용 그래프 DB, 성능과 기능 면에서 가장 성숙</li>
-        <li>Community / Enterprise 에디션으로 나뉘고 Enterprise는 상용 라이선스</li>
-        <li>별도 서버 운영 필요</li>
-        <li>RDBMS와 데이터를 따로 관리</li>
-      </ul>
-    </div>
-    <div class="compare-card">
-      <h4>Apache AGE</h4>
-      <ul>
-        <li>PostgreSQL 확장 &mdash; 기존 인프라 그대로</li>
-        <li><span class="hl-green">Apache 2.0</span> 라이선스</li>
-        <li>한 DB에서 관계형 + 그래프 + 벡터</li>
-        <li>Cypher 지원이 불완전하고 에코시스템이 작음</li>
-      </ul>
-    </div>
-  </div>
-  <div class="callout">이미 PostgreSQL을 쓰고 있고 그래프 쿼리가 워크로드의 일부라면 AGE가 합리적인 선택입니다.</div>
-
-  <h3 class="sub-title">AGE 동작 방식</h3>
-  <p>일반 SQL 안에서 <span class="tech">cypher()</span> 함수를 호출하는 형태입니다.</p>
+  <h3 class="sub-title">Apache AGE &mdash; PostgreSQL 안의 그래프</h3>
+  <p>PostgreSQL 확장으로 그래프와 Cypher 쿼리를 쓰게 해 줍니다. 별도 그래프 DB 서버 없이 <span class="hl">관계형 테이블 + 그래프 + pgvector 임베딩</span>을 한 DB에 둡니다. PostgreSQL 18 위에 AGE 1.8.0을 씁니다.</p>
 <pre>SELECT * FROM cypher('etf_graph', $$
     MATCH (e:ETF {code: '069500'})-[h:CURRENT_HOLDS]->(s:Stock)
     RETURN {stock: s.name, weight: h.weight}
     ORDER BY h.weight DESC LIMIT 10
 $$) as (result agtype);</pre>
-  <div class="callout-warn">
-    <strong>주의할 점:</strong> 그래프 이름을 지정해야 하고, 결과 타입은 <span class="tech">agtype</span>입니다. 반환 컬럼을 하나로 선언했으니 여러 값을 돌려줄 때는 <span class="hl">맵으로 감싸야</span> 합니다.
-  </div>
+  <p>Cypher가 SQL 함수 안에서 돌기 때문에 읽기 전용 트랜잭션, 실행 시간 제한, Alembic 마이그레이션 같은 PostgreSQL 도구를 그대로 씁니다. 대신 Cypher 지원이 Neo4j보다 불완전하고 자료가 적습니다.</p>
 
-  <h3 class="sub-title">써 보며 만난 AGE의 특성</h3>
-  <ul>
-    <li><strong>같은 WITH 절에서 만든 별칭으로는 ORDER BY를 못 합니다</strong> &mdash; 집계 결과로 정렬하려면 <span class="tech">WITH</span>를 한 번 더 둬야 합니다</li>
-    <li><strong>쿼리가 SQL의 <span class="tech">$$ ... $$</span> 안에 들어갑니다</strong> &mdash; 쿼리에 <span class="tech">$$</span>가 섞이면 따옴표가 닫히고 그 뒤가 날 SQL로 해석됩니다. LLM이 쓴 쿼리를 실행할 때 특히 중요합니다(AI 챗봇 챕터에서 다시 다룹니다)</li>
-    <li><strong>MERGE 뒤에 SET을 붙인 패턴에 버그가 있어</strong> 가격 노드는 "없으면 CREATE, 있으면 SET" 두 단계로 저장합니다</li>
-  </ul>
+  <h3 class="sub-title">pydantic-ai &mdash; tool-calling 에이전트</h3>
+  <p>LLM이 JSON 인자로 도구를 부르고, 인자는 스키마로 검증됩니다. 실행되는 코드는 우리가 작성한 도구뿐이라 LLM이 만든 코드를 실행할 일이 없습니다. 같은 프레임워크로 <span class="hl-purple">구조화된 출력</span>(화면 설계, 태깅)도 받습니다. LLM과 임베딩은 LiteLLM 프록시(OpenAI 호환)를 거칩니다.</p>
+
+  <h3 class="sub-title">Apache Airflow 3.x &mdash; 배치 수집</h3>
+  <p>"매일 아침 KIS에서 확정된 데이터를 받아 그래프에 적재한다"는 전형적인 배치 작업입니다. DAG를 Python 코드로 관리하고 테스트할 수 있고, 재시도·의존성 기반 병렬 실행·XCom을 설정만으로 씁니다. api-server, scheduler, dag-processor로 역할이 나뉜 3.x 구성입니다.</p>
 </section>
 
-<!-- ═══════════════ Chapter 3: LLM 에이전트 ═══════════════ -->
-<section class="chapter" data-title="LLM 에이전트 프레임워크">
+<!-- ═══════════════ Chapter 3: 전체 구성 ═══════════════ -->
+<section class="chapter" data-title="전체 구성">
   <div class="chapter-num">Chapter 03</div>
-  <h2 class="chapter-title">LLM 에이전트 프레임워크 &mdash; smolagents에서 pydantic-ai로</h2>
+  <h2 class="chapter-title">전체 구성</h2>
   <div class="chapter-divider"></div>
 
-  <h3 class="sub-title">에이전트가 도구를 부르는 두 가지 방식</h3>
-  <p>LLM 에이전트는 모델이 "어떤 도구를 어떤 인자로 부를지"를 정하고, 프로그램이 그 도구를 실행해 결과를 다시 모델에 돌려주는 반복 구조입니다. 도구를 부르는 방식은 크게 둘로 나뉩니다.</p>
-  <div class="compare">
-    <div class="compare-card">
-      <h4>코드 생성 (smolagents CodeAgent)</h4>
-      <ul>
-        <li>LLM이 <strong>Python 코드</strong>를 쓰고, 그 코드 안에서 도구 함수를 호출</li>
-        <li>변수·for 루프·조건 분기를 쓸 수 있어 유연함</li>
-        <li>대신 <span class="hl">LLM이 만든 코드를 백엔드 프로세스에서 실행</span></li>
-      </ul>
-    </div>
-    <div class="compare-card">
-      <h4>Tool calling (pydantic-ai)</h4>
-      <ul>
-        <li>LLM이 <strong>JSON 인자</strong>로 도구를 호출</li>
-        <li>인자를 JSON 스키마로 검증, 틀리면 재시도 프롬프트로 되돌림</li>
-        <li>실행되는 코드는 우리가 작성한 도구뿐</li>
-      </ul>
-    </div>
-  </div>
-
-  <h3 class="sub-title">smolagents &mdash; 처음의 선택</h3>
-  <p><span class="hl-purple">smolagents</span>는 Hugging Face가 만든 경량 에이전트 프레임워크로, <span class="hl">"최소한의 추상화"</span>가 철학입니다. LangChain이 무겁게 느껴져 골랐고, Model + Tool + Agent만 알면 시작할 수 있었습니다. 핵심 기능인 <span class="tech">CodeAgent</span>는 도구 호출을 Python 코드로 생성합니다.</p>
-
-  <h3 class="sub-title">pydantic-ai &mdash; 지금의 선택</h3>
-  <p>재가동하면서 세 후보를 비교했습니다.</p>
+  <h3 class="sub-title">기능</h3>
   <ul>
-    <li><strong>smolagents 유지</strong> &mdash; 익숙하지만 LLM 생성 코드 실행이라는 구조는 그대로</li>
-    <li><strong>LangChain deepagents</strong> &mdash; 계획(todo), 가상 파일시스템, 서브에이전트 같은 장기 작업용 기능이 중심. 도구 10개로 몇 단계면 끝나는 이 챗봇에는 과했습니다</li>
-    <li><strong>pydantic-ai</strong> &mdash; 가볍고, OpenAI 호환 엔드포인트를 그대로 쓰며, 도구 인자 스키마 검증이 있고, 코드 실행이 없음 &rarr; <span class="hl-green">선택</span></li>
+    <li><span class="hl-blue">ETF 탐색</span> &mdash; 검색, 테마 태그·액티브/패시브 필터, 상세(보유종목, 유사 ETF, 가격)</li>
+    <li><span class="hl-blue">액티브 ETF 비중 변화</span> &mdash; 액티브 ETF가 종목 비중을 어떻게 바꿨는지 날짜별로</li>
+    <li><span class="hl-blue">구성종목 분석</span> &mdash; ETF와 투자 비중을 넣으면 실제로 담기는 종목 비중을 계산</li>
+    <li><span class="hl-blue">포트폴리오</span> &mdash; 매수 기록, 목표 비중, 일별 스냅샷 대시보드, 공유</li>
+    <li><span class="hl-purple">AI 챗봇</span> &mdash; 자연어 질문에 표·차트·해설로 답하는 화면</li>
+    <li><span class="hl-blue">관리자</span> &mdash; 챗봇 로그 검수, 화면 설계 예시, ETF 태그, 알림 설정</li>
   </ul>
-  <div class="callout">결정적인 이유는 보안이었습니다. smolagents의 로컬 Python 실행기는 샌드박스가 아니었고, 우리 챗봇에 필요한 건 "코드 실행"이 아니라 "읽기 전용 조회 도구를 순서대로 부르는 것"이었습니다.</div>
-  <p>pydantic-ai의 <span class="tech">run_stream_events</span>는 도구 호출과 결과를 이벤트로 흘려 줍니다. 이걸 그대로 프론트엔드의 단계(step) 이벤트로 바꿔서, 기존 SSE 형식을 바꾸지 않고 프레임워크만 교체할 수 있었습니다.</p>
+
+  <h3 class="sub-title">구성 요소</h3>
+  <ul>
+    <li><span class="tech">db</span> &mdash; PostgreSQL 18 + Apache AGE + pgvector + pg_trgm</li>
+    <li><span class="tech">backend</span> &mdash; FastAPI + pydantic-ai</li>
+    <li><span class="tech">frontend</span> &mdash; React + TypeScript + Vite, nginx가 정적 파일을 서빙하고 <span class="tech">/api</span>를 백엔드로 넘김</li>
+    <li><span class="tech">airflow</span> &mdash; 3.x, 수집·태깅 DAG</li>
+  </ul>
+  <p>모두 Docker Compose로 띄웁니다. 외부에 열린 포트는 프런트엔드 하나이고, 백엔드·DB·Airflow는 내부에만 바인딩합니다. 가입은 초대 링크로 하고, 처음 만든 계정이 관리자가 됩니다.</p>
+
+  <div class="callout">하나의 PostgreSQL에서 CRUD는 관계형, 관계 탐색은 그래프, 예시 검색은 벡터로 나눕니다. 이 분리를 한 DB 안에서 할 수 있다는 것이 AGE를 고른 가장 큰 이유입니다.</div>
 </section>
 
-<!-- ═══════════════ Chapter 4: Apache Airflow ═══════════════ -->
-<section class="chapter" data-title="Apache Airflow 기술 소개">
+<!-- ═══════════════ Chapter 4: 데이터 수집 ═══════════════ -->
+<section class="chapter" data-title="데이터 수집">
   <div class="chapter-num">Chapter 04</div>
-  <h2 class="chapter-title">Apache Airflow 기술 소개</h2>
-  <div class="chapter-divider"></div>
-
-  <h3 class="sub-title">Apache Airflow란?</h3>
-  <p><span class="hl-green">Apache Airflow</span>는 데이터 파이프라인을 작성하고, 스케줄링하고, 모니터링하는 플랫폼입니다. Airbnb에서 시작해 지금은 Apache 최상위 프로젝트입니다.</p>
-  <ul>
-    <li><strong>DAG</strong> &mdash; Directed Acyclic Graph. 작업 흐름을 Python 코드로 정의한 것</li>
-    <li><strong>Task</strong> &mdash; DAG 안의 개별 작업 단위</li>
-    <li><strong>Operator</strong> &mdash; Task가 무엇을 할지 정하는 템플릿 (<span class="tech">PythonOperator</span>, <span class="tech">ShortCircuitOperator</span> 등)</li>
-    <li><strong>Scheduler</strong> &mdash; 스케줄에 맞춰 DAG를 트리거하는 엔진</li>
-  </ul>
-
-  <h3 class="sub-title">Airflow 3.x 구성</h3>
-  <p>지금은 <span class="tech">Airflow 3.3.2</span>(Python 3.14)를 커스텀 이미지로 씁니다. 2.x 때는 웹서버와 스케줄러를 한 컨테이너에서 돌렸지만, 3.x에서는 역할이 나뉩니다.</p>
-  <ul>
-    <li><strong>api-server</strong> &mdash; 웹 UI와 API</li>
-    <li><strong>scheduler</strong> &mdash; 실행 시점 판단과 Task 실행 (LocalExecutor)</li>
-    <li><strong>dag-processor</strong> &mdash; DAG 파일 파싱</li>
-    <li><strong>airflow-init</strong> &mdash; 메타데이터 DB 마이그레이션과 초기 설정</li>
-  </ul>
-  <p>import 경로도 바뀌어 DAG는 <span class="tech">airflow.sdk</span>, 표준 오퍼레이터는 <span class="tech">airflow.providers.standard</span>에서 가져옵니다.</p>
-
-  <h3 class="sub-title">왜 Airflow인가 &mdash; NiFi와의 비교</h3>
-  <div class="compare">
-    <div class="compare-card">
-      <h4>NiFi</h4>
-      <ul>
-        <li><span class="hl">실시간 데이터 라우팅</span>에 초점</li>
-        <li>GUI 드래그 앤 드롭으로 플로우 구성</li>
-        <li>IoT, 로그 수집, 시스템 간 실시간 전달에 강함</li>
-      </ul>
-    </div>
-    <div class="compare-card">
-      <h4>Airflow</h4>
-      <ul>
-        <li><span class="hl">배치 작업 오케스트레이션</span>에 초점</li>
-        <li>Python 코드로 워크플로 정의 &rarr; Git 버전 관리</li>
-        <li>정기 수집, 배치 ETL에 강함</li>
-      </ul>
-    </div>
-  </div>
-  <div class="callout">"거래일 다음 날 아침, KIS Open API에서 전날 확정된 데이터를 가져와 가공해 그래프에 적재한다." 전형적인 배치 작업이고, 수집 로직이 Python 클라이언트이니 Airflow가 자연스러웠습니다.</div>
-</section>
-
-<!-- ═══════════════ Chapter 5: 프로젝트 개요 & 아키텍처 ═══════════════ -->
-<section class="chapter" data-title="프로젝트 개요 & 아키텍처">
-  <div class="chapter-num">Chapter 05</div>
-  <h2 class="chapter-title">프로젝트 개요 & 아키텍처</h2>
-  <div class="chapter-divider"></div>
-
-  <h3 class="sub-title">프로젝트 개요</h3>
-  <p><span class="hl-blue">ETF Atlas</span>는 한국 ETF 정보를 수집·분석하고, AI 챗봇으로 질의하는 웹 서비스입니다.</p>
-  <ul>
-    <li><strong>ETF 탐색</strong> &mdash; 검색, 테마 태그별 조회, 보유종목, 유사 ETF</li>
-    <li><strong>워치리스트</strong> &mdash; 관심 ETF의 보유종목 비중 변화 추적과 알림</li>
-    <li><strong>포트폴리오</strong> &mdash; 매수 기록, 목표 비중, 일별 스냅샷 대시보드</li>
-    <li><strong>AI 챗봇</strong> &mdash; 자연어로 ETF 데이터 질의</li>
-    <li><strong>관리자</strong> &mdash; 챗봇 로그 승인, ETF 태그 수동 지정</li>
-  </ul>
-
-  <h3 class="sub-title">전체 아키텍처</h3>
-  <p>Docker Compose로 띄웁니다.</p>
-  <ul>
-    <li><strong>db</strong> &mdash; PostgreSQL 18 + Apache AGE 1.8.0 + pgvector + pg_trgm</li>
-    <li><strong>backend</strong> &mdash; FastAPI (Python 3.14) + pydantic-ai</li>
-    <li><strong>frontend</strong> &mdash; React 18 + TypeScript + Vite, nginx가 정적 파일을 서빙하고 <span class="tech">/api</span>를 백엔드로 프록시</li>
-    <li><strong>airflow</strong> &mdash; 3.3.2, api-server / scheduler / dag-processor / airflow-init</li>
-  </ul>
-  <div class="callout">하나의 PostgreSQL에 관계형 테이블, AGE 그래프, pgvector 임베딩이 함께 있습니다. CRUD는 관계형, 관계 탐색은 그래프, 예시 검색은 벡터 &mdash; 이게 AGE를 고른 가장 큰 이유입니다.</div>
-
-  <h3 class="sub-title">운영 측면의 정리</h3>
-  <ul>
-    <li><strong>외부 노출은 프론트엔드 포트(9600) 하나</strong> &mdash; 백엔드, DB, Airflow 포트는 모두 <span class="tech">127.0.0.1</span>에만 바인딩합니다. 외부 요청은 nginx가 <span class="tech">/api</span>로 받아 내부망으로 넘기고, 서버의 Airflow UI는 SSH 터널로 엽니다. Docker의 포트 공개가 방화벽 규칙을 우회할 수 있어서 내린 결정입니다</li>
-    <li><strong>인증은 ID/비밀번호</strong> &mdash; Google OAuth를 걷어냈습니다. 사용자가 0명이면 첫 화면이 <span class="tech">/setup</span>으로 가고, 거기서 만든 계정이 관리자가 됩니다</li>
-    <li><strong>스키마 마이그레이션은 Alembic</strong> &mdash; 기존 init SQL을 동결된 기준 리비전(0001)으로 두고, 백엔드가 기동할 때 <span class="tech">alembic upgrade head</span>를 실행합니다. 새 DB든 기존 DB든 같은 상태가 됩니다. 0002에서 포트폴리오 외래키에 NOT NULL을 추가했습니다</li>
-  </ul>
-</section>
-
-<!-- ═══════════════ Chapter 6: 데이터 수집 ═══════════════ -->
-<section class="chapter" data-title="데이터 수집 & 파이프라인">
-  <div class="chapter-num">Chapter 06</div>
   <h2 class="chapter-title">데이터 수집 &mdash; KIS Open API & Airflow</h2>
   <div class="chapter-divider"></div>
 
-  <h3 class="sub-title">데이터 소스: KIS 하나로</h3>
-  <p>시장 데이터는 한국투자증권 <span class="hl">KIS Open API</span>로 통일했습니다. 키 하나로 필요한 대부분을 얻습니다.</p>
+  <h3 class="sub-title">KIS에서 받는 것</h3>
   <ul>
-    <li><strong>ETF 목록</strong> &mdash; 공개 종목 마스터 파일(<span class="tech">kospi_code.mst</span>)의 ETF 그룹. 인증이 필요 없습니다</li>
-    <li><strong>ETF/ETN 현재가</strong> &mdash; NAV, 순자산, 상장주식수</li>
-    <li><strong>국내주식 기간별 시세</strong> &mdash; 일봉. ETF·주식 가격과 영업일 목록(KODEX 200의 일봉 날짜)에 씁니다</li>
-    <li><strong>ETF 구성종목 시세</strong> &mdash; 보유종목과 비중</li>
-    <li><strong>국내휴장일조회</strong> &mdash; 장 운영 여부, 하루 1회 캐시</li>
+    <li>ETF 목록 &mdash; 공개 종목 마스터 파일 (인증 불필요)</li>
+    <li>ETF 현재가 &mdash; NAV, 순자산, 상장주식수, 액티브/패시브 분류</li>
+    <li>일봉 &mdash; ETF·주식 가격과 영업일 목록</li>
+    <li>ETF 구성종목 &mdash; 보유종목과 비중</li>
+    <li>휴장일 &mdash; 개장 여부</li>
   </ul>
-  <p>KIS가 총보수를 주지 않아 보수율만 네이버 증권에서 가져옵니다. 포트폴리오 현재가 갱신(장중 10분 주기)은 아직 yfinance를 쓰고 있어, KIS 현재가로 옮기는 것이 남은 과제입니다.</p>
+  <p>총보수는 KIS가 주지 않아 네이버 증권에서, 포트폴리오의 장중 현재가는 yfinance에서 받습니다.</p>
 
   <h3 class="sub-title">유니버스 &mdash; 190개 ETF</h3>
-  <ul>
-    <li>상장 ETF <strong>약 1,175개</strong></li>
-    <li>&rarr; 이름 필터: 레버리지·인버스·선물·합성·커버드콜, 채권·금리, 금·은·원자재, 통화, 머니마켓, 리츠, 해외 투자 ETF 제외 &rarr; <strong>380여 개</strong></li>
-    <li>&rarr; 순자산 500억 원 이상 &rarr; <strong>190개, 약 156조 원</strong></li>
-  </ul>
-  <p>한 번 유니버스에 들어온 ETF는 빠지지 않습니다. 운용사는 ETF 이름 앞의 브랜드(KODEX, TIGER, ACE 등)로 판별해 <span class="tech">MANAGED_BY</span>로 연결합니다.</p>
+  <p>레버리지·인버스·선물·합성·커버드콜, 채권·원자재·통화·리츠·해외 투자 ETF를 이름으로 거르고, 순자산 500억 원 이상만 남깁니다. 한 번 들어온 ETF는 빠지지 않고, 운용사는 이름 앞 브랜드(KODEX, TIGER…)로 연결합니다.</p>
 
-  <h3 class="sub-title">수집 원칙 세 가지</h3>
+  <h3 class="sub-title">수집 원칙</h3>
   <ul>
-    <li><strong>백필하지 않는다</strong> &mdash; 첫 실행은 가장 최근 확정 거래일 하루만 수집하고, 이후 매일 쌓습니다. 구성종목 API가 날짜 지정을 지원하지 않아 과거 보유종목은 애초에 얻을 수 없습니다</li>
-    <li><strong>확정된 날까지만 수집한다</strong> &mdash; 16시(KST) 전에 돌면 전날까지만 수집합니다. 장중에 일봉을 요청하면 미완성된 당일 봉이 오기 때문입니다</li>
-    <li><strong>구성종목은 비중 상위 30개</strong> &mdash; KIS 구성종목 API는 상위 30개만 주고 다음 페이지가 없습니다. KODEX 200은 202종목 중 30개, 비중 합 약 85%입니다. 구성종목은 "XX와 YY가 많이 든 ETF를 수수료순으로" 같은 질의에 쓰는 데이터라 정확한 대사가 목적이 아니어서 그대로 받아들였습니다</li>
+    <li><span class="hl">백필하지 않는다</span> &mdash; 구성종목 API에 날짜 지정이 없어 과거 보유종목은 얻을 수 없습니다. 첫 실행부터 하루씩 쌓습니다</li>
+    <li><span class="hl">가격은 확정된 날까지만</span> &mdash; 장중에는 미완성 일봉이 오므로 16시 전이면 전날까지만 받습니다</li>
+    <li><span class="hl">구성종목은 개장일에, 공시된 날짜로</span> &mdash; KIS는 개장일 아침 08:30에 그날의 구성(직전 거래일 장 마감 기준)을 공시합니다. 개장일에만 받고 그날 날짜로 저장하며, 변화는 ETF별 직전 수집일과 비교합니다</li>
+    <li><span class="hl">구성종목은 상위 30개</span> &mdash; API가 비중 상위 30개만 줍니다. 질의용 데이터라 그대로 쓰고, 전체 종목 수는 따로 표시합니다</li>
   </ul>
 
-  <h3 class="sub-title">Airflow DAG 5개</h3>
+  <h3 class="sub-title">DAG</h3>
   <ul>
-    <li><strong>age_sync_universe</strong> (화~토 08:30) &mdash; 거래일 목록 &rarr; 유니버스·가격 &rarr; 구성종목(+ CURRENT_HOLDS 교체) &rarr; 주식 가격 &rarr; 수익률 &rarr; 신규 ETF 규칙 태그 &rarr; 수집 기록과 알림</li>
-    <li><strong>rdb_sync_metadata</strong> (평일 08:30) &mdash; 종목 마스터 파일 &rarr; 관계형 <span class="tech">etfs</span> 테이블</li>
-    <li><strong>rdb_realtime_prices</strong> (평일 장중 10분마다) &mdash; <span class="tech">ShortCircuitOperator</span>로 개장 여부를 판단한 뒤 보유 티커 현재가 수집 &rarr; 포트폴리오 스냅샷 갱신</li>
-    <li><strong>age_tagging</strong> (토 03:00) &mdash; 신규 ETF 테마 태깅 (규칙 + LLM)</li>
-    <li><strong>embed_code_examples</strong> (수동) &mdash; 챗봇 few-shot 예시의 질문 일반화와 임베딩</li>
+    <li><span class="tech">rdb_sync_metadata</span> (매일 08:40) &mdash; 종목 마스터 &rarr; 관계형 ETF 목록</li>
+    <li><span class="tech">age_sync_universe</span> (매일 08:50) &mdash; 영업일 &rarr; 유니버스·가격 &rarr; 구성종목 &rarr; 주식 가격 &rarr; 수익률 &rarr; 액티브 ETF 비중 변화 &rarr; 신규 ETF 태깅 &rarr; 수집 기록·Discord 알림</li>
+    <li><span class="tech">rdb_realtime_prices</span> (평일 장중 10분마다) &mdash; 보유 티커 현재가 &rarr; 포트폴리오 스냅샷</li>
+    <li><span class="tech">age_tagging</span> (토 03:00) &mdash; 테마 태깅</li>
+    <li><span class="tech">embed_code_examples</span> (수동) &mdash; 챗봇 예시 임베딩</li>
   </ul>
-
-  <h3 class="sub-title">Airflow에서 유용했던 기능</h3>
-  <ul>
-    <li><span class="hl-green">Configuration as Code</span> &mdash; DAG가 Python 파일이라 Git으로 관리하고, KIS 클라이언트 같은 수집 코드에 단위 테스트를 붙일 수 있습니다</li>
-    <li><span class="hl-green">XCom</span> &mdash; "거래일 목록" Task의 결과를 이후 Task들이 받아 씁니다</li>
-    <li><span class="hl-green">의존성과 병렬 실행</span> &mdash; 유니버스 수집 뒤 구성종목·수익률·태그가 갈라져 병렬로 돕니다</li>
-    <li><span class="hl-green">자동 재시도</span> &mdash; <span class="tech">retries=3, retry_delay=5분</span> 설정만으로 간헐적 실패를 흡수</li>
-    <li><span class="hl-green">Params</span> &mdash; 태깅 DAG의 <span class="tech">full_rebuild</span>처럼 수동 실행 시 동작을 바꾸는 인자</li>
-  </ul>
+  <p>모든 쓰기는 같은 날짜로 다시 돌려도 결과가 같게 만들었고, 조회에 실패한 ETF는 이전 값을 유지합니다.</p>
 </section>
 
-<!-- ═══════════════ Chapter 7: 그래프 데이터 활용 ═══════════════ -->
-<section class="chapter" data-title="그래프 데이터 활용">
-  <div class="chapter-num">Chapter 07</div>
-  <h2 class="chapter-title">그래프 데이터 활용</h2>
+<!-- ═══════════════ Chapter 5: 그래프 모델 ═══════════════ -->
+<section class="chapter" data-title="그래프 모델">
+  <div class="chapter-num">Chapter 05</div>
+  <h2 class="chapter-title">그래프 모델과 활용</h2>
   <div class="chapter-divider"></div>
 
-  <h3 class="sub-title">그래프 모델 (<span class="tech">etf_graph</span>)</h3>
+  <h3 class="sub-title">etf_graph</h3>
   <ul>
-    <li><strong>노드</strong> &mdash; <span class="tech">ETF</span>, <span class="tech">Stock</span>, <span class="tech">Price</span>, <span class="tech">Company</span>, <span class="tech">Tag</span>, <span class="tech">User</span></li>
-    <li><strong>HOLDS</strong> {date, weight, shares} &mdash; 날짜별 보유 이력. 변화 비교에만 씁니다</li>
-    <li><strong>CURRENT_HOLDS</strong> {date, weight, shares} &mdash; ETF별 현재 보유종목(최대 30개). 수집할 때마다 교체</li>
-    <li><strong>HAS_PRICE</strong>, <strong>MANAGED_BY</strong>, <strong>TAGGED</strong>, <strong>WATCHES</strong></li>
+    <li>노드 &mdash; <span class="tech">ETF</span>, <span class="tech">Stock</span>, <span class="tech">Price</span>, <span class="tech">Company</span>, <span class="tech">Tag</span>, <span class="tech">User</span></li>
+    <li><span class="tech">HOLDS {date, weight, shares}</span> &mdash; 날짜별 보유 이력. 비교에만 씁니다</li>
+    <li><span class="tech">CURRENT_HOLDS</span> &mdash; ETF별 현재 보유종목. 수집할 때마다 교체</li>
+    <li><span class="tech">HAS_PRICE</span>, <span class="tech">MANAGED_BY</span>, <span class="tech">TAGGED</span>, <span class="tech">WATCHES</span></li>
   </ul>
-  <div class="callout">"삼성전자를 보유한 ETF 중 반도체 태그가 달린 것" 같은 질의가 MATCH 패턴 하나로 표현됩니다.</div>
-
-  <h3 class="sub-title">왜 CURRENT_HOLDS를 따로 두었나</h3>
-  <p>HOLDS는 ETF-종목-날짜마다 엣지가 하나씩 생깁니다. 거래일마다 약 4,100개, 1년이면 약 100만 개가 쌓입니다. 예전에는 "현재 보유종목"을 이렇게 구했습니다.</p>
-<pre>MATCH (e:ETF)-[h:HOLDS]->(s:Stock)
-WITH e, s, h ORDER BY h.date DESC
-WITH e, s, head(collect(h)) AS latest
-...</pre>
-  <p>ETF마다 이력 전체를 훑는 쿼리라 데이터가 쌓일수록 느려집니다. 지금은 수집 직후 그날 HOLDS를 <span class="tech">CURRENT_HOLDS</span>로 복사해 두고, 현재 보유종목 조회는 <span class="hl">ETF당 30개 이하의 엣지만</span> 읽습니다. 조회에 실패한 ETF는 이전 구성종목을 유지하고, 같은 날짜로 다시 돌려도 결과가 같습니다.</p>
+  <p>이력은 하루 약 4,100개씩 늘어납니다. "현재 보유종목"을 이력에서 매번 찾으면 데이터가 쌓일수록 느려지므로, <span class="hl">현재와 이력을 다른 관계로 나눴습니다</span>. 현재 조회는 ETF당 30개 이하의 엣지만 읽습니다.</p>
 
   <h3 class="sub-title">유사 ETF</h3>
-  <p>공통 보유종목에서 두 비중 중 작은 값을 합산하고, 기준 ETF의 비중 합으로 나눠 정규화합니다.</p>
-<pre>MATCH (e1:ETF {code: $etf_code})-[h1:CURRENT_HOLDS]->(s:Stock)
+  <p>공통 보유종목마다 두 비중 중 작은 값을 더하고, 기준 ETF의 비중 합으로 나눠 정규화합니다. 상위 30개만 있어 비중 합이 100%가 아니기 때문입니다.</p>
+<pre>MATCH (e1:ETF {code: $code})-[h1:CURRENT_HOLDS]->(s:Stock)
       &lt;-[h2:CURRENT_HOLDS]-(e2:ETF)
 WHERE e1 &lt;&gt; e2
 WITH e2, COUNT(s) AS overlap,
      SUM(CASE WHEN h1.weight &lt; h2.weight
          THEN h1.weight ELSE h2.weight END) AS similarity
-WHERE overlap &gt;= $min_overlap
-RETURN {etf_code: e2.code, name: e2.name,
-        overlap: overlap, similarity: similarity}
+RETURN {code: e2.code, name: e2.name, similarity: similarity}
 ORDER BY similarity DESC LIMIT 5</pre>
-  <p>구성종목이 상위 30개뿐이라 비중 합이 100%가 아닌 ETF가 많습니다. 정규화하지 않으면 지수형 ETF끼리의 유사도가 낮게 나와서, 자기 비중 합 대비 비율로 나타냅니다.</p>
-  <div class="callout-warn">관계형 DB였다면 자기 조인과 집계가 얽힐 쿼리가, 그래프에서는 <span class="hl">MATCH 패턴</span> 하나로 읽힙니다.</div>
+  <p>관계형이면 자기 조인과 집계가 얽힐 쿼리가 MATCH 패턴 하나로 읽힙니다.</p>
 
-  <h3 class="sub-title">워치리스트 &mdash; 보유종목 변동 감지</h3>
-  <p>관심 ETF의 두 시점 <span class="tech">HOLDS</span>를 비교해 <span class="hl">신규 편입, 편출, 비중 증가, 비중 감소</span>로 분류합니다. 예를 들어 어떤 ETF가 SK하이닉스 비중을 15%에서 18.5%로 올렸다면 "비중 증가 +3.5%p"로 표시됩니다.</p>
-  <div class="callout-warn"><span class="hl">3%p를 넘는 변화</span>가 있으면 알립니다. 수집이 끝나면 PostgreSQL <span class="tech">LISTEN/NOTIFY</span> &rarr; 백엔드 SSE로 앱 상단에 알림 점이 뜨고, 설정되어 있으면 관리자의 <span class="tech">WATCHES</span>를 따라 Discord로도 보냅니다.</div>
+  <h3 class="sub-title">액티브 ETF 비중 변화</h3>
+  <p>수집이 끝나면 Airflow가 모든 액티브 ETF를 직전 수집일과 비교해 신규 편입·편출·비중 증감을 계산하고 한 테이블에 저장합니다. 웹의 비중 변화 화면, 메뉴 배지, Discord 알림이 모두 이 결과를 읽으므로 서로 다른 숫자가 나오지 않습니다. 알림 기준(%p)은 관리자 페이지에서 정하고 읽을 때 적용합니다.</p>
 </section>
 
-<!-- ═══════════════ Chapter 8: ETF 태깅 ═══════════════ -->
-<section class="chapter" data-title="ETF 테마 태깅">
-  <div class="chapter-num">Chapter 08</div>
+<!-- ═══════════════ Chapter 6: 테마 태깅 ═══════════════ -->
+<section class="chapter" data-title="테마 태깅">
+  <div class="chapter-num">Chapter 06</div>
   <h2 class="chapter-title">ETF 테마 태깅</h2>
   <div class="chapter-divider"></div>
 
-  <h3 class="sub-title">태그 27개, 세 단계</h3>
-  <p>반도체, AI, 2차전지, 방산, 고배당 같은 테마 태그 27개를 씁니다. 태그는 순서대로 붙입니다.</p>
+  <p>반도체, AI, 2차전지, 방산, 고배당 같은 태그 27개를 씁니다. 순서대로 붙입니다.</p>
   <ul>
-    <li><strong>지수 규칙</strong> &mdash; "200", "코스피", "KRX300", "150", "코스닥" 같은 이름 패턴으로 <span class="tech">코스피</span>/<span class="tech">코스닥</span>. 이 두 태그는 규칙으로만 붙습니다</li>
-    <li><strong>키워드 규칙</strong> &mdash; 이름에 "반도체", "배터리", "원자력" 등이 있으면 해당 태그</li>
-    <li><strong>LLM 분류</strong> &mdash; 나머지는 ETF 이름과 보유종목 상위 10개를 근거로 LLM이 structured output으로 태그를 고릅니다. 5개씩 묶어 보내고, 추론 중 토큰이 바닥난 배치는 thinking을 끄고 한 번 더 시도합니다</li>
+    <li><span class="hl-blue">지수 규칙</span> &mdash; "200", "코스피", "코스닥" 같은 이름 패턴으로 코스피/코스닥</li>
+    <li><span class="hl-blue">키워드 규칙</span> &mdash; 이름에 "반도체", "배터리", "원자력" 등이 있으면 그 태그</li>
+    <li><span class="hl-purple">LLM 분류</span> &mdash; 나머지는 이름과 상위 보유종목을 근거로 LLM이 구조화된 출력으로 고릅니다. 맞는 테마가 없으면 붙이지 않습니다</li>
   </ul>
-  <p>시장 전체를 담는 ETF처럼 맞는 테마가 없으면 <span class="hl">태그를 붙이지 않아도 되게</span> 했습니다. 가장 가까운 태그를 억지로 고르게 하면 오분류가 늘었습니다.</p>
-
-  <h3 class="sub-title">신규 ETF만 태깅</h3>
-  <p>예전에는 매주 전체 ETF를 다시 태깅했는데, LLM 결과가 실행마다 달라 같은 ETF의 태그가 주마다 바뀌었습니다(예: "전력·원전"이었다가 "전력·건설"). 지금은 <span class="tech">tagged_at</span>이 없는 ETF, 즉 새로 편입된 ETF만 태깅합니다. 규칙이나 태그 목록을 바꿨을 때는 <span class="tech">full_rebuild</span> 파라미터로 수동 실행해 전체를 다시 태깅합니다.</p>
-
-  <h3 class="sub-title">관리자 수동 지정</h3>
-  <p>관리자 페이지의 <span class="hl-blue">"ETF 태그"</span> 탭에 모든 ETF와 태그가 나옵니다. 셀렉트 박스로 추가하고 배지에서 제거하면 그 목록이 <span class="tech">manual_tags</span>로 고정되고, 태깅 DAG는 이 ETF에 규칙과 LLM을 적용하지 않고 지정값을 그대로 씁니다.</p>
-  <div class="callout"><span class="tech">우량주</span>는 수동으로만 붙는 태그입니다. "산업 테마 없이 시가총액 상위·성장성·ESG 등 선별 기준으로 대형주를 골라 담는 ETF"를 뜻하고, 지수를 폭넓게 따라가는 ETF는 계속 <span class="tech">코스피</span>로 둡니다. 기준이 사람의 판단에 가까워 LLM에 맡기지 않았습니다.</div>
+  <p>LLM 결과는 실행마다 달라질 수 있어, <span class="hl">한 번 붙인 태그는 고정하고 새로 들어온 ETF만 태깅</span>합니다. 전체 재태깅은 명시적으로 요청할 때만 합니다.</p>
+  <p>관리자가 직접 지정한 태그는 자동 태깅이 건드리지 않습니다. 사람의 판단에 가까운 "우량주"는 수동으로만 붙습니다.</p>
 </section>
 
-<!-- ═══════════════ Chapter 9: AI 챗봇 ═══════════════ -->
+<!-- ═══════════════ Chapter 7: AI 챗봇 ═══════════════ -->
 <section class="chapter" data-title="AI 챗봇">
-  <div class="chapter-num">Chapter 09</div>
-  <h2 class="chapter-title">AI 챗봇</h2>
+  <div class="chapter-num">Chapter 07</div>
+  <h2 class="chapter-title">AI 챗봇 &mdash; 답을 화면으로</h2>
   <div class="chapter-divider"></div>
 
-  <h3 class="sub-title">전체 구조</h3>
-  <p><span class="tech">ChatService</span>는 pydantic-ai <span class="hl-purple">tool-calling 에이전트</span> 하나입니다. LLM은 <span class="tech">qwen38-27b</span>, 임베딩은 <span class="tech">embedding-gemma-300m</span>(768차원)이고 둘 다 LiteLLM 프록시(OpenAI 호환)를 거칩니다. 도구는 10개입니다.</p>
+  <p>챗봇은 글로만 답하지 않습니다. 질문을 보고 <span class="hl-purple">화면을 먼저 설계</span>하고, 화면의 각 영역을 <span class="hl-green">스킬</span>이 채웁니다. 자세한 흐름은 Architecture 페이지에 있습니다.</p>
+
+  <h3 class="sub-title">처리 순서</h3>
   <ul>
-    <li><strong>검색:</strong> <span class="tech">etf_search</span>, <span class="tech">stock_search</span>, <span class="tech">list_tags</span></li>
-    <li><strong>정보:</strong> <span class="tech">get_etf_info</span>, <span class="tech">get_etf_prices</span>, <span class="tech">get_stock_prices</span>, <span class="tech">get_holdings_changes</span></li>
-    <li><strong>분석:</strong> <span class="tech">find_similar_etfs</span>, <span class="tech">compare_etfs</span>, <span class="tech">graph_query</span>(Cypher 직접 실행)</li>
+    <li><span class="hl">질문 재작성</span> &mdash; 이전 대화가 있으면 "이거 구성종목은?"을 독립된 질문으로</li>
+    <li><span class="hl">화면 설계</span> &mdash; Planner(LLM)가 화면을 줄과 슬롯으로 나누고, 슬롯마다 스킬·표시 방식·인자를 정합니다. 비슷한 질문의 설계 예시를 참고합니다</li>
+    <li><span class="hl">슬롯 채우기</span> &mdash; 데이터 스킬이 그래프를 조회해 표·차트 데이터를 만듭니다. 서로 독립된 슬롯은 동시에 돌고, 끝나는 대로 화면에 나타납니다</li>
+    <li><span class="hl">해설</span> &mdash; 마지막 슬롯이 앞 영역의 요약만 보고 해설을 흘려보냅니다</li>
   </ul>
-  <div class="callout">모든 도구가 Apache AGE 그래프를 조회합니다. 그래프와 에이전트가 여기서 만납니다.</div>
 
-  <h3 class="sub-title">동작 흐름</h3>
-<pre>Q: 삼성전자를 가장 많이 보유한 ETF는?
+  <h3 class="sub-title">숫자는 LLM을 거치지 않는다</h3>
+  <p>표와 차트의 숫자는 DB에서 곧바로 옵니다. LLM은 화면 설계와 해설만 하고, 해설에는 단위를 붙인 짧은 요약만 넘어갑니다. 그래서 숫자를 지어낼 틈이 없고, 일반 질문은 7~10초 안에 답합니다.</p>
 
-[Step 1] stock_search(query="삼성전자")
-[Step 2] graph_query(cypher="MATCH (e:ETF)-[h:CURRENT_HOLDS]
-         ->(s:Stock {code: '005930'})
-         RETURN {etf_code: e.code, etf_name: e.name, weight: h.weight}
-         ORDER BY h.weight DESC LIMIT 5")
-[답변]   마크다운 표</pre>
-  <p>모델이 도구 호출을 정하면 프로그램이 실행하고 결과를 돌려주는 과정을, 모델이 도구 없이 답할 때까지 반복합니다. 질문 하나당 모델 요청 수에 상한(15회)을 두었습니다. <span class="tech">run_stream_events</span>로 받은 도구 호출과 결과를 단계 이벤트로 바꿔 화면의 접이식 패널에 실시간으로 보여 줍니다.</p>
-  <div class="callout-green">사용자는 AI가 어떤 도구를 어떤 인자로 불러 답을 만들었는지 <strong>투명하게</strong> 볼 수 있습니다.</div>
-
-  <h3 class="sub-title">Tool 정의</h3>
-  <p>도구마다 <span class="tech">name</span>, <span class="tech">description</span>, <span class="tech">inputs</span>(JSON 스키마), <span class="tech">forward()</span>를 정의하면 pydantic-ai 도구로 변환됩니다.</p>
-<pre>class ETFSearchTool(ChatTool):
-    name = "etf_search"
-    description = "ETF를 이름이나 코드로 검색합니다. ..."
-    inputs = {
-        "query": {"type": "string", "description": "검색 키워드"},
-        "limit": {"type": "integer", "nullable": True,
-                  "description": "최대 결과 수 (기본값 10)"},
-    }
-
-    def forward(self, query: str, limit: int = 10) -> str: ...
-
-# ChatTool.as_agent_tool() → pydantic_ai Tool.from_schema(...)</pre>
-  <div class="callout-warn"><strong>핵심은 description</strong>입니다. 모델은 이 설명을 보고 도구를 고르고 인자를 채웁니다. 인자가 스키마에 맞지 않으면 재시도 프롬프트로 모델에 되돌아가고, 화면에는 오류 단계로 표시됩니다.</div>
-
-  <h3 class="sub-title">graph_query의 안전장치</h3>
-  <p>LLM이 쓴 Cypher를 그대로 실행하는 도구라 가장 위험합니다.</p>
+  <h3 class="sub-title">스킬로 안 되는 질문 &mdash; agent</h3>
+  <p>스킬로 표현할 수 없는 질문은 <span class="tech">agent</span> 슬롯 하나로 넘깁니다. 안에서는 도구 10개를 가진 tool-calling 에이전트가 돌고, 그중 <span class="tech">graph_query</span>는 LLM이 쓴 Cypher를 직접 실행합니다.</p>
   <ul>
-    <li>별도 연결에서 <span class="tech">SET TRANSACTION READ ONLY</span> 트랜잭션으로 실행, 끝나면 롤백</li>
-    <li><span class="tech">statement_timeout</span> 10초</li>
-    <li><span class="tech">$$</span>와 <span class="tech">;</span>가 든 쿼리는 거부 (SQL 따옴표 탈출 차단)</li>
-    <li>쿼리 오류 메시지를 LLM에 돌려줘 스스로 고치게 함</li>
+    <li>읽기 전용 트랜잭션, 실행 시간 10초 제한, SQL 따옴표를 탈출할 수 있는 <span class="tech">$$</span>·<span class="tech">;</span> 거부</li>
+    <li>pgvector로 비슷한 질문의 Cypher 패턴 예시를 찾아 프롬프트에 넣습니다. 고유명사는 자리표시자로 일반화해 엉뚱한 예시가 걸리지 않게 합니다</li>
+    <li>어떤 도구를 어떤 인자로 불렀는지 화면에 단계별로 보여 줍니다</li>
   </ul>
-  <p>또 하나, 도구 결과는 사람이 읽기 좋게 %와 억원 단위로 서식을 붙여 돌려주는데, 이걸 본 모델이 저장된 값도 문자열이라고 여기고 조건을 문자열로 쓴 적이 있습니다. 그래서 graph_query 설명에 "값은 숫자로 저장돼 있고 서식은 표시용"이라고 명시했습니다.</p>
 
-  <h3 class="sub-title">Few-shot &mdash; Cypher 패턴 예시</h3>
-  <p>시드 예시 <span class="hl">38개</span>를 도구 호출 순서로 적어 둡니다. 핵심은 Cypher 구조이고, 고유명사는 자리표시자(<span class="tech">&lt;종목명1&gt;</span>, <span class="tech">&lt;ETF명&gt;</span>, <span class="tech">&lt;운용사&gt;</span>)로 둡니다. 종목은 Cypher 안에서 이름으로 바로 찾습니다. 원본은 <span class="tech">docker/db/seed/code_examples.py</span>이고 여기서 SQL을 생성합니다.</p>
-<pre>Q: 삼성전자와 SK하이닉스가 많이 들어있는 ETF를 수수료순으로 정렬해줘
-   (질문은 일반화해서 임베딩, 코드는 자리표시자)
-graph_query(cypher="MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock)
-  WHERE s.name IN ['&lt;종목명1&gt;', '&lt;종목명2&gt;']
-  WITH e, count(s) AS matched, sum(h.weight) AS weight_sum
-  WHERE matched = 2
-  RETURN {code: e.code, name: e.name, weight_sum: weight_sum,
-          expense_ratio: e.expense_ratio}
-  ORDER BY e.expense_ratio ASC, weight_sum DESC LIMIT 10")</pre>
-  <p>예시의 질문은 일반화해서("삼성전자를…" &rarr; "특정 종목을…") 임베딩해 둡니다. 질문이 들어오면 같은 방식으로 일반화한 뒤(thinking을 끄면 0.2~0.4초, 켰을 때와 결과가 같았습니다) pgvector로 가까운 예시 3개를 찾아 일반화된 질문과 함께 프롬프트에 넣습니다.</p>
-  <ul>
-    <li>"현대차와 기아…" &mdash; 엉뚱한 예시(거리 0.29) 대신 맞는 예시가 거리 0.19로 매칭</li>
-    <li>"에코프로비엠과 포스코퓨처엠…" &mdash; 매칭 없음 &rarr; 거리 0.16</li>
-  </ul>
-  <p>관리자가 승인한 채팅 로그도 같은 도구 호출 형식의 예시로 추가됩니다.</p>
-
-  <h3 class="sub-title">설계 변천사</h3>
-  <p><strong>1단계: ReAct만</strong> &mdash; CodeAgent의 ReAct만 썼더니 <span class="hl">Cypher 정확도가 낮았습니다</span>. AGE의 Cypher는 Neo4j와 미묘하게 다른데, 모델이 그걸 알 리 없었습니다.</p>
-  <p><strong>2단계: Cypher Few-shot</strong> &mdash; Cypher 예시 100개를 pgvector로 찾아 넣으니 단순 질의는 좋아졌지만, 도구를 7~8번 불러야 하는 복잡한 질문에서는 방향을 잃었습니다.</p>
-  <p><strong>3단계: 분류기 + Plan-Execute-Summarize</strong> &mdash; 예상 호출 수가 많으면 계획을 JSON으로 세우고 순서대로 실행한 뒤 요약하게 했습니다. 안정적이었지만 구조가 무거웠습니다.</p>
-  <p><strong>4단계: ReAct + Python 코드 예시</strong> &mdash; "CodeAgent는 for 루프를 쓸 수 있는데 외부 플래너가 왜 필요한가?" PES를 걷어내고, 예시를 Python 코드로 바꿨습니다.</p>
-  <p><strong>5단계(현재): tool-calling + 일반화된 Cypher 패턴</strong> &mdash; 프레임워크를 pydantic-ai로 바꾸고, 예시는 다시 Cypher 패턴으로 돌아왔습니다. 대신 자리표시자로 일반화하고, 검색도 일반화된 질문끼리 비교합니다.</p>
-  <div class="callout-green"><strong>왜 진자가 다시 Cypher 쪽으로 돌아왔나.</strong> 예시가 실제로 도움을 준 부분은 Python 문법이 아니라 그 안에 든 Cypher 구조였습니다. 복잡한 조합은 Cypher 한 번이나 여러 도구 호출로 충분히 풀렸고, 그렇다면 읽기 전용 도구 호출로 같은 일을 할 수 있는데 LLM이 만든 Python을 실행하는 것은 불필요한 위험이었습니다. 고유명사가 박힌 예시가 엉뚱하게 매칭되는 문제는 자리표시자와 질문 일반화로 풀었습니다.</div>
+  <div class="callout">대상이 애매하면("반도체 ETF 구성종목") 하나를 추측하지 않고 후보를 보여 주며 되묻습니다. 관리자가 검수한 대화와 설계 예시가 다시 챗봇의 참고 자료가 됩니다.</div>
 </section>
 
-<!-- ═══════════════ Chapter 10: 포트폴리오 관리 ═══════════════ -->
-<section class="chapter" data-title="포트폴리오 관리">
-  <div class="chapter-num">Chapter 10</div>
+<!-- ═══════════════ Chapter 8: 포트폴리오 ═══════════════ -->
+<section class="chapter" data-title="포트폴리오">
+  <div class="chapter-num">Chapter 08</div>
   <h2 class="chapter-title">포트폴리오 관리 & 대시보드</h2>
   <div class="chapter-divider"></div>
 
-  <h3 class="sub-title">포트폴리오 관리</h3>
-  <p>사용자가 ETF와 주식의 매수 기록을 직접 입력하면 현재가로 평가액을 계산합니다. 목표 비중을 정하면 실제 비중과의 차이와 리밸런싱 계산을 보여 줍니다. 보유 수량·평균 단가와 스냅샷 금액은 앱 단에서 <span class="tech">AES-256-GCM</span>으로 암호화해 저장합니다.</p>
-
-  <h3 class="sub-title">대시보드</h3>
-  <p><span class="tech">portfolio_snapshots</span> 테이블에 포트폴리오별 일별 스냅샷이 쌓이고, 대시보드는 <span class="tech">Recharts</span>로 가치 변화를 그립니다. 스냅샷은 장중 10분마다 도는 실시간 가격 DAG가 가격 수집 직후 갱신하며, 포트폴리오마다 스냅샷 기록을 켜고 끌 수 있습니다. 같은 날은 <span class="tech">UNIQUE(portfolio_id, date)</span>로 덮어씁니다.</p>
-  <p>과거 이력을 백필하지 않으므로 추이 차트는 데이터가 쌓인 만큼만 보입니다.</p>
-
-  <div class="callout-green">이 기능은 관계형 테이블을 씁니다. CRUD와 트랜잭션 중심 데이터는 <strong>관계형</strong>으로, 관계 탐색은 <strong>그래프</strong>로 나눈 설계입니다.</div>
+  <p>사용자가 ETF와 주식의 매수 기록을 입력하면 현재가로 평가액을 계산하고, 목표 비중과의 차이로 리밸런싱을 보여 줍니다. 보유 수량·평균 단가·스냅샷 금액은 앱에서 AES-256-GCM으로 암호화해 저장합니다.</p>
+  <p>장중 10분마다 가격을 받은 직후 포트폴리오별 일별 스냅샷을 갱신하고, 대시보드는 그 추이를 그립니다. 포트폴리오는 다른 사용자에게 공유할 수 있습니다.</p>
+  <div class="callout-green">포트폴리오는 관계형 테이블을 씁니다. CRUD와 트랜잭션 중심 데이터는 관계형, 관계 탐색은 그래프라는 분리를 그대로 따릅니다.</div>
 </section>
 
-<!-- ═══════════════ Chapter 11: 시행착오 ═══════════════ -->
-<section class="chapter" data-title="시행착오">
-  <div class="chapter-num">Chapter 11</div>
-  <h2 class="chapter-title">시행착오</h2>
+<!-- ═══════════════ Chapter 9: 설계 원칙 ═══════════════ -->
+<section class="chapter" data-title="설계 원칙">
+  <div class="chapter-num">Chapter 09</div>
+  <h2 class="chapter-title">만들며 정한 원칙</h2>
   <div class="chapter-divider"></div>
 
-  <h3 class="sub-title">"오늘"은 언제인가 &mdash; 기준일과 멱등성</h3>
-  <p><span class="hl">"장 마감 후에 그날 데이터를 저장한다."</span> 단순해 보이지만 기준일과 수집일을 구분하지 않고 출발해서 여러 번 고쳐야 했습니다.</p>
-  <ul>
-    <li><span class="hl">데이터 없음 &ne; 값이 0</span> &mdash; 휴장일 다음 실행에서 새 가격이 없자 수익률이 0%로 덮어써졌습니다. 새 데이터가 없으면 기존 값을 건드리지 않게 고쳤습니다</li>
-    <li><span class="hl">요청한 날짜 &ne; 데이터의 날짜</span> &mdash; 비거래일을 요청하면 직전 거래일 데이터가 오는데, 요청 날짜로 저장했다가 가격 노드가 중복됐습니다. 지금은 영업일 목록 자체를 KIS 일봉이 돌려주는 실제 날짜로 만들고, 그 날짜를 XCom으로 하위 Task에 넘깁니다</li>
-    <li><span class="hl">수동 재실행 시 중복 알림</span> &mdash; DB 쓰기는 <span class="tech">ON CONFLICT DO NOTHING</span>으로 멱등했지만 알림은 매번 나갔습니다. <span class="tech">rowcount</span>로 새 행이 생겼을 때만 알립니다</li>
-    <li><span class="hl">스냅샷의 기준</span> &mdash; 스냅샷 전용 DAG가 가격 수집보다 먼저 돌아 어제 가격으로 오늘 스냅샷이 찍히기도 했습니다. 가격 수집 바로 뒤에 스냅샷을 갱신하는 한 DAG로 합치고 날짜별 UPSERT로 정리했습니다</li>
-  </ul>
+  <h3 class="sub-title">날짜를 정확히</h3>
+  <p>"데이터가 없음"과 "값이 0"은 다르고, "요청한 날짜"와 "데이터의 날짜"도 다릅니다. 새 데이터가 없으면 기존 값을 건드리지 않고, 저장 날짜는 API가 돌려준 실제 날짜와 공시일을 씁니다. 모든 쓰기는 다시 돌려도 결과가 같아야 합니다.</p>
 
-  <h3 class="sub-title">장중의 미완성 일봉</h3>
-  <p>KIS로 옮긴 뒤 오전 10시에 수집 DAG를 수동으로 돌렸더니, KIS 일봉이 장중에도 당일 봉을 돌려줘서 <span class="hl">장중 가격이 그날 종가로 저장</span>됐습니다. 다음 실행은 그 날짜를 이미 수집한 것으로 보고 넘어가므로 저절로 고쳐지지도 않는 구조였습니다. 이전 코드는 수집 범위를 항상 "오늘"까지 잡아서, 아침 정기 실행도 같은 위험을 안고 있었습니다. 수집 범위의 끝을 "종가가 확정된 마지막 날"로 잘라, 16시 전이면 전날까지만 수집하게 했습니다.</p>
+  <h3 class="sub-title">현재와 이력은 따로</h3>
+  <p>같은 관계라도 "지금"을 묻는 조회와 "변화"를 묻는 조회는 저장을 나눕니다(<span class="tech">CURRENT_HOLDS</span> / <span class="tech">HOLDS</span>).</p>
 
-  <h3 class="sub-title">이력이 쌓이는 관계 &mdash; HOLDS에서 CURRENT_HOLDS로</h3>
-  <p>날짜별 이력 엣지는 하루 약 4,100개씩 늘어납니다. "최신 보유종목" 쿼리가 ETF마다 이력 전체를 훑고 있었고, 지금은 괜찮아도 1년 뒤면 약 100만 개를 훑게 됩니다. 현재 상태를 담는 <span class="tech">CURRENT_HOLDS</span>를 따로 두고 이력은 비교에만 쓰도록 나눴습니다. <span class="hl">"현재"와 "이력"은 같은 관계라도 저장을 분리</span>하는 편이 낫습니다.</p>
-
-  <h3 class="sub-title">LLM 태깅의 비결정성</h3>
-  <p>같은 ETF가 주마다 다른 태그를 받았습니다. LLM 출력은 실행마다 달라질 수 있다는 걸 전제로 설계를 바꿨습니다. <span class="hl">한 번 붙인 태그는 고정</span>하고 신규 ETF만 태깅하며, 사람이 지정한 태그(<span class="tech">manual_tags</span>)는 자동 태깅이 건드리지 않습니다. 전체 재태깅은 명시적으로 요청할 때만 합니다.</p>
-
-  <h3 class="sub-title">이름 기반 휴리스틱의 구멍</h3>
-  <ul>
-    <li><strong>은 ETF가 유니버스에 들어옴</strong> &mdash; 제외 키워드가 "은현물"뿐이라 "1Q 은액티브"가 통과했습니다. 그렇다고 "은"을 키워드로 넣으면 "은행" ETF까지 빠집니다. 단어 첫머리의 "은"(뒤에 "행"이 오지 않는)만 잡는 정규식으로 고쳤습니다</li>
-    <li><strong>운용사 "기타" 7개</strong> &mdash; IBK, FOCUS, DAISHIN 같은 브랜드가 매핑 표에 없어 7개 ETF가 "기타"로 연결됐습니다. 마스터 파일에 남은 미매핑 브랜드까지 함께 추가했습니다</li>
-  </ul>
-  <div class="callout-warn">이름은 편리한 1차 필터지만 규칙에 없는 이름은 조용히 새어 나갑니다. "기타"나 미분류 개수처럼 <strong>새는 것을 드러내는 지표</strong>를 주기적으로 확인해야 합니다.</div>
-
-  <h3 class="sub-title">LLM이 쓴 쿼리의 보안</h3>
-  <p>처음 graph_query는 postgres 슈퍼유저 권한으로, CREATE·DELETE 같은 <span class="hl">키워드 블랙리스트</span>에만 기대고 있었습니다. 점검해 보니 TRUNCATE·ALTER는 목록에 없었고, 쿼리에 <span class="tech">$$</span>를 넣으면 Cypher를 감싼 SQL 따옴표를 빠져나가 임의의 SQL을 실행할 수 있었습니다. 지금은 <span class="hl">읽기 전용 트랜잭션 + 실행 시간 제한 + <span class="tech">$$</span>·<span class="tech">;</span> 거부</span>로 바꿨습니다. 금지어를 나열하는 대신 DB가 쓰기를 거부하게 만드는 쪽이 우회할 틈이 적습니다.</p>
-
-  <h3 class="sub-title">그래프 vs 관계형 &mdash; 어디에 뭘 넣을까</h3>
+  <h3 class="sub-title">저장소는 조회하는 곳에 맞춘다</h3>
   <div class="compare">
     <div class="compare-card">
-      <h4>그래프에 적합</h4>
+      <h4>그래프</h4>
       <ul>
-        <li>관계 탐색 (ETF-종목 보유, 유사 ETF, 태그)</li>
-        <li>시계열 + 관계 (날짜별 보유 비중 변화)</li>
-        <li>다대다 관계 (사용자-ETF 워치리스트)</li>
+        <li>ETF-종목 보유, 유사 ETF, 태그</li>
+        <li>날짜별 보유 비중과 가격</li>
+        <li>챗봇이 조회하는 모든 것</li>
       </ul>
     </div>
     <div class="compare-card">
-      <h4>관계형에 적합</h4>
+      <h4>관계형</h4>
       <ul>
-        <li>단순 CRUD (사용자, 포트폴리오, 매수 기록)</li>
-        <li>집계·정렬 중심 조회 (스냅샷, 평가액)</li>
-        <li>트랜잭션이 중요한 데이터 (인증)</li>
+        <li>사용자, 포트폴리오, 매수 기록</li>
+        <li>스냅샷, 챗봇 로그, 비중 변화</li>
+        <li>트랜잭션이 중요한 데이터</li>
       </ul>
     </div>
   </div>
-  <p>대표 사례가 가격 데이터입니다. 처음에는 <span class="tech">etf_prices</span>, <span class="tech">stock_prices</span> 관계형 테이블에 뒀지만, 챗봇 도구가 모두 그래프를 조회하다 보니 SQL과 Cypher를 오가야 했습니다. <span class="tech">Price</span> 노드와 <span class="tech">HAS_PRICE</span> 관계로 옮기고 테이블을 없앴습니다. <span class="hl">저장소는 "주로 어디서 조회하느냐"에 맞춰야</span> 한다는 교훈입니다.</p>
-  <div class="callout-green"><strong>"전부 그래프"나 "전부 관계형"이 아니라 데이터 특성에 맞게 섞어 쓰는 것이 현실적입니다.</strong> 그 분리를 한 DB 안에서 할 수 있다는 것이 AGE의 장점입니다.</div>
+
+  <h3 class="sub-title">LLM은 결정적이지 않다</h3>
+  <p>숫자는 LLM 밖에서 만들고, 한 번 정한 결과(태그)는 고정하며, 사람이 정한 값이 자동 결과보다 우선합니다. LLM이 쓴 쿼리는 금지어 목록 대신 <span class="hl">DB가 쓰기를 거부</span>하게 막습니다.</p>
+
+  <h3 class="sub-title">새는 것을 드러낸다</h3>
+  <p>이름 기반 필터는 편리하지만 규칙에 없는 이름은 조용히 새어 나갑니다. 운용사 "기타", 미분류 태그처럼 새는 것을 보여 주는 지표를 주기적으로 확인합니다.</p>
 </section>
 
-<!-- ═══════════════ Chapter 12: 회고 & 마무리 ═══════════════ -->
-<section class="chapter" data-title="회고 & 마무리">
-  <div class="chapter-num">Chapter 12</div>
+<!-- ═══════════════ Chapter 10: 회고 ═══════════════ -->
+<section class="chapter" data-title="회고">
+  <div class="chapter-num">Chapter 10</div>
   <h2 class="chapter-title">회고 & 마무리</h2>
   <div class="chapter-divider"></div>
 
-  <h3 class="sub-title">기술 선택 회고</h3>
-  <p>이 프로젝트에서 직접 겪은 것을 바탕으로 한 팀의 평가입니다.</p>
-
   <div class="review-card">
-    <h4><span class="hl-blue">Apache AGE</span></h4>
-    <div class="review-section">
-      <div class="review-label good">Good</div>
-      <p>PostgreSQL 하나로 <span class="hl">관계형 + 그래프 + 벡터 검색</span>을 운영합니다. Cypher도 결국 SQL 안에서 돌기 때문에 읽기 전용 트랜잭션, statement_timeout, Alembic 같은 PostgreSQL 도구를 그대로 쓸 수 있었습니다.</p>
-    </div>
-    <div class="review-section">
-      <div class="review-label bad">Bad</div>
-      <p>Cypher 지원이 불완전합니다(WITH 별칭 정렬, MERGE+SET). <span class="tech">$$</span> 따옴표 안에 쿼리를 넣는 구조라 외부 입력을 다룰 때 신경 쓸 게 많습니다. 이력이 쌓이는 관계는 모델링을 따로 고민해야 했고, 커뮤니티와 자료가 적습니다.</p>
-    </div>
-    <div class="review-section">
-      <div class="review-label rec">Recommend</div>
-      <p>이미 PostgreSQL을 쓰고 있고 그래프 쿼리가 전체 워크로드의 일부일 때.</p>
-    </div>
+    <h4>Apache AGE</h4>
+    <div class="review-section"><div class="review-label good">Good</div><p>PostgreSQL 하나로 관계형 + 그래프 + 벡터를 운영하고, PostgreSQL 도구를 그대로 씁니다.</p></div>
+    <div class="review-section"><div class="review-label bad">Bad</div><p>Cypher 지원이 불완전하고 자료가 적습니다. 쿼리를 SQL 따옴표 안에 넣는 구조라 외부 입력에 신경 쓸 게 많습니다.</p></div>
+    <div class="review-section"><div class="review-label rec">Recommend</div><p>이미 PostgreSQL을 쓰고 있고 그래프 쿼리가 워크로드의 일부일 때.</p></div>
   </div>
 
   <div class="review-card">
-    <h4><span class="hl-purple">pydantic-ai (tool-calling)</span></h4>
-    <div class="review-section">
-      <div class="review-label good">Good</div>
-      <p>가볍고 OpenAI 호환 엔드포인트에 바로 붙습니다. 도구 인자를 스키마로 검증하고 틀리면 모델에 되돌려 주며, 이벤트 스트림 덕에 기존 SSE 형식을 유지한 채 프레임워크를 바꿀 수 있었습니다. LLM이 만든 코드를 실행하지 않아도 됩니다.</p>
-    </div>
-    <div class="review-section">
-      <div class="review-label bad">Bad</div>
-      <p>CodeAgent처럼 루프·변수로 결과를 가공할 수 없어 정렬·필터는 모델이나 Cypher에 맡겨야 합니다. 도구들이 DB 세션 하나를 공유해 실행은 순차로 합니다. 추론 모델은 토큰 예산을 넉넉히 줘야 합니다.</p>
-    </div>
-    <div class="review-section">
-      <div class="review-label rec">Recommend</div>
-      <p>읽기 위주 도구 10개 안팎, 몇 단계면 끝나는 질의형 에이전트. 계획·파일시스템·서브에이전트가 필요한 장기 작업이라면 더 무거운 프레임워크를 검토할 만합니다.</p>
-    </div>
+    <h4>pydantic-ai</h4>
+    <div class="review-section"><div class="review-label good">Good</div><p>가볍고 OpenAI 호환 엔드포인트에 바로 붙습니다. 도구 인자와 구조화된 출력을 스키마로 검증하고, 틀리면 모델에 되돌려 고치게 합니다.</p></div>
+    <div class="review-section"><div class="review-label bad">Bad</div><p>도구 호출만으로는 결과를 자유롭게 가공하기 어려워, 정렬·필터는 Cypher나 스킬 쪽에 맡겨야 합니다.</p></div>
+    <div class="review-section"><div class="review-label rec">Recommend</div><p>읽기 위주 도구 10개 안팎의 질의형 에이전트, 그리고 LLM에게 구조를 받는 일.</p></div>
   </div>
 
   <div class="review-card">
-    <h4><span class="hl-green">Apache Airflow 3.x</span></h4>
-    <div class="review-section">
-      <div class="review-label good">Good</div>
-      <p>작업 흐름을 Python 코드로 관리하고 테스트할 수 있습니다. 웹 UI, 재시도, 의존성 기반 병렬 실행, XCom, Params가 설정만으로 동작합니다.</p>
-    </div>
-    <div class="review-section">
-      <div class="review-label bad">Bad</div>
-      <p>컨테이너가 api-server, scheduler, dag-processor, init으로 늘었고 2.x에서 올릴 때 import 경로와 이미지 구성을 손봐야 했습니다. "Hello World"까지 단계가 많습니다.</p>
-    </div>
-    <div class="review-section">
-      <div class="review-label rec">Recommend</div>
-      <p>Python 기반 배치 ETL과 정기 수집. 실시간 데이터 라우팅이 핵심이라면 NiFi 쪽이 맞습니다.</p>
-    </div>
+    <h4>Apache Airflow 3.x</h4>
+    <div class="review-section"><div class="review-label good">Good</div><p>수집 흐름을 Python 코드로 관리하고 테스트합니다. 재시도, 병렬 실행, 웹 UI가 설정만으로 동작합니다.</p></div>
+    <div class="review-section"><div class="review-label bad">Bad</div><p>컨테이너가 여럿으로 나뉘어 처음 띄우기까지 단계가 많습니다.</p></div>
+    <div class="review-section"><div class="review-label rec">Recommend</div><p>Python 기반 배치 ETL과 정기 수집.</p></div>
   </div>
 
   <div class="review-card">
-    <h4><span class="hl">KIS Open API (데이터 소스)</span></h4>
-    <div class="review-section">
-      <div class="review-label good">Good</div>
-      <p>키 하나로 ETF 목록(마스터 파일은 키도 불필요), 현재가, 일봉, 구성종목, 휴장일까지 얻습니다. 주식 일봉을 종목당 기간 단위로 한 번에 받아 호출 수가 줄었습니다.</p>
-    </div>
-    <div class="review-section">
-      <div class="review-label bad">Bad</div>
-      <p>구성종목은 상위 30개만, 날짜 지정 불가라 과거 백필이 안 됩니다. 장중에는 미완성 일봉이 옵니다. 토큰 발급·초당 호출 제한을 다뤄야 하고, 순자산 단위처럼 문서에 없는 부분이 있으며, 총보수는 제공하지 않습니다.</p>
-    </div>
-    <div class="review-section">
-      <div class="review-label rec">Recommend</div>
-      <p>국내 시세를 일 단위로 꾸준히 쌓는 개인·리서치 프로젝트. 정확한 전체 구성종목이나 과거 이력이 필요하다면 다른 소스를 함께 검토해야 합니다.</p>
-    </div>
+    <h4>KIS Open API</h4>
+    <div class="review-section"><div class="review-label good">Good</div><p>키 하나로 ETF 목록, 현재가, 일봉, 구성종목, 휴장일까지 얻습니다.</p></div>
+    <div class="review-section"><div class="review-label bad">Bad</div><p>구성종목은 상위 30개뿐이고 과거 이력이 없습니다. 총보수는 제공하지 않습니다.</p></div>
+    <div class="review-section"><div class="review-label rec">Recommend</div><p>국내 시세를 일 단위로 꾸준히 쌓는 개인·리서치 프로젝트.</p></div>
   </div>
 
-  <div style="text-align: center; margin-top: 60px; padding: 40px 0; border-top: 2px solid var(--border);">
-    <p style="font-size: 20px; font-weight: 600; color: var(--text);">감사합니다.</p>
-    <p style="color: var(--text-secondary); margin-top: 8px;">질문 받겠습니다.</p>
-  </div>
+  <div class="callout" style="text-align:center">감사합니다.</div>
 </section>
 
 </main>

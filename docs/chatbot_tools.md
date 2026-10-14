@@ -2,7 +2,11 @@
 
 ## 개요
 
-ETF Atlas 챗봇은 **pydantic-ai** tool-calling 에이전트를 사용하며, 총 **10개의 커스텀 도구**를 제공합니다.
+> 범위: 답변 화면의 `agent` 스킬 안에서 도는 tool-calling 에이전트(`ChatService`)와 그 도구.
+> 챗봇 전체 흐름은 웹 화면의 Architecture 페이지(`frontend/public/architecture.html`), 레이아웃·스킬 구현은 [answer-skills.md](answer-skills.md)를 본다.
+
+`ChatService`는 **pydantic-ai** tool-calling 에이전트이며, 총 **10개의 커스텀 도구**를 가진다.
+레이아웃 설계가 스킬로 표현할 수 없는 질문(태그·운용사별 목록, 유사 ETF, 비중 변화, 복잡한 그래프 조건 등)이나 설계에 실패한 질문을 `agent` 슬롯으로 넘기면 이 에이전트가 마크다운으로 답한다.
 모든 도구는 `backend/app/services/chat_service.py`에 정의되어 있습니다.
 
 ---
@@ -357,16 +361,17 @@ RETURN {etf_code: e.code, etf_name: e.name, weight_samsung: h1.weight, weight_te
 
 ## 에이전트의 도구 활용 방식
 
-### 아키텍처
+### 실행 흐름
+
+질문 재작성과 대화 기억은 답변 화면 오케스트레이터(`AnswerService`)가 먼저 처리하고, `agent` 스킬은 재작성된 질문을 넘긴다 (`refine=False`).
+`POST /api/chat/message`(스트리밍 없는 API)는 `ChatService`를 직접 부르며, 이때는 아래의 재작성도 여기서 한다.
 
 ```
-사용자 질문 (React)
-    ↓
-FastAPI POST /api/chat/message (또는 /message/stream)  ← {message, session_id}
+agent 스킬 (또는 POST /api/chat/message)
     ↓
 ChatMemory.load_context()   ← 세션 요약(오래된 턴) + 최근 5턴 원문
     ↓
-ChatMemory.refine()         ← 대명사·생략을 맥락으로 풀어 독립 질문으로 재작성 (맥락 없으면 생략)
+ChatMemory.refine()         ← /message 경로에서만. 대명사·생략을 맥락으로 풀어 독립 질문으로
     ↓
 ChatService._build_prompt() ← 유사 해결 절차 예시(재작성 질문으로 검색) + 대화 맥락 + 재작성 질문
     ↓
@@ -380,9 +385,7 @@ agent.run_stream_events(prompt)  ← instructions = 시스템 프롬프트 + 태
 │  3. 반복하다가 도구 호출 없이 텍스트를 반환하면 종료     │
 └─────────────────────────────────────────────────┘
     ↓
-최종 답변 텍스트 → 사용자에게 응답
-    ↓
-chat_logs 저장 (session_id, refined_question, steps) → ChatMemory.update_summary()
+최종 답변 마크다운 → agent 슬롯 내용 (실행 단계는 step 이벤트로 화면에)
 ```
 
 ### 세션과 대화 기억
@@ -401,14 +404,10 @@ chat_logs 저장 (session_id, refined_question, steps) → ChatMemory.update_sum
 - 실행 과정(step 목록, SSE `step` 이벤트와 같은 형식)은 `chat_logs.steps`에 저장해 세션을 다시 열 때도 보여 준다. few-shot용 `generated_code`도 같은 목록에서 만든다.
 - 세션을 지워도 `chat_logs`는 관리자 검수용으로 남고 `session_id`만 `NULL`이 된다.
 
-### CodeAgent(smolagents)에서 바꾼 이유 (2026-09)
+### 도구 실행 방식
 
-이전에는 smolagents `CodeAgent`가 LLM이 생성한 **Python 코드**를 백엔드 프로세스에서 실행했다. 지금은 LLM이 **JSON 인자**로 도구를 호출하고, 코드는 실행하지 않는다.
-
-- **보안**: LLM 생성 코드 실행 제거 (`LocalPythonExecutor`는 샌드박스가 아니었음)
-- **타입 검증**: 도구 인자를 JSON 스키마로 검증, 잘못된 인자는 재시도 프롬프트(`RetryPromptPart`)로 LLM에 되돌림 → step의 `error`로 표시
-- **병렬 호출**: 독립적인 조회는 한 번의 모델 응답에서 여러 도구를 호출 (같은 질문 기준 CodeAgent 약 13초 → 약 7초)
-- 도구는 하나의 DB 세션을 공유하므로 `sequential=True`로 등록해 실제 실행은 순차로 한다
+- 도구 인자는 JSON 스키마로 검증하고, 잘못된 인자는 재시도 프롬프트(`RetryPromptPart`)로 LLM에 되돌린다 → step의 `error`로 표시
+- 독립적인 조회는 한 번의 모델 응답에서 여러 도구를 호출할 수 있다. 다만 도구들이 DB 세션 하나를 공유하므로 `sequential=True`로 등록해 실제 실행은 순차로 한다
 - 정렬·필터링은 LLM이 결과를 보고 직접 하거나, 대상이 많으면 `graph_query`의 ORDER BY/LIMIT을 쓰도록 프롬프트로 안내
 
 ### 도구 등록 방식

@@ -302,7 +302,8 @@ def _parse_age_value(raw):
 
 BUSINESS_DAY_REFERENCE_CODE = '069500'  # KODEX 200 — 모든 거래일에 거래됨
 MARKET_SETTLED_TIME = time(16, 0)  # 15:30 종가 확정 후 여유
-MARKET_OPEN_TIME = time(9, 0)
+# KIS 구성종목(PDF)은 영업일 08:30에 직전 영업일 장 마감 후 내역으로 갱신된다 — 갱신 뒤에 받는다
+HOLDINGS_PUBLISH_TIME = time(8, 35)
 
 
 def last_settled_day(now: datetime) -> str:
@@ -323,6 +324,58 @@ def get_business_days(from_date: str, to_date: str) -> list[str]:
     # 실패를 빈 목록으로 돌려주면 "이미 최신"으로 오인하므로 예외를 그대로 올려 태스크 재시도에 맡긴다
     bars = kis.get_daily_bars(BUSINESS_DAY_REFERENCE_CODE, from_date, to_date)
     return [b.date for b in bars]
+
+
+def is_market_open(day) -> bool | None:
+    """개장일 여부. market_calendar 캐시 → 없으면 KIS 국내휴장일조회(1일 1회 권장) 후 저장. 모르면 None."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT is_open FROM market_calendar WHERE date = %s", (day,))
+        row = cur.fetchone()
+        if row is not None:
+            return row[0]
+
+        kis = get_kis_client()
+        if kis is None:
+            return None
+        try:
+            is_open = kis.is_market_open(day.strftime('%Y%m%d'))
+        except Exception as e:
+            log.warning(f"KIS holiday lookup failed: {e}")
+            return None
+        if is_open is not None:
+            cur.execute(
+                "INSERT INTO market_calendar (date, is_open) VALUES (%s, %s) "
+                "ON CONFLICT (date) DO UPDATE SET is_open = EXCLUDED.is_open, checked_at = NOW()",
+                (day, is_open),
+            )
+            conn.commit()
+        return is_open
+    finally:
+        cur.close()
+        conn.close()
+
+
+def holdings_target_date(now: datetime) -> str | None:
+    """지금 받을 수 있는 구성종목의 날짜(YYYYMMDD). 받으면 안 되는 때면 None.
+
+    KIS 구성종목은 영업일 08:30에 직전 영업일 장 마감 후 내역으로 갱신되고 과거 날짜는 조회할 수 없다.
+    그래서 오늘이 개장일이고 갱신 뒤(08:35)부터 종가 확정 전(16:00)까지만, 직전 영업일 날짜로 받는다.
+    (금요일 것은 월요일 아침에, 휴장일 다음 날엔 휴장일 전 영업일 것을 받는다.)
+    """
+    if not (HOLDINGS_PUBLISH_TIME <= now.time() < MARKET_SETTLED_TIME):
+        return None
+    is_open = is_market_open(now.date())
+    if is_open is None:
+        raise RuntimeError(f"Cannot tell whether {now:%Y-%m-%d} is a trading day")
+    if not is_open:
+        return None
+    days = get_business_days((now - timedelta(days=14)).strftime('%Y%m%d'),
+                             (now - timedelta(days=1)).strftime('%Y%m%d'))
+    if not days:
+        raise RuntimeError(f"No business day found before {now:%Y-%m-%d}")
+    return days[-1]
 
 
 def get_last_collected_date() -> str | None:

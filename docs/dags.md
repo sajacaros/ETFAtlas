@@ -6,7 +6,7 @@ AGE 수집 공용 로직은 `airflow/dags/age_utils.py`에 모여 있다.
 
 | DAG ID | 파일 | 스케줄 | 저장소 | 역할 |
 |--------|------|--------|--------|------|
-| `age_sync_universe` | `sync_universe_age.py` | `30 8 * * 2-6` (화~토 08:30 KST) | AGE | 일일 증분 수집 |
+| `age_sync_universe` | `sync_universe_age.py` | `50 8 * * *` (매일 08:50 KST) | AGE | 일일 증분 수집 |
 | `age_tagging` | `age_tagging.py` | `0 3 * * 6` (토 03:00 KST) | AGE | 신규 ETF 태깅 (`full_rebuild`로 전체 재태깅) |
 | `rdb_sync_metadata` | `sync_metadata_rdb.py` | `40 8 * * *` (매일 08:40 KST) | RDB | `etfs` 코드/이름 동기화 |
 | `rdb_realtime_prices` | `realtime_prices_rdb.py` | `*/10 9-15 * * 1-5` | RDB | 장중 현재가 + 포트폴리오 스냅샷 |
@@ -28,7 +28,7 @@ AGE 수집 공용 로직은 `airflow/dags/age_utils.py`에 모여 있다.
 
 마지막 수집일 이후 ~ 오늘까지 누락된 영업일의 데이터를 자동 수집한다.
 
-- **스케줄**: `30 8 * * 2-6` (거래일 다음날 08:30 KST, 화~토)
+- **스케줄**: `50 8 * * *` (매일 08:50 KST). 가격은 매일 따라잡고, 구성종목은 개장일에만 받는다
 - **재시도**: 3회, 5분 간격
 - **Catchup**: 비활성화
 - **동시 실행**: 1개 (`max_active_runs=1`)
@@ -63,14 +63,18 @@ KIS 종목 마스터에 없는(상장폐지) 유니버스 ETF는 Price 노드와
 
 #### 3. sync_holdings
 
-`collect_holdings(etf_codes, actual_dates[-1])` — 여러 날이 밀려 있어도 **최근 거래일 1일치**만 수집한다 (KIS는 과거 날짜 조회 불가).
+`holdings_target_date(now)`가 정한 날짜로 `collect_holdings(etf_codes, date)`를 호출하고, 받은 날짜를 XCom(return_value)으로 넘긴다. 이후 비중변화 계산·수집 기록·디스코드 알림은 가격 날짜가 아니라 이 날짜를 따른다.
+
+KIS 구성종목(PDF)은 **영업일 08:30에 직전 영업일 장 마감 후 내역으로 갱신**되고 과거 날짜는 조회할 수 없다. 그래서:
+- 오늘이 개장일(`is_market_open`, `market_calendar` 캐시)이고 08:35~16:00일 때만 받는다. 날짜는 직전 영업일이다.
+- 금요일 것은 월요일 아침에 받는다. 주말·휴장일 실행은 구성종목을 받지 않는다(가격만 따라잡는다).
+- 장중에 받아도 된다 — 평가금액은 기준가격으로 고정이고 비중만 장중 가격으로 0.0x%p 움직인다(2026-10-14 확인).
 
 KIS는 과거 구성종목을 주지 않으므로 그날 놓치면 복구할 수 없다. 그래서 실패를 다음처럼 다룬다.
 - KIS 호출: 네트워크 오류·타임아웃·5xx는 1·2·4초 간격으로 최대 3번 다시 시도한다(`kis_api_client._get`).
 - 연속 10개 ETF가 실패하면 KIS 장애로 보고 나머지는 시도하지 않는다(타임아웃 대기 방지).
 - 실패가 20% 이상이면 태스크를 실패시켜 Airflow 재시도(3회, 5분 간격)로 다시 받는다. 이미 HOLDS가 있는 ETF는 건너뛰므로 빠진 것만 받는다.
-- 마지막 시도이거나 실패가 20% 미만이면 받은 것만으로 진행하고, 빠진 ETF는 로그에 남긴다. 그 ETF는 다음 날 이틀치 변화로 비교된다(`weight_changes.prev_date`).
-- 평일 09:00~16:00(장중)에는 비중이 장중 가격으로 바뀔 수 있어 구성종목을 받지 않는다.
+- 마지막 시도이거나 실패가 20% 미만이면 받은 것만으로 진행하고, 빠진 ETF는 로그에 남긴다. 그 ETF는 다음 영업일에 이틀치 변화로 비교된다(`weight_changes.prev_date`).
 
 #### 4. sync_stock_prices
 
@@ -78,7 +82,7 @@ KIS는 과거 구성종목을 주지 않으므로 그날 놓치면 복구할 수
 
 #### 5. sync_weight_changes · record_collection · notify_discord
 
-액티브 ETF의 직전 영업일 대비 비중 변화를 계산해 `weight_changes`에 저장하고(`compute_weight_changes`), 최근 거래일을 `collection_runs`에 기록(`pg_notify` 발행)한 뒤 디스코드 알림을 보낸다. 기록은 계산이 실패해도 하고, 디스코드는 이미 보낸 날짜면 건너뛴다. 상세는 [notify.md](notify.md) 참고.
+액티브 ETF의 직전 영업일 대비 비중 변화를 계산해 `weight_changes`에 저장하고(`compute_weight_changes`), 구성종목을 받은 날짜를 `collection_runs`에 기록(`pg_notify` 발행)한 뒤 디스코드 알림을 보낸다. 구성종목을 받지 않은 실행(주말·휴장일)에서는 셋 다 건너뛴다. 기록은 계산이 실패해도 하고, 디스코드는 이미 보낸 날짜면 건너뛴다. 상세는 [notify.md](notify.md) 참고.
 
 #### 6. sync_returns
 

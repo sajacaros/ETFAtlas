@@ -20,7 +20,7 @@ from age_utils import (
     collect_stock_prices_for_dates,
     record_collection_run, send_discord_notification,
     update_etf_returns,
-    INDEX_TAG_PATTERNS, RULE_ONLY_TAGS, MARKET_OPEN_TIME, MARKET_SETTLED_TIME,
+    INDEX_TAG_PATTERNS, RULE_ONLY_TAGS, holdings_target_date,
 )
 
 log = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ dag = DAG(
     'age_sync_universe',
     default_args=default_args,
     description='ETF 데이터 일일 증분 수집 (Apache AGE)',
-    schedule='30 8 * * 2-6',  # 거래일 다음날 08:30 KST (화~토)
+    schedule='50 8 * * *',  # 매일 08:50 KST — 구성종목은 영업일에만 받는다 (holdings_target_date)
     catchup=False,
     max_active_runs=1,  # 수동 실행이 정기 실행과 겹치면 Price 노드가 중복될 수 있다
     tags=['etf', 'daily', 'age'],
@@ -97,29 +97,27 @@ HOLDINGS_RETRY_FAILURE_RATIO = 0.2
 
 
 def sync_holdings(**context):
-    """현재 구성종목(KIS)을 최근 거래일 HOLDS로 저장. KIS는 과거 날짜 조회 불가.
+    """구성종목(KIS)을 HOLDS로 저장. 받은 날짜(YYYYMMDD)를 돌려준다(XCom) — 받지 않았으면 None.
 
-    실패가 많으면 개장 전까지만 태스크 재시도로 다시 받고(이미 받은 ETF는 건너뜀), 마지막 시도면
-    받은 것만으로 진행한다. 장중에는 비중이 장중 가격으로 바뀔 수 있어 받지 않는다.
+    가격과 따로, 오늘이 개장일이면 직전 영업일 것을 받는다(holdings_target_date). KIS는 과거 날짜를 주지 않는다.
+    실패가 많으면 태스크 재시도로 빠진 ETF만 다시 받고(이미 받은 ETF는 건너뜀), 마지막 시도면
+    받은 것만으로 진행한다.
     """
     ti = context['ti']
-    dates = ti.xcom_pull(task_ids='sync_universe_and_prices', key='actual_dates')
-    if not dates:
-        return
-    now = datetime.now()
-    if now.weekday() < 5 and MARKET_OPEN_TIME <= now.time() < MARKET_SETTLED_TIME:
-        log.warning(f"Market hours ({now:%H:%M}) — skipping holdings for {dates[-1]}")
-        return
+    target = holdings_target_date(datetime.now())
+    if not target:
+        log.info("Not a holdings window (non-trading day or outside 08:35–16:00) — skipping holdings")
+        return None
 
     etf_codes = list(get_etf_codes_from_age())
-    failed = collect_holdings(etf_codes, dates[-1])
-    if not failed:
-        return
-    ratio = len(failed) / len(etf_codes)
-    last_try = ti.try_number > context['task'].retries
-    if ratio >= HOLDINGS_RETRY_FAILURE_RATIO and not last_try:
-        raise RuntimeError(f"Holdings failed for {len(failed)}/{len(etf_codes)} ETFs — retrying")
-    log.warning(f"Giving up holdings for {len(failed)}/{len(etf_codes)} ETFs on {dates[-1]}: {sorted(failed)}")
+    failed = collect_holdings(etf_codes, target)
+    if failed:
+        ratio = len(failed) / len(etf_codes)
+        last_try = ti.try_number > context['task'].retries
+        if ratio >= HOLDINGS_RETRY_FAILURE_RATIO and not last_try:
+            raise RuntimeError(f"Holdings failed for {len(failed)}/{len(etf_codes)} ETFs — retrying")
+        log.warning(f"Giving up holdings for {len(failed)}/{len(etf_codes)} ETFs on {target}: {sorted(failed)}")
+    return target
 
 
 def sync_stock_prices(**context):
@@ -133,18 +131,17 @@ def sync_stock_prices(**context):
 
 def sync_weight_changes(**context):
     """액티브 ETF 비중 변화 계산·저장. 웹 화면과 디스코드 알림이 이 결과를 읽는다."""
-    ti = context['ti']
-    dates = ti.xcom_pull(task_ids='sync_universe_and_prices', key='actual_dates')
-    if not dates:
-        return
+    if not context['ti'].xcom_pull(task_ids='sync_holdings'):
+        return  # 이번 실행에서 구성종목을 받지 않았다
     compute_weight_changes()
 
 
 def _latest_collected_date(ti) -> str | None:
-    dates = ti.xcom_pull(task_ids='sync_universe_and_prices', key='actual_dates')
-    if not dates:
+    """이번 실행에서 구성종목을 받은 날짜(YYYY-MM-DD). 수집 기록·알림은 가격이 아니라 구성종목 날짜를 따른다."""
+    bd = ti.xcom_pull(task_ids='sync_holdings')
+    if not bd:
         return None
-    return f"{dates[-1][:4]}-{dates[-1][4:6]}-{dates[-1][6:8]}"
+    return f"{bd[:4]}-{bd[4:6]}-{bd[6:8]}"
 
 
 def record_collection(**context):

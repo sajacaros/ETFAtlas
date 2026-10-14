@@ -35,6 +35,23 @@ export function dividendCycleLabel(cycle: number | null): string | null {
   return DIVIDEND_CYCLE_LABELS[cycle] ?? `${cycle}개월 주기 배당`
 }
 
+/** 홈에서 액티브/패시브 ETF만 모아 보는 칩 이름 — 배지를 누르면 그 목록으로 간다 */
+export const ACTIVE_TAG = '액티브'
+export const PASSIVE_TAG = '패시브'
+
+/** 액티브/패시브 배지. 누르면 홈의 해당 목록으로 이동한다 */
+export function ManagementBadge({ active, onClick }: { active: boolean | null | undefined; onClick?: () => void }) {
+  if (active == null) return null
+  const tag = active ? ACTIVE_TAG : PASSIVE_TAG
+  return (
+    <Link to={`/?tag=${encodeURIComponent(tag)}`} title={`${tag} ETF 모아 보기`} onClick={onClick}>
+      <Badge variant={active ? 'default' : 'secondary'} className="text-xs font-medium cursor-pointer">
+        {tag}
+      </Badge>
+    </Link>
+  )
+}
+
 export function componentCountLabel(count: number | null | undefined): string | null {
   return count ? `구성종목 ${count}개` : null
 }
@@ -254,7 +271,10 @@ export function ETFInfoDialog({ code, name, open, onOpenChange, portfolioWeight,
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl w-[95vw] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="text-xl">{etf?.name ?? name ?? code}</DialogTitle>
+          <DialogTitle className="text-xl flex items-center gap-2">
+            {etf?.name ?? name ?? code}
+            <ManagementBadge active={etf?.active} onClick={() => onOpenChange(false)} />
+          </DialogTitle>
           <DialogDescription className="flex items-center gap-2">
             <span>
               {[

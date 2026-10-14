@@ -610,6 +610,16 @@ def collect_universe_and_prices(dates: list[str]) -> tuple[set[str], list[dict],
         """, count_items)
         conn.commit()
 
+        # ── 2-4. 액티브 여부: KIS 분류(bstp_kor_isnm), 분류가 비면 기존 값 유지 ──
+        active_items = [{'code': c, 'value': snapshots[c].active} for c in sorted(existing_codes)
+                        if c in snapshots and snapshots[c].active is not None]
+        execute_cypher_batch(cur, """
+            MATCH (e:ETF {code: item.code})
+            SET e.active = item.value
+            RETURN 1
+        """, active_items)
+        conn.commit()
+
         # ── 3. Price 노드 (유니버스 ETF) ──
         price_items = []
         for code in sorted(existing_codes):

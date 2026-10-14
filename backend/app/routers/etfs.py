@@ -22,6 +22,7 @@ class ETFResponse(BaseModel):
     listed_date: str | None = None
     dividend_cycle: int | None = None
     component_count: int | None = None  # 전체 구성종목 수 (보유종목은 상위 30개까지만 수집)
+    active: bool | None = None  # 액티브 ETF 여부 (KIS 분류), 모르면 None
 
 
 class HoldingResponse(BaseModel):
@@ -68,6 +69,7 @@ class UniverseETFResponse(BaseModel):
     return_1w: float | None = None
     return_1m: float | None = None
     market_cap_change_1w: float | None = None
+    active: bool | None = None
 
 
 class ETFSearchResponse(BaseModel):
@@ -120,11 +122,12 @@ async def get_top_etfs(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     sort: str = Query("market_cap", pattern="^(market_cap|market_cap_change_1w|return_1d|return_1w)$"),
+    active: bool | None = Query(None, description="true: 액티브만, false: 패시브만"),
     db: Session = Depends(get_db),
 ):
     """ETF 목록 (정렬: market_cap, market_cap_change_1w, return_1w)"""
     graph = GraphService(db)
-    return graph.get_top_etfs(limit, sort, offset)
+    return graph.get_top_etfs(limit, sort, offset, active)
 
 
 @router.get("/search/universe", response_model=List[UniverseETFResponse])

@@ -89,6 +89,7 @@ class ETFSnapshot:
     listed_shares: int  # 상장주수 (lstn_stcn)
     dividend_cycle: Optional[int] = None  # 분배 주기 개월 수 (etf_dvdn_cycl: 1=월, 3=분기), 미제공 None
     component_count: Optional[int] = None  # 구성종목 수 (etf_cnfg_issu_cnt, 현금·선물 등 포함), 미제공 None
+    active: Optional[bool] = None  # 액티브 여부 (bstp_kor_isnm 'ETF(Active/…)'), 복제 방식이 없으면 None
 
     @property
     def market_cap(self) -> int:
@@ -364,8 +365,18 @@ class KISApiClient:
             listed_shares=self._parse_int(out.get("lstn_stcn")),
             dividend_cycle=self._parse_int(out.get("etf_dvdn_cycl")) or None,
             component_count=self._parse_int(out.get("etf_cnfg_issu_cnt")) or None,
+            active=self._parse_active(out.get("bstp_kor_isnm")),
         )
 
+    @staticmethod
+    def _parse_active(category: Optional[str]) -> Optional[bool]:
+        """'ETF(Active/수익증권)' → True, 'ETF(실물복제/…)'·'ETF(합성복제/…)' → False, 분류가 비면 None."""
+        category = category or ""
+        if "Active" in category:
+            return True
+        if "복제" in category:
+            return False
+        return None
 
     def is_market_open(self, date: str) -> Optional[bool]:
         """국내휴장일조회로 date(YYYYMMDD)의 개장일 여부 반환. 응답에 해당 날짜가 없으면 None.

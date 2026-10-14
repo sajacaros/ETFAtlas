@@ -174,13 +174,15 @@ class GraphService:
                 return str(raw)
         return None
 
-    def get_top_etfs(self, limit: int = 20, sort: str = "market_cap", offset: int = 0) -> List[Dict]:
-        """AGE Universe 내 ETF 목록 (정렬 기준 선택 가능)"""
+    def get_top_etfs(self, limit: int = 20, sort: str = "market_cap", offset: int = 0,
+                     active: bool | None = None) -> List[Dict]:
+        """AGE Universe 내 ETF 목록 (정렬 기준 선택 가능, active로 액티브/패시브만 거를 수 있다)"""
         order_field = self.SORT_FIELDS.get(sort, "e.net_assets")
+        active_filter = "" if active is None else f" AND e.active = {'true' if active else 'false'}"
         cypher = f"""
         MATCH (e:ETF)
-        WHERE {order_field} IS NOT NULL
-        RETURN {{code: e.code, name: e.name, net_assets: e.net_assets, return_1d: e.return_1d, return_1w: e.return_1w, return_1m: e.return_1m, market_cap_change_1w: e.market_cap_change_1w}}
+        WHERE {order_field} IS NOT NULL{active_filter}
+        RETURN {{code: e.code, name: e.name, net_assets: e.net_assets, return_1d: e.return_1d, return_1w: e.return_1w, return_1m: e.return_1m, market_cap_change_1w: e.market_cap_change_1w, active: e.active}}
         ORDER BY {order_field} DESC, e.code
         SKIP $offset
         LIMIT $limit
@@ -193,7 +195,7 @@ class GraphService:
         cypher = """
         MATCH (e:ETF)
         WHERE toLower(e.name) CONTAINS toLower($query) OR toLower(e.code) CONTAINS toLower($query)
-        RETURN {code: e.code, name: e.name, net_assets: e.net_assets, return_1d: e.return_1d, return_1w: e.return_1w, return_1m: e.return_1m, market_cap_change_1w: e.market_cap_change_1w}
+        RETURN {code: e.code, name: e.name, net_assets: e.net_assets, return_1d: e.return_1d, return_1w: e.return_1w, return_1m: e.return_1m, market_cap_change_1w: e.market_cap_change_1w, active: e.active}
         ORDER BY e.net_assets DESC, e.code
         SKIP $offset
         LIMIT $limit
@@ -210,7 +212,7 @@ class GraphService:
                 expense_ratio: e.expense_ratio, issuer: c.name,
                 description: e.description, base_index: e.base_index,
                 listed_date: e.listed_date, dividend_cycle: e.dividend_cycle,
-                component_count: e.component_count}
+                component_count: e.component_count, active: e.active}
         """
         rows = self.execute_cypher(query, {"code": code})
         if rows:
@@ -256,7 +258,7 @@ class GraphService:
         """태그에 속한 ETF 목록 (이름, 코드, 순자산)"""
         query = """
         MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: $tag_name})
-        RETURN {code: e.code, name: e.name, net_assets: e.net_assets, return_1d: e.return_1d, return_1w: e.return_1w, return_1m: e.return_1m, market_cap_change_1w: e.market_cap_change_1w}
+        RETURN {code: e.code, name: e.name, net_assets: e.net_assets, return_1d: e.return_1d, return_1w: e.return_1w, return_1m: e.return_1m, market_cap_change_1w: e.market_cap_change_1w, active: e.active}
         ORDER BY e.net_assets DESC
         """
         rows = self.execute_cypher(query, {"tag_name": tag_name})
@@ -619,7 +621,7 @@ class GraphService:
         """사용자의 즐겨찾기 ETF 목록 (UniverseETFResponse 형식)"""
         query = """
         MATCH (u:User {user_id: $user_id})-[r:WATCHES]->(e:ETF)
-        RETURN {code: e.code, name: e.name, net_assets: e.net_assets, return_1d: e.return_1d, return_1w: e.return_1w, return_1m: e.return_1m, market_cap_change_1w: e.market_cap_change_1w}
+        RETURN {code: e.code, name: e.name, net_assets: e.net_assets, return_1d: e.return_1d, return_1w: e.return_1w, return_1m: e.return_1m, market_cap_change_1w: e.market_cap_change_1w, active: e.active}
         ORDER BY e.net_assets DESC
         """
         rows = self.execute_cypher(query, {"user_id": user_id})

@@ -168,6 +168,7 @@ export interface ETF {
   listed_date: string | null
   dividend_cycle: number | null  // 분배 주기 개월 수 (1=월, 3=분기), 0=분배 없음(TR)
   component_count?: number | null  // 전체 구성종목 수 (현금·선물 등 포함). 보유종목은 상위 30개까지만 있다
+  active?: boolean | null  // 액티브 ETF 여부 (KIS 분류), 모르면 null
 }
 
 export interface Holding {
@@ -292,6 +293,7 @@ export interface TagETF {
   return_1w: number | null
   return_1m: number | null
   market_cap_change_1w: number | null
+  active?: boolean | null
 }
 
 export interface TagHolding {

@@ -9,6 +9,7 @@ import { etfsApi, tagsApi, watchlistApi } from '@/lib/api'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/use-toast'
 import { formatKrwAmount } from '@/lib/utils'
+import { ACTIVE_TAG, PASSIVE_TAG } from '@/components/ETFInfo'
 import type { Tag, Holding } from '@/types/api'
 
 interface ETFCardItem {
@@ -19,6 +20,7 @@ interface ETFCardItem {
   return_1w?: number | null
   return_1m?: number | null
   market_cap_change_1w?: number | null
+  active?: boolean | null
 }
 
 const PAGE_SIZE = 20
@@ -48,6 +50,7 @@ function ETFExpandableCard({
   holdings,
   isWatched,
   onWatchToggle,
+  onActiveClick,
 }: {
   etf: ETFCardItem
   expanded: boolean
@@ -55,6 +58,7 @@ function ETFExpandableCard({
   holdings: Holding[] | undefined
   isWatched: boolean
   onWatchToggle: ((code: string) => void) | null
+  onActiveClick: () => void
 }) {
   return (
     <Card>
@@ -69,13 +73,28 @@ function ETFExpandableCard({
             <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
           )}
           <div className="min-w-0 flex-1">
-            <Link
-              to={`/etf/${etf.code}`}
-              className="font-medium hover:underline truncate block"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {etf.name}
-            </Link>
+            <div className="flex items-center gap-2 min-w-0">
+              <Link
+                to={`/etf/${etf.code}`}
+                className="font-medium hover:underline truncate"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {etf.name}
+              </Link>
+              {/* 패시브가 대부분이라 카드에는 액티브만 표시한다 */}
+              {etf.active && (
+                <Badge
+                  className="shrink-0 cursor-pointer text-[10px] px-1.5 py-0"
+                  title="액티브 ETF 모아 보기"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onActiveClick()
+                  }}
+                >
+                  {ACTIVE_TAG}
+                </Badge>
+              )}
+            </div>
             <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
               {etf.code}
               {/* 모바일: 이름은 첫 줄 전체를 쓰고 1D·시총은 코드 옆 둘째 줄에 */}
@@ -183,6 +202,9 @@ export default function HomePage() {
     '1주수익률': 'return_1w',
   }
   const isSortTag = (tagName: string) => tagName in SORT_TAGS
+  // 시총순으로 액티브/패시브만 모아 본다
+  const STYLE_TAGS: Record<string, boolean> = { [ACTIVE_TAG]: true, [PASSIVE_TAG]: false }
+  const isStyleTag = (tagName: string) => tagName in STYLE_TAGS
 
   // 무한 스크롤: 검색·정렬 탭은 PAGE_SIZE씩 이어 받고, 분류 태그·즐겨찾기는 한 번에 전체를 받는다
   const [hasMore, setHasMore] = useState(false)
@@ -255,6 +277,7 @@ export default function HomePage() {
   const loadTag = (tagName: string) => {
     if (tagName === FAVORITES_TAG) return loadList(() => watchlistApi.getETFs(), false)
     if (isSortTag(tagName)) return loadList((offset) => etfsApi.getTop(PAGE_SIZE, SORT_TAGS[tagName], offset), true)
+    if (isStyleTag(tagName)) return loadList((offset) => etfsApi.getTop(PAGE_SIZE, 'market_cap', offset, STYLE_TAGS[tagName]), true)
     return loadList(() => tagsApi.getETFs(tagName), false)
   }
 
@@ -383,7 +406,7 @@ export default function HomePage() {
         {/* 정렬 버튼 그룹 + 검색 */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <div className="no-scrollbar flex items-center gap-1 overflow-x-auto rounded-lg border p-1 sm:shrink-0">
-            {Object.keys(SORT_TAGS).map((name) => (
+            {[...Object.keys(SORT_TAGS), ...Object.keys(STYLE_TAGS)].map((name) => (
               <button
                 key={name}
                 className={`shrink-0 whitespace-nowrap px-3 py-1.5 text-sm rounded-md transition-colors ${
@@ -474,6 +497,7 @@ export default function HomePage() {
                 holdings={holdings[etf.code]}
                 isWatched={watchedCodes.has(etf.code)}
                 onWatchToggle={isAuthenticated ? handleWatchToggle : null}
+                onActiveClick={() => selectedTag !== ACTIVE_TAG && handleTagClick(ACTIVE_TAG)}
               />
             ))}
             {hasMore && <div ref={sentinelRef} className="h-px" />}

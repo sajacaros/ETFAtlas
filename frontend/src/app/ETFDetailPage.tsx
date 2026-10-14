@@ -23,7 +23,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { etfsApi, watchlistApi } from '@/lib/api'
-import { ETFInfoCards, ETFLink, computeMarketCap, dividendCycleLabel, componentCountLabel, HoldingsCoverageNote } from '@/components/ETFInfo'
+import { ETFInfoCards, ETFLink, computeMarketCap, dividendCycleLabel, componentCountLabel, HoldingsCoverageNote, ManagementBadge } from '@/components/ETFInfo'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/use-toast'
 import type { ETF, Holding, HoldingChange, Price, SimilarETF } from '@/types/api'
@@ -225,7 +225,10 @@ export default function ETFDetailPage() {
     <div className="space-y-6">
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-3xl font-bold">{etf.name}</h1>
+          <h1 className="text-3xl font-bold flex items-center gap-3">
+            {etf.name}
+            <ManagementBadge active={etf.active} />
+          </h1>
           <p className="text-muted-foreground">
             {[etf.code, dividendCycleLabel(etf.dividend_cycle), componentCountLabel(etf.component_count)].filter(Boolean).join(' · ')}
           </p>

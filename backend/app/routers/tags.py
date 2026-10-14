@@ -21,6 +21,7 @@ class TagETFResponse(BaseModel):
     return_1w: Optional[float] = None
     return_1m: Optional[float] = None
     market_cap_change_1w: Optional[float] = None
+    active: Optional[bool] = None
 
 
 class TagHoldingResponse(BaseModel):

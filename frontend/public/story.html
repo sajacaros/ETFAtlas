@@ -246,6 +246,18 @@
   .gedge.hl { stroke: var(--primary); stroke-width: 2; }
   .glabel { font-family: 'Fira Code', monospace; font-size: 11px; fill: var(--text-secondary); }
   .glabel.hl { fill: var(--primary); font-weight: 600; }
+  .bgroup { fill: var(--bg); stroke: #cbd5e1; stroke-width: 1.2; }
+  .bgroup.db { fill: #fbfaff; stroke: #c4b5fd; }
+  .btitle { font-size: 12.5px; font-weight: 700; fill: var(--text-secondary); }
+  .bbox { fill: var(--surface); stroke: var(--primary); stroke-width: 1.3; }
+  .bbox.ext { stroke: #94a3b8; }
+  .bbox.graph { stroke: var(--primary); fill: var(--primary-light); }
+  .bbox.rel { stroke: var(--green); fill: var(--green-light); }
+  .bbox.vec { stroke: var(--purple); fill: var(--purple-light); }
+  .bname { font-size: 13px; font-weight: 700; fill: var(--text); text-anchor: middle; }
+  .bsub { font-size: 11px; fill: var(--text-secondary); text-anchor: middle; }
+  .barrow { stroke: var(--primary); stroke-width: 1.5; }
+  .blabel { font-size: 11px; fill: var(--primary-dark); }
   /* ── In iframe (modal) ── */
   @media (max-height: 700px), (max-width: 1100px) {
     header { display: none; }
@@ -350,6 +362,72 @@ $$) as (result agtype);</pre>
   </ul>
 
   <h3 class="sub-title">구성 요소</h3>
+  <figure class="graph-figure">
+    <svg viewBox="0 0 820 430" role="img" aria-label="외부 데이터를 Airflow가 받아 PostgreSQL에 적재하고, 프런트엔드가 백엔드 API를 거쳐 같은 PostgreSQL을 조회하는 구성. PostgreSQL 안에 그래프, 관계형, 벡터 저장소가 있다">
+      <defs>
+        <marker id="barrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+      </defs>
+      <rect x="20" y="20" width="300" height="82" rx="12" class="bgroup "/>
+      <text x="34" y="40" class="btitle">외부 데이터</text>
+      <rect x="30" y="48" width="102" height="40" rx="9" class="bbox ext"/>
+      <text x="81" y="73" class="bname">KIS Open API</text>
+      <rect x="138" y="48" width="82" height="40" rx="9" class="bbox ext"/>
+      <text x="179" y="73" class="bname">네이버 증권</text>
+      <rect x="226" y="48" width="82" height="40" rx="9" class="bbox ext"/>
+      <text x="267" y="73" class="bname">yfinance</text>
+      <rect x="350" y="46" width="110" height="46" rx="9" class="bbox ext"/>
+      <text x="405" y="65" class="bname">Discord</text>
+      <text x="405" y="82" class="bsub">비중 변화 알림</text>
+      <rect x="490" y="20" width="310" height="82" rx="12" class="bgroup "/>
+      <text x="504" y="40" class="btitle">Frontend</text>
+      <rect x="502" y="48" width="286" height="40" rx="9" class="bbox "/>
+      <text x="645" y="73" class="bname">React · nginx</text>
+      <rect x="20" y="140" width="300" height="92" rx="12" class="bgroup "/>
+      <text x="34" y="160" class="btitle">Airflow</text>
+      <rect x="32" y="168" width="136" height="50" rx="9" class="bbox "/>
+      <text x="100" y="189" class="bname">수집 DAG</text>
+      <text x="100" y="206" class="bsub">매일 아침 · 장중 10분</text>
+      <rect x="176" y="168" width="132" height="50" rx="9" class="bbox "/>
+      <text x="242" y="189" class="bname">태깅 DAG</text>
+      <text x="242" y="206" class="bsub">신규 ETF 테마</text>
+      <rect x="350" y="168" width="110" height="50" rx="9" class="bbox ext"/>
+      <text x="405" y="189" class="bname">LiteLLM</text>
+      <text x="405" y="206" class="bsub">LLM · 임베딩</text>
+      <rect x="490" y="140" width="310" height="92" rx="12" class="bgroup "/>
+      <text x="504" y="160" class="btitle">Backend · FastAPI</text>
+      <rect x="502" y="168" width="136" height="50" rx="9" class="bbox "/>
+      <text x="570" y="189" class="bname">챗봇</text>
+      <text x="570" y="206" class="bsub">화면 설계 + 스킬</text>
+      <rect x="648" y="168" width="140" height="50" rx="9" class="bbox "/>
+      <text x="718" y="189" class="bname">API</text>
+      <text x="718" y="206" class="bsub">탐색 · 포트폴리오 · 관리</text>
+      <rect x="20" y="280" width="780" height="136" rx="12" class="bgroup db"/>
+      <text x="34" y="300" class="btitle">PostgreSQL · 하나의 DB</text>
+      <rect x="36" y="308" width="240" height="92" rx="9" class="bbox graph"/>
+      <text x="156" y="344" class="bname">AGE 그래프</text>
+      <text x="156" y="361" class="bsub">ETF · 종목 · 운용사 · 태그</text>
+      <text x="156" y="375" class="bsub">보유(현재/이력) · 가격</text>
+      <rect x="290" y="308" width="250" height="92" rx="9" class="bbox rel"/>
+      <text x="415" y="344" class="bname">관계형 테이블</text>
+      <text x="415" y="361" class="bsub">사용자 · 포트폴리오 · 스냅샷</text>
+      <text x="415" y="375" class="bsub">챗봇 대화 · 비중 변화</text>
+      <rect x="554" y="308" width="230" height="92" rx="9" class="bbox vec"/>
+      <text x="669" y="344" class="bname">pgvector</text>
+      <text x="669" y="361" class="bsub">챗봇 예시 임베딩</text>
+      <text x="669" y="375" class="bsub">해결 절차 · 화면 설계</text>
+      <line x1="100" y1="102" x2="100" y2="166" class="barrow" marker-end="url(#barrowhead)"/>
+      <text x="108" y="138" class="blabel">시세 · 구성종목 · 보수율</text>
+      <line x1="290" y1="140" x2="372" y2="94" class="barrow" marker-end="url(#barrowhead)"/>
+      <line x1="308" y1="193" x2="348" y2="193" class="barrow" marker-end="url(#barrowhead)"/>
+      <line x1="502" y1="193" x2="462" y2="193" class="barrow" marker-end="url(#barrowhead)"/>
+      <line x1="645" y1="102" x2="645" y2="138" class="barrow" marker-end="url(#barrowhead)"/>
+      <text x="653" y="125" class="blabel">/api</text>
+      <line x1="170" y1="232" x2="170" y2="278" class="barrow" marker-end="url(#barrowhead)"/>
+      <text x="178" y="260" class="blabel">적재</text>
+      <line x1="645" y1="232" x2="645" y2="278" class="barrow" marker-end="url(#barrowhead)"/>
+      <text x="653" y="260" class="blabel">조회 · 저장 (SQL · Cypher)</text>
+    </svg>
+  </figure>
   <ul>
     <li><span class="tech">db</span> &mdash; PostgreSQL 18 + Apache AGE + pgvector + pg_trgm</li>
     <li><span class="tech">backend</span> &mdash; FastAPI + pydantic-ai</li>

@@ -302,6 +302,7 @@ def _parse_age_value(raw):
 
 BUSINESS_DAY_REFERENCE_CODE = '069500'  # KODEX 200 — 모든 거래일에 거래됨
 MARKET_SETTLED_TIME = time(16, 0)  # 15:30 종가 확정 후 여유
+MARKET_OPEN_TIME = time(9, 0)
 
 
 def last_settled_day(now: datetime) -> str:
@@ -319,12 +320,9 @@ def get_business_days(from_date: str, to_date: str) -> list[str]:
     kis = get_kis_client()
     if kis is None:
         return []
-    try:
-        bars = kis.get_daily_bars(BUSINESS_DAY_REFERENCE_CODE, from_date, to_date)
-        return [b.date for b in bars]
-    except Exception as e:
-        log.warning(f"Failed to get business days via KIS daily bars: {e}")
-        return []
+    # 실패를 빈 목록으로 돌려주면 "이미 최신"으로 오인하므로 예외를 그대로 올려 태스크 재시도에 맡긴다
+    bars = kis.get_daily_bars(BUSINESS_DAY_REFERENCE_CODE, from_date, to_date)
+    return [b.date for b in bars]
 
 
 def get_last_collected_date() -> str | None:
@@ -459,6 +457,72 @@ def refresh_etf_profiles(cur, codes) -> int:
 # 공용 수집 함수
 # ──────────────────────────────────────────────
 
+# 마스터에서 사라진 ETF가 이보다 많으면 마스터 파일 이상으로 보고 삭제하지 않는다
+DELIST_MAX_RATIO = 0.1
+
+
+def sync_universe_listing(cur, existing_codes: set[str], master: dict[str, str]) -> set[str]:
+    """KIS 종목 마스터 기준으로 유니버스를 정리한다: 마스터에 없는(상장폐지) ETF는 노드째 지우고,
+    이름이 바뀐 ETF는 이름(과 이름으로 정하는 운용사)을 고친다. 남은 유니버스 코드를 돌려준다.
+    """
+    import json
+
+    delisted = sorted(existing_codes - master.keys())
+    if delisted and len(delisted) > max(5, len(existing_codes) * DELIST_MAX_RATIO):
+        log.warning(f"{len(delisted)}/{len(existing_codes)} universe ETFs missing from master — "
+                    f"suspect a bad master file, skipping delisting: {delisted[:10]}")
+        delisted = []
+    if delisted:
+        items = [{'code': c} for c in delisted]
+        # 가격 노드는 ETF에만 매달려 있으니 함께 지우고, 나머지 관계(HOLDS·TAGGED·WATCHES 등)는 DETACH로 끊는다
+        execute_cypher_batch(cur, """
+            MATCH (e:ETF {code: item.code})-[:HAS_PRICE]->(p:Price)
+            DETACH DELETE p
+            RETURN 1
+        """, items)
+        execute_cypher_batch(cur, """
+            MATCH (e:ETF {code: item.code})
+            DETACH DELETE e
+            RETURN 1
+        """, items)
+        log.info(f"Removed {len(delisted)} delisted ETFs: {delisted}")
+
+    renamed = []
+    for row in execute_cypher(cur, "MATCH (e:ETF) RETURN {code: e.code, name: e.name}"):
+        if not row[0]:
+            continue
+        data = json.loads(_parse_age_value(row[0]))
+        new_name = master.get(data['code'])
+        if new_name and new_name != data.get('name'):
+            renamed.append({'code': data['code'], 'name': new_name, 'old_name': data.get('name') or '',
+                            'company': get_company_from_etf_name(new_name)})
+    if renamed:
+        execute_cypher_batch(cur, """
+            MATCH (e:ETF {code: item.code})
+            SET e.name = item.name
+            RETURN 1
+        """, renamed)
+        moved = [r for r in renamed if r['company'] != get_company_from_etf_name(r['old_name'])]
+        if moved:
+            execute_cypher_batch(cur, """
+                MATCH (e:ETF {code: item.code})-[r:MANAGED_BY]->(:Company)
+                DELETE r
+                RETURN 1
+            """, moved)
+            execute_cypher_batch(cur, """
+                MERGE (c:Company {name: item.company}) RETURN c
+            """, [{'company': c} for c in sorted({r['company'] for r in moved})])
+            execute_cypher_batch(cur, """
+                MATCH (e:ETF {code: item.code})
+                MATCH (c:Company {name: item.company})
+                MERGE (e)-[:MANAGED_BY]->(c)
+                RETURN 1
+            """, moved)
+        log.info("Renamed ETFs: " + ", ".join(f"{r['code']} {r['old_name']} → {r['name']}" for r in renamed))
+
+    return existing_codes - set(delisted)
+
+
 def collect_universe_and_prices(dates: list[str]) -> tuple[set[str], list[dict], list[str]]:
     """KIS 기반 ETF 유니버스 갱신 + ETF Price 노드 생성.
 
@@ -505,6 +569,10 @@ def collect_universe_and_prices(dates: list[str]) -> tuple[set[str], list[dict],
     total_prices = 0
 
     try:
+        # ── 1-1. 상장폐지 ETF 제거, 이름 변경 반영 ──
+        existing_codes = sync_universe_listing(cur, existing_codes, master)
+        conn.commit()
+
         # ── 2. 신규 ETF 노드 + 메타데이터 ──
         snapshot_dicts = [{'code': c, 'name': master[c], 'net_assets': snap.net_assets}
                           for c, snap in snapshots.items()]
@@ -668,21 +736,26 @@ def get_kis_client():
     )
 
 
-def collect_holdings(etf_codes: list[str], bd: str):
+# KIS가 통째로 응답하지 않을 때 ETF마다 타임아웃을 기다리지 않도록, 연속으로 이만큼 실패하면 중단한다
+HOLDINGS_MAX_CONSECUTIVE_FAILURES = 10
+
+
+def collect_holdings(etf_codes: list[str], bd: str) -> list[str]:
     """KIS ETF 구성종목시세로 현재 구성종목을 조회해 bd(YYYYMMDD) 날짜의 HOLDS 엣지로 저장.
 
     KIS API는 날짜 지정이 불가능(호출 시점 스냅샷)하므로 과거 날짜 백필은 지원하지 않는다.
     bd에는 최근 거래일을 넘긴다. Stock 노드(이름/is_etf 포함)도 함께 생성.
+    받은 것은 저장하고, 끝내 HOLDS를 못 쓴 ETF 코드를 돌려준다 — 재실행하면 이미 받은 ETF는 건너뛰고
+    이 ETF들만 다시 받는다. 재시도할지는 호출 쪽(태스크)이 정한다.
     """
     from itertools import groupby
 
     if not etf_codes or not bd:
-        return
+        return []
 
     kis = get_kis_client()
     if kis is None:
-        log.warning("Skipping holdings collection (KIS credentials missing)")
-        return
+        raise RuntimeError("KIS credentials missing — cannot collect holdings")
 
     date_str = f"{bd[:4]}-{bd[4:6]}-{bd[6:8]}"
 
@@ -709,16 +782,22 @@ def collect_holdings(etf_codes: list[str], bd: str):
     if not remaining_etfs:
         log.info(f"[{bd}] All {len(etf_codes)} ETFs already have HOLDS, skipping")
         refresh_current_holds(date_str)
-        return
+        return []
     if existing_holds:
         log.info(f"[{bd}] Skipping {len(existing_holds)} ETFs with existing HOLDS, "
                  f"fetching {len(remaining_etfs)}")
 
     all_holds = []
     stock_names = {}  # stock_code -> KIS 종목명
-    failed = 0
+    failed_codes = []
+    consecutive = 0
 
-    for ticker in remaining_etfs:
+    for idx, ticker in enumerate(remaining_etfs):
+        if consecutive >= HOLDINGS_MAX_CONSECUTIVE_FAILURES:
+            log.warning(f"[{bd}] {consecutive} consecutive KIS failures — aborting, "
+                        f"{len(remaining_etfs) - idx} ETFs not attempted")
+            failed_codes.extend(remaining_etfs[idx:])
+            break
         try:
             components = [
                 c for c in kis.get_etf_components(ticker)
@@ -732,16 +811,18 @@ def collect_holdings(etf_codes: list[str], bd: str):
                 })
                 if c.stock_name:
                     stock_names.setdefault(c.stock_code, c.stock_name)
+            consecutive = 0
         except Exception as e:
-            failed += 1
+            failed_codes.append(ticker)
+            consecutive += 1
             log.warning(f"Failed KIS components for {ticker}: {e}")
 
-    if failed:
-        log.warning(f"[{bd}] KIS component fetch failed for {failed}/{len(remaining_etfs)} ETFs")
+    if failed_codes:
+        log.warning(f"[{bd}] KIS component fetch failed for {len(failed_codes)}/{len(remaining_etfs)} ETFs")
     if not all_holds:
-        log.warning(f"[{bd}] No holdings data from KIS. Skipping.")
+        log.warning(f"[{bd}] No holdings data from KIS.")
         refresh_current_holds(date_str)
-        return
+        return failed_codes
 
     all_stock_codes = {h['stock_code'] for h in all_holds}
 
@@ -807,6 +888,7 @@ def collect_holdings(etf_codes: list[str], bd: str):
                 conn.commit()
             except Exception as e:
                 log.warning(f"Failed HOLDS batch for {bd} at group {i}: {e}")
+                failed_codes.extend(code for code, _ in batch_groups)
                 conn.rollback()
                 cur = init_age(conn)
 
@@ -818,6 +900,7 @@ def collect_holdings(etf_codes: list[str], bd: str):
         conn.close()
 
     refresh_current_holds(date_str)
+    return failed_codes
 
 
 def refresh_current_holds(date_str: str):

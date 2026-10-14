@@ -31,6 +31,7 @@ AGE 수집 공용 로직은 `airflow/dags/age_utils.py`에 모여 있다.
 - **스케줄**: `30 8 * * 2-6` (거래일 다음날 08:30 KST, 화~토)
 - **재시도**: 3회, 5분 간격
 - **Catchup**: 비활성화
+- **동시 실행**: 1개 (`max_active_runs=1`)
 
 ### 태스크 구조
 
@@ -58,10 +59,18 @@ AGE가 비어 있으면(첫 실행) 최근 10일 중 마지막 거래일 하루�
 #### 2. sync_universe_and_prices
 
 `collect_universe_and_prices(dates)`를 호출하고, 신규 편입 ETF(`new_etfs`)와 실제로 ETF Price가 저장된 거래일(`actual_dates`)을 XCom으로 push한다.
+KIS 종목 마스터에 없는(상장폐지) 유니버스 ETF는 Price 노드와 함께 지우고, 이름이 바뀐 ETF는 이름과 운용사(MANAGED_BY)를 고친다(`sync_universe_listing`). 마스터에서 유니버스의 10%(최소 5개)를 넘게 사라지면 마스터 이상으로 보고 지우지 않는다.
 
 #### 3. sync_holdings
 
 `collect_holdings(etf_codes, actual_dates[-1])` — 여러 날이 밀려 있어도 **최근 거래일 1일치**만 수집한다 (KIS는 과거 날짜 조회 불가).
+
+KIS는 과거 구성종목을 주지 않으므로 그날 놓치면 복구할 수 없다. 그래서 실패를 다음처럼 다룬다.
+- KIS 호출: 네트워크 오류·타임아웃·5xx는 1·2·4초 간격으로 최대 3번 다시 시도한다(`kis_api_client._get`).
+- 연속 10개 ETF가 실패하면 KIS 장애로 보고 나머지는 시도하지 않는다(타임아웃 대기 방지).
+- 실패가 20% 이상이면 태스크를 실패시켜 Airflow 재시도(3회, 5분 간격)로 다시 받는다. 이미 HOLDS가 있는 ETF는 건너뛰므로 빠진 것만 받는다.
+- 마지막 시도이거나 실패가 20% 미만이면 받은 것만으로 진행하고, 빠진 ETF는 로그에 남긴다. 그 ETF는 다음 날 이틀치 변화로 비교된다(`weight_changes.prev_date`).
+- 평일 09:00~16:00(장중)에는 비중이 장중 가격으로 바뀔 수 있어 구성종목을 받지 않는다.
 
 #### 4. sync_stock_prices
 

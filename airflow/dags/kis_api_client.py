@@ -153,6 +153,7 @@ class KISApiClient:
     MIN_INTERVAL = 0.06                    # 초당 호출 제한(실전 20건/s) 대비 최소 간격
     RATE_LIMIT_CODE = "EGW00201"           # 초당 거래건수 초과
     TOKEN_EXPIRED_CODE = "EGW00123"        # 기간이 만료된 token
+    RETRY_BACKOFF = 1.0                    # 네트워크 오류·5xx 재시도 대기(초), 시도마다 두 배
 
     def __init__(
         self,
@@ -225,19 +226,31 @@ class KISApiClient:
         token_refreshed = False
         for attempt in range(retries + 1):
             self._throttle()
-            resp = self.session.get(
-                f"{self.base_url}{path}",
-                headers={
-                    "content-type": "application/json; charset=utf-8",
-                    "authorization": f"Bearer {self._get_token()}",
-                    "appkey": self.app_key,
-                    "appsecret": self.app_secret,
-                    "tr_id": tr_id,
-                    "custtype": "P",
-                },
-                params=params,
-                timeout=30,
-            )
+            try:
+                resp = self.session.get(
+                    f"{self.base_url}{path}",
+                    headers={
+                        "content-type": "application/json; charset=utf-8",
+                        "authorization": f"Bearer {self._get_token()}",
+                        "appkey": self.app_key,
+                        "appsecret": self.app_secret,
+                        "tr_id": tr_id,
+                        "custtype": "P",
+                    },
+                    params=params,
+                    timeout=30,
+                )
+            except (requests.ConnectionError, requests.Timeout) as e:
+                # 일시적인 네트워크 오류는 횟수를 정해 간격을 늘려 가며 다시 시도한다
+                if attempt < retries:
+                    log.warning(f"KIS {tr_id} network error ({type(e).__name__}), retry {attempt + 1}/{retries}")
+                    time.sleep(self.RETRY_BACKOFF * 2 ** attempt)
+                    continue
+                raise
+            if resp.status_code >= 500 and attempt < retries:
+                log.warning(f"KIS {tr_id} HTTP {resp.status_code}, retry {attempt + 1}/{retries}")
+                time.sleep(self.RETRY_BACKOFF * 2 ** attempt)
+                continue
             try:
                 data = resp.json()
             except ValueError:

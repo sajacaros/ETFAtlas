@@ -404,6 +404,13 @@ export default function ETFDetailPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
+                {sortedChanges.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-6">
+                      비교할 이전 데이터가 없습니다
+                    </TableCell>
+                  </TableRow>
+                )}
                 {sortedChanges.map((change) => (
                   <TableRow key={change.stock_code}>
                     <TableCell>

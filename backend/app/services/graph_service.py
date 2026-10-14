@@ -433,6 +433,9 @@ class GraphService:
             prev_date = self._get_prev_trading_date(etf_code, actual_date)
 
         previous, prev_actual = self._get_holdings_at(etf_code, prev_date) if prev_date else ({}, None)
+        if not prev_actual:
+            # 비교할 이전 데이터가 없으면(유니버스 신규 편입 첫날 등) 전 종목이 신규편입으로 보이므로 비교하지 않는다
+            return [], actual_date, None
 
         changes = []
         all_codes = set(current.keys()) | set(previous.keys())

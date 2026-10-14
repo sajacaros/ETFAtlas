@@ -4,7 +4,7 @@ from ..utils.time import utcnow
 
 
 class WeightChange(Base):
-    """액티브 ETF 보유종목의 직전 영업일 대비 비중 변화. Airflow가 수집 후 계산해 넣는다.
+    """액티브 ETF 보유종목의 이전 공시일 대비 비중 변화 (날짜는 구성종목 공시일). Airflow가 수집 후 계산해 넣는다.
 
     변화가 있는 종목은 크기와 상관없이 모두 담고, 기준값(%p)은 읽는 쪽(웹·디스코드)이 적용한다.
     """
@@ -15,7 +15,7 @@ class WeightChange(Base):
 
     id = Column(Integer, primary_key=True)
     base_date = Column(String(10), nullable=False, index=True)
-    prev_date = Column(String(10), nullable=False)  # 이 ETF의 직전 영업일 (HOLDS가 있는 이전 날짜)
+    prev_date = Column(String(10), nullable=False)  # 이 ETF의 이전 공시일 (HOLDS가 있는 이전 날짜)
     etf_code = Column(String(20), nullable=False)
     etf_name = Column(Text, nullable=False)
     stock_code = Column(String(20), nullable=False)

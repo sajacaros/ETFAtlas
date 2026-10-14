@@ -302,7 +302,7 @@ def _parse_age_value(raw):
 
 BUSINESS_DAY_REFERENCE_CODE = '069500'  # KODEX 200 — 모든 거래일에 거래됨
 MARKET_SETTLED_TIME = time(16, 0)  # 15:30 종가 확정 후 여유
-# KIS 구성종목(PDF)은 영업일 08:30에 직전 영업일 장 마감 후 내역으로 갱신된다 — 갱신 뒤에 받는다
+# KIS 구성종목(PDF)은 영업일 08:30에 그날 공시분(직전 영업일 장 마감 후 보유)으로 갱신된다 — 갱신 뒤에 받는다
 HOLDINGS_PUBLISH_TIME = time(8, 35)
 
 
@@ -358,24 +358,18 @@ def is_market_open(day) -> bool | None:
 
 
 def holdings_target_date(now: datetime) -> str | None:
-    """지금 받을 수 있는 구성종목의 날짜(YYYYMMDD). 받으면 안 되는 때면 None.
+    """지금 받을 구성종목의 날짜(YYYYMMDD) — 수집한 날(그날 공시된 구성). 받으면 안 되는 때면 None.
 
-    KIS 구성종목은 영업일 08:30에 직전 영업일 장 마감 후 내역으로 갱신되고 과거 날짜는 조회할 수 없다.
-    그래서 오늘이 개장일이고 갱신 뒤(08:35)부터 종가 확정 전(16:00)까지만, 직전 영업일 날짜로 받는다.
-    (금요일 것은 월요일 아침에, 휴장일 다음 날엔 휴장일 전 영업일 것을 받는다.)
+    KIS 구성종목(PDF)은 영업일 08:30에 그날 적용할 내역(직전 영업일 장 마감 후 보유)으로 갱신되고
+    다음 영업일 아침까지 그대로다. 그래서 개장일 08:35 이후면 언제 받아도 같은 내역이고, 그날 날짜로 적는다.
+    주말·휴장일에는 갱신이 없으므로 받지 않는다. 비교는 ETF별 이전 수집일과 하므로 날짜가 비어도 된다.
     """
-    if not (HOLDINGS_PUBLISH_TIME <= now.time() < MARKET_SETTLED_TIME):
+    if now.time() < HOLDINGS_PUBLISH_TIME:
         return None
     is_open = is_market_open(now.date())
     if is_open is None:
         raise RuntimeError(f"Cannot tell whether {now:%Y-%m-%d} is a trading day")
-    if not is_open:
-        return None
-    days = get_business_days((now - timedelta(days=14)).strftime('%Y%m%d'),
-                             (now - timedelta(days=1)).strftime('%Y%m%d'))
-    if not days:
-        raise RuntimeError(f"No business day found before {now:%Y-%m-%d}")
-    return days[-1]
+    return now.strftime('%Y%m%d') if is_open else None
 
 
 def get_last_collected_date() -> str | None:
@@ -1265,7 +1259,7 @@ def _weight_change_type(prev: Optional[dict], curr: Optional[dict], diff: float)
 
 
 def compute_weight_changes():
-    """액티브 ETF의 직전 영업일 대비 보유종목 비중 변화를 계산해 weight_changes에 저장.
+    """액티브 ETF의 이전 수집일(공시일) 대비 보유종목 비중 변화를 계산해 weight_changes에 저장.
 
     weight_change_dates에 없는(아직 계산하지 않은) HOLDS 날짜를 모두 처리하므로 첫 실행이면 과거 전체를 채운다.
     가장 최근 날짜는 이미 계산했어도 다시 계산한다 — KIS는 과거 구성종목을 주지 않으므로 나중에 HOLDS가
@@ -1435,7 +1429,8 @@ def send_discord_notification(date_str: str):
         ]
 
         # 디스코드 메시지 발송 — 2000자 제한에 맞춰 나눠 보낸다
-        messages = _split_discord_messages(f"📊 **ETF 비중 변화 알림** ({date_str})", changes_summary)
+        # 날짜는 구성종목 공시일 — 실제 매매는 직전 영업일 장중에 일어난 것
+        messages = _split_discord_messages(f"📊 **ETF 비중 변화 알림** ({date_str} 공시)", changes_summary)
 
         try:
             with httpx.Client(timeout=10) as client:

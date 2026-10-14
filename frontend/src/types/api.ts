@@ -444,7 +444,7 @@ export interface ChatSessionDetail {
 export interface ActiveChange {
   etf_code: string
   etf_name: string
-  prev_date: string  // 이 ETF의 직전 영업일
+  prev_date: string  // 이 ETF의 이전 공시일 (비교 대상)
   stock_code: string
   stock_name: string
   change_type: 'added' | 'removed' | 'increased' | 'decreased'

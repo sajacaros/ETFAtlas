@@ -209,7 +209,7 @@ async def get_active_changes(
     base_date: str = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     db: Session = Depends(get_db),
 ):
-    """액티브 ETF 전체의 직전 영업일 대비 비중 변화 (기준값 초과만). 모든 회원이 같은 목록을 본다.
+    """액티브 ETF 전체의 이전 공시일 대비 비중 변화 (기준값 초과만). 모든 회원이 같은 목록을 본다.
 
     Airflow가 계산해 둔 weight_changes를 읽는다 — 디스코드 알림과 같은 데이터.
     base_date를 주면 그날 이전에 계산된 가장 최근 날짜를 쓴다.

@@ -201,7 +201,7 @@ function DiscordSettingsTab() {
   return (
     <div className="max-w-xl space-y-6 py-2">
       <p className="text-sm text-muted-foreground">
-        매일 수집이 끝나면 액티브 ETF 전체에서 직전 영업일보다 구성종목 비중이 기준값보다 크게 바뀐 종목을 디스코드로 보냅니다. 웹의 비중 변화 화면도 같은 기준값을 씁니다.
+        개장일마다 구성종목 공시를 받으면 액티브 ETF 전체에서 이전 공시보다 비중이 기준값보다 크게 바뀐 종목을 디스코드로 보냅니다. 웹의 비중 변화 화면도 같은 기준값을 씁니다.
         메시지가 2,000자를 넘으면 나눠서 보냅니다.
       </p>
 

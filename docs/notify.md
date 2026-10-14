@@ -2,13 +2,13 @@
 
 ## 개요
 
-액티브 ETF 전체의 보유종목 비중 변화(직전 영업일 대비)를 **인앱 SSE** + **디스코드 웹훅**으로 알림.
+액티브 ETF 전체의 보유종목 비중 변화(이전 공시일 대비)를 **인앱 SSE** + **디스코드 웹훅**으로 알림.
 Airflow가 수집 후 한 번 계산해 `weight_changes` 테이블에 저장하고, 웹 화면·빨간 점·디스코드가 모두 이 결과를 읽는다.
 
 ## 아키텍처
 
 ```
-DAG age_sync_universe (매일 08:50, 구성종목은 개장일에만 직전 영업일 것)
+DAG age_sync_universe (매일 08:50, 구성종목은 개장일에만 그날 공시분)
   └─ HOLDS 수집 완료 (KIS API, 최근 거래일)
   └─ sync_weight_changes — 액티브 ETF 비중 변화 계산 → weight_changes 저장
   └─ record_collection — collection_runs INSERT + NOTIFY new_collection (계산 실패해도 실행)
@@ -49,8 +49,8 @@ last_notification_checked_at TIMESTAMP
 
 | 채널 | 대상 | ETF 소스 | 트리거 | 임계값 |
 |------|------|----------|--------|--------|
-| 인앱 (빨간 점 + `/changes` 페이지) | 모든 회원 (같은 내용) | 액티브 ETF 전체 | pg_notify → SSE push | 기준값 초과 (직전 영업일 대비) |
-| 디스코드 | 웹훅 채널 | 액티브 ETF 전체 | DAG 수집 완료 | 기준값 초과 (기본 3%p, 직전 영업일 대비) |
+| 인앱 (빨간 점 + `/changes` 페이지) | 모든 회원 (같은 내용) | 액티브 ETF 전체 | pg_notify → SSE push | 기준값 초과 (이전 공시일 대비) |
+| 디스코드 | 웹훅 채널 | 액티브 ETF 전체 | DAG 수집 완료 | 기준값 초과 (기본 3%p, 이전 공시일 대비) |
 
 기준값은 관리자 페이지 디스코드 탭에서 설정하며 웹과 디스코드가 같은 값을 쓴다. `weight_changes`에는 변화가 있는 종목을 크기와 상관없이 모두 저장하고 기준값은 읽을 때 적용한다.
 
@@ -114,7 +114,7 @@ SSE도 같은 출처라 `EventSource`가 세션 쿠키를 자동으로 보낸다
 - `POST /api/auth/setup`(최초 설치)으로 만든 계정이 `admin`, `POST /api/auth/register`로 가입한 계정은 `member`.
 - `auth_service.is_admin(db, user_id)`로 확인.
 - 알림 대상은 역할과 상관없이 액티브 ETF 전체다(ETF.active, KIS 분류로 매일 갱신).
-- 비교 기준은 ETF별 직전 HOLDS 날짜(직전 영업일)이며, KIS API는 과거 구성종목을 제공하지 않으므로 HOLDS 수집 이틀째부터 비교 대상이 생긴다.
+- HOLDS 날짜는 구성종목 공시일(수집한 영업일)이고, 비교 기준은 ETF별 이전 HOLDS 날짜다. 공시일의 변화는 직전 영업일 장중 매매를 반영한다. KIS API는 과거 구성종목을 제공하지 않으므로 HOLDS 수집 이틀째부터 비교 대상이 생긴다.
 
 ## 환경 변수
 

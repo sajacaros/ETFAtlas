@@ -38,7 +38,7 @@ dag = DAG(
     'age_sync_universe',
     default_args=default_args,
     description='ETF 데이터 일일 증분 수집 (Apache AGE)',
-    schedule='50 8 * * *',  # 매일 08:50 KST — 구성종목은 영업일에만 받는다 (holdings_target_date)
+    schedule='50 8 * * *',  # 매일 08:50 KST — 구성종목은 개장일에만 그날 날짜로 받는다 (holdings_target_date)
     catchup=False,
     max_active_runs=1,  # 수동 실행이 정기 실행과 겹치면 Price 노드가 중복될 수 있다
     tags=['etf', 'daily', 'age'],
@@ -99,14 +99,14 @@ HOLDINGS_RETRY_FAILURE_RATIO = 0.2
 def sync_holdings(**context):
     """구성종목(KIS)을 HOLDS로 저장. 받은 날짜(YYYYMMDD)를 돌려준다(XCom) — 받지 않았으면 None.
 
-    가격과 따로, 오늘이 개장일이면 직전 영업일 것을 받는다(holdings_target_date). KIS는 과거 날짜를 주지 않는다.
+    가격과 따로, 개장일이면 그날 공시된 구성을 그날 날짜로 받는다(holdings_target_date). KIS는 과거 날짜를 주지 않는다.
     실패가 많으면 태스크 재시도로 빠진 ETF만 다시 받고(이미 받은 ETF는 건너뜀), 마지막 시도면
     받은 것만으로 진행한다.
     """
     ti = context['ti']
     target = holdings_target_date(datetime.now())
     if not target:
-        log.info("Not a holdings window (non-trading day or outside 08:35–16:00) — skipping holdings")
+        log.info("No holdings to fetch (non-trading day or before 08:35) — skipping holdings")
         return None
 
     etf_codes = list(get_etf_codes_from_age())

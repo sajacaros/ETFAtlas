@@ -365,7 +365,7 @@ ETF 구성 종목
 
 ### GET /api/etfs/active/changes
 
-액티브 ETF 전체의 직전 영업일 대비 보유종목 비중 변화. Airflow가 수집 후 계산해 둔 `weight_changes`를 읽으며(디스코드 알림과 같은 데이터),
+액티브 ETF 전체의 이전 공시일 대비 보유종목 비중 변화(날짜는 구성종목 공시일, 실제 매매는 직전 영업일). Airflow가 수집 후 계산해 둔 `weight_changes`를 읽으며(디스코드 알림과 같은 데이터),
 관리자 페이지의 디스코드 기준값(%p)을 넘는 변화만 담는다. 모든 회원이 같은 결과를 본다.
 비교할 이전 데이터가 없는 ETF(유니버스 신규 편입 첫날 등)는 계산에서 빠진다.
 
@@ -384,7 +384,7 @@ ETF 구성 종목
     {
       "etf_code": string,
       "etf_name": string,
-      "prev_date": string,           // 이 ETF의 직전 영업일
+      "prev_date": string,           // 이 ETF의 이전 공시일 (비교 대상)
       "stock_code": string,
       "stock_name": string,
       "change_type": "added" | "removed" | "increased" | "decreased",

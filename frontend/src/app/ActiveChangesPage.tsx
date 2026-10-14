@@ -200,11 +200,11 @@ export default function ActiveChangesPage() {
       <p className="text-sm text-muted-foreground">
         {currentDate && (
           <>
-            기준일: {previousDate && `${previousDate.slice(2).replace(/-/g, '/')} → `}
+            공시일: {previousDate && `${previousDate.slice(2).replace(/-/g, '/')} → `}
             {currentDate.slice(2).replace(/-/g, '/')} ·{' '}
           </>
         )}
-        액티브 ETF 전체에서 직전 영업일보다 비중이 {threshold ?? '-'}%p 넘게 바뀐 종목 (디스코드 알림과 같은 내용)
+        액티브 ETF 전체에서 이전 공시보다 비중이 {threshold ?? '-'}%p 넘게 바뀐 종목. 공시일의 변화는 직전 영업일 매매를 반영합니다 (디스코드 알림과 같은 내용)
       </p>
 
       {loading ? (

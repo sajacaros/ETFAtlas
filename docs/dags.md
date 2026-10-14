@@ -8,7 +8,7 @@ AGE 수집 공용 로직은 `airflow/dags/age_utils.py`에 모여 있다.
 |--------|------|--------|--------|------|
 | `age_sync_universe` | `sync_universe_age.py` | `30 8 * * 2-6` (화~토 08:30 KST) | AGE | 일일 증분 수집 |
 | `age_tagging` | `age_tagging.py` | `0 3 * * 6` (토 03:00 KST) | AGE | 신규 ETF 태깅 (`full_rebuild`로 전체 재태깅) |
-| `rdb_sync_metadata` | `sync_metadata_rdb.py` | `30 8 * * 1-5` (평일 08:30 KST) | RDB | `etfs` 코드/이름 동기화 |
+| `rdb_sync_metadata` | `sync_metadata_rdb.py` | `40 8 * * *` (매일 08:40 KST) | RDB | `etfs` 코드/이름 동기화 |
 | `rdb_realtime_prices` | `realtime_prices_rdb.py` | `*/10 9-15 * * 1-5` | RDB | 장중 현재가 + 포트폴리오 스냅샷 |
 | `embed_code_examples` | `embed_code_examples.py` | 수동 | RDB (pgvector) | 챗봇 코드·레이아웃 예제 임베딩 |
 
@@ -183,7 +183,7 @@ ETF별 최근 45개 Price로 `close_price`, `return_1d`, `return_1w`, `return_1m
 KIS 종목 마스터 파일에서 전체 ETF 목록을 받아 RDB `etfs` 테이블에 code + name만 동기화한다 (포트폴리오의 비유니버스 ETF 이름 조회용).
 ETF 상세 메타데이터(순자산, 보수율, 운용사 등)는 AGE에서 관리한다.
 
-- **스케줄**: `30 8 * * 1-5` (평일 08:30 KST)
+- **스케줄**: `40 8 * * *` (매일 08:40 KST)
 - **재시도**: 3회, 5분 간격
 
 ```

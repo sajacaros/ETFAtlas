@@ -23,7 +23,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { etfsApi, watchlistApi } from '@/lib/api'
-import { ETFInfoCards, ETFLink, computeMarketCap, dividendCycleLabel } from '@/components/ETFInfo'
+import { ETFInfoCards, ETFLink, computeMarketCap, dividendCycleLabel, componentCountLabel, HoldingsCoverageNote } from '@/components/ETFInfo'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/use-toast'
 import type { ETF, Holding, HoldingChange, Price, SimilarETF } from '@/types/api'
@@ -227,7 +227,7 @@ export default function ETFDetailPage() {
         <div>
           <h1 className="text-3xl font-bold">{etf.name}</h1>
           <p className="text-muted-foreground">
-            {[etf.code, dividendCycleLabel(etf.dividend_cycle)].filter(Boolean).join(' · ')}
+            {[etf.code, dividendCycleLabel(etf.dividend_cycle), componentCountLabel(etf.component_count)].filter(Boolean).join(' · ')}
           </p>
         </div>
         <Button
@@ -350,7 +350,8 @@ export default function ETFDetailPage() {
           <TabsTrigger value="changes">비중 변화</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="holdings" className="mt-4">
+        <TabsContent value="holdings" className="mt-4 space-y-2">
+          <HoldingsCoverageNote total={etf.component_count} shown={holdings.length} />
           <Card>
             <Table>
               <TableHeader>

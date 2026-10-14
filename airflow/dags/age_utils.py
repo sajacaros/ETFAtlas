@@ -600,6 +600,16 @@ def collect_universe_and_prices(dates: list[str]) -> tuple[set[str], list[dict],
         """, cycle_items)
         conn.commit()
 
+        # ── 2-3. 구성종목 수: KIS가 주는 전체 개수 (HOLDS는 상위 30개까지만 있다) ──
+        count_items = [{'code': c, 'value': snapshots[c].component_count} for c in sorted(existing_codes)
+                       if c in snapshots and snapshots[c].component_count]
+        execute_cypher_batch(cur, """
+            MATCH (e:ETF {code: item.code})
+            SET e.component_count = item.value
+            RETURN 1
+        """, count_items)
+        conn.commit()
+
         # ── 3. Price 노드 (유니버스 ETF) ──
         price_items = []
         for code in sorted(existing_codes):

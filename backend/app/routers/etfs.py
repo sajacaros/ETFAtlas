@@ -21,6 +21,7 @@ class ETFResponse(BaseModel):
     base_index: str | None = None
     listed_date: str | None = None
     dividend_cycle: int | None = None
+    component_count: int | None = None  # 전체 구성종목 수 (보유종목은 상위 30개까지만 수집)
 
 
 class HoldingResponse(BaseModel):

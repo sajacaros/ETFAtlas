@@ -167,6 +167,7 @@ export interface ETF {
   base_index: string | null
   listed_date: string | null
   dividend_cycle: number | null  // 분배 주기 개월 수 (1=월, 3=분기), 0=분배 없음(TR)
+  component_count?: number | null  // 전체 구성종목 수 (현금·선물 등 포함). 보유종목은 상위 30개까지만 있다
 }
 
 export interface Holding {

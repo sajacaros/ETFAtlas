@@ -35,6 +35,20 @@ export function dividendCycleLabel(cycle: number | null): string | null {
   return DIVIDEND_CYCLE_LABELS[cycle] ?? `${cycle}개월 주기 배당`
 }
 
+export function componentCountLabel(count: number | null | undefined): string | null {
+  return count ? `구성종목 ${count}개` : null
+}
+
+/** 보유종목은 비중 상위 30개까지만 수집하므로, 전체보다 적게 보일 때 그 사실을 알린다 */
+export function HoldingsCoverageNote({ total, shown }: { total: number | null | undefined; shown: number }) {
+  if (!total || shown === 0 || shown >= total) return null
+  return (
+    <p className="text-xs text-muted-foreground">
+      전체 {total}개 중 비중 상위 {shown}개 (현금·선물 등 포함 개수)
+    </p>
+  )
+}
+
 function InfoCard({ label, children }: { label: string; children: ReactNode }) {
   return (
     <Card className="py-3">
@@ -246,6 +260,7 @@ export function ETFInfoDialog({ code, name, open, onOpenChange, portfolioWeight,
               {[
                 code,
                 etf && dividendCycleLabel(etf.dividend_cycle),
+                etf && componentCountLabel(etf.component_count),
                 portfolioWeight != null && `포트폴리오 비중 ${portfolioWeight.toFixed(1)}%`,
               ].filter(Boolean).join(' · ')}
             </span>
@@ -278,7 +293,10 @@ export function ETFInfoDialog({ code, name, open, onOpenChange, portfolioWeight,
           <div className="space-y-4 min-w-0">
             <ETFInfoCards etf={etf} tags={tags} marketCap={marketCap} />
             <div>
-              <p className="text-sm font-semibold mb-2">구성 종목</p>
+              <div className="flex items-baseline gap-2 mb-2">
+                <p className="text-sm font-semibold">구성 종목</p>
+                <HoldingsCoverageNote total={etf.component_count} shown={holdings.length} />
+              </div>
               {holdings.length === 0 ? (
                 <p className="text-sm text-muted-foreground">구성 종목 정보가 없습니다</p>
               ) : (

@@ -1180,36 +1180,25 @@ def send_discord_notification(date_str: str):
             log.info("No admin watches found — skipping Discord notification")
             return
 
-        # 1주일 전 HOLDS 날짜 조회 (가장 가까운 거래일)
-        if watches:
-            from datetime import datetime, timedelta
-            one_week_ago = (datetime.strptime(date_str, '%Y-%m-%d') - timedelta(days=7)).strftime('%Y-%m-%d')
-            first_etf = watches[0]['etf_code']
-            prev_results = execute_cypher(cur, """
-                MATCH (e:ETF {code: $code})-[h:HOLDS]->(:Stock)
-                WITH DISTINCT h.date as d
-                WHERE d <= $target_date
-                RETURN {date: d}
-                ORDER BY d DESC
-                LIMIT 1
-            """, {'code': first_etf, 'target_date': one_week_ago})
-            prev_date = None
-            if prev_results:
-                raw = _parse_age_value(prev_results[0][0])
-                prev_data = json.loads(raw)
-                prev_date = prev_data.get('date')
-
-        if not prev_date:
-            log.info("No previous date found — skipping Discord notification")
-            return
-
         # ETF별 비중변화 수집
         changes_summary = []
         for w in watches:
             etf_code = w['etf_code']
             etf_name = w['etf_name']
 
-            # 현재 날짜 holdings
+            # 직전 영업일(이 ETF의 HOLDS가 있는 date_str 이전 마지막 날짜)과 비교
+            prev_results = execute_cypher(cur, """
+                MATCH (e:ETF {code: $code})-[h:HOLDS]->(:Stock)
+                WITH DISTINCT h.date as d
+                WHERE d < $target_date
+                RETURN {date: d}
+                ORDER BY d DESC
+                LIMIT 1
+            """, {'code': etf_code, 'target_date': date_str})
+            if not prev_results:
+                continue
+            prev_date = json.loads(_parse_age_value(prev_results[0][0])).get('date')
+
             today_h = _query_holdings(cur, etf_code, date_str)
             prev_h = _query_holdings(cur, etf_code, prev_date)
 

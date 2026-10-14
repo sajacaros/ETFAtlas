@@ -193,6 +193,26 @@
   ul.plain { padding-left: 18px; font-size: 13.5px; }
   ul.plain li { margin: 4px 0; }
   @media (max-width: 720px) { .kv { grid-template-columns: 1fr; } .mock-row.c2 { grid-template-columns: 1fr; } }
+  /* 흐름도 */
+  .flow-figure { margin: 0 0 18px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); padding: 10px; overflow-x: auto; }
+  .flow-figure svg { display: block; width: 100%; min-width: 760px; height: auto; }
+  .flane.server { fill: #fffdf5; stroke: #fde68a; }
+  .flane.front { fill: #f5f9ff; stroke: #bfdbfe; }
+  .flane-label { font-size: 11px; font-weight: 700; fill: var(--muted); letter-spacing: 0.03em; }
+  .fbox { fill: var(--surface); stroke-width: 1.5; }
+  .fbox.srv { stroke: var(--accent); }
+  .fbox.srv.llm { stroke: var(--purple); fill: #fbfaff; }
+  .fbox.fe { stroke: var(--primary); }
+  .fbox.back { fill: #fffbeb; }
+  .fname { font-size: 13.5px; font-weight: 700; fill: var(--text); text-anchor: middle; }
+  .fsub { font-size: 10.5px; fill: var(--muted); text-anchor: middle; }
+  .fedge { stroke: #94a3b8; stroke-width: 1.5; fill: none; }
+  .fedge.loop { stroke-dasharray: 5 4; }
+  .fedge.ev { stroke: var(--primary); }
+  .fedge.get { stroke: var(--green); }
+  .floop-label { font-size: 11px; fill: var(--muted); }
+  .fev { font-family: 'Fira Code', monospace; font-size: 11px; fill: var(--primary); }
+  .fget { font-family: 'Fira Code', monospace; font-size: 11px; fill: var(--green); }
 </style>
 </head>
 <body>
@@ -263,6 +283,70 @@
   <section id="query">
     <h2>사용자 질의는 이렇게 처리됩니다</h2>
     <p class="lead"><code>POST /api/chat/message/stream</code> 한 번에 아래 단계가 차례로 돌고, 진행 상황은 SSE로 바로 흘러갑니다.</p>
+    <figure class="flow-figure">
+      <svg viewBox="0 0 960 322" role="img" aria-label="서버가 질문 재작성, 예시 찾기, 화면 설계, 데이터 슬롯, 해설, 답변 순으로 처리하고, 이벤트마다 프런트가 스켈레톤, 차트와 표, 해설 스트리밍, 완료를 그리는 흐름">
+        <defs>
+          <marker id="farrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/></marker>
+          <marker id="farrow-ev" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+          <marker id="farrow-get" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#059669"/></marker>
+        </defs>
+        <rect x="8" y="28" width="944" height="98" rx="12" class="flane server"/>
+        <text x="22" y="46" class="flane-label">서버 · AnswerService</text>
+        <rect x="8" y="212" width="944" height="100" rx="12" class="flane front"/>
+        <text x="22" y="230" class="flane-label">프런트 · AnswerView</text>
+        <line x1="150" y1="87" x2="173" y2="87" class="fedge" marker-end="url(#farrow)"/>
+        <line x1="306" y1="87" x2="329" y2="87" class="fedge" marker-end="url(#farrow)"/>
+        <line x1="462" y1="87" x2="485" y2="87" class="fedge" marker-end="url(#farrow)"/>
+        <line x1="626" y1="87" x2="641" y2="87" class="fedge" marker-end="url(#farrow)"/>
+        <line x1="774" y1="87" x2="797" y2="87" class="fedge" marker-end="url(#farrow)"/>
+        <path d="M548,52 C548,32 402,32 402,59" class="fedge loop" marker-end="url(#farrow)"/>
+        <text x="556" y="47" class="floop-label">빈 슬롯이 있으면 1회 재설계</text>
+        <rect x="20" y="62" width="130" height="50" rx="9" class="fbox srv"/>
+        <text x="85" y="83" class="fname">질문 재작성</text>
+        <text x="85" y="100" class="fsub">대화 맥락이 있을 때</text>
+        <rect x="176" y="62" width="130" height="50" rx="9" class="fbox srv"/>
+        <text x="241" y="83" class="fname">설계 예시 찾기</text>
+        <text x="241" y="100" class="fsub">임베딩 후보 → LLM 선택</text>
+        <rect x="332" y="62" width="130" height="50" rx="9" class="fbox srv llm"/>
+        <text x="397" y="83" class="fname">화면 설계</text>
+        <text x="397" y="100" class="fsub">Planner · 실패 시 agent</text>
+        <rect x="496" y="54" width="130" height="50" rx="9" class="fbox srv back"/>
+        <rect x="492" y="58" width="130" height="50" rx="9" class="fbox srv back"/>
+        <rect x="488" y="62" width="130" height="50" rx="9" class="fbox srv"/>
+        <text x="553" y="83" class="fname">데이터 슬롯</text>
+        <text x="553" y="100" class="fsub">의존 순서대로 병렬</text>
+        <rect x="644" y="62" width="130" height="50" rx="9" class="fbox srv llm"/>
+        <text x="709" y="83" class="fname">해설</text>
+        <text x="709" y="100" class="fsub">narrative · 요약만 보고</text>
+        <rect x="800" y="62" width="130" height="50" rx="9" class="fbox srv"/>
+        <text x="865" y="83" class="fname">답변 텍스트</text>
+        <text x="865" y="100" class="fsub">대화 기억 · 검수용</text>
+        <rect x="332" y="246" width="130" height="50" rx="9" class="fbox fe"/>
+        <text x="397" y="267" class="fname">스켈레톤</text>
+        <text x="397" y="284" class="fsub">줄 · 슬롯 격자</text>
+        <rect x="488" y="246" width="130" height="50" rx="9" class="fbox fe"/>
+        <text x="553" y="267" class="fname">차트 · 표</text>
+        <text x="553" y="284" class="fsub">끝난 영역부터</text>
+        <rect x="644" y="246" width="130" height="50" rx="9" class="fbox fe"/>
+        <text x="709" y="267" class="fname">해설 스트리밍</text>
+        <text x="709" y="284" class="fsub">글자 단위로</text>
+        <rect x="800" y="246" width="130" height="50" rx="9" class="fbox fe"/>
+        <text x="865" y="267" class="fname">완료</text>
+        <text x="865" y="284" class="fsub">대화 목록에 저장</text>
+        <line x1="397" y1="114" x2="397" y2="243" class="fedge ev" marker-end="url(#farrow-ev)"/>
+        <text x="403" y="158" class="fev">layout</text>
+        <line x1="531" y1="114" x2="531" y2="243" class="fedge ev" marker-end="url(#farrow-ev)"/>
+        <text x="525" y="150" class="fev" text-anchor="end">slot</text>
+        <text x="525" y="165" class="fev" text-anchor="end">complete</text>
+        <line x1="575" y1="244" x2="575" y2="117" class="fedge get" marker-end="url(#farrow-get)"/>
+        <text x="581" y="150" class="fget">GET</text>
+        <text x="581" y="165" class="fget">영역 내용</text>
+        <line x1="709" y1="114" x2="709" y2="243" class="fedge ev" marker-end="url(#farrow-ev)"/>
+        <text x="715" y="158" class="fev">slot_delta</text>
+        <line x1="865" y1="114" x2="865" y2="243" class="fedge ev" marker-end="url(#farrow-ev)"/>
+        <text x="871" y="158" class="fev">answer</text>
+      </svg>
+    </figure>
     <div class="steps">
       <div class="step"><div><div class="t">질문 재작성</div><div class="d">이전 대화가 있을 때만. "이거 구성종목은?" → "KODEX 반도체 구성종목은?"</div></div><div class="time">~0.5초</div></div>
       <div class="step"><div><div class="t">설계 예시 찾기</div><div class="d">질문을 일반화("삼성전자" → "특정 종목")해 임베딩으로 비슷한 화면 설계 예시 후보를 뽑고, LLM이 그중 <b>질문 유형이 같은 것</b>만 고른다. 예시는 관리자 페이지에서 관리</div></div><div class="time"></div></div>

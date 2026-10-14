@@ -112,6 +112,29 @@ export interface AdminDiscordWatchETF {
   etf_name: string
 }
 
+export interface AdminDiscordNotificationLog {
+  id: number
+  base_date: string
+  status: 'sent' | 'failed'
+  threshold: number
+  items: {
+    etf_code: string
+    etf_name: string
+    prev_date: string
+    changes: {
+      stock_code: string
+      stock_name: string
+      change_type: 'added' | 'removed' | 'increased' | 'decreased'
+      previous_weight: number
+      current_weight: number
+      weight_change: number
+    }[]
+  }[]
+  message_count: number
+  error: string | null
+  sent_at: string | null
+}
+
 export interface AdminInvitation {
   id: number
   token: string

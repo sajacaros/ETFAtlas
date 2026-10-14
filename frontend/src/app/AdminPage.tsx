@@ -5,7 +5,7 @@ import { useToast } from '@/hooks/use-toast'
 import { adminApi, etfsApi } from '@/lib/api'
 import { copyText } from '@/lib/clipboard'
 import type {
-  AdminCodeExample, AdminLayoutExample, AdminExampleSearch, AdminChatLog, AdminETFTag, AdminDiscordSettings, AdminDiscordWatchETF, AdminInvitation, AdminMember,
+  AdminCodeExample, AdminLayoutExample, AdminExampleSearch, AdminChatLog, AdminETFTag, AdminDiscordSettings, AdminDiscordWatchETF, AdminDiscordNotificationLog, AdminInvitation, AdminMember,
   AdminAISettings, AdminAISettingField, AdminAITestResult,
 } from '@/types/api'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -31,7 +31,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog'
 import { Switch } from '@/components/ui/switch'
-import { ShieldAlert, Plus, Pencil, Archive, Check, X, Upload, Undo2, Search, Loader2, RotateCcw, Copy, Trash2, KeyRound, LogOut } from 'lucide-react'
+import { ShieldAlert, Plus, Pencil, Archive, Check, X, Upload, Undo2, Search, Loader2, RotateCcw, Copy, Trash2, KeyRound, LogOut, ChevronDown, ChevronRight } from 'lucide-react'
 
 const STATUS_FILTERS = {
   codeExamples: [
@@ -254,6 +254,7 @@ function DiscordSettingsTab() {
       </div>
 
       <DiscordWatchETFs />
+      <DiscordNotificationLogs />
     </div>
   )
 }
@@ -380,6 +381,125 @@ function DiscordWatchETFs() {
             </li>
           ))}
         </ul>
+      )}
+    </div>
+  )
+}
+
+const CHANGE_TYPE_LABELS: Record<AdminDiscordNotificationLog['items'][number]['changes'][number]['change_type'], string> = {
+  added: '신규편입',
+  removed: '편출',
+  increased: '증가',
+  decreased: '감소',
+}
+
+const LOG_PAGE_SIZE = 30
+
+function DiscordNotificationLogs() {
+  const { toast } = useToast()
+  const [logs, setLogs] = useState<AdminDiscordNotificationLog[] | null>(null)
+  const [total, setTotal] = useState(0)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [openId, setOpenId] = useState<number | null>(null)
+
+  useEffect(() => {
+    adminApi.getDiscordNotificationLogs(LOG_PAGE_SIZE)
+      .then((r) => {
+        setLogs(r.logs)
+        setTotal(r.total)
+        setOpenId(r.logs[0]?.id ?? null)
+      })
+      .catch(() => toast({ title: '발송 이력 조회 실패', variant: 'destructive' }))
+  }, [toast])
+
+  const loadMore = async () => {
+    if (!logs) return
+    setLoadingMore(true)
+    try {
+      const r = await adminApi.getDiscordNotificationLogs(LOG_PAGE_SIZE, logs.length)
+      setLogs([...logs, ...r.logs])
+      setTotal(r.total)
+    } catch {
+      toast({ title: '발송 이력 조회 실패', variant: 'destructive' })
+    } finally {
+      setLoadingMore(false)
+    }
+  }
+
+  return (
+    <div className="space-y-3 border-t pt-6">
+      <div>
+        <Label>발송 이력</Label>
+        <p className="text-sm text-muted-foreground">디스코드로 보낸 비중 변화입니다. 변화가 없어 보내지 않은 날은 남지 않습니다.</p>
+      </div>
+
+      {logs === null ? (
+        <div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin" /></div>
+      ) : logs.length === 0 ? (
+        <p className="text-sm text-muted-foreground">아직 보낸 알림이 없습니다.</p>
+      ) : (
+        <div className="border rounded-md divide-y">
+          {logs.map((log) => {
+            const open = openId === log.id
+            const stockCount = log.items.reduce((n, item) => n + item.changes.length, 0)
+            return (
+              <div key={log.id}>
+                <button
+                  type="button"
+                  className="w-full flex items-center gap-3 px-3 py-2 text-sm text-left hover:bg-muted"
+                  onClick={() => setOpenId(open ? null : log.id)}
+                  aria-expanded={open}
+                >
+                  {open ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
+                  <span className="font-medium">{log.base_date}</span>
+                  <span className="text-muted-foreground flex-1">
+                    ETF {log.items.length}개 · 종목 {stockCount}건 · 기준 {log.threshold}%p
+                  </span>
+                  {log.status === 'failed'
+                    ? <Badge variant="destructive">실패</Badge>
+                    : <span className="text-xs text-muted-foreground">{formatDateTime(log.sent_at)}</span>}
+                </button>
+                {open && (
+                  <div className="px-3 pb-3 space-y-3">
+                    {log.error && <p className="text-sm text-destructive">전송 실패: {log.error}</p>}
+                    {log.items.map((item) => (
+                      <div key={item.etf_code} className="space-y-1">
+                        <div className="text-sm">
+                          <ETFLink code={item.etf_code} name={item.etf_name} className="font-medium">{item.etf_name}</ETFLink>
+                          <span className="text-muted-foreground"> ({item.etf_code}) · {item.prev_date} → {log.base_date}</span>
+                        </div>
+                        <Table>
+                          <TableBody>
+                            {item.changes.map((c) => (
+                              <TableRow key={c.stock_code}>
+                                <TableCell className="py-1.5 w-20">
+                                  <Badge variant={c.weight_change > 0 ? 'default' : 'destructive'}>{CHANGE_TYPE_LABELS[c.change_type]}</Badge>
+                                </TableCell>
+                                <TableCell className="py-1.5">{c.stock_name}</TableCell>
+                                <TableCell className="py-1.5 text-right tabular-nums text-muted-foreground">
+                                  {c.previous_weight.toFixed(2)}% → {c.current_weight.toFixed(2)}%
+                                </TableCell>
+                                <TableCell className={`py-1.5 text-right tabular-nums w-24 ${c.weight_change > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                  {c.weight_change > 0 ? '+' : ''}{c.weight_change.toFixed(2)}%p
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {logs && logs.length < total && (
+        <Button variant="outline" size="sm" onClick={loadMore} disabled={loadingMore}>
+          {loadingMore && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}더 보기
+        </Button>
       )}
     </div>
   )

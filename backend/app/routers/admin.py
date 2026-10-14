@@ -16,6 +16,7 @@ from ..models.code_example import CodeExample
 from ..models.layout_example import LayoutExample
 from ..models.discord_setting import DiscordSetting
 from ..models.discord_watch_etf import DiscordWatchETF
+from ..models.discord_notification_log import DiscordNotificationLog
 from ..models.ai_setting import AISetting
 from ..services.ai_config import AI_CONFIG_FIELDS, SECRET_FIELDS, load_ai_config, stored_value
 from ..utils.encryption import encrypt_value
@@ -681,6 +682,35 @@ async def remove_discord_watch_etf(
         db.delete(row)
         db.commit()
     return _discord_watch_etfs(db)
+
+
+@router.get("/settings/discord/logs")
+async def get_discord_notification_logs(
+    limit: int = Query(30, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    admin_id: int = Depends(get_admin_user_id),
+):
+    """디스코드 비중변화 알림 발송 이력 (최근 순)."""
+    q = db.query(DiscordNotificationLog)
+    rows = q.order_by(DiscordNotificationLog.sent_at.desc(), DiscordNotificationLog.id.desc()) \
+        .offset(offset).limit(limit).all()
+    return {
+        "total": q.count(),
+        "logs": [
+            {
+                "id": r.id,
+                "base_date": r.base_date,
+                "status": r.status,
+                "threshold": r.threshold,
+                "items": r.items,
+                "message_count": r.message_count,
+                "error": r.error,
+                "sent_at": r.sent_at.isoformat() if r.sent_at else None,
+            }
+            for r in rows
+        ],
+    }
 
 
 # === AI(LLM/임베딩) 접속 설정 ===

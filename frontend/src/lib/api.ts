@@ -36,6 +36,7 @@ import type {
   AdminETFTagList,
   AdminDiscordSettings,
   AdminDiscordWatchETF,
+  AdminDiscordNotificationLog,
   AdminAISettings,
   AdminAISettingField,
   AdminAITestResult,
@@ -543,6 +544,12 @@ export const adminApi = {
   },
   removeDiscordWatchETF: async (etfCode: string) => {
     const { data } = await api.delete<AdminDiscordWatchETF[]>(`/admin/settings/discord/etfs/${etfCode}`)
+    return data
+  },
+  getDiscordNotificationLogs: async (limit = 30, offset = 0) => {
+    const { data } = await api.get<{ total: number; logs: AdminDiscordNotificationLog[] }>(
+      '/admin/settings/discord/logs', { params: { limit, offset } }
+    )
     return data
   },
   testDiscordWebhook: async () => {

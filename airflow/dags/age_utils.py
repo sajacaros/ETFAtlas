@@ -1131,6 +1131,28 @@ def _split_discord_messages(header: str, blocks: list[str], limit: int = DISCORD
     return [f"{header} ({i}/{total})\n\n{m}" for i, m in enumerate(messages, 1)]
 
 
+CHANGE_TYPE_LABELS = {'added': '신규편입', 'removed': '편출', 'increased': '증가', 'decreased': '감소'}
+
+
+def _record_discord_notification(conn, date_str: str, threshold: float, items: list[dict],
+                                 message_count: int, error: str | None = None):
+    """디스코드로 보낸(또는 보내다 실패한) 비중변화를 discord_notification_logs에 남긴다."""
+    import json
+
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "INSERT INTO discord_notification_logs "
+            "(base_date, status, threshold, items, message_count, error, sent_at) "
+            "VALUES (%s, %s, %s, %s::jsonb, %s, %s, now() AT TIME ZONE 'utc')",
+            (date_str, 'failed' if error else 'sent', threshold,
+             json.dumps(items, ensure_ascii=False), message_count, error),
+        )
+        conn.commit()
+    finally:
+        cur.close()
+
+
 def send_discord_notification(date_str: str):
     """관리자 페이지에서 지정한 ETF들의 직전 영업일 대비 비중변화를 디스코드로 발송."""
     import httpx
@@ -1160,8 +1182,8 @@ def send_discord_notification(date_str: str):
             log.info("No Discord watch ETFs configured — skipping Discord notification")
             return
 
-        # ETF별 비중변화 수집
-        changes_summary = []
+        # ETF별 비중변화 수집 — 이력에 그대로 남기려고 구조화해서 모은다
+        items = []
         for w in watches:
             etf_code = w['etf_code']
             etf_name = w['etf_name']
@@ -1198,42 +1220,63 @@ def send_discord_notification(date_str: str):
                     continue
 
                 if curr and not prev:
-                    ct = "신규편입"
+                    ct = "added"
                 elif prev and not curr:
-                    ct = "편출"
+                    ct = "removed"
                 elif diff > 0:
-                    ct = "증가"
+                    ct = "increased"
                 else:
-                    ct = "감소"
+                    ct = "decreased"
 
-                name = (curr or prev)['name']
-                etf_changes.append(f"  {ct} {name}: {pw:.1f}% → {cw:.1f}% ({diff:+.1f}%p)")
+                etf_changes.append({
+                    'stock_code': code,
+                    'stock_name': (curr or prev)['name'],
+                    'change_type': ct,
+                    'previous_weight': pw,
+                    'current_weight': cw,
+                    'weight_change': round(diff, 4),
+                })
 
             if etf_changes:
-                changes_summary.append(f"**{etf_name}** ({etf_code})\n" + "\n".join(etf_changes))
+                etf_changes.sort(key=lambda c: abs(c['weight_change']), reverse=True)
+                items.append({'etf_code': etf_code, 'etf_name': etf_name, 'prev_date': prev_date, 'changes': etf_changes})
 
-        if not changes_summary:
+        if not items:
             log.info("No significant changes — skipping Discord notification")
             return
+
+        changes_summary = [
+            f"**{item['etf_name']}** ({item['etf_code']})\n" + "\n".join(
+                f"  {CHANGE_TYPE_LABELS[c['change_type']]} {c['stock_name']}: "
+                f"{c['previous_weight']:.1f}% → {c['current_weight']:.1f}% ({c['weight_change']:+.1f}%p)"
+                for c in item['changes']
+            )
+            for item in items
+        ]
 
         # 디스코드 메시지 발송 — 2000자 제한에 맞춰 나눠 보낸다
         messages = _split_discord_messages(f"📊 **ETF 비중 변화 알림** ({date_str})", changes_summary)
 
-        with httpx.Client(timeout=10) as client:
-            for message in messages:
-                resp = client.post(webhook_url, json={"content": message})
-                if resp.status_code == 429:  # rate limit — 안내된 만큼 기다렸다 한 번 재시도
-                    import time as _time
-                    _time.sleep(float(resp.json().get('retry_after', 1)))
+        try:
+            with httpx.Client(timeout=10) as client:
+                for message in messages:
                     resp = client.post(webhook_url, json={"content": message})
-                resp.raise_for_status()
+                    if resp.status_code == 429:  # rate limit — 안내된 만큼 기다렸다 한 번 재시도
+                        import time as _time
+                        _time.sleep(float(resp.json().get('retry_after', 1)))
+                        resp = client.post(webhook_url, json={"content": message})
+                    resp.raise_for_status()
+        except httpx.HTTPError as e:
+            # httpx 예외 메시지엔 웹훅 주소(토큰 포함)가 들어가므로 종류·상태코드만 남긴다
+            status = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else None
+            error = f"{type(e).__name__} status={status}"
+            _record_discord_notification(conn, date_str, threshold, items, len(messages), error)
+            log.warning(f"Discord notification failed: {error}")
+            return
 
-        log.info(f"Discord notification sent: {len(changes_summary)} ETFs with changes in {len(messages)} message(s)")
+        _record_discord_notification(conn, date_str, threshold, items, len(messages))
+        log.info(f"Discord notification sent: {len(items)} ETFs with changes in {len(messages)} message(s)")
 
-    except httpx.HTTPError as e:
-        # httpx 예외 메시지엔 웹훅 주소(토큰 포함)가 들어가므로 종류·상태코드만 남긴다
-        status = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else None
-        log.warning(f"Discord notification failed: {type(e).__name__} status={status}")
     except Exception as e:
         log.warning(f"Discord notification failed: {e}")
     finally:

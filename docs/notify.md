@@ -2,15 +2,17 @@
 
 ## 개요
 
-즐겨찾기 ETF의 보유종목 비중 변화를 **인앱 SSE** + **디스코드 웹훅**으로 알림.
+액티브 ETF 전체의 보유종목 비중 변화(직전 영업일 대비)를 **인앱 SSE** + **디스코드 웹훅**으로 알림.
+Airflow가 수집 후 한 번 계산해 `weight_changes` 테이블에 저장하고, 웹 화면·빨간 점·디스코드가 모두 이 결과를 읽는다.
 
 ## 아키텍처
 
 ```
 DAG age_sync_universe (화~토 08:30)
   └─ HOLDS 수집 완료 (KIS API, 최근 거래일)
-  └─ collection_runs INSERT + NOTIFY new_collection (pg_notify)
-  └─ Discord 웹훅 발송 (admin 즐겨찾기 기반)
+  └─ sync_weight_changes — 액티브 ETF 비중 변화 계산 → weight_changes 저장
+  └─ record_collection — collection_runs INSERT + NOTIFY new_collection (계산 실패해도 실행)
+  └─ notify_discord — weight_changes 중 기준값 초과를 디스코드로 발송
 
 Backend
   └─ GET /api/notifications/stream — LISTEN new_collection (SSE)
@@ -47,8 +49,10 @@ last_notification_checked_at TIMESTAMP
 
 | 채널 | 대상 | ETF 소스 | 트리거 | 임계값 |
 |------|------|----------|--------|--------|
-| 인앱 SSE | 로그인 유저 본인 | 본인 즐겨찾기 | pg_notify → SSE push | - |
-| 디스코드 | admin 유저만 | admin 즐겨찾기 | DAG 수집 완료 | 기준값 초과 (기본 3%p, 약 1주 전 HOLDS 대비) |
+| 인앱 (빨간 점 + `/changes` 페이지) | 모든 회원 (같은 내용) | 액티브 ETF 전체 | pg_notify → SSE push | 기준값 초과 (직전 영업일 대비) |
+| 디스코드 | 웹훅 채널 | 액티브 ETF 전체 | DAG 수집 완료 | 기준값 초과 (기본 3%p, 직전 영업일 대비) |
+
+기준값은 관리자 페이지 디스코드 탭에서 설정하며 웹과 디스코드가 같은 값을 쓴다. `weight_changes`에는 변화가 있는 종목을 크기와 상관없이 모두 저장하고 기준값은 읽을 때 적용한다.
 
 ## Backend API
 
@@ -76,18 +80,19 @@ SSE도 같은 출처라 `EventSource`가 세션 쿠키를 자동으로 보낸다
 
 ## DAG 태스크
 
-`sync_universe_age.py`의 `record_and_notify` 태스크:
+`sync_universe_age.py`:
 
-1. `record_collection_run(date_str)` — `collection_runs` INSERT + `NOTIFY new_collection`
-2. `send_discord_notification(date_str)` — admin WATCHES 기반 비중변화 요약 발송
+1. `sync_weight_changes` → `compute_weight_changes()` — 아직 계산하지 않은 HOLDS 날짜와 최근 5개 날짜를 계산해 `weight_changes`에 저장(날짜별 DELETE+INSERT), `weight_change_dates`에 완료 표시. 첫 실행이면 과거 전체를 채운다. 이전 HOLDS가 없는 ETF는 비교하지 않는다.
+2. `record_collection` → `record_collection_run(date_str)` — `collection_runs` INSERT + `NOTIFY new_collection`. `trigger_rule='all_done'`이라 비중변화 계산이 실패해도 기록한다.
+3. `notify_discord` → `send_discord_notification(date_str)` — 계산이 성공했을 때만 실행.
 
-의존관계: `sync_holdings → [sync_stock_prices, record_and_notify] → end`
+의존관계: `sync_holdings → sync_weight_changes → [record_collection, notify_discord] → end`
 
 ### 중복 방지
 
-- `collection_runs.collected_at`에 UNIQUE 제약 → `ON CONFLICT DO NOTHING`
-- `rowcount > 0`일 때만 NOTIFY 발행 + 디스코드 발송
-- 수동 트리거/Airflow retry 시 같은 날짜면 알림 스킵
+- `collection_runs.collected_at`에 UNIQUE 제약 → `ON CONFLICT DO NOTHING`, 새로 기록됐을 때만 NOTIFY
+- 디스코드는 `discord_notification_logs`에 그 날짜의 성공(`sent`) 기록이 있으면 건너뛴다
+- 발송 실패는 이력에 `failed`로 남기고 예외를 올려 Airflow 재시도(3회, 5분 간격)로 다시 보낸다
 
 ## Frontend
 
@@ -101,15 +106,15 @@ SSE도 같은 출처라 `EventSource`가 세션 쿠키를 자동으로 보낸다
 ### UI
 
 - **Header**: Bell 아이콘에 `hasNew` 시 빨간 dot 뱃지 (`w-2 h-2 bg-red-500 rounded-full`)
-- **WatchlistChangesPage**: 페이지 마운트 시 `markChecked()` 호출 → 뱃지 제거
+- **ActiveChangesPage** (`/changes`): 페이지 마운트 시 `markChecked()` 호출 → 뱃지 제거
 
 ## 유저 역할 (RDB user_roles)
 
 - 역할은 AGE `User` 노드가 아니라 RDB `roles` / `user_roles`에 저장한다.
 - `POST /api/auth/setup`(최초 설치)으로 만든 계정이 `admin`, `POST /api/auth/register`로 가입한 계정은 `member`.
 - `auth_service.is_admin(db, user_id)`로 확인.
-- 디스코드 알림은 `send_discord_notification`이 `user_roles`에서 admin user_id를 조회한 뒤, 해당 유저의 AGE WATCHES만 대상으로 한다.
-- 비교 기준은 약 1주 전 HOLDS 날짜이며, KIS API는 과거 구성종목을 제공하지 않으므로 HOLDS 수집 시작 후 1주가 지나야 비교 대상이 생긴다.
+- 알림 대상은 역할과 상관없이 액티브 ETF 전체다(ETF.active, KIS 분류로 매일 갱신).
+- 비교 기준은 ETF별 직전 HOLDS 날짜(직전 영업일)이며, KIS API는 과거 구성종목을 제공하지 않으므로 HOLDS 수집 이틀째부터 비교 대상이 생긴다.
 
 ## 환경 변수
 

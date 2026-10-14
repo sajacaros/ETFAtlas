@@ -8,8 +8,8 @@ from .code_example import CodeExample
 from .layout_example import LayoutExample
 from .role import Role, UserRole
 from .discord_setting import DiscordSetting
-from .discord_watch_etf import DiscordWatchETF
 from .discord_notification_log import DiscordNotificationLog
+from .weight_change import WeightChange, WeightChangeDate
 from .ai_setting import AISetting
 from .invitation import Invitation
 from .auth_session import AuthSession
@@ -32,8 +32,9 @@ __all__ = [
     "Role",
     "UserRole",
     "DiscordSetting",
-    "DiscordWatchETF",
     "DiscordNotificationLog",
+    "WeightChange",
+    "WeightChangeDate",
     "AISetting",
     "Invitation",
     "AuthSession",

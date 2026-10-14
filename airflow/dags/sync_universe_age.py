@@ -16,7 +16,7 @@ import logging
 from age_utils import (
     get_db_connection, init_age, execute_cypher_batch,
     get_business_days, last_settled_day, get_last_collected_date, get_etf_codes_from_age,
-    collect_universe_and_prices, collect_holdings,
+    collect_universe_and_prices, collect_holdings, compute_weight_changes,
     collect_stock_prices_for_dates,
     record_collection_run, send_discord_notification,
     update_etf_returns,
@@ -110,19 +110,34 @@ def sync_stock_prices(**context):
     collect_stock_prices_for_dates(dates)
 
 
-def record_and_notify(**context):
-    """수집 완료 기록 + 디스코드 알림. 이미 기록된 날짜면 스킵."""
+def sync_weight_changes(**context):
+    """액티브 ETF 비중 변화 계산·저장. 웹 화면과 디스코드 알림이 이 결과를 읽는다."""
     ti = context['ti']
     dates = ti.xcom_pull(task_ids='sync_universe_and_prices', key='actual_dates')
     if not dates:
         return
-    last_date = dates[-1]
-    date_str = f"{last_date[:4]}-{last_date[4:6]}-{last_date[6:8]}"
-    is_new = record_collection_run(date_str)
-    if is_new:
+    compute_weight_changes()
+
+
+def _latest_collected_date(ti) -> str | None:
+    dates = ti.xcom_pull(task_ids='sync_universe_and_prices', key='actual_dates')
+    if not dates:
+        return None
+    return f"{dates[-1][:4]}-{dates[-1][4:6]}-{dates[-1][6:8]}"
+
+
+def record_collection(**context):
+    """수집 완료 기록 + 웹 알림(pg_notify). 비중변화 계산이 실패해도 기록한다."""
+    date_str = _latest_collected_date(context['ti'])
+    if date_str:
+        record_collection_run(date_str)
+
+
+def notify_discord(**context):
+    """디스코드 비중변화 알림. 이미 보낸 날짜는 건너뛰고, 실패하면 태스크 재시도로 다시 보낸다."""
+    date_str = _latest_collected_date(context['ti'])
+    if date_str:
         send_discord_notification(date_str)
-    else:
-        log.info(f"Already recorded {date_str} — skipping Discord notification")
 
 
 def sync_returns(**context):
@@ -191,8 +206,13 @@ t_holdings = PythonOperator(task_id='sync_holdings',
                              python_callable=sync_holdings, dag=dag)
 t_stock_prices = PythonOperator(task_id='sync_stock_prices',
                                  python_callable=sync_stock_prices, dag=dag)
-t_notify = PythonOperator(task_id='record_and_notify',
-                           python_callable=record_and_notify, dag=dag)
+t_changes = PythonOperator(task_id='sync_weight_changes',
+                            python_callable=sync_weight_changes, dag=dag)
+# 비중변화 계산 뒤에 기록해야 웹 알림이 새 계산 결과를 본다. 계산이 실패해도 기록은 한다
+t_record = PythonOperator(task_id='record_collection',
+                           python_callable=record_collection, trigger_rule='all_done', dag=dag)
+t_discord = PythonOperator(task_id='notify_discord',
+                            python_callable=notify_discord, dag=dag)
 t_returns = PythonOperator(task_id='sync_returns',
                             python_callable=sync_returns, dag=dag)
 t_tags = PythonOperator(task_id='tag_new_etfs',
@@ -200,11 +220,12 @@ t_tags = PythonOperator(task_id='tag_new_etfs',
 
 # 의존 관계:
 # start → fetch_trading_dates → sync_universe_and_prices
-#   → sync_holdings → [sync_stock_prices, record_and_notify]
+#   → sync_holdings → [sync_stock_prices, sync_weight_changes → [record_collection, notify_discord]]
 #   → sync_returns (가격 수집 후)
 #   → tag_new_etfs (유니버스 수집 후)
 # → end
 start >> t_dates >> t_universe
 t_universe >> [t_holdings, t_returns, t_tags]
-t_holdings >> [t_stock_prices, t_notify]
-[t_stock_prices, t_notify, t_returns, t_tags] >> end
+t_holdings >> [t_stock_prices, t_changes]
+t_changes >> [t_record, t_discord]
+[t_stock_prices, t_record, t_discord, t_returns, t_tags] >> end

@@ -351,39 +351,6 @@ def get_last_collected_date() -> str | None:
         conn.close()
 
 
-def get_previous_holds_date(before_date: str) -> str | None:
-    """AGE에서 before_date 이전의 가장 최근 HOLDS 날짜 조회.
-
-    Args:
-        before_date: 기준일 (YYYY-MM-DD 형식)
-
-    Returns:
-        YYYYMMDD 문자열 또는 None
-    """
-    conn = get_db_connection()
-    cur = init_age(conn)
-    try:
-        results = execute_cypher(cur, """
-            MATCH ()-[h:HOLDS]->()
-            WHERE h.date < $before_date
-            WITH DISTINCT h.date AS d
-            RETURN d
-            ORDER BY d DESC
-            LIMIT 1
-        """, {'before_date': before_date})
-        if results and results[0][0]:
-            raw = _parse_age_value(results[0][0])
-            if raw and raw != 'null':
-                return raw.replace('-', '')
-        return None
-    except Exception as e:
-        log.warning(f"Failed to query previous holds date: {e}")
-        return None
-    finally:
-        cur.close()
-        conn.close()
-
-
 def get_etf_codes_from_age() -> set[str]:
     """AGE에서 ETF 유니버스 코드 조회."""
     conn = get_db_connection()
@@ -1036,26 +1003,6 @@ def record_collection_run(date_str: str) -> bool:
         conn.close()
 
 
-def _query_holdings(cur, etf_code: str, date_str: str) -> dict:
-    """특정 날짜의 보유종목 비중 조회. {stock_code: {name, weight}} 딕셔너리 반환."""
-    import json
-
-    results = execute_cypher(cur, """
-        MATCH (e:ETF {code: $etf_code})-[h:HOLDS {date: $date}]->(s:Stock)
-        RETURN {code: s.code, name: s.name, weight: h.weight}
-    """, {'etf_code': etf_code, 'date': date_str})
-
-    holdings = {}
-    for row in results:
-        if row[0]:
-            data = json.loads(_parse_age_value(row[0]))
-            holdings[data['code']] = {
-                'name': data['name'],
-                'weight': float(data['weight']) if data.get('weight') else 0,
-            }
-    return holdings
-
-
 DISCORD_MAX_CONTENT = 2000  # 디스코드 메시지 content 최대 길이
 
 
@@ -1173,13 +1120,131 @@ def _record_discord_notification(conn, date_str: str, threshold: float, items: l
         cur.close()
 
 
-def send_discord_notification(date_str: str):
-    """관리자 페이지에서 지정한 ETF들의 직전 영업일 대비 비중변화를 디스코드로 발송."""
-    import httpx
+def _weight_change_type(prev: Optional[dict], curr: Optional[dict], diff: float) -> str:
+    if curr and not prev:
+        return 'added'
+    if prev and not curr:
+        return 'removed'
+    return 'increased' if diff > 0 else 'decreased'
+
+
+def compute_weight_changes():
+    """액티브 ETF의 직전 영업일 대비 보유종목 비중 변화를 계산해 weight_changes에 저장.
+
+    weight_change_dates에 없는(아직 계산하지 않은) HOLDS 날짜를 모두 처리하므로 첫 실행이면 과거 전체를 채운다.
+    가장 최근 날짜는 이미 계산했어도 다시 계산한다 — KIS는 과거 구성종목을 주지 않으므로 나중에 HOLDS가
+    채워질 수 있는 날(수집 재시도로 빠진 ETF를 채운 경우)은 가장 최근 날짜뿐이다.
+    변화가 있는 종목은 크기와 상관없이 모두 저장하고, 기준값은 읽는 쪽(웹·디스코드)이 적용한다.
+    이전 HOLDS가 없는 ETF(유니버스 신규 편입 첫날 등)는 비교하지 않는다.
+    """
     import json
+    from collections import defaultdict
 
     conn = get_db_connection()
     cur = init_age(conn)
+    rdb_cur = conn.cursor()
+    try:
+        date_rows = execute_cypher(cur, """
+            MATCH (e:ETF)-[h:HOLDS]->(:Stock)
+            WHERE e.active = true
+            WITH DISTINCT h.date as d
+            RETURN {date: d}
+        """)
+        all_dates = sorted(json.loads(_parse_age_value(r[0]))['date'] for r in date_rows if r[0])
+        rdb_cur.execute("SELECT base_date FROM weight_change_dates")
+        done = {r[0] for r in rdb_cur.fetchall()}
+        pending = [d for d in all_dates if d not in done or d == all_dates[-1]]
+        if not pending:
+            log.info("No HOLDS dates for active ETFs")
+            return
+        since = pending[0]
+
+        holdings = defaultdict(lambda: defaultdict(dict))  # etf_code -> date -> stock_code -> {name, weight}
+        etf_names = {}
+
+        def add_rows(rows):
+            for row in rows:
+                if not row[0]:
+                    continue
+                data = json.loads(_parse_age_value(row[0]))
+                etf_names[data['etf_code']] = data.get('etf_name') or data['etf_code']
+                holdings[data['etf_code']][data['date']][data['stock_code']] = {
+                    'name': data.get('stock_name') or data['stock_code'],
+                    'weight': float(data['weight']) if data.get('weight') else 0,
+                }
+
+        add_rows(execute_cypher(cur, """
+            MATCH (e:ETF)-[h:HOLDS]->(s:Stock)
+            WHERE e.active = true AND h.date >= $since
+            RETURN {etf_code: e.code, etf_name: e.name, date: h.date,
+                    stock_code: s.code, stock_name: s.name, weight: h.weight}
+        """, {'since': since}))
+        # 첫 계산일의 비교 대상: ETF별로 그 이전의 마지막 HOLDS (며칠 빠졌던 ETF도 이전 데이터와 비교한다)
+        prev_dates = []
+        for row in execute_cypher(cur, """
+            MATCH (e:ETF)-[h:HOLDS]->(:Stock)
+            WHERE e.active = true AND h.date < $since
+            WITH e.code as code, max(h.date) as d
+            RETURN {etf_code: code, date: d}
+        """, {'since': since}):
+            if row[0]:
+                prev_dates.append(json.loads(_parse_age_value(row[0])))
+        add_rows(execute_cypher_batch(cur, """
+            MATCH (e:ETF {code: item.etf_code})-[h:HOLDS {date: item.date}]->(s:Stock)
+            RETURN {etf_code: e.code, etf_name: e.name, date: h.date,
+                    stock_code: s.code, stock_name: s.name, weight: h.weight}
+        """, prev_dates))
+
+        for base_date in pending:
+            rows = []
+            for etf_code, by_date in holdings.items():
+                today_h = by_date.get(base_date)
+                prev_dates = [d for d in by_date if d < base_date]
+                if not today_h or not prev_dates:
+                    continue
+                prev_date = max(prev_dates)
+                prev_h = by_date[prev_date]
+                for code in set(today_h) | set(prev_h):
+                    curr, prev = today_h.get(code), prev_h.get(code)
+                    cw = curr['weight'] if curr else 0
+                    pw = prev['weight'] if prev else 0
+                    diff = round(cw - pw, 4)
+                    if diff == 0:
+                        continue
+                    rows.append((base_date, prev_date, etf_code, etf_names[etf_code], code, (curr or prev)['name'],
+                                 _weight_change_type(prev, curr, diff), pw, cw, diff))
+
+            rdb_cur.execute("DELETE FROM weight_changes WHERE base_date = %s", (base_date,))
+            if rows:
+                rdb_cur.executemany(
+                    "INSERT INTO weight_changes (base_date, prev_date, etf_code, etf_name, stock_code, stock_name, "
+                    "change_type, previous_weight, current_weight, weight_change) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    rows,
+                )
+            rdb_cur.execute(
+                "INSERT INTO weight_change_dates (base_date, computed_at) VALUES (%s, now() AT TIME ZONE 'utc') "
+                "ON CONFLICT (base_date) DO UPDATE SET computed_at = EXCLUDED.computed_at",
+                (base_date,),
+            )
+            conn.commit()
+            log.info(f"Weight changes {base_date}: {len(rows)} rows")
+    finally:
+        rdb_cur.close()
+        cur.close()
+        conn.close()
+
+
+def send_discord_notification(date_str: str):
+    """weight_changes에 저장된 액티브 ETF 비중변화 중 기준값을 넘는 것을 디스코드로 발송.
+
+    이미 보낸 날짜(발송 이력에 성공 기록)면 건너뛴다. 발송에 실패하면 이력에 남기고 예외를 올려
+    Airflow 재시도가 다시 보내게 한다.
+    """
+    import httpx
+
+    conn = get_db_connection()
+    cur = conn.cursor()
 
     try:
         settings = _load_discord_settings(conn)
@@ -1192,74 +1257,33 @@ def send_discord_notification(date_str: str):
             return
         threshold = settings['threshold']
 
-        # 관리자 페이지에서 지정한 알림 대상 ETF
-        rdb_cur = conn.cursor()
-        rdb_cur.execute("SELECT etf_code, etf_name FROM discord_watch_etfs ORDER BY created_at, etf_code")
-        watches = [{'etf_code': code, 'etf_name': name} for code, name in rdb_cur.fetchall()]
-        rdb_cur.close()
-
-        if not watches:
-            log.info("No Discord watch ETFs configured — skipping Discord notification")
+        cur.execute("SELECT 1 FROM discord_notification_logs WHERE base_date = %s AND status = 'sent' LIMIT 1",
+                    (date_str,))
+        if cur.fetchone():
+            log.info(f"Discord notification for {date_str} already sent — skipping")
             return
 
-        # ETF별 비중변화 수집 — 이력에 그대로 남기려고 구조화해서 모은다
-        items = []
-        for w in watches:
-            etf_code = w['etf_code']
-            etf_name = w['etf_name']
-
-            # 직전 영업일(이 ETF의 HOLDS가 있는 date_str 이전 마지막 날짜)과 비교
-            prev_results = execute_cypher(cur, """
-                MATCH (e:ETF {code: $code})-[h:HOLDS]->(:Stock)
-                WITH DISTINCT h.date as d
-                WHERE d < $target_date
-                RETURN {date: d}
-                ORDER BY d DESC
-                LIMIT 1
-            """, {'code': etf_code, 'target_date': date_str})
-            if not prev_results:
-                continue
-            prev_date = json.loads(_parse_age_value(prev_results[0][0])).get('date')
-
-            today_h = _query_holdings(cur, etf_code, date_str)
-            prev_h = _query_holdings(cur, etf_code, prev_date)
-
-            if not today_h or not prev_h:
-                continue
-
-            etf_changes = []
-            all_codes = set(today_h.keys()) | set(prev_h.keys())
-            for code in all_codes:
-                curr = today_h.get(code)
-                prev = prev_h.get(code)
-                cw = curr['weight'] if curr else 0
-                pw = prev['weight'] if prev else 0
-                diff = cw - pw
-
-                if abs(diff) <= threshold:
-                    continue
-
-                if curr and not prev:
-                    ct = "added"
-                elif prev and not curr:
-                    ct = "removed"
-                elif diff > 0:
-                    ct = "increased"
-                else:
-                    ct = "decreased"
-
-                etf_changes.append({
-                    'stock_code': code,
-                    'stock_name': (curr or prev)['name'],
-                    'change_type': ct,
-                    'previous_weight': pw,
-                    'current_weight': cw,
-                    'weight_change': round(diff, 4),
-                })
-
-            if etf_changes:
-                etf_changes.sort(key=lambda c: abs(c['weight_change']), reverse=True)
-                items.append({'etf_code': etf_code, 'etf_name': etf_name, 'prev_date': prev_date, 'changes': etf_changes})
+        cur.execute(
+            "SELECT etf_code, etf_name, prev_date, stock_code, stock_name, change_type, "
+            "previous_weight, current_weight, weight_change "
+            "FROM weight_changes WHERE base_date = %s AND abs(weight_change) > %s "
+            "ORDER BY abs(weight_change) DESC",
+            (date_str, threshold),
+        )
+        # ETF는 가장 큰 변화가 큰 순, 종목은 변화량 큰 순
+        items, by_etf = [], {}
+        for etf_code, etf_name, prev_date, stock_code, stock_name, ct, pw, cw, diff in cur.fetchall():
+            if etf_code not in by_etf:
+                by_etf[etf_code] = {'etf_code': etf_code, 'etf_name': etf_name, 'prev_date': prev_date, 'changes': []}
+                items.append(by_etf[etf_code])
+            by_etf[etf_code]['changes'].append({
+                'stock_code': stock_code,
+                'stock_name': stock_name,
+                'change_type': ct,
+                'previous_weight': pw,
+                'current_weight': cw,
+                'weight_change': diff,
+            })
 
         if not items:
             log.info("No significant changes — skipping Discord notification")
@@ -1291,14 +1315,11 @@ def send_discord_notification(date_str: str):
             status = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else None
             error = f"{type(e).__name__} status={status}"
             _record_discord_notification(conn, date_str, threshold, items, len(messages), error)
-            log.warning(f"Discord notification failed: {error}")
-            return
+            # 예외 체인에도 웹훅 주소가 남지 않게 새 예외로 올린다
+            raise RuntimeError(f"Discord notification failed: {error}") from None
 
         _record_discord_notification(conn, date_str, threshold, items, len(messages))
         log.info(f"Discord notification sent: {len(items)} ETFs with changes in {len(messages)} message(s)")
-
-    except Exception as e:
-        log.warning(f"Discord notification failed: {e}")
     finally:
         cur.close()
         conn.close()

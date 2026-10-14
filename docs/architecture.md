@@ -226,6 +226,7 @@ GET /api/etfs/search?q={keyword}              # ETF 자동완성
 GET /api/etfs/{code}                          # ETF 상세
 GET /api/etfs/{code}/holdings?date={date}     # 구성 종목
 GET /api/etfs/{code}/changes?period={1m|3m|6m}# 포트폴리오 변화
+GET /api/etfs/active/changes?base_date=  # 액티브 ETF 비중 변화 (Airflow 계산 결과, 기준값 초과, 모든 회원 공통)
 GET /api/etfs/{code}/price?period={1w|1m|3m|1y}# 가격 (캔들)
 ```
 
@@ -235,7 +236,6 @@ GET /api/etfs/{code}/price?period={1w|1m|3m|1y}# 가격 (캔들)
 GET    /api/watchlist           # 내 워치리스트 + 수익률
 POST   /api/watchlist           # ETF 추가
 DELETE /api/watchlist/{etf_code}# ETF 삭제
-GET    /api/watchlist/changes   # 워치리스트 ETF 포트폴리오 변화
 ```
 
 ### AI 추천 (인증 필요)

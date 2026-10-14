@@ -363,6 +363,39 @@ ETF 구성 종목
 }
 ```
 
+### GET /api/etfs/active/changes
+
+액티브 ETF 전체의 직전 영업일 대비 보유종목 비중 변화. Airflow가 수집 후 계산해 둔 `weight_changes`를 읽으며(디스코드 알림과 같은 데이터),
+관리자 페이지의 디스코드 기준값(%p)을 넘는 변화만 담는다. 모든 회원이 같은 결과를 본다.
+비교할 이전 데이터가 없는 ETF(유니버스 신규 편입 첫날 등)는 계산에서 빠진다.
+
+**Query Parameters**
+| 파라미터 | 타입 | 필수 | 설명 |
+|----------|------|------|------|
+| base_date | string | X | 기준일 YYYY-MM-DD. 그날 이전에 계산된 가장 최근 날짜를 쓴다 (기본: 최신) |
+
+**Response**
+```typescript
+{
+  "current_date": string | null,
+  "previous_date": string | null,    // 변화 항목들의 prev_date 중 가장 늦은 날
+  "threshold": number,               // 기준값 %p
+  "changes": [                       // 변화량 절댓값 큰 순
+    {
+      "etf_code": string,
+      "etf_name": string,
+      "prev_date": string,           // 이 ETF의 직전 영업일
+      "stock_code": string,
+      "stock_name": string,
+      "change_type": "added" | "removed" | "increased" | "decreased",
+      "previous_weight": number,
+      "current_weight": number,
+      "weight_change": number
+    }
+  ]
+}
+```
+
 ### GET /api/etfs/{code}/changes
 
 ETF 포트폴리오 변화
@@ -541,38 +574,6 @@ ETF 투자 비중으로 구성종목 비중 계산 (구성종목 분석 화면).
 ```typescript
 {
   "message": "success"
-}
-```
-
-### GET /api/watchlist/changes
-
-워치리스트 ETF들의 포트폴리오 변화
-
-**인증**: 세션 쿠키 필요
-
-**Query Parameters**
-| 파라미터 | 타입 | 필수 | 설명 |
-|----------|------|------|------|
-| period | string | X | "1m" \| "3m" \| "6m" (기본: 1m) |
-
-**Response**
-```typescript
-{
-  "data": {
-    "changes": [
-      {
-        "etf_code": string,
-        "etf_name": string,
-        "date": string,
-        "type": "NEW" | "REMOVED" | "WEIGHT_CHANGE",
-        "stock_code": string,
-        "stock_name": string,
-        "before_weight": number | null,
-        "after_weight": number | null,
-        "weight_diff": number | null
-      }
-    ]
-  }
 }
 ```
 

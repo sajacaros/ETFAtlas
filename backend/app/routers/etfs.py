@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..services.graph_service import GraphService
 from ..services.etf_service import ETFService
+from ..services.weight_changes import get_alert_threshold, get_significant_changes, resolve_change_date
 from ..models.etf import ETF
 from ..domain.composition import ETFAllocation, aggregate_composition
 
@@ -41,6 +42,19 @@ class HoldingChangeResponse(BaseModel):
     current_weight: float
     previous_weight: float
     weight_change: float
+
+
+class ActiveChangeResponse(HoldingChangeResponse):
+    etf_code: str
+    etf_name: str
+    prev_date: str
+
+
+class ActiveChangesResponse(BaseModel):
+    current_date: str | None = None
+    previous_date: str | None = None
+    threshold: float
+    changes: List[ActiveChangeResponse]
 
 
 class PriceResponse(BaseModel):
@@ -187,6 +201,29 @@ async def get_composition(request: CompositionRequest, db: Session = Depends(get
         ],
         total_stocks=len(stocks),
         as_of=as_of,
+    )
+
+
+@router.get("/active/changes", response_model=ActiveChangesResponse)
+async def get_active_changes(
+    base_date: str = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    db: Session = Depends(get_db),
+):
+    """액티브 ETF 전체의 직전 영업일 대비 비중 변화 (기준값 초과만). 모든 회원이 같은 목록을 본다.
+
+    Airflow가 계산해 둔 weight_changes를 읽는다 — 디스코드 알림과 같은 데이터.
+    base_date를 주면 그날 이전에 계산된 가장 최근 날짜를 쓴다.
+    """
+    threshold = get_alert_threshold(db)
+    current_date = resolve_change_date(db, base_date)
+    if not current_date:
+        return ActiveChangesResponse(threshold=threshold, changes=[])
+    changes = get_significant_changes(db, current_date, threshold)
+    return ActiveChangesResponse(
+        current_date=current_date,
+        previous_date=max((c.prev_date for c in changes), default=None),
+        threshold=threshold,
+        changes=[ActiveChangeResponse.model_validate(c, from_attributes=True) for c in changes],
     )
 
 

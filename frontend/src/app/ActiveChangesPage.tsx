@@ -13,22 +13,22 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { watchlistApi } from '@/lib/api'
+import { etfsApi } from '@/lib/api'
 import { ETFLink } from '@/components/ETFInfo'
 import { useAuth } from '@/hooks/useAuth'
 import { useNotification } from '@/hooks/useNotification'
-import type { WatchlistChange } from '@/types/api'
+import type { ActiveChange } from '@/types/api'
 
 type SortKey = 'etf_name' | 'stock_name' | 'change_type' | 'previous_weight' | 'current_weight' | 'weight_change'
 type SortDir = 'asc' | 'desc'
 
-export default function WatchlistChangesPage() {
+export default function ActiveChangesPage() {
   const { isAuthenticated } = useAuth()
   const { markChecked } = useNotification()
-  const [changes, setChanges] = useState<WatchlistChange[]>([])
+  const [changes, setChanges] = useState<ActiveChange[]>([])
   const [currentDate, setCurrentDate] = useState<string | null>(null)
   const [previousDate, setPreviousDate] = useState<string | null>(null)
-  const [period, setPeriod] = useState<'1d' | '1w' | '1m'>('1d')
+  const [threshold, setThreshold] = useState<number | null>(null)
   const [baseDate, setBaseDate] = useState('')
   const [filter, setFilter] = useState<'all' | 'increased' | 'decreased'>('all')
   const [loading, setLoading] = useState(true)
@@ -48,12 +48,13 @@ export default function WatchlistChangesPage() {
       return
     }
     setLoading(true)
-    watchlistApi
-      .getChanges(period, baseDate || undefined)
+    etfsApi
+      .getActiveChanges(baseDate || undefined)
       .then((res) => {
         setChanges(res.changes)
         setCurrentDate(res.current_date)
         setPreviousDate(res.previous_date)
+        setThreshold(res.threshold)
       })
       .catch(() => {
         setChanges([])
@@ -61,7 +62,7 @@ export default function WatchlistChangesPage() {
         setPreviousDate(null)
       })
       .finally(() => setLoading(false))
-  }, [isAuthenticated, period, baseDate])
+  }, [isAuthenticated, baseDate])
 
   const filteredChanges = changes.filter((c) => {
     if (filter === 'increased') return c.change_type === 'increased' || c.change_type === 'added'
@@ -160,22 +161,10 @@ export default function WatchlistChangesPage() {
             <ArrowLeft className="w-5 h-5" />
           </Button>
         </Link>
-        <h1 className="text-2xl font-bold">즐겨찾기 비중 변화</h1>
+        <h1 className="text-2xl font-bold">액티브 ETF 비중 변화</h1>
       </div>
 
       <div className="flex items-center gap-4 flex-wrap">
-        <div className="flex gap-1">
-          {(['1d', '1w', '1m'] as const).map((p) => (
-            <Button
-              key={p}
-              size="sm"
-              variant={period === p ? 'default' : 'outline'}
-              onClick={() => setPeriod(p)}
-            >
-              {p === '1d' ? '전일' : p === '1w' ? '1주' : '1개월'}
-            </Button>
-          ))}
-        </div>
         <div className="flex gap-1">
           {([
             { key: 'all', label: '모두보기' },
@@ -208,11 +197,15 @@ export default function WatchlistChangesPage() {
         </div>
       </div>
 
-      {currentDate && previousDate && (
-        <p className="text-sm text-muted-foreground">
-          기준일: {previousDate?.slice(2).replace(/-/g, '/')} → {currentDate?.slice(2).replace(/-/g, '/')}
-        </p>
-      )}
+      <p className="text-sm text-muted-foreground">
+        {currentDate && (
+          <>
+            기준일: {previousDate && `${previousDate.slice(2).replace(/-/g, '/')} → `}
+            {currentDate.slice(2).replace(/-/g, '/')} ·{' '}
+          </>
+        )}
+        액티브 ETF 전체에서 직전 영업일보다 비중이 {threshold ?? '-'}%p 넘게 바뀐 종목 (디스코드 알림과 같은 내용)
+      </p>
 
       {loading ? (
         <div className="text-center py-12 text-muted-foreground">로딩 중...</div>
@@ -222,7 +215,7 @@ export default function WatchlistChangesPage() {
             <AlertCircle className="w-10 h-10" />
             <p className="text-lg font-medium">비중 변화가 감지되지 않았습니다</p>
             <p className="text-sm">
-              즐겨찾기 ETF들의 보유종목 비중이 변하면 여기에 표시됩니다
+              액티브 ETF들의 보유종목 비중이 기준값보다 크게 변하면 여기에 표시됩니다
             </p>
           </div>
         </Card>

@@ -7,7 +7,7 @@ import type {
   HoldingChange,
   Price,
   WatchlistItem,
-  WatchlistChangesResponse,
+  ActiveChangesResponse,
   Portfolio,
   PortfolioDetail,
   TargetAllocationItem,
@@ -35,7 +35,6 @@ import type {
   AdminETFTag,
   AdminETFTagList,
   AdminDiscordSettings,
-  AdminDiscordWatchETF,
   AdminDiscordNotificationLog,
   AdminAISettings,
   AdminAISettingField,
@@ -151,6 +150,12 @@ export const etfsApi = {
     const { data } = await api.get<Holding[]>(`/etfs/${code}/holdings`, { params: { date } })
     return data
   },
+  getActiveChanges: async (baseDate?: string) => {
+    const params: Record<string, string> = {}
+    if (baseDate) params.base_date = baseDate
+    const { data } = await api.get<ActiveChangesResponse>('/etfs/active/changes', { params })
+    return data
+  },
   getChanges: async (code: string, period = '1d') => {
     const { data } = await api.get<HoldingChange[]>(`/etfs/${code}/changes`, { params: { period } })
     return data
@@ -193,12 +198,6 @@ export const watchlistApi = {
   },
   remove: async (etfCode: string) => {
     await api.delete(`/watchlist/${etfCode}`)
-  },
-  getChanges: async (period = '1d', baseDate?: string) => {
-    const params: Record<string, string> = { period }
-    if (baseDate) params.base_date = baseDate
-    const { data } = await api.get<WatchlistChangesResponse>('/watchlist/changes', { params })
-    return data
   },
 }
 
@@ -532,18 +531,6 @@ export const adminApi = {
   // webhook_url: undefined면 기존 주소 유지, ''면 삭제
   updateDiscordSettings: async (body: { enabled: boolean; threshold: number; webhook_url?: string }) => {
     const { data } = await api.put<AdminDiscordSettings>('/admin/settings/discord', body)
-    return data
-  },
-  getDiscordWatchETFs: async () => {
-    const { data } = await api.get<AdminDiscordWatchETF[]>('/admin/settings/discord/etfs')
-    return data
-  },
-  addDiscordWatchETF: async (etfCode: string) => {
-    const { data } = await api.post<AdminDiscordWatchETF[]>('/admin/settings/discord/etfs', { etf_code: etfCode })
-    return data
-  },
-  removeDiscordWatchETF: async (etfCode: string) => {
-    const { data } = await api.delete<AdminDiscordWatchETF[]>(`/admin/settings/discord/etfs/${etfCode}`)
     return data
   },
   getDiscordNotificationLogs: async (limit = 30, offset = 0) => {

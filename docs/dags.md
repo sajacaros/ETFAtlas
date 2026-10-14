@@ -39,11 +39,13 @@ start
   └─ fetch_trading_dates
        └─ sync_universe_and_prices
             ├─ sync_holdings
-            │    ├─ sync_stock_prices ─┐
-            │    └─ record_and_notify ─┤
-            ├─ sync_returns ───────────┤
-            └─ tag_new_etfs ───────────┘
-                                      end
+            │    ├─ sync_stock_prices ──────────────────────┐
+            │    └─ sync_weight_changes                     │
+            │         ├─ record_collection (all_done) ──────┤
+            │         └─ notify_discord ────────────────────┤
+            ├─ sync_returns ────────────────────────────────┤
+            └─ tag_new_etfs ────────────────────────────────┘
+                                                           end
 ```
 
 ### 태스크 상세
@@ -65,9 +67,9 @@ AGE가 비어 있으면(첫 실행) 최근 10일 중 마지막 거래일 하루�
 
 `collect_stock_prices_for_dates(actual_dates)` — 누락된 거래일의 Stock 가격을 수집한다.
 
-#### 5. record_and_notify
+#### 5. sync_weight_changes · record_collection · notify_discord
 
-최근 거래일을 `collection_runs`에 기록(`pg_notify` 발행)하고, 신규 기록일 때만 디스코드 알림을 보낸다. 상세는 [notify.md](notify.md) 참고.
+액티브 ETF의 직전 영업일 대비 비중 변화를 계산해 `weight_changes`에 저장하고(`compute_weight_changes`), 최근 거래일을 `collection_runs`에 기록(`pg_notify` 발행)한 뒤 디스코드 알림을 보낸다. 기록은 계산이 실패해도 하고, 디스코드는 이미 보낸 날짜면 건너뛴다. 상세는 [notify.md](notify.md) 참고.
 
 #### 6. sync_returns
 
@@ -220,7 +222,9 @@ check_market_open → collect_prices → update_snapshots
 | `etfs` | rdb_sync_metadata | sync_etfs_to_rdb | pg_trgm 퍼지 검색, 포트폴리오 ETF 이름 조회 |
 | `ticker_prices` | rdb_realtime_prices | collect_prices | 티커별 일별 가격 캐시 |
 | `portfolio_snapshots` | rdb_realtime_prices | update_snapshots | 포트폴리오 일별 평가금액 이력 |
-| `collection_runs` | age_sync_universe | record_and_notify | 수집 완료 기록, 알림 트리거 |
+| `collection_runs` | age_sync_universe | record_collection | 수집 완료 기록, 알림 트리거 |
+| `weight_changes`, `weight_change_dates` | age_sync_universe | sync_weight_changes | 액티브 ETF 비중 변화 (웹·디스코드 공용) |
+| `discord_notification_logs` | age_sync_universe | notify_discord | 디스코드 발송 이력 |
 | `kis_tokens` | KIS를 호출하는 모든 DAG | - | KIS 접근 토큰 캐시 |
 | `market_calendar` | rdb_realtime_prices | check_market_open | 개장일 여부 캐시 (하루 1회) |
 | `code_examples` | embed_code_examples | embed_code_examples | 챗봇 few-shot 코드 예제 (vector(768)) |

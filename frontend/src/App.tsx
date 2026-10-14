@@ -11,7 +11,7 @@ import ChatPage from './app/ChatPage'
 import CompositionPage from './app/CompositionPage'
 import PortfolioPage from './app/PortfolioPage'
 import PortfolioDashboardPage from './app/PortfolioDashboardPage'
-import WatchlistChangesPage from './app/WatchlistChangesPage'
+import ActiveChangesPage from './app/ActiveChangesPage'
 import SharedPortfoliosPage from '@/app/SharedPortfoliosPage'
 import SharedPortfolioDetailPage from '@/app/SharedPortfolioDetailPage'
 import AdminPage from './app/AdminPage'
@@ -80,7 +80,7 @@ function App() {
             <Route path="/portfolio" element={<PortfolioPage />} />
             <Route path="/portfolio/dashboard" element={<PortfolioDashboardPage />} />
             <Route path="/portfolio/:id/dashboard" element={<PortfolioDashboardPage />} />
-            <Route path="/watchlist/changes" element={<WatchlistChangesPage />} />
+            <Route path="/changes" element={<ActiveChangesPage />} />
             <Route path="/composition" element={<CompositionPage />} />
             <Route path="/shared" element={<SharedPortfoliosPage />} />
             <Route path="/shared/:shareToken" element={<SharedPortfolioDetailPage />} />

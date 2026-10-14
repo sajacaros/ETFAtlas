@@ -15,7 +15,6 @@ from ..models.chat import ChatLog, ChatLogStatus
 from ..models.code_example import CodeExample
 from ..models.layout_example import LayoutExample
 from ..models.discord_setting import DiscordSetting
-from ..models.discord_watch_etf import DiscordWatchETF
 from ..models.discord_notification_log import DiscordNotificationLog
 from ..models.ai_setting import AISetting
 from ..services.ai_config import AI_CONFIG_FIELDS, SECRET_FIELDS, load_ai_config, stored_value
@@ -635,53 +634,6 @@ async def test_discord_webhook(
         logger.warning(f"Discord test failed: {type(e).__name__} status={status}")
         raise HTTPException(status_code=502, detail="디스코드 전송에 실패했습니다. 웹훅 주소를 확인하세요.")
     return {"ok": True}
-
-
-class DiscordWatchETFCreate(BaseModel):
-    etf_code: str
-
-
-def _discord_watch_etfs(db: Session) -> list[dict]:
-    rows = db.query(DiscordWatchETF).order_by(DiscordWatchETF.created_at, DiscordWatchETF.etf_code).all()
-    return [{"etf_code": r.etf_code, "etf_name": r.etf_name} for r in rows]
-
-
-@router.get("/settings/discord/etfs")
-async def get_discord_watch_etfs(
-    db: Session = Depends(get_db),
-    admin_id: int = Depends(get_admin_user_id),
-):
-    """디스코드 비중변화 알림 대상 ETF 목록."""
-    return _discord_watch_etfs(db)
-
-
-@router.post("/settings/discord/etfs")
-async def add_discord_watch_etf(
-    body: DiscordWatchETFCreate,
-    db: Session = Depends(get_db),
-    admin_id: int = Depends(get_admin_user_id),
-):
-    """알림 대상 ETF 추가. 보유종목을 수집하는(그래프에 있는) ETF만 받는다."""
-    detail = GraphService(db).get_etf_detail(body.etf_code.strip())
-    if not detail:
-        raise HTTPException(status_code=404, detail="보유종목을 수집하는 ETF가 아닙니다")
-    if db.get(DiscordWatchETF, detail["code"]) is None:
-        db.add(DiscordWatchETF(etf_code=detail["code"], etf_name=detail["name"]))
-        db.commit()
-    return _discord_watch_etfs(db)
-
-
-@router.delete("/settings/discord/etfs/{etf_code}")
-async def remove_discord_watch_etf(
-    etf_code: str,
-    db: Session = Depends(get_db),
-    admin_id: int = Depends(get_admin_user_id),
-):
-    row = db.get(DiscordWatchETF, etf_code)
-    if row is not None:
-        db.delete(row)
-        db.commit()
-    return _discord_watch_etfs(db)
 
 
 @router.get("/settings/discord/logs")

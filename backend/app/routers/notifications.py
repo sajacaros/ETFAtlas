@@ -21,7 +21,7 @@ async def get_notification_status(
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
-    """새 알림 유무 확인 — 즐겨찾기가 있고 새 수집 데이터가 있을 때만 true"""
+    """새 알림 유무 확인 — 마지막 확인 이후 새 수집이 있고, 그 수집에서 액티브 ETF에 기준값 초과 변화가 있을 때 true"""
     user = db.query(User).filter(User.id == user_id).first()
     latest = db.query(CollectionRun).order_by(CollectionRun.created_at.desc()).first()
 
@@ -33,21 +33,11 @@ async def get_notification_status(
         or latest.created_at > user.last_notification_checked_at
     )
 
-    # 즐겨찾기에 실제 3%p 초과 비중 변화가 있을 때만 빨간 점 표시 (1주일 기준)
+    # 액티브 ETF에 실제 기준값 초과 비중 변화(직전 영업일 대비)가 있을 때만 빨간 점 표시
     if has_new:
-        from ..services.graph_service import GraphService
-        graph = GraphService(db)
-        watched = graph.get_user_watches(user_id)
-        if not watched:
-            has_new = False
-        else:
-            has_new = False
-            for item in watched:
-                changes, _, _ = graph.get_etf_holdings_changes(item["etf_code"], "1w")
-                if any(c["change_type"] != "unchanged" and abs(c["weight_change"]) > 3
-                       for c in changes):
-                    has_new = True
-                    break
+        from ..services.weight_changes import get_alert_threshold, get_significant_changes, resolve_change_date
+        change_date = resolve_change_date(db)
+        has_new = bool(change_date) and bool(get_significant_changes(db, change_date, get_alert_threshold(db)))
 
     return {
         "has_new": has_new,

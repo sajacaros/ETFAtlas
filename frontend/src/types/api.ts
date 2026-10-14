@@ -107,11 +107,6 @@ export interface AdminDiscordSettings {
   configured: boolean  // false: 웹에서 저장한 적 없음 (DAG는 서버 환경변수 사용)
 }
 
-export interface AdminDiscordWatchETF {
-  etf_code: string
-  etf_name: string
-}
-
 export interface AdminDiscordNotificationLog {
   id: number
   base_date: string
@@ -446,9 +441,10 @@ export interface ChatSessionDetail {
 }
 
 // Watchlist change types
-export interface WatchlistChange {
+export interface ActiveChange {
   etf_code: string
   etf_name: string
+  prev_date: string  // 이 ETF의 직전 영업일
   stock_code: string
   stock_name: string
   change_type: 'added' | 'removed' | 'increased' | 'decreased'
@@ -457,10 +453,11 @@ export interface WatchlistChange {
   weight_change: number
 }
 
-export interface WatchlistChangesResponse {
+export interface ActiveChangesResponse {
   current_date: string | null
   previous_date: string | null
-  changes: WatchlistChange[]
+  threshold: number  // 이 값(%p)을 넘는 변화만 담긴다 (디스코드 알림과 같은 기준값)
+  changes: ActiveChange[]
 }
 
 // Similar ETF types

@@ -174,7 +174,8 @@ export default function ChatPage() {
     setSessionPages((prev) => ({ ...prev, items: prev.items.map((s) => (s.id === id ? { ...s, title: updated.title } : s)) }))
   }
 
-  const sendMessage = async (text: string) => {
+  // refine=false는 재작성된 질문이 원래 뜻과 달라 원문 그대로 다시 묻는 경우다
+  const sendMessage = async (text: string, refine = true) => {
     const trimmed = text.trim()
     if (!trimmed || isAnswering || isLoadingSession) return
 
@@ -194,7 +195,7 @@ export default function ChatPage() {
         isStopping: false, done: false,
       },
     ])
-    setInput('')
+    if (refine) setInput('')  // 원문으로 다시 묻기는 입력창이 아니라 지난 질문에서 보내므로 쓰던 입력을 지우지 않는다
 
     let collectedSteps: ChatStep[] = []
     // 같은 step_number가 있으면 결과로 바꾸고, 없으면 뒤에 붙인다
@@ -260,7 +261,7 @@ export default function ChatPage() {
         setStreams((prev) => prev.filter((s) => s.key !== key))
         refreshSessions()  // 새 세션 추가·최근 활동 순서를 반영
       },
-    })
+    }, refine)
   }
 
   const stopMessage = async () => {
@@ -396,6 +397,15 @@ export default function ChatPage() {
                   >
                     <CornerDownRight className="w-3 h-3 mt-0.5 shrink-0" />
                     <span>{msg.refinedQuestion}</span>
+                    <button
+                      type="button"
+                      className="ml-1 shrink-0 underline underline-offset-2 hover:text-foreground disabled:opacity-50 disabled:no-underline"
+                      onClick={() => sendMessage(msg.content, false)}
+                      disabled={isAnswering || isLoadingSession}
+                      title="다시 쓴 질문이 뜻과 다르면 원래 질문 그대로 다시 묻습니다"
+                    >
+                      원문으로 다시 묻기
+                    </button>
                   </div>
                 )}
                 {msg.matchedExamples && msg.matchedExamples.length > 0 && (

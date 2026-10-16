@@ -374,7 +374,8 @@ export const chatApi = {
     await api.post(`/chat/sessions/${sessionId}/stop`)
   },
   // sessionId가 null이면 서버가 새 세션을 만들고 onSession으로 알려준다
-  streamMessage: (message: string, sessionId: number | null, handlers: ChatStreamHandlers) => {
+  // refine=false면 대화 맥락으로 질문을 재작성하지 않고 원문 그대로 묻는다
+  streamMessage: (message: string, sessionId: number | null, handlers: ChatStreamHandlers, refine = true) => {
     const abortController = new AbortController()
     const baseUrl = `${API_URL}/api`
 
@@ -383,7 +384,7 @@ export const chatApi = {
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ message, session_id: sessionId }),
+      body: JSON.stringify({ message, session_id: sessionId, refine }),
       signal: abortController.signal,
     })
       .then(async (response) => {

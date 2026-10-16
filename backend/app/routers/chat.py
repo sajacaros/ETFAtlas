@@ -33,6 +33,7 @@ _stop_events: dict[tuple[int, int], asyncio.Event] = {}
 class ChatRequest(BaseModel):
     message: str
     session_id: Optional[int] = None  # 없으면 새 세션을 만든다
+    refine: bool = True  # False면 맥락으로 질문을 재작성하지 않고 원문 그대로 답한다 ("원문으로 다시 묻기")
 
 
 class ToolCallItem(BaseModel):
@@ -183,7 +184,7 @@ async def send_message(
         memory = chat_service.memory
         await asyncio.to_thread(memory.update_summary, session)  # 지난 요약이 실패했으면 여기서 따라잡는다
         context = memory.load_context(session)
-        result = await chat_service.chat(request.message, context)
+        result = await chat_service.chat(request.message, context, refine=request.refine)
         chat_log_id = _save_chat_log(
             db, user_id, session, request.message, result["refined_question"],
             result["answer"], result.get("steps", []),
@@ -244,7 +245,7 @@ async def stream_message(
             context = memory.load_context(session)
             # 맥락을 읽은 뒤에 만든다 — 먼저 만들면 답이 빈 이번 턴이 맥락에 끼어든다
             chat_log_id = _start_chat_log(db, user_id, session, request.message)
-            async for event in service.stream(request.message, context, chat_log_id, stop):
+            async for event in service.stream(request.message, context, chat_log_id, stop, refine=request.refine):
                 if event.get("type") == "refined_question":
                     refined_question = event["data"]["question"]
                 elif event.get("type") == "step":

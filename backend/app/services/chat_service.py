@@ -721,12 +721,14 @@ class ChatService:
     # Public API
     # ------------------------------------------------------------------
 
-    async def chat(self, message: str, context: Optional[ConversationContext] = None) -> Dict:
+    async def chat(
+        self, message: str, context: Optional[ConversationContext] = None, refine: bool = True,
+    ) -> Dict:
         answer = FALLBACK_ANSWER
         refined_question = message
         steps: List[Dict] = []
         matched_examples: List[Dict] = []
-        async for event in self.chat_stream(message, context):
+        async for event in self.chat_stream(message, context, refine=refine):
             if event["type"] == "refined_question":
                 refined_question = event["data"]["question"]
             elif event["type"] == "step":

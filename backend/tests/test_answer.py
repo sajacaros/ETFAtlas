@@ -998,3 +998,21 @@ def test_example_selector_falls_back_to_distance_when_it_fails():
         raise RuntimeError("LLM down")
     picked = asyncio.run(_selector_planner(broken)._select("질문", CANDIDATES))
     assert [ex["id"] for ex in picked] == [10, 11]  # 0.35 안이고 1위와 0.05 차이 안
+
+
+def test_stream_skips_refine_when_user_asks_for_the_original(monkeypatch):
+    class RewritingMemory(FakeMemory):
+        def refine(self, message, context):
+            return "다시 쓴 질문"
+
+    service = _service(monkeypatch, [[_slot("s1", "data")]], REG)
+    service.memory = RewritingMemory(None)
+    context = ConversationContext(summary="이전 대화")
+
+    async def run(refine):
+        return [e async for e in service.stream("질문", context, 7, asyncio.Event(), refine=refine)]
+
+    assert any(e["type"] == "refined_question" for e in asyncio.run(run(True)))
+    events = asyncio.run(run(False))
+    assert not any(e["type"] == "refined_question" for e in events)
+    assert {"type": "status", "data": {"stage": "refining"}} not in events

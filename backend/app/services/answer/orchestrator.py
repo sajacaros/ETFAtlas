@@ -146,10 +146,13 @@ class AnswerService:
 
     async def stream(
         self, message: str, context: ConversationContext, chat_log_id: int, stop: asyncio.Event,
+        refine: bool = True,
     ) -> AsyncIterator[Dict[str, Any]]:
-        if not context.is_empty():  # 맥락이 없으면 재작성하지 않는다
+        # refine=False는 사용자가 재작성을 거부하고 원문 그대로 다시 물은 경우다
+        question = message
+        if refine and not context.is_empty():  # 맥락이 없으면 재작성하지 않는다
             yield _event("status", {"stage": "refining"})
-        question = await asyncio.to_thread(self.memory.refine, message, context)
+            question = await asyncio.to_thread(self.memory.refine, message, context)
         if question != message:
             yield _event("refined_question", {"question": question})
         if stop.is_set():

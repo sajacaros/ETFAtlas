@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, KeyboardEvent } from 'react'
 import {
-  Send, Square, Loader2, MessageCircle, ChevronLeft, ChevronRight, Trash2, BookOpen, Plus, Pencil, Check, X, History, CornerDownRight,
+  Send, Square, Loader2, MessageCircle, ChevronLeft, ChevronRight, Trash2, Book, BookOpen, Plus, Pencil, Check, X, History, CornerDownRight,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -638,9 +638,10 @@ function SessionList({
 
 function MatchedExamplesView({ examples }: { examples: MatchedCodeExample[] }) {
   return (
-    <details className="mt-1">
+    <details className="mt-1 group">
       <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground flex items-center gap-1 select-none">
-        <BookOpen className="w-3 h-3" />
+        <Book className="w-3 h-3 group-open:hidden" />
+        <BookOpen className="w-3 h-3 hidden group-open:block" />
         참고 코드 예제 ({examples.length}건)
       </summary>
       <div className="mt-1 space-y-1">

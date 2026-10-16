@@ -1735,6 +1735,7 @@ function ChatLogDetailDialog({
             )}
             <div className="flex gap-4 text-sm text-muted-foreground">
               <span>상태: <Badge variant={statusBadgeVariant(chatLog.status)}>{chatLog.status}</Badge></span>
+              <span>결과: {chatLog.result}</span>
               <span>생성일: {new Date(chatLog.created_at).toLocaleString()}</span>
             </div>
           </div>

@@ -12,11 +12,20 @@ import {
 import { chatApi, type ChatStage } from '@/lib/api'
 import { appendPage, groupByDate, mergeFirstPage, type SessionListState } from '@/lib/sessionPages'
 import type {
-  ChatSessionDetail, ChatSessionSummary, ChatStep, LayoutNode, MatchedCodeExample, SlotState,
+  ChatLogResult, ChatSessionDetail, ChatSessionSummary, ChatStep, LayoutNode, MatchedCodeExample, SlotState,
 } from '@/types/api'
 import { AnswerView } from '@/components/answer/AnswerView'
 import ReactMarkdown from 'react-markdown'
 import { MARKDOWN_PLUGINS } from '@/lib/markdown'
+
+const STOPPED_MESSAGE = '요청하신 대로 중지했습니다.'  // 서버가 저장하는 문구와 같게
+
+// 완료·되묻기는 답변 자체로 드러나므로 표시하지 않는다
+const RESULT_LABELS: Partial<Record<ChatLogResult, string>> = {
+  cancelled: '중지됨',
+  failed: '실패',
+  running: '완료되지 않음',  // 아직 저장 전이거나 서버가 도중에 끊겼다
+}
 
 const EXAMPLE_QUESTIONS = [
   '삼성전자를 가장 많이 보유한 ETF는?',
@@ -40,6 +49,7 @@ interface DisplayMessage {
   refinedQuestion?: string | null
   steps?: ChatStep[]
   matchedExamples?: MatchedCodeExample[]
+  result?: ChatLogResult
 }
 
 interface ChatStream {
@@ -50,7 +60,6 @@ interface ChatStream {
   stage: ChatStage | null
   examples: MatchedCodeExample[]
   answer: AnswerScreen | null  // 레이아웃을 받은 뒤부터 영역이 채워지는 화면
-  isStopping: boolean
   done: boolean  // 답변은 받았고 서버 저장을 기다리는 중
 }
 
@@ -59,7 +68,7 @@ function toDisplayMessages(detail: ChatSessionDetail): DisplayMessage[] {
     // created_at은 타임존 없는 UTC라 'Z'를 붙여 읽는다
     { role: 'user', content: m.question, refinedQuestion: m.refined_question, sentAt: new Date(m.created_at + 'Z') },
     {
-      role: 'assistant', content: m.answer, steps: m.steps,
+      role: 'assistant', content: m.answer, steps: m.steps, result: m.result,
       answer: m.layout ? { chatLogId: m.id, layout: m.layout, slots: m.slots } : null,
     },
   ])
@@ -88,6 +97,8 @@ export default function ChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const nextStreamKey = useRef(0)
+  // 중지하면 스트림을 화면에서 바로 떼어 낸다 — 서버는 실행 중인 단계를 마치고 저장하므로 연결은 끊지 않는다
+  const detachers = useRef(new Map<number, () => void>())
   // 스트림 콜백에서 지금 보고 있는 세션을 읽기 위한 ref
   const sessionIdRef = useRef<number | null>(null)
   sessionIdRef.current = sessionId
@@ -192,7 +203,7 @@ export default function ChatPage() {
       ...prev.filter((s) => s.sessionId !== sessionId),
       {
         key, sessionId, messages: newMessages, steps: [], stage: null, examples: [], answer: null,
-        isStopping: false, done: false,
+        done: false,
       },
     ])
     if (refine) setInput('')  // 원문으로 다시 묻기는 입력창이 아니라 지난 질문에서 보내므로 쓰던 입력을 지우지 않는다
@@ -215,18 +226,50 @@ export default function ChatPage() {
       updateStream({ answer: answerScreen })
     }
 
-    const finish = (content: string) => {
+    const finish = (content: string, result: ChatLogResult) => {
       newMessages = [
         ...newMessages,
         {
-          role: 'assistant', content, answer: answerScreen, matchedExamples: collectedExamples,
+          role: 'assistant', content, result, answer: answerScreen, matchedExamples: collectedExamples,
           steps: collectedSteps.filter((s) => !s.running),  // 결과 없이 끝난 단계는 남기지 않는다
         },
       ]
       // 서버 저장이 끝날 때까지는 스트림이 들고 있는 대화를 보여준다
-      updateStream({ messages: newMessages, steps: [], examples: [], answer: null, isStopping: false, done: true })
+      updateStream({ messages: newMessages, steps: [], examples: [], answer: null, done: true })
       if (isViewing()) textareaRef.current?.focus()
     }
+
+    // 떼어 낸 뒤 오는 이벤트는 버린다 (서버가 남은 단계를 마치고 저장하는 중)
+    let detached = false
+    const live = <A extends unknown[]>(fn: (...args: A) => void) => (...args: A) => {
+      if (!detached) fn(...args)
+    }
+    detachers.current.set(key, () => {
+      detached = true
+      detachers.current.delete(key)
+      if (answerScreen) {
+        // 끝나지 않은 영역은 중지로 마감한다 — 흘려받던 본문은 받은 데까지 남는다
+        const slots = { ...answerScreen.slots }
+        collectSlotIds(answerScreen.layout).forEach((id) => {
+          const status = slots[id]?.status ?? 'pending'
+          if (status === 'pending' || status === 'running') slots[id] = { ...slots[id], status: 'stopped' }
+        })
+        answerScreen = { ...answerScreen, slots }
+      }
+      newMessages = [
+        ...newMessages,
+        {
+          role: 'assistant', content: STOPPED_MESSAGE, result: 'cancelled', answer: answerScreen,
+          matchedExamples: collectedExamples,
+          steps: collectedSteps.filter((s) => !s.running),
+        },
+      ]
+      if (isViewing()) {
+        setMessages(newMessages)
+        textareaRef.current?.focus()
+      }
+      setStreams((prev) => prev.filter((s) => s.key !== key))
+    })
 
     chatApi.streamMessage(trimmed, sessionId, {
       onSession: ({ session_id }) => {
@@ -235,42 +278,42 @@ export default function ChatPage() {
         updateStream({ sessionId: session_id })
         refreshSessions()  // 새 대화도 바로 목록에 올려 다른 세션에 갔다 돌아올 수 있게 한다
       },
-      onStatus: (stage) => updateStream({ stage }),
-      onRefinedQuestion: (question) => {
+      onStatus: live((stage) => updateStream({ stage })),
+      onRefinedQuestion: live((question) => {
         newMessages = [...newMessages.slice(0, -1), { ...userMessage, refinedQuestion: question }]
         updateStream({ messages: newMessages })
-      },
-      onStepStart: (step) => upsertStep({ ...step, observations: '', error: null, running: true }),
-      onStep: (step) => upsertStep(step),
-      onAnswer: (answer) => finish(answer),
-      onError: (error) => finish(`죄송합니다. 오류가 발생했습니다: ${error}`),
-      onLayout: ({ chat_log_id, layout }) => {
+      }),
+      onStepStart: live((step) => upsertStep({ ...step, observations: '', error: null, running: true })),
+      onStep: live((step) => upsertStep(step)),
+      onAnswer: live((answer, result) => finish(answer, result)),
+      onError: live((error) => finish(`죄송합니다. 오류가 발생했습니다: ${error}`, 'failed')),
+      onLayout: live(({ chat_log_id, layout }) => {
         // 같은 답변의 레이아웃이 다시 오면(비어 있던 영역을 다시 설계) 이미 채운 영역은 그대로 둔다 — 다시 채울 영역은 running부터 다시 온다
         const slots = answerScreen?.chatLogId === chat_log_id ? answerScreen.slots : {}
         answerScreen = { chatLogId: chat_log_id, layout, slots }
         updateStream({ answer: answerScreen })
-      },
-      onSlot: ({ id, status, message }) => updateSlot(id, (prev) => ({ ...prev, status, message })),
-      onSlotDelta: ({ id, text }) => updateSlot(id, (prev) => ({ ...prev, text: (prev.text ?? '') + text })),
-      onMatchedExamples: (examples) => {
+      }),
+      onSlot: live(({ id, status, message }) => updateSlot(id, (prev) => ({ ...prev, status, message }))),
+      onSlotDelta: live(({ id, text }) => updateSlot(id, (prev) => ({ ...prev, text: (prev.text ?? '') + text }))),
+      onMatchedExamples: live((examples) => {
         collectedExamples = examples
         updateStream({ examples })
-      },
+      }),
       onDone: () => {
-        if (isViewing()) setMessages(newMessages)
+        detachers.current.delete(key)
+        if (!detached && isViewing()) setMessages(newMessages)
         setStreams((prev) => prev.filter((s) => s.key !== key))
         refreshSessions()  // 새 세션 추가·최근 활동 순서를 반영
       },
     }, refine)
   }
 
-  const stopMessage = async () => {
+  const stopMessage = () => {
     const stream = viewedStream
-    if (!stream || stream.sessionId === null || stream.isStopping) return
-    setStreams((prev) => prev.map((s) => (s.key === stream.key ? { ...s, isStopping: true } : s)))
-    try {
-      await chatApi.stopMessage(stream.sessionId)
-    } catch { /* 이미 끝났으면 404 — 스트림이 곧 마무리된다 */ }
+    if (!stream || stream.sessionId === null || stream.done) return
+    // 서버는 실행 중인 단계를 마친 뒤 멈추지만, 화면은 바로 중지됨으로 끝내 다음 질문을 받는다
+    chatApi.stopMessage(stream.sessionId).catch(() => { /* 이미 끝났으면 404 */ })
+    detachers.current.get(stream.key)?.()
   }
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -390,6 +433,11 @@ export default function ChatPage() {
                     </CardContent>
                   </Card>
                 )}
+                {msg.result && RESULT_LABELS[msg.result] && (
+                  <div className={`mt-1 text-xs ${msg.result === 'failed' ? 'text-destructive' : 'text-muted-foreground'}`}>
+                    {RESULT_LABELS[msg.result]}
+                  </div>
+                )}
                 {msg.refinedQuestion && (
                   <div
                     className="mt-1 text-xs text-muted-foreground flex items-start justify-end gap-1"
@@ -433,7 +481,7 @@ export default function ChatPage() {
                   <CardContent className="p-3 flex items-center gap-2 text-sm text-muted-foreground">
                     <Loader2 className="w-4 h-4 animate-spin" />
                     <span className="truncate">
-                      {streamingStatus(viewedStream.steps, viewedStream.stage, viewedStream.isStopping, viewedStream.answer)}
+                      {streamingStatus(viewedStream.steps, viewedStream.stage, viewedStream.answer)}
                     </span>
                   </CardContent>
                 </Card>
@@ -463,13 +511,13 @@ export default function ChatPage() {
           {isAnswering ? (
             <Button
               onClick={stopMessage}
-              disabled={viewedStream.sessionId === null || viewedStream.isStopping}
+              disabled={viewedStream.sessionId === null}
               size="icon"
               variant="outline"
-              title="중지 (실행 중인 단계는 끝까지 기다립니다)"
+              title="중지"
               className="shrink-0 h-[44px] w-[44px]"
             >
-              {viewedStream.isStopping ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4 fill-current" />}
+              <Square className="w-4 h-4 fill-current" />
             </Button>
           ) : (
             <Button
@@ -677,9 +725,8 @@ const STAGE_LABELS: Record<ChatStage, string> = {
   thinking: '생각 중...',
 }
 
-function streamingStatus(steps: ChatStep[], stage: ChatStage | null, isStopping: boolean, answer: AnswerScreen | null) {
+function streamingStatus(steps: ChatStep[], stage: ChatStage | null, answer: AnswerScreen | null) {
   const running = steps.filter((s) => s.running)
-  if (isStopping) return running.length > 0 ? '중지 요청됨 — 실행 중인 단계가 끝나면 멈춰요...' : '중지하는 중...'
   if (running.length > 0) {
     const names = running.flatMap((s) => s.tool_calls.map((tc) => tc.name)).join(', ')
     return `Step ${running[0].step_number} 실행 중... [${names}]`
@@ -687,7 +734,7 @@ function streamingStatus(steps: ChatStep[], stage: ChatStage | null, isStopping:
   if (stage === 'replanning') return STAGE_LABELS.replanning
   if (answer) {
     const states = Object.values(answer.slots)
-    const total = countSlots(answer.layout)
+    const total = collectSlotIds(answer.layout).length
     const finished = states.filter((s) => s.status !== 'pending' && s.status !== 'running').length
     return `답변 채우는 중... (${finished}/${total})`
   }
@@ -733,6 +780,6 @@ function StepsView({ steps, defaultOpen = false }: { steps: ChatStep[]; defaultO
   )
 }
 
-function countSlots(node: LayoutNode): number {
-  return node.type === 'slot' ? 1 : node.children.reduce((n, child) => n + countSlots(child), 0)
+function collectSlotIds(node: LayoutNode): string[] {
+  return node.type === 'slot' ? [node.id] : node.children.flatMap(collectSlotIds)
 }

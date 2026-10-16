@@ -80,6 +80,7 @@ async def test_chat_stream_emits_steps_and_answer(service):
     assert json.loads(steps[1]["observations"])["period"] == "1d"  # null → forward 기본값
     assert all(s["error"] is None for s in steps)
     assert answers == ["| ETF | 종가 |\n|---|---|\n| 069500 | 35,000 |"]
+    assert events[-1]["data"]["result"] == "completed"
 
 
 @pytest.mark.asyncio
@@ -113,6 +114,7 @@ async def test_chat_stream_stop_waits_for_running_tools(service):
     assert [s["step_number"] for s in steps] == [1, 2]  # 같이 실행 중이던 도구는 결과까지 받는다
     assert all(s["error"] is None for s in steps)
     assert answers == [cs.STOPPED_ANSWER]  # 다음 모델 요청(최종 답변)은 쓰지 않는다
+    assert events[-1]["data"]["result"] == "cancelled"
 
 
 @pytest.mark.asyncio
@@ -121,7 +123,7 @@ async def test_chat_stream_stop_before_agent_runs(service):
     stop.set()
     events = [e async for e in service.chat_stream("종가 알려줘", stop=stop)]
     assert [e["type"] for e in events] == ["status", "answer"]  # 예시 검색까지만 하고 에이전트는 돌리지 않는다
-    assert events[-1]["data"]["answer"] == cs.STOPPED_ANSWER
+    assert events[-1]["data"] == {"answer": cs.STOPPED_ANSWER, "result": "cancelled"}
 
 
 @pytest.mark.asyncio
@@ -210,12 +212,12 @@ def test_save_chat_log_keeps_steps_and_refined_question():
         {"step_number": 1, "code": 'etf_search(query="KODEX 200")', "error": None},
         {"step_number": 2, "code": "get_etf_info()", "error": "etf_code 누락"},
     ]
-    assert _save_chat_log(db, 1, session, "그거 보수율은?", "KODEX 200의 보수율은?", "0.15%", steps) == 7
+    assert _save_chat_log(db, 1, session, "그거 보수율은?", "KODEX 200의 보수율은?", "0.15%", steps, "completed") == 7
     log = db.added
-    assert log.session_id == 3 and log.steps == steps
+    assert log.session_id == 3 and log.steps == steps and log.result == "completed"
     assert log.generated_code == 'etf_search(query="KODEX 200")'  # 실패한 호출은 예시에서 뺀다
     assert log.refined_question == "KODEX 200의 보수율은?"
     assert session.updated_at is not None
 
-    _save_chat_log(db, 1, session, "안녕", "안녕", "범위 밖", [])
+    _save_chat_log(db, 1, session, "안녕", "안녕", "범위 밖", [], "completed")
     assert db.added.steps is None and db.added.refined_question is None

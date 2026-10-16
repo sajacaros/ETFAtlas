@@ -47,6 +47,7 @@ import type {
   SharedReturnsSummary,
   ShareToggleResponse,
   RiskAnalysisResponse,
+  ChatLogResult,
 } from '@/types/api'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
@@ -334,7 +335,7 @@ export interface ChatStreamHandlers {
   onStatus?: (stage: ChatStage) => void
   onStepStart?: (step: Pick<ChatStep, 'step_number' | 'code' | 'tool_calls'>) => void
   onStep: (step: ChatStep) => void
-  onAnswer: (answer: string) => void
+  onAnswer: (answer: string, result: ChatLogResult) => void
   onError: (error: string) => void
   onMatchedExamples?: (examples: MatchedCodeExample[]) => void
   onLayout?: (data: { chat_log_id: number; layout: LayoutNode }) => void
@@ -415,7 +416,7 @@ export const chatApi = {
               else if (event.type === 'status') handlers.onStatus?.(event.data.stage)
               else if (event.type === 'step_start') handlers.onStepStart?.(event.data)
               else if (event.type === 'step') handlers.onStep(event.data)
-              else if (event.type === 'answer') handlers.onAnswer(event.data.answer)
+              else if (event.type === 'answer') handlers.onAnswer(event.data.answer, event.data.result)
               else if (event.type === 'error') handlers.onError(event.data.message)
               else if (event.type === 'matched_examples') handlers.onMatchedExamples?.(event.data.examples)
               else if (event.type === 'layout') handlers.onLayout?.(event.data)

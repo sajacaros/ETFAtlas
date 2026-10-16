@@ -7,7 +7,8 @@
   slot {id, status, message?}             running → complete | empty | failed | stopped
   slot_delta {id, text}                   텍스트 슬롯이 흘려보내는 조각
   step_start / step / matched_examples    agent 스킬의 실행 과정 (data에 slot_id)
-  answer {answer}                         마지막. 화면 전체를 텍스트로 옮긴 것 (대화 기억·관리자 검수용)
+  answer {answer, result}                 마지막. 화면 전체를 텍스트로 옮긴 것 (대화 기억·관리자 검수용)과
+                                          답변을 어떻게 마쳤는지 (completed | cancelled | failed | clarifying)
 
 이 모듈은 특정 스킬을 모른다. 스킬이 늘어도 바뀌지 않는다.
 """
@@ -19,7 +20,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from ...database import SessionLocal
-from ...models.chat import ChatSlot
+from ...models.chat import ChatLogResult, ChatSlot
 from ...utils.time import utcnow
 from ..ai_config import load_ai_config
 from ..chat_memory import ChatMemory, ConversationContext
@@ -86,6 +87,17 @@ def answer_text(slots: List[PlannedSlot], results: Dict[str, Dict[str, Any]]) ->
         if body:
             parts.append(f"### {slot.title}\n{body}" if slot.title else body)
     return "\n\n".join(parts) or FALLBACK_ANSWER
+
+
+def answer_result(slots: List[PlannedSlot], results: Dict[str, Dict[str, Any]], stop: asyncio.Event) -> str:
+    """답변 전체의 결과. 일부 영역만 비거나 실패했으면 완료로 본다 (영역별 상태는 chat_slots에 있다)."""
+    if stop.is_set():
+        return ChatLogResult.CANCELLED.value
+    if any(r.get("clarify") for r in results.values()):
+        return ChatLogResult.CLARIFYING.value
+    if all((results.get(s.id) or {}).get("status") == "failed" for s in slots):
+        return ChatLogResult.FAILED.value
+    return ChatLogResult.COMPLETED.value
 
 
 class SlotStore:
@@ -156,7 +168,7 @@ class AnswerService:
         if question != message:
             yield _event("refined_question", {"question": question})
         if stop.is_set():
-            yield _event("answer", {"answer": STOPPED_ANSWER})
+            yield _event("answer", {"answer": STOPPED_ANSWER, "result": ChatLogResult.CANCELLED.value})
             return
 
         yield _event("status", {"stage": "planning"})
@@ -194,7 +206,7 @@ class AnswerService:
         later = [s for s in slots if self._registry[s.skill].after_others]
         async for event in self._run_slots(later, question, context, chat_log_id, stop, results, all_slots=slots):
             yield event
-        yield _event("answer", {"answer": answer_text(slots, results)})
+        yield _event("answer", {"answer": answer_text(slots, results), "result": answer_result(slots, results, stop)})
 
     async def _run_slots(
         self, slots: List[PlannedSlot], question: str, context: ConversationContext,

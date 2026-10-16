@@ -62,6 +62,7 @@ export interface AdminChatLog {
   answer: string
   generated_code: string | null
   status: string
+  result: ChatLogResult
   created_at: string
 }
 
@@ -368,9 +369,13 @@ export interface ChatSessionMessage {
   steps: ChatStep[]
   layout: LayoutNode | null  // null이면 answer 마크다운만 있는 예전 답변
   slots: Record<string, { status: SlotStatus; message?: string }>
-  status: string
+  status: string  // 평가·예제 검수 상태
+  result: ChatLogResult
   created_at: string
 }
+
+// 답변을 어떻게 마쳤는지. running은 아직 저장 전이거나 서버가 도중에 끊긴 답변이다
+export type ChatLogResult = 'running' | 'completed' | 'cancelled' | 'failed' | 'clarifying'
 
 // 답변 화면: 레이아웃(영역 배치)이 먼저 오고, 각 영역(슬롯)은 끝나는 대로 따로 가져온다
 export type SlotType = 'text' | 'markdown' | 'table' | 'chart'

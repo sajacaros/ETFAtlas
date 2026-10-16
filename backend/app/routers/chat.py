@@ -13,7 +13,7 @@ from ..services.answer import AnswerService
 from ..services.chat_service import ChatService
 from ..utils.session import get_current_user_id
 from ..utils.time import utcnow
-from ..models.chat import ChatLog, ChatLogStatus, ChatSession, ChatSlot
+from ..models.chat import ChatLog, ChatLogResult, ChatLogStatus, ChatSession, ChatSlot
 from ..schemas.chat import FeedbackRequest, ChatSessionUpdate
 
 logger = logging.getLogger(__name__)
@@ -121,6 +121,7 @@ def _save_chat_log(
     refined_question: Optional[str],
     answer: str,
     steps: List[dict],
+    result: str,
 ) -> int:
     """Save chat log into the session and return its id."""
     chat_log = ChatLog(
@@ -132,6 +133,7 @@ def _save_chat_log(
         generated_code=_extract_generated_code(steps),
         steps=steps or None,
         status=ChatLogStatus.PENDING.value,
+        result=result,
     )
     db.add(chat_log)
     session.updated_at = utcnow()
@@ -144,7 +146,7 @@ def _start_chat_log(db: Session, user_id: int, session: ChatSession, question: s
     """답변을 만들기 전에 로그를 만든다 — 슬롯 내용이 이 로그 id에 붙어 저장되고, 프런트는 이 id로 가져간다."""
     chat_log = ChatLog(
         user_id=user_id, session_id=session.id, question=question, answer="",
-        status=ChatLogStatus.PENDING.value,
+        status=ChatLogStatus.PENDING.value, result=ChatLogResult.RUNNING.value,
     )
     db.add(chat_log)
     db.commit()
@@ -161,6 +163,7 @@ def _finish_chat_log(
     answer: str,
     steps: List[dict],
     layout: Optional[dict],
+    result: str,
 ) -> None:
     chat_log = db.get(ChatLog, chat_log_id)
     chat_log.refined_question = refined_question if refined_question != question else None
@@ -168,6 +171,7 @@ def _finish_chat_log(
     chat_log.generated_code = _extract_generated_code(steps)
     chat_log.steps = steps or None
     chat_log.layout = layout
+    chat_log.result = result
     session.updated_at = utcnow()
     db.commit()
 
@@ -187,7 +191,7 @@ async def send_message(
         result = await chat_service.chat(request.message, context, refine=request.refine)
         chat_log_id = _save_chat_log(
             db, user_id, session, request.message, result["refined_question"],
-            result["answer"], result.get("steps", []),
+            result["answer"], result.get("steps", []), result["result"],
         )
         await asyncio.to_thread(memory.update_summary, session)
         return ChatResponse(
@@ -236,6 +240,7 @@ async def stream_message(
         refined_question = None
         steps = []
         layout = None
+        result = ChatLogResult.FAILED.value  # 답변 이벤트 없이 끝나면 실패
         chat_log_id = None
         memory = None
         try:
@@ -254,19 +259,21 @@ async def stream_message(
                     layout = event["data"]["layout"]
                 elif event.get("type") == "answer":
                     answer = event["data"]["answer"]
+                    result = event["data"]["result"]
                 yield sse(event)
         except Exception as e:
             logger.exception("Chat stream error")
+            result = ChatLogResult.FAILED.value
             yield sse({"type": "error", "data": {"message": str(e)}})
 
         try:
             if chat_log_id is None:
                 chat_log_id = _save_chat_log(
-                    db, user_id, session, request.message, refined_question, answer or "", steps
+                    db, user_id, session, request.message, refined_question, answer or "", steps, result
                 )
             else:
                 _finish_chat_log(
-                    db, chat_log_id, session, request.message, refined_question, answer or "", steps, layout
+                    db, chat_log_id, session, request.message, refined_question, answer or "", steps, layout, result
                 )
             yield sse({"type": "chat_log_id", "data": {"chat_log_id": chat_log_id}})
         except Exception as e:
@@ -368,6 +375,7 @@ async def get_session(
                 "layout": log.layout,
                 "slots": slot_status.get(log.id, {}),
                 "status": log.status,
+                "result": log.result,
                 "created_at": log.created_at.isoformat(),
             }
             for log in logs

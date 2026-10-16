@@ -389,6 +389,7 @@ async def list_chat_logs(
                 "answer": item.answer,
                 "generated_code": item.generated_code,
                 "status": item.status,
+                "result": item.result,
                 "created_at": item.created_at.isoformat(),
             }
             for item in items

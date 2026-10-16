@@ -216,6 +216,7 @@ def test_stream_sends_layout_first_then_fills_slots(monkeypatch):
     )
     assert events[-1]["type"] == "answer"
     assert "### 가\nA요약" in events[-1]["data"]["answer"]
+    assert events[-1]["data"]["result"] == "completed"  # 일부 영역만 실패하면 완료로 본다
 
 
 def test_stop_skips_slots_that_wait_for_others(monkeypatch):
@@ -232,6 +233,30 @@ def test_stop_skips_slots_that_wait_for_others(monkeypatch):
     events = _collect(service, stop)
     assert service._store.saved == {"s1": "complete", "s2": "stopped"}
     assert not any(e["type"] == "slot_delta" for e in events)
+    assert events[-1]["data"]["result"] == "cancelled"
+
+
+def test_stop_before_planning_is_cancelled(monkeypatch):
+    stop = asyncio.Event()
+    stop.set()
+    service = _service(monkeypatch, [[_slot("s1", "data")]], REG)
+    events = _collect(service, stop)
+    assert events[-1]["data"] == {"answer": orch.STOPPED_ANSWER, "result": "cancelled"}
+
+
+def test_answer_fails_only_when_every_slot_fails(monkeypatch):
+    service = _service(monkeypatch, [[_slot("s1", "broken"), _slot("s2", "broken")]], REG)
+    assert _collect(service)[-1]["data"]["result"] == "failed"
+
+
+def test_answer_that_asks_back_is_clarifying(monkeypatch):
+    class AskingData(DataSkillStub):
+        async def run(self, args, display, ctx):
+            yield text_result("어느 쪽인가요?").event() | {"clarify": True}
+
+    registry = {**REG, "data": AskingData()}
+    service = _service(monkeypatch, [[_slot("s1", "data")]], registry)
+    assert _collect(service)[-1]["data"]["result"] == "clarifying"
 
 
 # --- 종목 스킬 / 해석기 ---

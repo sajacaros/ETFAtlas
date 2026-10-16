@@ -16,6 +16,15 @@ class ChatLogStatus(str, Enum):
     EMBEDDED = "embedded"
 
 
+class ChatLogResult(str, Enum):
+    """답변을 어떻게 마쳤는지. status(평가·예제 검수)와는 별개다."""
+    RUNNING = "running"  # 답변을 만드는 중 (서버가 도중에 죽으면 그대로 남는다)
+    COMPLETED = "completed"  # 일부 영역이 비거나 실패해도 답을 냈으면 완료
+    CANCELLED = "cancelled"  # 사용자가 중지했다
+    FAILED = "failed"  # 오류가 났거나 모든 영역이 실패했다
+    CLARIFYING = "clarifying"  # 대상을 정하지 못해 되물었다
+
+
 class ChatSession(Base):
     """챗봇 대화 세션. 최근 턴은 chat_logs 원문으로, 그 이전 턴은 summary로 기억한다."""
     __tablename__ = "chat_sessions"
@@ -51,6 +60,7 @@ class ChatLog(Base):
     # 답변 화면 구성 (column/row/slot 트리). 슬롯 내용은 chat_slots. NULL이면 answer 마크다운만 있는 예전 답변
     layout = Column(JSONB, nullable=True)
     status = Column(String(20), default=ChatLogStatus.PENDING.value)
+    result = Column(String(20), nullable=False, default=ChatLogResult.COMPLETED.value)
     created_at = Column(DateTime, default=utcnow)
 
 

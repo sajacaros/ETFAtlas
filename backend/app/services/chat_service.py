@@ -13,6 +13,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.usage import UsageLimits
 from sqlalchemy.orm import Session
 
+from ..models.chat import ChatLogResult
 from .ai_config import load_ai_config
 from .graph_service import GraphService
 from .embedding_service import EmbeddingService
@@ -725,6 +726,7 @@ class ChatService:
         self, message: str, context: Optional[ConversationContext] = None, refine: bool = True,
     ) -> Dict:
         answer = FALLBACK_ANSWER
+        result = ChatLogResult.FAILED.value
         refined_question = message
         steps: List[Dict] = []
         matched_examples: List[Dict] = []
@@ -735,10 +737,11 @@ class ChatService:
                 steps.append(event["data"])
             elif event["type"] == "answer":
                 answer = event["data"]["answer"]
+                result = event["data"]["result"]
             elif event["type"] == "matched_examples":
                 matched_examples = event["data"]["examples"]
         return {
-            "answer": answer, "refined_question": refined_question,
+            "answer": answer, "result": result, "refined_question": refined_question,
             "steps": steps, "matched_examples": matched_examples,
         }
 
@@ -774,7 +777,7 @@ class ChatService:
         last_observations = ""
         answer = None
         if stop.is_set():
-            yield {"type": "answer", "data": {"answer": STOPPED_ANSWER}}
+            yield {"type": "answer", "data": {"answer": STOPPED_ANSWER, "result": ChatLogResult.CANCELLED.value}}
             return
         yield {"type": "status", "data": {"stage": "thinking"}}
         try:
@@ -817,8 +820,14 @@ class ChatService:
         except Exception:
             logger.exception("Chat agent failed")
 
+        if stop.is_set():
+            result = ChatLogResult.CANCELLED
+        elif answer or last_observations:
+            result = ChatLogResult.COMPLETED
+        else:
+            result = ChatLogResult.FAILED
         if not answer and stop.is_set():
             answer = STOPPED_ANSWER
         if not answer:
             answer = last_observations[:2000] if last_observations else FALLBACK_ANSWER
-        yield {"type": "answer", "data": {"answer": answer}}
+        yield {"type": "answer", "data": {"answer": answer, "result": result.value}}

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from .ai_config import load_ai_config
-from ..models.chat import ChatLog, ChatSession
+from ..models.chat import ChatLog, ChatLogResult, ChatSession
 from .chat_memory_prompt import REFINE_SYSTEM_PROMPT, SUMMARY_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -81,7 +81,8 @@ class ChatMemory:
     def load_context(self, session: ChatSession) -> ConversationContext:
         recent = (
             self.db.query(ChatLog)
-            .filter(ChatLog.session_id == session.id)
+            # 아직 답을 만드는 중인 턴은 답이 비어 있다 (중지하고 바로 다음 질문을 하면 앞 턴이 아직 돌고 있다)
+            .filter(ChatLog.session_id == session.id, ChatLog.result != ChatLogResult.RUNNING.value)
             .order_by(ChatLog.id.desc())
             .limit(self.window)
             .all()

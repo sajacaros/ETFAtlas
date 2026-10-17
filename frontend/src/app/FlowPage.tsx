@@ -31,7 +31,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useToast } from '@/hooks/use-toast'
-import { useTheme } from '@/hooks/useTheme'
 import { FlowNodeCard, type FlowCanvasNode, type RunState } from '@/components/flow/FlowNodeCard'
 import { NodePalette, DRAG_TYPE } from '@/components/flow/NodePalette'
 import { ParamForm } from '@/components/flow/ParamForm'
@@ -84,7 +83,6 @@ function createsCycle(edges: Edge[], source: string, target: string) {
 
 function FlowEditor() {
   const { toast } = useToast()
-  const { theme } = useTheme()
   const { screenToFlowPosition, fitView } = useReactFlow()
   const canvasRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -361,7 +359,7 @@ function FlowEditor() {
         {/* 캔버스 */}
         <div
           ref={canvasRef}
-          className="h-[60vh] min-h-[360px] overflow-hidden rounded-lg border bg-muted/30 lg:h-auto lg:min-h-0 lg:flex-1"
+          className="h-[60vh] min-h-[360px] overflow-hidden rounded-lg border lg:h-auto lg:min-h-0 lg:flex-1"
           onDragOver={(e) => {
             e.preventDefault()
             e.dataTransfer.dropEffect = 'move'
@@ -379,13 +377,12 @@ function FlowEditor() {
             onNodeClick={(_, n) => setSelectedId(n.id)}
             onPaneClick={() => setSelectedId(null)}
             onNodesDelete={(deleted) => deleted.some((n) => n.id === selectedId) && setSelectedId(null)}
-            colorMode={theme === 'gameboy' ? 'dark' : 'light'}
             deleteKeyCode={['Backspace', 'Delete']}
             defaultEdgeOptions={{ style: { strokeWidth: 1.5 } }}
             proOptions={{ hideAttribution: true }}
             minZoom={0.2}
           >
-            <Background gap={16} size={1} />
+            <Background gap={20} size={1.5} />
             <Controls showInteractive={false} />
             {!selected && (
               <Panel position="top-left" className="max-w-xs rounded-md border bg-background/90 px-3 py-2 text-xs text-muted-foreground shadow-sm">

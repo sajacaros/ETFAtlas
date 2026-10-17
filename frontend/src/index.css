@@ -180,3 +180,24 @@
   }
   .theme-gameboy .recharts-default-legend .recharts-legend-item-text { color: hsl(var(--muted-foreground)) !important; }
 }
+
+/* 분석 흐름 캔버스(React Flow): 자체 색 대신 앱 테마 토큰을 쓴다.
+   colorMode="dark"는 캔버스에 .dark 클래스를 붙여 게임보이 색을 덮어쓰므로 쓰지 않는다 */
+.react-flow {
+  --xy-background-color: hsl(var(--background));  /* 노드(카드 색)가 바탕 위로 뜨게 */
+  --xy-background-pattern-color: hsl(var(--muted-foreground) / 0.35);
+  --xy-edge-stroke: hsl(var(--muted-foreground) / 0.8);
+  --xy-edge-stroke-selected: hsl(var(--primary));
+  --xy-connectionline-stroke: hsl(var(--primary));
+  --xy-handle-background-color: hsl(var(--muted-foreground));
+  --xy-handle-border-color: hsl(var(--background));
+  --xy-selection-background-color: hsl(var(--primary) / 0.08);
+  --xy-selection-border: 1px dotted hsl(var(--primary) / 0.6);
+  --xy-controls-box-shadow: none;
+  --xy-controls-button-background-color: hsl(var(--card));
+  --xy-controls-button-background-color-hover: hsl(var(--muted));
+  --xy-controls-button-color: hsl(var(--foreground));
+  --xy-controls-button-color-hover: hsl(var(--foreground));
+  --xy-controls-button-border-color: hsl(var(--border));
+}
+.react-flow__controls { border: 1px solid hsl(var(--border)); border-radius: calc(var(--radius) - 2px); overflow: hidden; }

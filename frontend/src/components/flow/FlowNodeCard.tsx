@@ -24,7 +24,7 @@ export function FlowNodeCard({ data, selected }: NodeProps<FlowCanvasNode>) {
   return (
     <div
       className={cn(
-        'w-48 rounded-lg border border-l-4 bg-card px-3 py-2 shadow-sm transition-shadow',
+        'w-48 rounded-lg border border-l-4 bg-card px-3 py-2 shadow-md transition-shadow',
         category.bar,
         selected && 'ring-2 ring-primary/60',
         state === 'error' && 'border-destructive',

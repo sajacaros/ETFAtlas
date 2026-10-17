@@ -32,7 +32,9 @@ import { ETFInfoDialog } from '@/components/ETFInfo'
 import { etfsApi, portfolioApi } from '@/lib/api'
 import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
-import type { CompositionResponse, Portfolio } from '@/types/api'
+import type { AccountType, CompositionResponse, Portfolio } from '@/types/api'
+import { AccountTypePicker } from '@/components/AccountType'
+import { DEFAULT_ACCOUNT_TYPE } from '@/lib/accountType'
 
 interface Pick {
   code: string
@@ -82,6 +84,7 @@ export default function CompositionPage() {
 
   // 저장
   const [saveOpen, setSaveOpen] = useState(false)
+  const [saveAccountType, setSaveAccountType] = useState<AccountType>(DEFAULT_ACCOUNT_TYPE)
   const [saveName, setSaveName] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -219,6 +222,7 @@ export default function CompositionPage() {
     try {
       const created = await portfolioApi.create({
         name: saveName.trim(),
+        account_type: saveAccountType,
         calculation_base: 'CURRENT_TOTAL',
         targets: activePicks.map((p) => ({ ticker: p.code, target_weight: parseWeight(p.weight) })),
       })
@@ -475,6 +479,10 @@ export default function CompositionPage() {
                 onChange={(e) => setSaveName(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSave()}
               />
+            </div>
+            <div className="space-y-2">
+              <Label>계좌 유형</Label>
+              <AccountTypePicker value={saveAccountType} onChange={setSaveAccountType} />
             </div>
             <div className="space-y-2">
               <p className="text-sm font-medium">목표 비중 (입력값 그대로)</p>

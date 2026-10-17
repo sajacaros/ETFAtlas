@@ -202,11 +202,13 @@ export interface WatchlistItem {
 
 // Portfolio types
 export type CalculationBase = 'CURRENT_TOTAL' | 'TARGET_AMOUNT'
+export type AccountType = 'IRP' | 'PENSION_SAVINGS'
 export type AdjustmentStatus = 'BUY' | 'SELL' | 'HOLD'
 
 export interface Portfolio {
   id: number
   name: string
+  account_type: AccountType
   calculation_base: CalculationBase
   target_total_amount: number | null
   display_order: number
@@ -238,6 +240,7 @@ export interface HoldingItem {
 export interface PortfolioDetail {
   id: number
   name: string
+  account_type: AccountType
   calculation_base: CalculationBase
   target_total_amount: number | null
   snapshot_enabled: boolean
@@ -510,9 +513,9 @@ export interface SharedAllocationItem {
 
 export interface SharedPortfolioListItem {
   portfolio_name: string
+  account_type: AccountType
   share_token: string
   tickers_count: number
-  holdings: SharedAllocationItem[]
   owner_id: number
   owner_name: string
   shared_at: string | null
@@ -521,6 +524,7 @@ export interface SharedPortfolioListItem {
 
 export interface SharedPortfolioDetail {
   portfolio_name: string
+  account_type: AccountType
   allocations: SharedAllocationItem[]
   owner_name: string
   shared_at: string | null

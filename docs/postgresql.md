@@ -260,11 +260,11 @@ engine = create_engine(
 | roles | 역할 | admin, member |
 | user_roles | 사용자-역할 매핑 | UNIQUE(user_id, role_id) |
 | etfs | ETF 코드/이름 | pg_trgm 퍼지 검색, `rdb_sync_metadata` DAG이 적재 |
-| portfolios | 포트폴리오 | snapshot_enabled |
+| portfolios | 포트폴리오 | account_type(IRP / PENSION_SAVINGS, 0019), snapshot_enabled |
 | target_allocations | 목표 비중 | UNIQUE(portfolio_id, ticker) |
 | holdings | 보유 수량 | UNIQUE(portfolio_id, ticker), quantity/avg_price 암호화 |
 | portfolio_snapshots | 일별 평가금액 | UNIQUE(portfolio_id, date), 금액 컬럼 암호화 |
-| shared_portfolios | 공유한 포트폴리오 스냅샷 | 공유 시점의 이름·비중(`allocations` JSONB), share_token UNIQUE. 원본 삭제 시 portfolio_id만 NULL (0018) |
+| shared_portfolios | 공유한 포트폴리오 스냅샷 | 공유 시점의 이름·계좌 유형·비중(`allocations` JSONB), share_token UNIQUE. 원본 삭제 시 portfolio_id만 NULL (0018) |
 | ticker_prices | 티커별 일별 가격 캐시 | 복합 PK (ticker, date) |
 | collection_runs | 수집 완료 기록 | collected_at UNIQUE, 알림 트리거 |
 | kis_tokens | KIS 접근 토큰 캐시 | PK app_key_hash |

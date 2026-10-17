@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { sharedApi } from '@/lib/api'
 import { formatDateTime } from '@/lib/utils'
+import { ACCOUNT_TYPES } from '@/lib/accountType'
+import { AccountTypeBadge } from '@/components/AccountType'
 import type { SharedPortfolioListItem, SharedReturnsSummary } from '@/types/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -17,8 +19,6 @@ const SORTS = [
   { key: 'returns_3m', label: '3달 수익률순' },
 ] as const
 type SortKey = (typeof SORTS)[number]['key']
-
-const PREVIEW_COUNT = 3
 
 function ReturnBadge({ value }: { value: number | null }) {
   if (value === null) return <span className="text-muted-foreground">-</span>
@@ -36,6 +36,7 @@ export default function SharedPortfoliosPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const query = searchParams.get('q') ?? ''
   const owner = searchParams.get('owner') ?? ''  // '' 전체, 'me' 나, 그 외 공유자 id
+  const accountType = searchParams.get('type') ?? ''  // '' 전체
   const sortParam = searchParams.get('sort')
   const sort: SortKey = SORTS.some((s) => s.key === sortParam) ? (sortParam as SortKey) : 'latest'
 
@@ -80,18 +81,18 @@ export default function SharedPortfoliosPage() {
     const q = query.trim().toLowerCase()
     const filtered = portfolios.filter((p) => {
       if (owner === 'me' ? !p.is_owner : owner && String(p.owner_id) !== owner) return false
+      if (accountType && p.account_type !== accountType) return false
       if (!q) return true
       return p.portfolio_name.toLowerCase().includes(q)
-        || p.holdings.some((h) => h.name.toLowerCase().includes(q) || h.ticker.includes(q))
     })
     if (sort === 'latest') return filtered  // 서버가 최신순으로 준다
     if (sort === 'oldest') return [...filtered].reverse()
     // 수익률이 없는 것은 뒤로 보낸다
     const value = (p: SharedPortfolioListItem) => returnsMap[p.share_token]?.[sort] ?? -Infinity
     return [...filtered].sort((a, b) => value(b) - value(a))
-  }, [portfolios, query, owner, sort, returnsMap])
+  }, [portfolios, query, owner, accountType, sort, returnsMap])
 
-  const filtering = query !== '' || owner !== ''
+  const filtering = query !== '' || owner !== '' || accountType !== ''
 
   return (
     <div className="space-y-6">
@@ -112,7 +113,7 @@ export default function SharedPortfoliosPage() {
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
             className="pl-8"
-            placeholder="제목 또는 ETF 이름 검색"
+            placeholder="제목 검색"
             value={query}
             onChange={(e) => setParam('q', e.target.value)}
           />
@@ -127,6 +128,17 @@ export default function SharedPortfoliosPage() {
           {myCount > 0 && <option value="me">내가 공유한 것 ({myCount})</option>}
           {owners.map((o) => (
             <option key={o.id} value={String(o.id)}>{o.name} ({o.count})</option>
+          ))}
+        </select>
+        <select
+          aria-label="계좌 유형"
+          className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+          value={accountType}
+          onChange={(e) => setParam('type', e.target.value)}
+        >
+          <option value="">전체 계좌</option>
+          {ACCOUNT_TYPES.map((t) => (
+            <option key={t.value} value={t.value}>{t.label}</option>
           ))}
         </select>
         <select
@@ -168,6 +180,7 @@ export default function SharedPortfoliosPage() {
               <CardHeader className="pb-2">
                 <div className="flex items-start gap-2">
                   <CardTitle className="text-lg flex-1 break-words">{p.portfolio_name}</CardTitle>
+                  <AccountTypeBadge type={p.account_type} className="shrink-0" />
                   {p.is_owner && <Badge variant="secondary" className="shrink-0">내 공유</Badge>}
                 </div>
                 <p className="text-xs text-muted-foreground">
@@ -186,19 +199,7 @@ export default function SharedPortfoliosPage() {
                 </p>
               </CardHeader>
               <CardContent className="flex-1 flex flex-col">
-                <div className="text-sm space-y-1 flex-1">
-                  {p.holdings.slice(0, PREVIEW_COUNT).map((h) => (
-                    <div key={h.ticker} className="flex justify-between gap-2">
-                      <span className="truncate">{h.name}</span>
-                      <span className="text-muted-foreground shrink-0">{h.weight.toFixed(1)}%</span>
-                    </div>
-                  ))}
-                  <p className="text-xs text-muted-foreground">
-                    {p.tickers_count > PREVIEW_COUNT
-                      ? `외 ${p.tickers_count - PREVIEW_COUNT}개 · 종목 ${p.tickers_count}개`
-                      : `종목 ${p.tickers_count}개`}
-                  </p>
-                </div>
+                <p className="text-sm text-muted-foreground flex-1">종목 {p.tickers_count}개</p>
                 <div className="mt-3 pt-3 border-t">
                   <div className="grid grid-cols-3 gap-2 text-center text-xs">
                     <div>

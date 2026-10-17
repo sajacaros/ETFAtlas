@@ -21,7 +21,9 @@ import { copyText } from '@/lib/clipboard'
 import { holdingsMarkdown } from '@/lib/holdingsMarkdown'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/use-toast'
-import type { Portfolio, PortfolioDetail, CalculationResult, CalculationRow, CalculationBase, DashboardSummary } from '@/types/api'
+import type { Portfolio, PortfolioDetail, CalculationResult, CalculationRow, CalculationBase, AccountType, DashboardSummary } from '@/types/api'
+import { AccountTypeBadge, AccountTypePicker } from '@/components/AccountType'
+import { ACCOUNT_TYPES, DEFAULT_ACCOUNT_TYPE } from '@/lib/accountType'
 import PortfolioTable from '@/components/PortfolioTable'
 import AddTickerDialog from '@/components/AddTickerDialog'
 import { useAmountVisibility, formatMaskedNumber } from '@/hooks/useAmountVisibility'
@@ -88,8 +90,8 @@ function SortablePortfolioCard({
       className="cursor-pointer hover:shadow-md transition-shadow"
       onClick={() => onSelect(p.id)}
     >
-      <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <div className="flex items-center gap-1">
+      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+        <div className="flex items-center gap-1 min-w-0">
           <button
             className="cursor-grab active:cursor-grabbing touch-none p-1 -ml-1 text-muted-foreground hover:text-foreground"
             {...attributes}
@@ -98,9 +100,12 @@ function SortablePortfolioCard({
           >
             <GripVertical className="w-4 h-4" />
           </button>
-          <CardTitle className="text-lg">{p.name}</CardTitle>
+          <div className="min-w-0 space-y-1">
+            <CardTitle className="text-lg break-keep [overflow-wrap:anywhere]">{p.name}</CardTitle>
+            <AccountTypeBadge type={p.account_type} />
+          </div>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 shrink-0">
           {p.current_value_updated_at && (
             <span className="text-xs text-muted-foreground">
               {(() => {
@@ -260,6 +265,7 @@ export default function PortfolioPage() {
   const [createOpen, setCreateOpen] = useState(false)
   const [newName, setNewName] = useState('')
   const [newBase, setNewBase] = useState<CalculationBase>('CURRENT_TOTAL')
+  const [newAccountType, setNewAccountType] = useState<AccountType>(DEFAULT_ACCOUNT_TYPE)
   const [newAmount, setNewAmount] = useState('')
 
   // Delete confirmation
@@ -280,6 +286,7 @@ export default function PortfolioPage() {
 
   // Batch editing state
   const [draftCalcBase, setDraftCalcBase] = useState<CalculationBase>('CURRENT_TOTAL')
+  const [draftAccountType, setDraftAccountType] = useState<AccountType>(DEFAULT_ACCOUNT_TYPE)
   const [addedTickers, setAddedTickers] = useState<{
     ticker: string; name: string; targetWeight: number; quantity: number; avgPrice?: number
   }[]>([])
@@ -399,12 +406,14 @@ export default function PortfolioPage() {
     try {
       const p = await portfolioApi.create({
         name: newName,
+        account_type: newAccountType,
         calculation_base: newBase,
         target_total_amount: newAmount ? parseFloat(newAmount) : null,
       })
       setPortfolios([...portfolios, p])
       setNewName('')
       setNewBase('CURRENT_TOTAL')
+      setNewAccountType(DEFAULT_ACCOUNT_TYPE)
       setNewAmount('')
       setCreateOpen(false)
       toast({ title: '포트폴리오가 생성되었습니다' })
@@ -609,6 +618,7 @@ export default function PortfolioPage() {
   const enterEditMode = () => {
     if (!detail) return
     setDraftCalcBase(detail.calculation_base)
+    setDraftAccountType(detail.account_type)
     setAddedTickers([])
     setDeletedTickers([])
     pendingChangesRef.current = { weights: {}, quantities: {}, avgPrices: {} }
@@ -656,6 +666,7 @@ export default function PortfolioPage() {
 
       await portfolioApi.batchUpdate(selectedId, {
         name: editName,
+        account_type: draftAccountType,
         calculation_base: draftCalcBase,
         target_total_amount: editAmount ? parseFloat(editAmount) : null,
         targets,
@@ -781,6 +792,20 @@ export default function PortfolioPage() {
             />
           ) : (
             <h2 className="text-xl font-bold py-1 px-2">{detail.name}</h2>
+          )}
+          {isEditing ? (
+            <select
+              aria-label="계좌 유형"
+              className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+              value={draftAccountType}
+              onChange={(e) => setDraftAccountType(e.target.value as AccountType)}
+            >
+              {ACCOUNT_TYPES.map((t) => (
+                <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+            </select>
+          ) : (
+            <AccountTypeBadge type={detail.account_type} />
           )}
           <div className="flex items-center gap-2 ml-auto">
             {calcLoading && <span className="text-sm text-muted-foreground">계산 중...</span>}
@@ -1007,6 +1032,10 @@ export default function PortfolioPage() {
                   onChange={(e) => setNewName(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
                 />
+              </div>
+              <div className="space-y-2">
+                <Label>계좌 유형</Label>
+                <AccountTypePicker value={newAccountType} onChange={setNewAccountType} />
               </div>
               <div className="space-y-2">
                 <Label>계산 기준</Label>

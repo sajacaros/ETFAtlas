@@ -42,36 +42,20 @@ async def list_shared_portfolios(
         .order_by(SharedPortfolio.created_at.desc(), SharedPortfolio.id.desc())
         .all()
     )
-    names = PriceService(db).get_etf_names(
-        list({a["ticker"] for s, _ in rows for a in s.allocations})
-    )
-
-    items = []
-    for s, owner in rows:
-        # 현금은 종목 수에 넣지 않는다
-        etfs = sorted(
-            (a for a in s.allocations if a["ticker"] != "CASH"),
-            key=lambda a: float(a["weight"]),
-            reverse=True,
-        )
-        items.append(SharedPortfolioListItem(
+    return [
+        SharedPortfolioListItem(
             portfolio_name=s.name,
+            account_type=s.account_type,
             share_token=str(s.share_token),
-            tickers_count=len(etfs),
-            holdings=[
-                SharedAllocationItem(
-                    ticker=a["ticker"],
-                    name=names.get(a["ticker"], a["ticker"]),
-                    weight=float(a["weight"]),
-                )
-                for a in etfs
-            ],
+            # 현금은 종목 수에 넣지 않는다
+            tickers_count=sum(1 for a in s.allocations if a["ticker"] != "CASH"),
             owner_id=owner.id,
             owner_name=_owner_name(owner),
             shared_at=_iso_utc(s.created_at),
             is_owner=s.user_id == user_id,
-        ))
-    return items
+        )
+        for s, owner in rows
+    ]
 
 
 def _get_shared_portfolio(db: Session, share_token: str) -> SharedPortfolio:
@@ -106,6 +90,7 @@ async def get_shared_portfolio(
 
     return SharedPortfolioDetail(
         portfolio_name=shared.name,
+        account_type=shared.account_type,
         allocations=[
             SharedAllocationItem(
                 ticker=a["ticker"],

@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf'
 import 'jspdf-autotable'
+import { accountTypeLabel } from '@/lib/accountType'
 import type { SharedPortfolioDetail, SharedReturnsSummary } from '@/types/api'
 import {
   loadKoreanFont,
@@ -28,7 +29,7 @@ export async function generateSharedPdf(params: SharedPdfParams): Promise<void> 
   await loadKoreanFont(doc)
 
   const today = new Date().toISOString().slice(0, 10)
-  let y = addHeader(doc, detail.portfolio_name, today)
+  let y = addHeader(doc, `${detail.portfolio_name} (${accountTypeLabel(detail.account_type)})`, today)
 
   // 가상 수익률 요약
   if (summary) {

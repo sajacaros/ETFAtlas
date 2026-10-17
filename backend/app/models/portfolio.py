@@ -14,6 +14,8 @@ class Portfolio(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     name = Column(String(255), nullable=False, default="My Portfolio")
     calculation_base = Column(String(20), nullable=False, default="CURRENT_TOTAL")
+    # 계좌 유형: IRP(개인형 퇴직연금) / PENSION_SAVINGS(연금저축). 유형마다 편입 조건이 다르다
+    account_type = Column(String(20), nullable=False, default="PENSION_SAVINGS")
     target_total_amount = Column(Numeric(15, 2), nullable=True)
     display_order = Column(Integer, nullable=False, default=0)
     snapshot_enabled = Column(Boolean, nullable=False, default=False)
@@ -82,6 +84,7 @@ class SharedPortfolio(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete="SET NULL"), nullable=True)
     name = Column(String(255), nullable=False)
+    account_type = Column(String(20), nullable=False)
     # [{"ticker": "069500", "weight": 40.0}, ...] — weight는 목표 비중(%)
     allocations = Column(JSONB, nullable=False)
     created_at = Column(DateTime, default=utcnow)

@@ -1,6 +1,9 @@
 from pydantic import BaseModel, ConfigDict
-from typing import Optional
+from typing import Literal, Optional
 from decimal import Decimal
+
+
+AccountType = Literal["IRP", "PENSION_SAVINGS"]
 
 
 class TargetAllocationCreate(BaseModel):
@@ -11,6 +14,7 @@ class TargetAllocationCreate(BaseModel):
 # --- Portfolio ---
 class PortfolioCreate(BaseModel):
     name: str = "My Portfolio"
+    account_type: AccountType = "PENSION_SAVINGS"
     calculation_base: str = "CURRENT_TOTAL"
     target_total_amount: Optional[Decimal] = None
     targets: list[TargetAllocationCreate] = []  # 구성종목 분석에서 저장할 때 목표 비중을 함께 넣는다
@@ -18,6 +22,7 @@ class PortfolioCreate(BaseModel):
 
 class PortfolioUpdate(BaseModel):
     name: Optional[str] = None
+    account_type: Optional[AccountType] = None
     calculation_base: Optional[str] = None
     target_total_amount: Optional[Decimal] = None
     snapshot_enabled: Optional[bool] = None
@@ -35,6 +40,7 @@ class PortfolioReorderRequest(BaseModel):
 class PortfolioResponse(BaseModel):
     id: int
     name: str
+    account_type: AccountType
     calculation_base: str
     target_total_amount: Optional[Decimal] = None
     current_value: Optional[Decimal] = None
@@ -118,6 +124,7 @@ class CalculationResponse(BaseModel):
 class PortfolioDetailResponse(BaseModel):
     id: int
     name: str
+    account_type: AccountType
     calculation_base: str
     target_total_amount: Optional[Decimal] = None
     snapshot_enabled: bool = False
@@ -186,6 +193,7 @@ class BatchHoldingItem(BaseModel):
 
 class PortfolioBatchUpdate(BaseModel):
     name: Optional[str] = None
+    account_type: Optional[AccountType] = None
     calculation_base: Optional[str] = None
     target_total_amount: Optional[Decimal] = None
     targets: list[BatchTargetItem]
@@ -209,9 +217,9 @@ class SharedAllocationItem(BaseModel):
 
 class SharedPortfolioListItem(BaseModel):
     portfolio_name: str
+    account_type: AccountType
     share_token: str
     tickers_count: int
-    holdings: list[SharedAllocationItem] = []  # 현금 제외, 비중 큰 순
     owner_id: int
     owner_name: str
     shared_at: Optional[str] = None
@@ -220,6 +228,7 @@ class SharedPortfolioListItem(BaseModel):
 
 class SharedPortfolioDetail(BaseModel):
     portfolio_name: str
+    account_type: AccountType
     allocations: list[SharedAllocationItem]
     owner_name: str
     shared_at: Optional[str] = None

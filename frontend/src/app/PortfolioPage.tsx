@@ -217,17 +217,20 @@ function SortablePortfolioCard({
               {p.snapshot_enabled ? '스냅샷 활성' : '스냅샷 비활성'}
             </span>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={(e) => {
-              e.stopPropagation()
-              onDashboard(p.id)
-            }}
-          >
-            <BarChart3 className="w-4 h-4 mr-1" />
-            대시보드
-          </Button>
+          {/* 스냅샷을 끄면 기록이 지워져 대시보드에 보여줄 추이가 없다 */}
+          {p.snapshot_enabled && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation()
+                onDashboard(p.id)
+              }}
+            >
+              <BarChart3 className="w-4 h-4 mr-1" />
+              대시보드
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -1216,7 +1219,7 @@ export default function PortfolioPage() {
                 if (id !== null) applySnapshotToggle(id, false)
               }}
             >
-              끄고 삭제
+              스냅샷 끄기
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -350,6 +350,9 @@ async def update_portfolio(
     snapshot_just_enabled = (
         request.snapshot_enabled is True and not portfolio.snapshot_enabled
     )
+    snapshot_just_disabled = (
+        request.snapshot_enabled is False and portfolio.snapshot_enabled
+    )
 
     if request.name is not None:
         portfolio.name = request.name
@@ -361,6 +364,11 @@ async def update_portfolio(
         portfolio.target_total_amount = request.target_total_amount
     if request.snapshot_enabled is not None:
         portfolio.snapshot_enabled = request.snapshot_enabled
+    if snapshot_just_disabled:
+        # 끄면 쌓인 기록을 모두 지운다. 다시 켜면 그날부터 새로 쌓는다 (화면에서 경고 후 끈다)
+        db.query(PortfolioSnapshot).filter(
+            PortfolioSnapshot.portfolio_id == portfolio.id,
+        ).delete(synchronize_session=False)
 
     db.commit()
     db.refresh(portfolio)

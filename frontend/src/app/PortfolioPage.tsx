@@ -260,6 +260,7 @@ export default function PortfolioPage() {
   // Delete confirmation
   const [deleteTargetId, setDeleteTargetId] = useState<number | null>(null)
   const [shareOpen, setShareOpen] = useState(false)
+  const [snapshotOffTargetId, setSnapshotOffTargetId] = useState<number | null>(null)
   const [sharing, setSharing] = useState(false)
 
   // Total summary
@@ -460,11 +461,20 @@ export default function PortfolioPage() {
   }
 
   const handleToggleSnapshot = async (id: number, enabled: boolean) => {
+    // 끄면 쌓인 기록이 모두 지워지므로 먼저 확인받는다
+    if (!enabled) {
+      setSnapshotOffTargetId(id)
+      return
+    }
+    await applySnapshotToggle(id, true)
+  }
+
+  const applySnapshotToggle = async (id: number, enabled: boolean) => {
     try {
       await portfolioApi.update(id, { snapshot_enabled: enabled })
       const data = await portfolioApi.getAll()
       setPortfolios(data)
-      toast({ title: enabled ? '스냅샷이 활성화되었습니다' : '스냅샷이 비활성화되었습니다' })
+      toast({ title: enabled ? '스냅샷이 활성화되었습니다' : '스냅샷을 끄고 기록을 삭제했습니다' })
     } catch {
       toast({ title: '스냅샷 설정 변경 실패', variant: 'destructive' })
     }
@@ -1182,6 +1192,31 @@ export default function PortfolioPage() {
             </Button>
             <Button variant="destructive" onClick={confirmDelete}>
               삭제
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={snapshotOffTargetId !== null} onOpenChange={(open) => { if (!open) setSnapshotOffTargetId(null) }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>스냅샷 끄기</DialogTitle>
+            <DialogDescription>
+              '{portfolios.find((p) => p.id === snapshotOffTargetId)?.name}'의 스냅샷을 끄면 지금까지 쌓인 평가금액 기록이 모두 삭제되고, 대시보드와 통합 대시보드에서도 사라집니다. 다시 켜면 그날부터 새로 쌓입니다. 이 작업은 되돌릴 수 없습니다.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setSnapshotOffTargetId(null)}>
+              취소
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                const id = snapshotOffTargetId
+                setSnapshotOffTargetId(null)
+                if (id !== null) applySnapshotToggle(id, false)
+              }}
+            >
+              끄고 삭제
             </Button>
           </DialogFooter>
         </DialogContent>

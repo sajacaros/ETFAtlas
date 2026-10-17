@@ -105,7 +105,7 @@ async def get_portfolios(
         result.append(PortfolioResponse(
             id=p.id,
             name=p.name,
-            account_type=p.account_type,
+            account_types=p.account_types,
             calculation_base=p.calculation_base,
             target_total_amount=p.target_total_amount,
             snapshot_enabled=p.snapshot_enabled,
@@ -158,7 +158,7 @@ async def create_portfolio(
     portfolio = Portfolio(
         user_id=user_id,
         name=request.name,
-        account_type=request.account_type,
+        account_types=request.account_types,
         calculation_base=request.calculation_base,
         target_total_amount=request.target_total_amount,
         display_order=max_order + 1,
@@ -185,7 +185,7 @@ async def duplicate_portfolio(
     copy = Portfolio(
         user_id=user_id,
         name=source.name[:255 - len(suffix)] + suffix,
-        account_type=source.account_type,
+        account_types=list(source.account_types),
         calculation_base=source.calculation_base,
         target_total_amount=source.target_total_amount,
         display_order=max_order + 1,
@@ -204,13 +204,13 @@ async def duplicate_portfolio(
     return copy
 
 
-def _is_same_snapshot(name: str, account_type: str, allocations: list[dict], shared: SharedPortfolio) -> bool:
+def _is_same_snapshot(name: str, account_types: list[str], allocations: list[dict], shared: SharedPortfolio) -> bool:
     """이름·계좌 유형·종목별 비중이 모두 같으면 같은 공유본이다. 종목 순서는 보지 않는다."""
     def weights(items: list[dict]) -> dict[str, float]:
         return {a["ticker"]: float(a["weight"]) for a in items}
     return (
         shared.name == name
-        and shared.account_type == account_type
+        and set(shared.account_types) == set(account_types)
         and weights(shared.allocations) == weights(allocations)
     )
 
@@ -238,7 +238,7 @@ async def share_portfolio(
         SharedPortfolio.portfolio_id == portfolio.id,
         SharedPortfolio.user_id == user_id,
     ).order_by(SharedPortfolio.created_at.desc()).all()
-    shared = next((s for s in existing if _is_same_snapshot(portfolio.name, portfolio.account_type, allocations, s)), None)
+    shared = next((s for s in existing if _is_same_snapshot(portfolio.name, portfolio.account_types, allocations, s)), None)
     created = shared is None
     if created:
         shared = SharedPortfolio(
@@ -246,7 +246,7 @@ async def share_portfolio(
             user_id=user_id,
             portfolio_id=portfolio.id,
             name=portfolio.name,
-            account_type=portfolio.account_type,
+            account_types=list(portfolio.account_types),
             allocations=allocations,
         )
         db.add(shared)
@@ -267,7 +267,7 @@ async def get_portfolio(
     return PortfolioDetailResponse(
         id=portfolio.id,
         name=portfolio.name,
-        account_type=portfolio.account_type,
+        account_types=portfolio.account_types,
         calculation_base=portfolio.calculation_base,
         target_total_amount=portfolio.target_total_amount,
         snapshot_enabled=portfolio.snapshot_enabled,
@@ -353,8 +353,8 @@ async def update_portfolio(
 
     if request.name is not None:
         portfolio.name = request.name
-    if request.account_type is not None:
-        portfolio.account_type = request.account_type
+    if request.account_types is not None:
+        portfolio.account_types = request.account_types
     if request.calculation_base is not None:
         portfolio.calculation_base = request.calculation_base
     if request.target_total_amount is not None:
@@ -383,8 +383,8 @@ async def batch_update_portfolio(
     # Update settings
     if request.name is not None:
         portfolio.name = request.name
-    if request.account_type is not None:
-        portfolio.account_type = request.account_type
+    if request.account_types is not None:
+        portfolio.account_types = request.account_types
     if request.calculation_base is not None:
         portfolio.calculation_base = request.calculation_base
     if request.target_total_amount is not None:
@@ -440,7 +440,7 @@ async def batch_update_portfolio(
     return PortfolioDetailResponse(
         id=portfolio.id,
         name=portfolio.name,
-        account_type=portfolio.account_type,
+        account_types=portfolio.account_types,
         calculation_base=portfolio.calculation_base,
         target_total_amount=portfolio.target_total_amount,
         snapshot_enabled=portfolio.snapshot_enabled,

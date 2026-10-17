@@ -1,5 +1,5 @@
-from sqlalchemy import Column, Integer, String, DateTime, Date, ForeignKey, Numeric, Boolean, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
+from sqlalchemy import Column, Integer, String, DateTime, Date, ForeignKey, Numeric, Boolean, UniqueConstraint, CheckConstraint
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB, ARRAY
 from sqlalchemy.orm import relationship
 import uuid
 from ..database import Base
@@ -9,13 +9,14 @@ from ..utils.time import utcnow
 
 class Portfolio(Base):
     __tablename__ = "portfolios"
+    __table_args__ = (CheckConstraint("cardinality(account_types) >= 1", name="ck_portfolios_account_types"),)
 
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     name = Column(String(255), nullable=False, default="My Portfolio")
     calculation_base = Column(String(20), nullable=False, default="CURRENT_TOTAL")
-    # 계좌 유형: IRP(개인형 퇴직연금) / PENSION_SAVINGS(연금저축). 유형마다 편입 조건이 다르다
-    account_type = Column(String(20), nullable=False, default="PENSION_SAVINGS")
+    # 계좌 유형 태그: IRP(개인형 퇴직연금) / PENSION_SAVINGS(연금저축), 1개 이상. 유형마다 편입 조건이 다르다
+    account_types = Column(ARRAY(String(20)), nullable=False, default=lambda: ["PENSION_SAVINGS"])
     target_total_amount = Column(Numeric(15, 2), nullable=True)
     display_order = Column(Integer, nullable=False, default=0)
     snapshot_enabled = Column(Boolean, nullable=False, default=False)
@@ -78,13 +79,14 @@ class PortfolioSnapshot(Base):
 class SharedPortfolio(Base):
     """공유 시점의 포트폴리오 구성을 그대로 담은 스냅샷. 원본을 고치거나 지워도 바뀌지 않는다."""
     __tablename__ = "shared_portfolios"
+    __table_args__ = (CheckConstraint("cardinality(account_types) >= 1", name="ck_shared_portfolios_account_types"),)
 
     id = Column(Integer, primary_key=True)
     share_token = Column(PG_UUID(as_uuid=True), unique=True, nullable=False, default=uuid.uuid4)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete="SET NULL"), nullable=True)
     name = Column(String(255), nullable=False)
-    account_type = Column(String(20), nullable=False)
+    account_types = Column(ARRAY(String(20)), nullable=False)
     # [{"ticker": "069500", "weight": 40.0}, ...] — weight는 목표 비중(%)
     allocations = Column(JSONB, nullable=False)
     created_at = Column(DateTime, default=utcnow)

@@ -3,8 +3,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { sharedApi } from '@/lib/api'
 import { formatDateTime } from '@/lib/utils'
 import { ACCOUNT_TYPES } from '@/lib/accountType'
-import { AccountTypeBadge } from '@/components/AccountType'
-import type { SharedPortfolioListItem, SharedReturnsSummary } from '@/types/api'
+import { AccountTypeBadges } from '@/components/AccountType'
+import type { AccountType, SharedPortfolioListItem, SharedReturnsSummary } from '@/types/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -81,7 +81,7 @@ export default function SharedPortfoliosPage() {
     const q = query.trim().toLowerCase()
     const filtered = portfolios.filter((p) => {
       if (owner === 'me' ? !p.is_owner : owner && String(p.owner_id) !== owner) return false
-      if (accountType && p.account_type !== accountType) return false
+      if (accountType && !p.account_types.includes(accountType as AccountType)) return false
       if (!q) return true
       return p.portfolio_name.toLowerCase().includes(q)
     })
@@ -180,9 +180,9 @@ export default function SharedPortfoliosPage() {
               <CardHeader className="pb-2">
                 <div className="flex items-start gap-2">
                   <CardTitle className="text-lg flex-1 break-words">{p.portfolio_name}</CardTitle>
-                  <AccountTypeBadge type={p.account_type} className="shrink-0" />
                   {p.is_owner && <Badge variant="secondary" className="shrink-0">내 공유</Badge>}
                 </div>
+                <AccountTypeBadges types={p.account_types} />
                 <p className="text-xs text-muted-foreground">
                   <button
                     type="button"

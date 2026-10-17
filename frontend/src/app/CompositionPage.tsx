@@ -34,7 +34,7 @@ import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import type { AccountType, CompositionResponse, Portfolio } from '@/types/api'
 import { AccountTypePicker } from '@/components/AccountType'
-import { DEFAULT_ACCOUNT_TYPE } from '@/lib/accountType'
+import { DEFAULT_ACCOUNT_TYPES } from '@/lib/accountType'
 
 interface Pick {
   code: string
@@ -84,7 +84,7 @@ export default function CompositionPage() {
 
   // 저장
   const [saveOpen, setSaveOpen] = useState(false)
-  const [saveAccountType, setSaveAccountType] = useState<AccountType>(DEFAULT_ACCOUNT_TYPE)
+  const [saveAccountTypes, setSaveAccountTypes] = useState<AccountType[]>(DEFAULT_ACCOUNT_TYPES)
   const [saveName, setSaveName] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -222,7 +222,7 @@ export default function CompositionPage() {
     try {
       const created = await portfolioApi.create({
         name: saveName.trim(),
-        account_type: saveAccountType,
+        account_types: saveAccountTypes,
         calculation_base: 'CURRENT_TOTAL',
         targets: activePicks.map((p) => ({ ticker: p.code, target_weight: parseWeight(p.weight) })),
       })
@@ -482,7 +482,7 @@ export default function CompositionPage() {
             </div>
             <div className="space-y-2">
               <Label>계좌 유형</Label>
-              <AccountTypePicker value={saveAccountType} onChange={setSaveAccountType} />
+              <AccountTypePicker value={saveAccountTypes} onChange={setSaveAccountTypes} />
             </div>
             <div className="space-y-2">
               <p className="text-sm font-medium">목표 비중 (입력값 그대로)</p>

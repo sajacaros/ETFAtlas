@@ -208,7 +208,7 @@ export type AdjustmentStatus = 'BUY' | 'SELL' | 'HOLD'
 export interface Portfolio {
   id: number
   name: string
-  account_type: AccountType
+  account_types: AccountType[]
   calculation_base: CalculationBase
   target_total_amount: number | null
   display_order: number
@@ -240,7 +240,7 @@ export interface HoldingItem {
 export interface PortfolioDetail {
   id: number
   name: string
-  account_type: AccountType
+  account_types: AccountType[]
   calculation_base: CalculationBase
   target_total_amount: number | null
   snapshot_enabled: boolean
@@ -513,7 +513,7 @@ export interface SharedAllocationItem {
 
 export interface SharedPortfolioListItem {
   portfolio_name: string
-  account_type: AccountType
+  account_types: AccountType[]
   share_token: string
   tickers_count: number
   owner_id: number
@@ -524,7 +524,7 @@ export interface SharedPortfolioListItem {
 
 export interface SharedPortfolioDetail {
   portfolio_name: string
-  account_type: AccountType
+  account_types: AccountType[]
   allocations: SharedAllocationItem[]
   owner_name: string
   shared_at: string | null

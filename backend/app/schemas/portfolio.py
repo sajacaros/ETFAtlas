@@ -1,9 +1,19 @@
-from pydantic import BaseModel, ConfigDict
-from typing import Literal, Optional
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from typing import Annotated, Literal, Optional
 from decimal import Decimal
 
 
 AccountType = Literal["IRP", "PENSION_SAVINGS"]
+ACCOUNT_TYPE_ORDER: tuple[str, ...] = ("IRP", "PENSION_SAVINGS")
+
+
+def normalize_account_types(types: list[str]) -> list[str]:
+    """중복을 없애고 정해진 순서로 맞춘다. 같은 태그 묶음이면 늘 같은 값이 된다."""
+    return [t for t in ACCOUNT_TYPE_ORDER if t in types]
+
+
+# 계좌 유형 태그는 최소 1개
+AccountTypes = Annotated[list[AccountType], Field(min_length=1), AfterValidator(normalize_account_types)]
 
 
 class TargetAllocationCreate(BaseModel):
@@ -14,7 +24,7 @@ class TargetAllocationCreate(BaseModel):
 # --- Portfolio ---
 class PortfolioCreate(BaseModel):
     name: str = "My Portfolio"
-    account_type: AccountType = "PENSION_SAVINGS"
+    account_types: AccountTypes = ["PENSION_SAVINGS"]
     calculation_base: str = "CURRENT_TOTAL"
     target_total_amount: Optional[Decimal] = None
     targets: list[TargetAllocationCreate] = []  # 구성종목 분석에서 저장할 때 목표 비중을 함께 넣는다
@@ -22,7 +32,7 @@ class PortfolioCreate(BaseModel):
 
 class PortfolioUpdate(BaseModel):
     name: Optional[str] = None
-    account_type: Optional[AccountType] = None
+    account_types: Optional[AccountTypes] = None
     calculation_base: Optional[str] = None
     target_total_amount: Optional[Decimal] = None
     snapshot_enabled: Optional[bool] = None
@@ -40,7 +50,7 @@ class PortfolioReorderRequest(BaseModel):
 class PortfolioResponse(BaseModel):
     id: int
     name: str
-    account_type: AccountType
+    account_types: list[AccountType]
     calculation_base: str
     target_total_amount: Optional[Decimal] = None
     current_value: Optional[Decimal] = None
@@ -124,7 +134,7 @@ class CalculationResponse(BaseModel):
 class PortfolioDetailResponse(BaseModel):
     id: int
     name: str
-    account_type: AccountType
+    account_types: list[AccountType]
     calculation_base: str
     target_total_amount: Optional[Decimal] = None
     snapshot_enabled: bool = False
@@ -193,7 +203,7 @@ class BatchHoldingItem(BaseModel):
 
 class PortfolioBatchUpdate(BaseModel):
     name: Optional[str] = None
-    account_type: Optional[AccountType] = None
+    account_types: Optional[AccountTypes] = None
     calculation_base: Optional[str] = None
     target_total_amount: Optional[Decimal] = None
     targets: list[BatchTargetItem]
@@ -217,7 +227,7 @@ class SharedAllocationItem(BaseModel):
 
 class SharedPortfolioListItem(BaseModel):
     portfolio_name: str
-    account_type: AccountType
+    account_types: list[AccountType]
     share_token: str
     tickers_count: int
     owner_id: int
@@ -228,7 +238,7 @@ class SharedPortfolioListItem(BaseModel):
 
 class SharedPortfolioDetail(BaseModel):
     portfolio_name: str
-    account_type: AccountType
+    account_types: list[AccountType]
     allocations: list[SharedAllocationItem]
     owner_name: str
     shared_at: Optional[str] = None

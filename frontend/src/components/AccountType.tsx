@@ -1,28 +1,45 @@
 import type { AccountType } from '@/types/api'
-import { ACCOUNT_TYPES, accountTypeLabel } from '@/lib/accountType'
+import { ACCOUNT_TYPES, accountTypeLabel, toggleAccountType } from '@/lib/accountType'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 
-export function AccountTypeBadge({ type, className }: { type: AccountType; className?: string }) {
-  return <Badge variant="outline" className={className}>{accountTypeLabel(type)}</Badge>
+export function AccountTypeBadges({ types, className }: { types: AccountType[]; className?: string }) {
+  return (
+    <div className={cn('flex flex-wrap gap-1', className)}>
+      {types.map((t) => (
+        <Badge key={t} variant="outline">{accountTypeLabel(t)}</Badge>
+      ))}
+    </div>
+  )
 }
 
-/** 계좌 유형 선택 버튼 묶음 (계산 기준 선택과 같은 모양) */
-export function AccountTypePicker({ value, onChange }: { value: AccountType; onChange: (type: AccountType) => void }) {
+/** 계좌 유형 태그 선택 (여러 개, 최소 1개). compact면 편집 헤더에 맞는 작은 버튼 */
+export function AccountTypePicker({ value, onChange, compact = false }: {
+  value: AccountType[]
+  onChange: (types: AccountType[]) => void
+  compact?: boolean
+}) {
   return (
-    <div className="flex gap-2">
-      {ACCOUNT_TYPES.map((t) => (
-        <Button
-          key={t.value}
-          type="button"
-          size="sm"
-          variant={value === t.value ? 'default' : 'outline'}
-          onClick={() => onChange(t.value)}
-          className="flex-1"
-        >
-          {t.label}
-        </Button>
-      ))}
+    <div className="flex gap-2" role="group" aria-label="계좌 유형">
+      {ACCOUNT_TYPES.map((t) => {
+        const selected = value.includes(t.value)
+        const locked = selected && value.length === 1
+        return (
+          <Button
+            key={t.value}
+            type="button"
+            size="sm"
+            variant={selected ? 'default' : 'outline'}
+            aria-pressed={selected}
+            title={locked ? '계좌 유형은 하나 이상 선택해야 합니다' : undefined}
+            onClick={() => onChange(toggleAccountType(value, t.value))}
+            className={cn(!compact && 'flex-1', locked && 'cursor-not-allowed')}
+          >
+            {t.label}
+          </Button>
+        )
+      })}
     </div>
   )
 }

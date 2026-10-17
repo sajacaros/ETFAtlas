@@ -213,11 +213,11 @@ export const portfolioApi = {
     const { data } = await api.get<PortfolioDetail>(`/portfolios/${id}`)
     return data
   },
-  create: async (params: { name: string; account_type?: AccountType; calculation_base: string; target_total_amount?: number | null; targets?: { ticker: string; target_weight: number }[] }) => {
+  create: async (params: { name: string; account_types?: AccountType[]; calculation_base: string; target_total_amount?: number | null; targets?: { ticker: string; target_weight: number }[] }) => {
     const { data } = await api.post<Portfolio>('/portfolios/', params)
     return data
   },
-  update: async (id: number, params: { name?: string; account_type?: AccountType; calculation_base?: string; target_total_amount?: number | null; snapshot_enabled?: boolean }) => {
+  update: async (id: number, params: { name?: string; account_types?: AccountType[]; calculation_base?: string; target_total_amount?: number | null; snapshot_enabled?: boolean }) => {
     const { data } = await api.put<Portfolio>(`/portfolios/${id}`, params)
     return data
   },
@@ -230,7 +230,7 @@ export const portfolioApi = {
   },
   batchUpdate: async (id: number, params: {
     name?: string;
-    account_type?: AccountType;
+    account_types?: AccountType[];
     calculation_base?: string;
     target_total_amount?: number | null;
     targets: { ticker: string; target_weight: number }[];

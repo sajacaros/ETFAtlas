@@ -21,7 +21,7 @@ import { generateSharedPdf } from '@/lib/sharedPdf'
 import { copyText } from '@/lib/clipboard'
 import { holdingsMarkdown } from '@/lib/holdingsMarkdown'
 import { formatDateTime } from '@/lib/utils'
-import { AccountTypeBadge } from '@/components/AccountType'
+import { AccountTypeBadges } from '@/components/AccountType'
 import { useToast } from '@/hooks/use-toast'
 
 const PERIODS = [
@@ -123,7 +123,7 @@ export default function SharedPortfolioDetailPage() {
         <div className="flex-1">
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-bold">{detail.portfolio_name}</h1>
-            <AccountTypeBadge type={detail.account_type} className="shrink-0" />
+            <AccountTypeBadges types={detail.account_types} className="shrink-0" />
           </div>
           <p className="text-sm text-muted-foreground">
             {detail.owner_name}님이 {detail.shared_at ? `${formatDateTime(detail.shared_at)}에 ` : ''}공유한 구성

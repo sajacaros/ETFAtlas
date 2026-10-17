@@ -29,7 +29,7 @@ export async function generateSharedPdf(params: SharedPdfParams): Promise<void> 
   await loadKoreanFont(doc)
 
   const today = new Date().toISOString().slice(0, 10)
-  let y = addHeader(doc, `${detail.portfolio_name} (${accountTypeLabel(detail.account_type)})`, today)
+  let y = addHeader(doc, `${detail.portfolio_name} (${detail.account_types.map(accountTypeLabel).join('·')})`, today)
 
   // 가상 수익률 요약
   if (summary) {

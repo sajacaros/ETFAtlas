@@ -45,7 +45,7 @@ async def list_shared_portfolios(
     return [
         SharedPortfolioListItem(
             portfolio_name=s.name,
-            account_type=s.account_type,
+            account_types=s.account_types,
             share_token=str(s.share_token),
             # 현금은 종목 수에 넣지 않는다
             tickers_count=sum(1 for a in s.allocations if a["ticker"] != "CASH"),
@@ -90,7 +90,7 @@ async def get_shared_portfolio(
 
     return SharedPortfolioDetail(
         portfolio_name=shared.name,
-        account_type=shared.account_type,
+        account_types=shared.account_types,
         allocations=[
             SharedAllocationItem(
                 ticker=a["ticker"],

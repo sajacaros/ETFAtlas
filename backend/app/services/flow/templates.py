@@ -1,0 +1,70 @@
+"""추천 조합: 팔레트에서 골라 캔버스에 바로 불러오는 흐름. 그래프 형식은 저장된 흐름과 같다."""
+from typing import Any, Dict, List, Tuple
+
+
+def _graph(nodes: List[Tuple[str, str, Dict[str, Any], int, int]], edges: List[Tuple[str, str]]) -> Dict[str, Any]:
+    return {
+        "nodes": [{"id": i, "type": t, "params": p, "position": {"x": x, "y": y}} for i, t, p, x, y in nodes],
+        "edges": [{"id": f"{s}-{t}", "source": s, "target": t} for s, t in edges],
+    }
+
+
+TEMPLATES: List[Dict[str, Any]] = [
+    {
+        "key": "basic",
+        "name": "기본 스크리닝",
+        "description": "전체 종목 → 정배열·고가 근처 → AI 근거 → 결과",
+        "graph": _graph(
+            [
+                ("src", "source", {"mode": "all"}, 0, 120),
+                ("chart", "chart_filter", {"ma_aligned": True, "near_high_pct": 10}, 280, 120),
+                ("ai", "ai_analysis", {"max_stocks": 10}, 560, 120),
+                ("out", "result", {"sort_by": "ret"}, 840, 120),
+            ],
+            [("src", "chart"), ("chart", "ai"), ("ai", "out")],
+        ),
+    },
+    {
+        "key": "double_check",
+        "name": "이중 확인 교집합",
+        "description": "추세 조건과 거래량 조건을 따로 걸러 둘 다 통과한 종목만",
+        "graph": _graph(
+            [
+                ("src", "source", {"mode": "all"}, 0, 160),
+                ("trend", "chart_filter", {"ma_aligned": True}, 280, 40),
+                ("volume", "chart_filter", {"volume_ratio_min": 1.5, "return_days": 5, "return_min": 0}, 280, 280),
+                ("both", "combine", {"op": "intersection"}, 560, 160),
+                ("out", "result", {"sort_by": "vol_ratio"}, 840, 160),
+            ],
+            [("src", "trend"), ("src", "volume"), ("trend", "both"), ("volume", "both"), ("both", "out")],
+        ),
+    },
+    {
+        "key": "vcp",
+        "name": "변동성 수축",
+        "description": "간이 VCP 종목을 찾아 AI로 근거 정리",
+        "graph": _graph(
+            [
+                ("src", "source", {"mode": "all"}, 0, 120),
+                ("chart", "chart_filter", {"vcp": True}, 280, 120),
+                ("ai", "ai_analysis", {"max_stocks": 10, "focus": "trend"}, 560, 120),
+                ("out", "result", {"sort_by": "from_high"}, 840, 120),
+            ],
+            [("src", "chart"), ("chart", "ai"), ("ai", "out")],
+        ),
+    },
+    {
+        "key": "portfolio_risk",
+        "name": "내 포트폴리오 과열 점검",
+        "description": "내 포트폴리오가 담은 종목 중 RSI 70 이상을 위험 관점으로",
+        "graph": _graph(
+            [
+                ("src", "source", {"mode": "portfolio"}, 0, 120),
+                ("chart", "chart_filter", {"rsi_min": 70}, 280, 120),
+                ("ai", "ai_analysis", {"max_stocks": 10, "focus": "risk"}, 560, 120),
+                ("out", "result", {"sort_by": "rsi"}, 840, 120),
+            ],
+            [("src", "chart"), ("chart", "ai"), ("ai", "out")],
+        ),
+    },
+]

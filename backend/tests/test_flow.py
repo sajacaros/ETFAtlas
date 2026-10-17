@@ -267,3 +267,14 @@ def test_universe_search_requires_every_word_ignoring_spaces(monkeypatch):
     assert captured["params"]["q0"] == "반도체" and captured["params"]["q1"] == "kodex"
     assert captured["query"].count("replace(toLower(e.name), ' ', '') CONTAINS") == 2
     assert "RETURN {code: e.code" in captured["query"]
+
+
+def test_return_period_is_fixed_and_old_saved_option_is_ignored():
+    from app.services.flow.nodes.chart_filter import RETURN_DAYS
+
+    p = ChartFilterParams.model_validate({"return_days": 5, "return_min": 0})  # 예전에 저장한 흐름
+    assert not hasattr(p, "return_days")
+    closes = list(range(100, 200))
+    assert metrics(_bars(closes), p)["ret"] == pytest.approx(round((closes[-1] / closes[-1 - RETURN_DAYS] - 1) * 100, 2))
+    keys = [s["key"] for s in node_spec(ChartFilterNode)["params"]]
+    assert "return_days" not in keys

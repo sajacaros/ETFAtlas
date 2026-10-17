@@ -7,6 +7,7 @@ from .. import indicators as ind
 from ..base import FlowContext, Node, StockSet, result
 
 MIN_BARS = 60  # 이보다 짧으면 지표를 믿기 어렵다 (60일 이평·VCP)
+RETURN_DAYS = 20  # 수익률 조건·정렬의 기준 기간 (약 한 달). 옵션으로 두면 뜻이 헷갈려 고정한다
 
 
 class ChartFilterParams(BaseModel):
@@ -15,9 +16,8 @@ class ChartFilterParams(BaseModel):
     above_ma: Optional[int] = Field(None, ge=5, le=200, title="종가가 N일 이평 위", description="예: 20")
     high_days: int = Field(120, ge=20, le=250, title="고가 기준 기간(일)")
     near_high_pct: Optional[float] = Field(None, ge=0, le=50, title="고가 대비 하락폭 이내(%)", description="예: 10 → 고가에서 10% 안")
-    return_days: int = Field(20, ge=1, le=250, title="수익률 기간(일)")
-    return_min: Optional[float] = Field(None, title="최소 수익률(%)")
-    return_max: Optional[float] = Field(None, title="최대 수익률(%)")
+    return_min: Optional[float] = Field(None, title="20일 수익률 최소(%)", description="최근 종가 ÷ 20거래일 전 종가. 예: 5")
+    return_max: Optional[float] = Field(None, title="20일 수익률 최대(%)")
     volume_ratio_min: Optional[float] = Field(None, ge=0, title="거래량 배수 이상", description="마지막 날 ÷ 직전 20일 평균. 예: 2")
     rsi_min: Optional[float] = Field(None, ge=0, le=100, title="RSI(14) 이상")
     rsi_max: Optional[float] = Field(None, ge=0, le=100, title="RSI(14) 이하")
@@ -29,7 +29,7 @@ def metrics(bars: List[ind.Bar], p: ChartFilterParams) -> Dict[str, Any]:
     volumes = [b["volume"] for b in bars]
     m: Dict[str, Any] = {
         "close": closes[-1],
-        "ret": ind.period_return(closes, p.return_days),
+        "ret": ind.period_return(closes, RETURN_DAYS),
         "from_high": ind.from_high(bars, p.high_days),
         "vol_ratio": ind.volume_ratio(volumes),
         "rsi": ind.rsi(closes),
@@ -77,9 +77,9 @@ def conditions(p: ChartFilterParams) -> List[str]:
     if p.near_high_pct is not None:
         out.append(f"{p.high_days}일 고가 대비 -{p.near_high_pct:g}% 이내")
     if p.return_min is not None:
-        out.append(f"{p.return_days}일 수익률 ≥ {p.return_min:g}%")
+        out.append(f"{RETURN_DAYS}일 수익률 ≥ {p.return_min:g}%")
     if p.return_max is not None:
-        out.append(f"{p.return_days}일 수익률 ≤ {p.return_max:g}%")
+        out.append(f"{RETURN_DAYS}일 수익률 ≤ {p.return_max:g}%")
     if p.volume_ratio_min is not None:
         out.append(f"거래량 ≥ 20일 평균 × {p.volume_ratio_min:g}")
     if p.rsi_min is not None:
@@ -119,7 +119,7 @@ class ChartFilterNode(Node):
         ordered = dict(sorted(computed.items(), key=lambda kv: -(kv[1]["ret"] if kv[1]["ret"] is not None else -1e9)))
         items = source.derive(ordered)
         items.add_field("close", "종가", "price")
-        items.add_field("ret", f"{params.return_days}일 수익률", "percent")
+        items.add_field("ret", f"{RETURN_DAYS}일 수익률", "percent")
         items.add_field("from_high", f"{params.high_days}일 고가 대비", "percent")
         items.add_field("vol_ratio", "거래량 배수")
         items.add_field("rsi", "RSI(14)")

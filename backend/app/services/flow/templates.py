@@ -27,12 +27,12 @@ TEMPLATES: List[Dict[str, Any]] = [
     {
         "key": "double_check",
         "name": "이중 확인 교집합",
-        "description": "추세 조건과 거래량 조건을 따로 걸러 둘 다 통과한 종목만",
+        "description": "추세(정배열)와 거래량(1.5배, 20일 수익률 ≥ 0) 조건을 따로 걸러 둘 다 통과한 종목만",
         "graph": _graph(
             [
                 ("src", "source", {"mode": "all"}, 0, 160),
                 ("trend", "chart_filter", {"ma_aligned": True}, 280, 40),
-                ("volume", "chart_filter", {"volume_ratio_min": 1.5, "return_days": 5, "return_min": 0}, 280, 280),
+                ("volume", "chart_filter", {"volume_ratio_min": 1.5, "return_min": 0}, 280, 280),
                 ("both", "combine", {"op": "intersection"}, 560, 160),
                 ("out", "result", {"sort_by": "vol_ratio"}, 840, 160),
             ],

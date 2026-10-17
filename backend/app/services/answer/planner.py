@@ -4,11 +4,13 @@ LLM에게는 재귀 트리 대신 '줄(row) 목록, 줄마다 슬롯 1~3개'라�
 프런트로 보내는 레이아웃은 column/row/slot 트리로 바꾼다.
 """
 import asyncio
+import copy
 import json
 import logging
 from dataclasses import dataclass, field
 from typing import Annotated, Any, Callable, Dict, List, Literal, Optional, Set, Union
 
+from annotated_types import MinLen
 from pydantic import BaseModel, Field, ValidationError, create_model, model_validator
 from pydantic_ai import Agent, ModelRetry, RunContext
 from sqlalchemy.orm import Session
@@ -94,6 +96,18 @@ class PlannedSlot:
     depends_on: List[str] = field(default_factory=list)
 
 
+def plan_args(args: type[BaseModel]) -> type[BaseModel]:
+    """계획 단계의 인자 모델: 목록의 최소 개수를 1로 낮춘다. 참조('@rank.1-3') 하나가 펼치면 여러 항목이 되므로
+    펼치기 전에 원래 최소 개수로 막으면 맞는 계획도 거절된다. 원래 제한은 참조를 펼친 뒤에 원래 Args로 검사한다."""
+    relaxed = {}
+    for key, info in args.model_fields.items():
+        if any(isinstance(m, MinLen) and m.min_length > 1 for m in info.metadata):
+            field = copy.copy(info)
+            field.metadata = [MinLen(1) if isinstance(m, MinLen) else m for m in info.metadata]
+            relaxed[key] = (info.annotation, field)
+    return create_model(f"{args.__name__}Plan", __base__=args, **relaxed) if relaxed else args
+
+
 def _step_model(skill: Skill) -> type[BaseModel]:
     return create_model(
         f"Slot_{skill.name}",
@@ -102,7 +116,7 @@ def _step_model(skill: Skill) -> type[BaseModel]:
         title=(str, Field(description="영역 제목 (짧게)")),
         # 기본값을 두면 모델이 빠뜨린 채 넘어가 요청과 다른 차트가 나온다 — 반드시 고르게 한다
         display=(Literal[skill.displays], Field(description="표시 방식")),
-        args=(skill.Args, ...),
+        args=(plan_args(skill.Args), ...),
     )
 
 
@@ -138,10 +152,11 @@ def build_plan_model(registry: Dict[str, Skill]) -> type[BaseModel]:
                     errors.append(f"{_label(step)}의 '@{ref}' 참조: {target.skill} 스킬은 참조할 결과를 내보내지 않습니다")
                 else:
                     ok.append(ref)
-            if refs:  # 펼친 모양은 참조 문법만으로 정해진다 — 대상 슬롯이 틀려도 함께 알려 준다
-                error = _expanded_error(step, steps)
-                if error:
-                    errors.append(error)
+            # 펼친 모양은 참조 문법만으로 정해진다 — 대상 슬롯이 틀려도 함께 알려 준다.
+            # 참조가 없어도 검사한다 (계획 인자 모델은 목록 최소 개수를 낮춘 것이다)
+            error = _expanded_error(step, steps, registry[step.skill].Args)
+            if error:
+                errors.append(error)
             graph[id(step)] = [id(named[r]) for r in ok]
         # name은 결과를 넘기려고 붙인다 — 받는 슬롯이 없으면 그 슬롯을 빠뜨린 것이다
         referenced = {r for step in steps for r in refs_in(step.args.model_dump())}
@@ -168,15 +183,18 @@ def _label(step: BaseModel) -> str:
     return f"{step.skill} 슬롯 '{step.title}'"
 
 
-def _expanded_error(step: BaseModel, steps: List[BaseModel]) -> Optional[str]:
-    """참조를 펼친 뒤에도 인자가 맞는지 (예: 최대 5개인 목록에 '@rank.1-10'을 넣으면 10개가 된다). 맞으면 None."""
+def _expanded_error(step: BaseModel, steps: List[BaseModel], args_model: type[BaseModel]) -> Optional[str]:
+    """참조를 펼친 뒤에도 인자가 원래 Args에 맞는지 (예: 최대 5개인 목록에 '@rank.1-10'을 넣으면 10개가 된다). 맞으면 None."""
+    dumped = step.args.model_dump()
     try:
-        type(step.args).model_validate(expanded(step.args.model_dump()))
+        args_model.model_validate(expanded(dumped))
     except RefError as e:
         return f"{_label(step)}: {e}"
     except ValidationError as e:
         err = e.errors()[0]
         field = ".".join(str(p) for p in err["loc"])
+        if not refs_in(dumped):
+            return f"{_label(step)}의 '{field}' 인자가 맞지 않습니다: {err['msg']}"
         hint = "'@이름.1-N'은 N개 항목이 됩니다. 범위를 줄이거나 같은 스킬 슬롯을 여럿으로 나눠 담으세요"
         if err["type"] == "too_long":  # 이 질문에 맞는 분할을 계산해 준다 (이름으로 적은 항목이 자리를 차지한다)
             # 이 슬롯만 보고 나누면 넘친 순위가 옆 슬롯으로 밀려 또 넘친다 — 같은 스킬 슬롯들의 순위와

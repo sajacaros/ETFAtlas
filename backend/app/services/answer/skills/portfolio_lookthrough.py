@@ -8,8 +8,8 @@ from ....domain.composition import ETFAllocation, aggregate_composition
 from ...graph_service import GraphService
 from ..resolver import AmbiguousETF, EntityResolver, UnmanagedETF, _normalize
 from ..schemas import BarView, DataField, Dataset, DonutView, Source, TableView, TreemapView
-from .base import DataSkill, SkillResult, data_result, not_found
-from .common import node
+from .base import DataSkill, SkillResult, data_result, empty, not_found
+from .common import cut_note, min_weight_field, node
 
 DONUT_MAX_SLICES = 8  # 넘으면 나머지를 '기타'로 묶는다
 OTHER = "_OTHER"  # 집계용 표식: ETF 안에서 상위 30개 밖 종목·현금
@@ -29,6 +29,7 @@ class PortfolioLookthroughArgs(BaseModel):
         min_length=1, max_length=50, description="포트폴리오 구성. 사용자가 준 표나 목록의 각 행 (ETF와 개별 종목이 섞여도 된다)",
     )
     top: int = Field(15, ge=5, le=50, description="보여줄 상위 종목 수")
+    min_weight: Optional[float] = min_weight_field("종목(합산 비중 기준)")
     normalize: bool = Field(True, description=(
         "입력 비중 합계를 100%로 환산할지. 기본값 true (예: 합계 40%면 각 비중을 2.5배). "
         "사용자가 입력한 비중 그대로(환산하지 말고) 보고 싶다고 할 때만 false"
@@ -128,6 +129,10 @@ class PortfolioLookthroughSkill(DataSkill):
         total = sum(a.weight for a in allocations)
         exposures = aggregate_composition(allocations, normalize=args.normalize)
         named = [x for x in exposures if x.stock_code != OTHER]
+        if args.min_weight is not None:
+            named = [x for x in named if round(x.weight, 2) >= args.min_weight]
+            if not named:
+                return empty(f"합산 비중이 {args.min_weight:g}% 이상인 종목이 없습니다")
         top = min(args.top, DONUT_MAX_SLICES - 1) if display == "donut" else args.top
         shown = named[:top]
         rows = [
@@ -174,9 +179,12 @@ class PortfolioLookthroughSkill(DataSkill):
                          else f"입력 비중 합계 {total:.2f}%를 환산하지 않고 그대로 계산했습니다")
         if etfs:
             notes.append("ETF 구성종목은 비중 상위 30개 기준입니다")
+        if args.min_weight is not None:
+            notes += cut_note(len(named), len(shown), "종목")
 
+        condition = f"합산 비중 {args.min_weight:g}% 이상 " if args.min_weight is not None else ""
         summary = (
-            f"포트폴리오 합산 상위 {len(shown)}개: "
+            f"포트폴리오 {condition}합산 상위 {len(shown)}개: "
             + ", ".join(f"{r['name']} {r['weight']:.2f}%" for r in rows)
             + (f" / {notes[0]}" if unknown else "")
         )

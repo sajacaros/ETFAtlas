@@ -1,3 +1,5 @@
+from typing import Optional
+
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -5,7 +7,7 @@ from ...graph_service import GraphService
 from ..resolver import EntityResolver
 from ..schemas import BarView, DataField, Dataset, DonutView, Source, TableView, TreemapView
 from .base import DataSkill, SkillResult, data_result, empty, not_found
-from .common import node
+from .common import cut_note, min_weight_field, node
 
 DONUT_MAX_SLICES = 8  # 넘으면 나머지를 '기타'로 묶는다
 
@@ -13,6 +15,7 @@ DONUT_MAX_SLICES = 8  # 넘으면 나머지를 '기타'로 묶는다
 class HoldingsArgs(BaseModel):
     etf: str = Field(description="ETF 이름 또는 6자리 코드")
     top: int = Field(10, ge=3, le=30, description="보여줄 상위 종목 수")
+    min_weight: Optional[float] = min_weight_field("종목")
 
 
 class HoldingsSkill(DataSkill):
@@ -38,6 +41,10 @@ class HoldingsSkill(DataSkill):
         holdings = [h for h in holdings if h.get("weight") is not None]
         if not holdings:
             return empty(f"{etf['name']}의 구성종목 데이터가 없습니다")
+        if args.min_weight is not None:
+            holdings = [h for h in holdings if h["weight"] >= args.min_weight]
+            if not holdings:
+                return empty(f"{etf['name']}에 비중 {args.min_weight:g}% 이상인 종목이 없습니다")
 
         top = args.top
         if display == "donut":
@@ -63,11 +70,13 @@ class HoldingsSkill(DataSkill):
             "donut": DonutView(name="name", value="weight"),
             "bar": BarView(x="name", y=["weight"], horizontal=True),
         }.get(display, TableView())
+        condition = f"비중 {args.min_weight:g}% 이상 " if args.min_weight is not None else ""
         summary = (
-            f"{etf['name']} 상위 {len(shown)}개 종목: "
+            f"{etf['name']} {condition}상위 {len(shown)}개 종목: "
             + ", ".join(f"{h['name']} {h['weight']:.2f}%" for h in shown)
             + f" (합계 {shown_sum:.2f}%)"
         )
         sources = [Source(label=f"{etf['name']} 구성종목", as_of=shown[0].get("date"))]
-        return data_result(dataset, view, summary, sources,
+        notes = cut_note(len(holdings), len(shown), "종목") if args.min_weight is not None else []
+        return data_result(dataset, view, summary, sources, notes,
                            exports=[{"code": h["code"], "name": h["name"]} for h in holdings])

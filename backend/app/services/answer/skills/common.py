@@ -14,6 +14,18 @@ class ETFListArgs(BaseModel):
     etfs: List[str] = Field(min_length=1, max_length=5, description=ETF_NAMES_DESCRIPTION)
 
 
+def min_weight_field(target: str):
+    return Field(None, gt=0, le=100, description=(
+        f"이 비중(%) 이상인 {target}만 남긴다 (예: '비중 10% 넘는'이면 10). 조건이 없으면 비운다. "
+        "남는 개수는 실행해 봐야 알므로, 이 결과를 받는 슬롯은 나눠 만들지 말고 하나만 만든다 (예: '@이름.1-5')"
+    ))
+
+
+def cut_note(passed: int, shown: int, target: str) -> List[str]:
+    """비중 조건을 통과한 대상이 표시 개수보다 많으면 잘렸다고 알린다 ('10% 넘는 ETF들'이 몇 개인지 숨기지 않게)."""
+    return [f"조건에 맞는 {target} {passed}개 중 상위 {shown}개만 표시했습니다"] if passed > shown else []
+
+
 def object_particle(word: str) -> str:
     """목적격 조사: 마지막 글자가 한글이면 받침으로 을/를을 고르고, 영문·숫자로 끝나면 '을(를)'."""
     last = word.strip()[-1:] if word.strip() else ""

@@ -615,6 +615,11 @@ def test_refs_resolve_ranks_and_expand_ranges_in_lists():
         refs.resolve({"etf": "@rank.1-2"}, exports)
     with pytest.raises(refs.RefError, match="3개뿐"):
         refs.resolve({"etf": "@rank.4"}, exports)
+    # 범위가 결과를 넘으면 있는 만큼만, 통째로 넘으면 다시 설계할 일이 아닌 오류
+    assert refs.resolve({"etfs": ["@rank.2-5"]}, exports) == {"etfs": ["069500", "102110"]}
+    with pytest.raises(refs.RefPastEnd, match="3개뿐"):
+        refs.resolve({"etfs": ["@rank.4-5"]}, exports)
+    assert not issubclass(refs.RefError, refs.RefPastEnd)
 
 
 def _plan_steps(*slots):
@@ -645,6 +650,10 @@ def test_plan_turns_references_into_dependencies():
      "'etfs' 인자가 맞지 않습니다"),
     ([RANK, {"skill": "holdings", "title": "구성", "display": "table", "args": {"etf": "@rank.1-3"}}], "하나만 들어가는 인자"),
     ([RANK, {"skill": "holdings", "title": "구성", "display": "table", "args": {"etf": "@rank.3-1"}}], "범위가 잘못됐습니다"),
+    # 목록 최소 개수는 참조를 펼친 뒤에 원래 Args로 본다 — 참조가 없는 슬롯도 마찬가지
+    ([{"skill": "etf_compare", "title": "비교", "display": "table", "args": {"etfs": ["KODEX 200"]}}], "'etfs' 인자가 맞지 않습니다"),
+    ([RANK, {"skill": "etf_compare", "title": "비교", "display": "table", "args": {"etfs": ["@rank.1"]}}],
+     "'etfs' 인자가 맞지 않습니다"),
 ])
 def test_plan_rejects_bad_references(slots, error):
     with pytest.raises(Exception, match=error):
@@ -668,6 +677,10 @@ def test_plan_reports_all_reference_errors_at_once():
 @pytest.mark.parametrize("etfs", [["@rank.1-5"], ["@rank.1-2", "KODEX 200", "@rank.3-4"], ["@rank.1"]])
 def test_plan_accepts_references_that_fit_after_expansion(etfs):
     _plan_steps(RANK, {"skill": "period_returns", "title": "수익률", "display": "bar", "args": {"etfs": etfs}})
+
+
+def test_plan_accepts_a_range_that_fills_a_list_needing_several_items():
+    _plan_steps(RANK, {"skill": "etf_compare", "title": "비교", "display": "table", "args": {"etfs": ["@rank.1-3"]}})
 
 
 class EtfArgs(BaseModel):
@@ -726,6 +739,31 @@ def test_stream_skips_a_referencing_slot_when_its_target_has_nothing(monkeypatch
                for e in events)
 
 
+class ListArgs(BaseModel):
+    etfs: list
+
+
+class ReceivingList(Receiving):
+    Args = ListArgs
+
+    async def run(self, args, display, ctx):
+        Receiving.seen.append(args.etfs)
+        yield text_result("받음").event()
+
+
+def test_range_past_a_filtered_result_is_left_empty_without_replanning(monkeypatch):
+    Receiving.seen = []
+    rows = [[_ref_slot("s1", "exp", NoArgs(), name="rank", title="순위")],
+            [_ref_slot("s2", "recv", ListArgs(etfs=["@rank.1-5"]), depends_on=["s1"]),
+             _ref_slot("s3", "recv", ListArgs(etfs=["@rank.6-10"]), depends_on=["s1"])]]
+    service = _service(monkeypatch, rows, {"exp": Exporting(), "recv": ReceivingList()})
+    service._planner = ReplanningPlanner(rows, rows)
+    _collect(service)
+    assert Receiving.seen == [["448100"]]
+    assert service._store.saved == {"s1": "complete", "s2": "complete", "s3": "empty"}
+    assert service._planner.replanned_with is None
+
+
 def test_stock_holders_exports_etfs_in_rank_order(monkeypatch):
     from app.services.answer.skills import stock_holders as mod
     monkeypatch.setattr(mod, "node", lambda graph, cypher, params: [
@@ -739,12 +777,18 @@ def test_stock_holders_exports_etfs_in_rank_order(monkeypatch):
 
 # --- 레이아웃 예시 ---
 
+LAYOUT_SEED_MIGRATIONS = ("0013_layout_examples.py", "0021_layout_examples_rank_overlap.py")
+
+
 def _layout_seeds():
-    path = Path(__file__).parent.parent / "migrations/versions/0013_layout_examples.py"
-    spec = importlib.util.spec_from_file_location("layout_examples_migration", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.SEEDS
+    seeds = []
+    for name in LAYOUT_SEED_MIGRATIONS:
+        path = Path(__file__).parent.parent / "migrations/versions" / name
+        spec = importlib.util.spec_from_file_location(f"layout_examples_{name[:4]}", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        seeds += module.SEEDS
+    return seeds
 
 
 @pytest.mark.parametrize("seed", _layout_seeds(), ids=lambda s: s["question"])
@@ -1041,3 +1085,141 @@ def test_stream_skips_refine_when_user_asks_for_the_original(monkeypatch):
     events = asyncio.run(run(False))
     assert not any(e["type"] == "refined_question" for e in events)
     assert {"type": "status", "data": {"stage": "refining"}} not in events
+
+
+# --- 수치로 다시 고르기·비중 조건·구성 겹침 ---
+
+def test_stock_holders_keeps_only_etfs_above_the_weight(monkeypatch):
+    from app.services.answer.skills import stock_holders as mod
+    monkeypatch.setattr(mod, "node", lambda graph, cypher, params: [
+        {"code": "A", "name": "많이", "stock": "005930", "weight": 24.0, "expense_ratio": 0.4, "date": "2026-10-07"},
+        {"code": "B", "name": "조금", "stock": "005930", "weight": 9.5, "expense_ratio": 0.3, "date": "2026-10-07"},
+    ])
+    skill = REGISTRY["stock_holders"]
+    result = skill.fetch(skill.Args(stocks=["삼성전자"], min_weight=10), "bar", None, FakeStockResolver())
+    assert result.exports == [{"code": "A", "name": "많이"}]
+    assert "10% 이상" in result.summary
+    empty = skill.fetch(skill.Args(stocks=["삼성전자"], min_weight=30), "bar", None, FakeStockResolver())
+    assert (empty.status, empty.retryable) == ("empty", False)
+    cut = skill.fetch(skill.Args(stocks=["삼성전자"], min_weight=5, top=3), "bar", None, FakeStockResolver())
+    assert "조건에 맞는 ETF" not in " ".join(cut.content["notes"])  # 2개 모두 보인다
+
+
+def test_holdings_keeps_only_stocks_above_the_weight(monkeypatch):
+    monkeypatch.setattr(holdings_mod, "node", lambda graph, cypher, params: [
+        {"code": "005930", "name": "삼성전자", "weight": 30.0, "date": "2026-10-07"},
+        {"code": "000660", "name": "SK하이닉스", "weight": 2.0, "date": "2026-10-07"},
+    ])
+    skill = REGISTRY["holdings"]
+    result = skill.fetch(skill.Args(etf="KODEX 200", min_weight=5), "table", None, FakeResolver())
+    assert result.exports == [{"code": "005930", "name": "삼성전자"}]
+    assert [r["name"] for r in result.content["dataset"]["rows"]] == ["삼성전자"]
+    cut = skill.fetch(skill.Args(etf="KODEX 200", min_weight=1, top=3), "table", None, FakeResolver())
+    assert cut.content["notes"] == []
+
+
+def test_lookthrough_keeps_only_stocks_above_the_combined_weight(lookthrough, monkeypatch):
+    skill = REGISTRY["portfolio_lookthrough"]
+    args = skill.Args(items=[{"asset": "KODEX 200", "allocation": 50}, {"asset": "KODEX 반도체", "allocation": 50}],
+                      min_weight=25)
+    result = skill.fetch(args, "table", None, FakePortfolioResolver())
+    # 삼성전자 27.5, 한미반도체 25, SK하이닉스 22.5
+    assert result.exports == [{"code": "005930", "name": "삼성전자"}, {"code": "042700", "name": "한미반도체"}]
+
+
+class FakeRankResolver:
+    ETFS = {n: {"code": c, "name": n} for n, c in [("가", "000001"), ("나", "000002"), ("다", "000003")]}
+
+    def etfs(self, db, names):
+        found = [self.ETFS[n] for n in names if n in self.ETFS]
+        return found, [n for n in names if n not in self.ETFS]
+
+    def stocks(self, db, names):
+        return self.etfs(db, names)
+
+
+def test_rank_args_need_one_source_and_etf_only_metrics_for_etfs():
+    Args = REGISTRY["rank"].Args
+    with pytest.raises(ValueError, match="하나만"):
+        Args(kind="etf", by="net_assets")
+    with pytest.raises(ValueError, match="하나만"):
+        Args(kind="etf", targets=["가"], theme="반도체", by="net_assets")
+    with pytest.raises(ValueError, match="ETF에만"):
+        Args(kind="stock", targets=["가"], by="expense_ratio")
+
+
+def test_rank_orders_filters_and_exports_by_the_metric(monkeypatch):
+    from app.services.answer.skills import rank as mod
+    queries = []
+
+    def fake_node(graph, cypher, params):
+        queries.append(cypher)
+        return [{"code": "000001", "value": 0.45}, {"code": "000002", "value": 0.05}, {"code": "000003", "value": None}]
+
+    monkeypatch.setattr(mod, "node", fake_node)
+    monkeypatch.setattr(mod, "GraphService", lambda db: None)
+    skill = REGISTRY["rank"]
+    args = skill.Args(kind="etf", targets=["가", "나", "다", "없음"], by="expense_ratio", order="asc", top=5)
+    result = skill.fetch(args, "table", None, FakeRankResolver())
+    assert "IN ['000001', '000002', '000003']" in queries[0]
+    assert result.exports == [{"code": "000002", "name": "나"}, {"code": "000001", "name": "가"}]
+    assert "총보수 낮은 순" in result.summary
+    assert any("데이터가 없어 뺀 ETF: 다" in n for n in result.content["notes"])
+    assert any("찾지 못한 ETF: 없음" in n for n in result.content["notes"])
+
+    filtered = skill.fetch(skill.Args(kind="etf", targets=["가", "나"], by="expense_ratio", max_value=0.1),
+                           "table", None, FakeRankResolver())
+    assert filtered.exports == [{"code": "000002", "name": "나"}]
+
+
+def test_rank_computes_period_returns_from_prices(monkeypatch):
+    from app.services.answer.skills import rank as mod
+    prices = {"000001": [("2026-10-01", 100), ("2026-10-08", 110)], "000002": [("2026-10-01", 100), ("2026-10-08", 90)]}
+
+    class FakeGraph:
+        def get_stock_prices(self, code, days):
+            return [{"date": d, "close": c} for d, c in prices.get(code, [])]
+
+    monkeypatch.setattr(mod, "GraphService", lambda db: FakeGraph())
+    skill = REGISTRY["rank"]
+    result = skill.fetch(skill.Args(kind="stock", targets=["가", "나", "다"], by="return_1w", top=1),
+                         "bar", None, FakeRankResolver())
+    assert result.exports == [{"code": "000001", "name": "가"}]
+    assert result.content["dataset"]["rows"][0]["value"] == 10.0
+    assert "후보 종목 3개 중 1주 수익률 높은 순" in result.summary
+
+
+def test_overlap_splits_common_and_only_holdings():
+    from app.services.answer.skills.overlap import overlap
+
+    def h(code, weight):
+        return {"stock_code": code, "stock_name": code, "weight": weight}
+
+    o = overlap([h("A", 30), h("B", 20), h("C", 5)], [h("A", 10), h("B", 25), h("D", 40)])
+    assert o["common"] == ["B", "A"]  # 두 비중 합이 큰 순
+    assert (o["only_a"], o["only_b"]) == (["C"], ["D"])
+    assert (o["overlap"], o["common_a"], o["common_b"]) == (30.0, 50.0, 35.0)
+
+
+def test_overlap_skill_exports_common_stocks(monkeypatch):
+    from app.services.answer.skills import overlap as mod
+    monkeypatch.setattr(mod, "_holdings", lambda db, codes: {
+        "000001": [{"stock_code": "005930", "stock_name": "삼성전자", "weight": 30.0, "date": "2026-10-07"},
+                   {"stock_code": "000660", "stock_name": "SK하이닉스", "weight": 10.0, "date": "2026-10-07"}],
+        "000002": [{"stock_code": "005930", "stock_name": "삼성전자", "weight": 20.0, "date": "2026-10-07"}],
+    })
+    skill = REGISTRY["overlap"]
+    result = skill.fetch(skill.Args(etfs=["가", "나"]), "table", None, FakeRankResolver())
+    assert result.exports == [{"code": "005930", "name": "삼성전자"}]
+    rows = result.content["dataset"]["rows"]
+    assert [(r["name"], r["where"], r["a"], r["b"]) for r in rows] == [
+        ("삼성전자", "공통", 30.0, 20.0), ("SK하이닉스", "가만", 10.0, None)]
+    assert "겹치는 비중 20.00%" in result.summary
+    missing = skill.fetch(skill.Args(etfs=["가", "없음"]), "table", None, FakeRankResolver())
+    assert (missing.status, missing.retryable) == ("empty", True)
+
+
+def test_cut_note_tells_how_many_passed_the_filter():
+    from app.services.answer.skills.common import cut_note
+    assert cut_note(8, 5, "ETF") == ["조건에 맞는 ETF 8개 중 상위 5개만 표시했습니다"]
+    assert cut_note(3, 5, "ETF") == []

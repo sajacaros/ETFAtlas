@@ -8,9 +8,11 @@ from .etf_compare import ETFCompareSkill
 from .etf_profile import ETFProfileSkill
 from .holdings import HoldingsSkill
 from .narrative import NarrativeSkill
+from .overlap import OverlapSkill
 from .period_returns import PeriodReturnsSkill
 from .portfolio_lookthrough import PortfolioLookthroughSkill
 from .price_trend import PriceTrendSkill
+from .rank import RankSkill
 from .stock_holders import StockHoldersSkill
 from .stock_trend import StockTrendSkill
 
@@ -25,6 +27,8 @@ REGISTRY: Dict[str, Skill] = {
         PortfolioLookthroughSkill(),
         StockTrendSkill(),
         StockHoldersSkill(),
+        RankSkill(),
+        OverlapSkill(),
         ETFChoiceSkill(),
         NarrativeSkill(),
         AgentSkill(),

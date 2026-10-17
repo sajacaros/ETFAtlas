@@ -267,13 +267,15 @@ class AnswerService:
                     titles = {n: by_id[i].title for n, i in names.items()}
                     dumped = slot.args.model_dump()
                     try:
-                        args = type(slot.args).model_validate(refs.resolve(dumped, exports))
+                        # 계획의 인자 모델은 목록 최소 개수를 낮춘 것이라 원래 Args로 검사한다
+                        args = self._registry[slot.skill].Args.model_validate(refs.resolve(dumped, exports))
                         ref_notes = refs.describe(dumped, exports, titles)
                     except (refs.RefError, ValidationError) as e:
                         logger.warning("Slot %s could not use referenced results: %s", slot.id, e)
                         message = str(e) if isinstance(e, refs.RefError) else "앞 영역의 결과를 이 영역에 쓸 수 없습니다"
-                        # 참조 범위를 고치면 나아질 수 있다 (예: 결과가 3개뿐인데 5위를 참조)
-                        await finish(slot, {"status": "empty", "message": message, "retryable": True}, message)
+                        # 참조 범위를 고치면 나아질 수 있다 (예: 결과가 3개뿐인데 5위를 참조). 범위가 통째로 결과 밖이면 아니다
+                        retryable = not isinstance(e, refs.RefPastEnd)
+                        await finish(slot, {"status": "empty", "message": message, "retryable": retryable}, message)
                         return
 
                 related = [(by_id[d].title, _related_text(results[d])) for d in deps if d in results]

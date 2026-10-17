@@ -1,5 +1,5 @@
 import re
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -8,7 +8,7 @@ from ...graph_service import GraphService
 from ..resolver import EntityResolver
 from ..schemas import BarView, DataField, Dataset, Source, TableView
 from .base import DataSkill, SkillResult, data_result, empty, not_found
-from .common import node, object_particle
+from .common import cut_note, min_weight_field, node, object_particle
 
 SAFE_CODE_RE = re.compile(r"[0-9A-Z]{6}")  # 쿼리 문자열에 직접 넣으므로 코드 모양만 허용
 
@@ -18,6 +18,7 @@ class StockHoldersArgs(BaseModel):
         "종목 이름 또는 6자리 코드 목록. 여러 종목을 함께 많이 담은 ETF를 물으면 그 종목들을 모두 한 목록에 적는다"
     ))
     top: int = Field(10, ge=3, le=30, description="보여줄 ETF 수 (비중 높은 순)")
+    min_weight: Optional[float] = min_weight_field("ETF(종목이 여러 개면 비중 합계 기준)")
 
 
 class StockHoldersSkill(DataSkill):
@@ -36,10 +37,16 @@ class StockHoldersSkill(DataSkill):
         stocks = [s for s in stocks if SAFE_CODE_RE.fullmatch(s["code"])]
         if not stocks:
             return not_found(f"종목을 찾지 못했습니다: {', '.join(args.stocks)}")
-        holders = _rank(db, stocks)[:args.top]
+        holders = _rank(db, stocks)
         names = ", ".join(s["name"] for s in stocks)
         if not holders:
             return empty(f"{names}{object_particle(names)} 상위 구성종목으로 담은 ETF가 없습니다")
+        if args.min_weight is not None:
+            holders = [h for h in holders if h["total"] >= args.min_weight]
+            if not holders:
+                return empty(f"{names} 비중이 {args.min_weight:g}% 이상인 ETF가 없습니다")
+        passed = len(holders)
+        holders = holders[:args.top]
 
         single = len(stocks) == 1
         weight_keys = [f"w_{s['code']}" for s in stocks]
@@ -64,8 +71,12 @@ class StockHoldersSkill(DataSkill):
             return f"{h['name']} 합계 {h['total']:.2f}%({parts}, 총보수 {h['expense_ratio']}%)"
 
         label = f"{names} 비중이" if single else f"{names} 비중 합계가"
+        if args.min_weight is not None:
+            label = f"{label} {args.min_weight:g}% 이상이고"
         summary = f"{label} 높은 ETF: " + "; ".join(describe(h) for h in holders)
         notes = ["ETF마다 비중 상위 30개 종목까지만 수집하므로, 그 밖에서 담은 ETF는 빠집니다"]
+        if args.min_weight is not None:
+            notes += cut_note(passed, len(holders), "ETF")
         if not single:
             notes.append("상위 30개 안에 없는 종목은 0%로 계산했습니다")
         if missing:

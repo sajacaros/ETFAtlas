@@ -15,6 +15,11 @@ class RefError(ValueError):
     pass
 
 
+class RefPastEnd(RefError):
+    """범위 참조('@rank.6-10')가 통째로 결과 밖이다. 필터처럼 결과 개수를 미리 알 수 없을 때 생기고,
+    계획을 고쳐도 데이터가 늘지 않으므로 다시 설계하지 않는다."""
+
+
 def _walk(value: Any):
     if isinstance(value, str):
         yield value
@@ -37,6 +42,8 @@ def _pick(match: re.Match, exports: Dict[str, List[Dict[str, str]]]) -> List[Dic
     if start < 1 or end < start:
         raise RefError(f"참조 범위가 잘못됐습니다: {match.group(0)}")
     if len(items) < start:
+        if match.group(3):
+            raise RefPastEnd(f"'{name}' 영역의 결과가 {len(items)}개뿐이라 이 영역에 보여줄 대상이 없습니다")
         raise RefError(f"'{name}' 영역의 결과가 {len(items)}개뿐이라 {start}위를 쓸 수 없습니다")
     return items[start - 1:end]
 

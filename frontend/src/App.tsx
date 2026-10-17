@@ -9,6 +9,7 @@ import HomePage from './app/HomePage'
 import ETFDetailPage from './app/ETFDetailPage'
 import ChatPage from './app/ChatPage'
 import CompositionPage from './app/CompositionPage'
+import FlowPage from './app/FlowPage'
 import PortfolioPage from './app/PortfolioPage'
 import PortfolioDashboardPage from './app/PortfolioDashboardPage'
 import ActiveChangesPage from './app/ActiveChangesPage'
@@ -85,6 +86,7 @@ function App() {
             <Route path="/shared" element={<SharedPortfoliosPage />} />
             <Route path="/shared/:shareToken" element={<SharedPortfolioDetailPage />} />
             <Route path="/chat" element={<ChatPage />} />
+            <Route path="/flows" element={<FlowPage />} />
             <Route path="/admin" element={<AdminPage />} />
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="/login" element={<LoginPage />} />

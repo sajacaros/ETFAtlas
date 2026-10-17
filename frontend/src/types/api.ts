@@ -598,3 +598,70 @@ export interface CompositionResponse {
   total_stocks: number
   as_of: string | null
 }
+
+// 분석 흐름 (노드 기반 종목 분석)
+export type FlowCategory = 'source' | 'filter' | 'combine' | 'ai' | 'result'
+
+export interface FlowParamSpec {
+  key: string
+  label: string
+  help: string
+  type: 'select' | 'bool' | 'number' | 'text' | 'portfolio' | 'field'
+  options: { value: string; label: string }[] | null
+  nullable: boolean
+  default: unknown
+  show_if: Record<string, unknown[]> | null  // 다른 설정값이 목록 안에 있을 때만 보인다
+}
+
+export interface FlowNodeSpec {
+  type: string
+  label: string
+  category: FlowCategory
+  description: string
+  icon: string
+  min_inputs: number
+  max_inputs: number | null
+  params: FlowParamSpec[]
+}
+
+export interface FlowGraphData {
+  nodes: { id: string; type: string; params: Record<string, unknown>; position?: { x: number; y: number } }[]
+  edges: { id?: string; source: string; target: string }[]
+}
+
+export interface FlowTemplate {
+  key: string
+  name: string
+  description: string
+  graph: FlowGraphData
+}
+
+export interface FlowCatalog {
+  nodes: FlowNodeSpec[]
+  templates: FlowTemplate[]
+}
+
+export interface SavedFlow {
+  id: number
+  name: string
+  updated_at: string | null
+  graph?: FlowGraphData
+}
+
+export interface FlowNodeResult {
+  id: string
+  count: number
+  badge: string
+  dataset: Dataset
+  notes: string[]
+  seconds: number
+}
+
+export interface FlowRunHandlers {
+  onNodeStart?: (id: string) => void
+  onNodeProgress?: (id: string, message: string) => void
+  onNodeDone?: (result: FlowNodeResult) => void
+  onNodeError?: (id: string, message: string, skipped: boolean) => void
+  onError: (message: string) => void
+  onDone?: () => void
+}

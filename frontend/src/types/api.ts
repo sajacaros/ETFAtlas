@@ -606,7 +606,7 @@ export interface FlowParamSpec {
   key: string
   label: string
   help: string
-  type: 'select' | 'bool' | 'number' | 'text' | 'portfolio' | 'field'
+  type: 'select' | 'bool' | 'number' | 'text' | 'portfolio' | 'field' | 'etf'
   options: { value: string; label: string }[] | null
   nullable: boolean
   default: unknown

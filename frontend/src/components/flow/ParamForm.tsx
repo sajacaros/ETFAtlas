@@ -1,6 +1,7 @@
 import type { FlowParamSpec, Portfolio } from '@/types/api'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import { EtfPicker } from './EtfPicker'
 
 const selectClass =
   'flex h-9 w-full rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
@@ -69,6 +70,21 @@ export function ParamForm({ specs, values, onChange, portfolios, fieldOptions }:
                   const raw = e.target.value
                   if (raw === '') onChange(spec.key, spec.nullable ? null : spec.default)
                   else if (!Number.isNaN(Number(raw))) onChange(spec.key, Number(raw))
+                }}
+              />
+            )}
+            {spec.type === 'etf' && (
+              <EtfPicker
+                id={id}
+                value={String(value ?? '')}
+                name={String(values[`${spec.key}_name`] ?? '')}
+                onPick={(code, name) => {
+                  onChange(spec.key, code)
+                  onChange(`${spec.key}_name`, name)  // 화면 표시용, 서버는 무시한다
+                }}
+                onType={(text) => {
+                  onChange(spec.key, text)
+                  onChange(`${spec.key}_name`, '')
                 }}
               />
             )}

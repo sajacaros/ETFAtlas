@@ -248,3 +248,22 @@ def test_ai_facts_do_not_repeat_values_the_upstream_node_computed():
     assert labels.count("20일 수익률") == 1 and "20일 수익률: 12.50%" in lines
     assert "100일 고가 대비" in labels  # 기간은 실제 일봉 길이로
     assert lines[-1] == "담은 ETF 수: 1개 (비중 큰 순: KODEX 200 3.20%)"
+
+
+# --- ETF search (EtfPicker) ---
+
+def test_universe_search_requires_every_word_ignoring_spaces(monkeypatch):
+    from app.services.graph_service import GraphService
+
+    captured = {}
+
+    def fake_execute(self, query, params=None, raise_errors=False):
+        captured["query"], captured["params"] = query, params
+        return []
+
+    monkeypatch.setattr(GraphService, "execute_cypher", fake_execute)
+    g = GraphService(None)
+    assert g.search_etfs_in_universe("반도체  KODEX", 5) == []
+    assert captured["params"]["q0"] == "반도체" and captured["params"]["q1"] == "kodex"
+    assert captured["query"].count("replace(toLower(e.name), ' ', '') CONTAINS") == 2
+    assert "RETURN {code: e.code" in captured["query"]

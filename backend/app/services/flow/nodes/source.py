@@ -25,7 +25,10 @@ class SourceParams(BaseModel):
     mode: Literal["all", "etf", "portfolio", "codes"] = Field(
         "all", title="가져올 대상", json_schema_extra={"options": MODES},
     )
-    etf: str = Field("", title="ETF", description="이름 또는 6자리 코드", json_schema_extra={"show_if": {"mode": ["etf"]}})
+    etf: str = Field(
+        "", title="ETF", description="이름 일부나 코드로 검색해 고른다 (예: 반도체 kodex)",
+        json_schema_extra={"widget": "etf", "show_if": {"mode": ["etf"]}},
+    )
     portfolio_id: Optional[int] = Field(
         None, title="포트폴리오", json_schema_extra={"widget": "portfolio", "show_if": {"mode": ["portfolio"]}},
     )

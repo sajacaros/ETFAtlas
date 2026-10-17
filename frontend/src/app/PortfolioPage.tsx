@@ -204,7 +204,8 @@ function SortablePortfolioCard({
           )
         })()}
 
-        <div className="flex items-center justify-between mt-3">
+        {/* 대시보드 버튼(h-9)이 없어도 높이가 같도록 고정 */}
+        <div className="flex items-center justify-between mt-3 h-9">
           <div className="flex items-center gap-2">
             <Switch
               checked={p.snapshot_enabled}

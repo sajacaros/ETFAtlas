@@ -1,4 +1,5 @@
 import asyncio
+import re
 from typing import Any, Dict, List, Literal
 
 from pydantic import BaseModel, Field
@@ -12,6 +13,7 @@ from ..base import FlowContext, Node, StockSet, result
 from .source import SAFE_CODE_RE
 
 CONCURRENCY = 3  # LLM 프록시에 동시에 보내는 요청 수
+HAN_RE = re.compile(r"[\u3400-\u9fff]")  # 모델이 가끔 한자·중국어 낱말을 섞는다
 
 FOCUS = {
     "summary": "종합 — 추세·위치·거래량·ETF 편입을 고르게",
@@ -22,7 +24,7 @@ FOCUS = {
 PROMPT = """당신은 ETF Atlas의 종목 분석 보조입니다. 주어진 '사실'만으로 이 종목이 앞 단계 조건을 통과한 근거를 정리합니다.
 - 사실에 없는 수치·뉴스·실적·업황을 만들지 마세요. 모르는 것은 쓰지 않습니다.
 - 매수·매도 권유, 목표가, 앞으로 오르거나 내릴 것이라는 예측은 쓰지 마세요.
-- 한국어로 3문장 이내. 첫 문장은 핵심 근거, 둘째는 수치로 본 특징, 셋째는 주의할 점(사실에서 보이는 위험).
+- 한글로만 3문장 이내로 씁니다 (한자·중국어 낱말을 섞지 않습니다. RSI·ETF 같은 지표 이름은 그대로 씁니다). 첫 문장은 핵심 근거, 둘째는 수치로 본 특징, 셋째는 주의할 점(사실에서 보이는 위험).
 - 지표는 적힌 정의대로만 해석하세요. 거래량 배수 = 마지막 날 거래량 ÷ 직전 20일 평균, 고가 대비 = 기간 최고가에서 몇 % 아래인지.
 - 담은 ETF는 몇 개 ETF가 얼마나 담았는지만 쓰고, 그것이 주가에 어떤 의미인지는 추측하지 마세요."""
 
@@ -118,8 +120,11 @@ class AIAnalysisNode(Node):
                 if ctx.stop.is_set():
                     return code, "중지됨"
                 try:
-                    out = await agent.run(prompt)
-                    return code, out.output.strip()
+                    text = (await agent.run(prompt)).output.strip()
+                    if HAN_RE.search(text):  # 한 번만 다시 쓰게 한다
+                        retry = await agent.run(prompt + "\n\n(앞 답에 한자가 섞였습니다. 한글로만 다시 쓰세요.)")
+                        text = retry.output.strip()
+                    return code, text
                 except Exception as e:
                     return code, f"분석 실패: {e}"
 

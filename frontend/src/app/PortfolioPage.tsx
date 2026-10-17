@@ -100,24 +100,14 @@ function SortablePortfolioCard({
           >
             <GripVertical className="w-4 h-4" />
           </button>
-          <CardTitle className="text-lg min-w-0 break-keep [overflow-wrap:anywhere]">{p.name}</CardTitle>
+          <CardTitle className="text-lg min-w-0 truncate" title={p.name}>{p.name}</CardTitle>
+          <AccountTypeBadges types={p.account_types} className="ml-1 shrink-0 flex-nowrap" compact />
         </div>
-        <div className="flex items-center gap-1 shrink-0">
-          {p.current_value_updated_at && (
-            <span className="text-xs text-muted-foreground">
-              {(() => {
-                const d = new Date(p.current_value_updated_at + 'Z')
-                const mm = String(d.getMonth() + 1).padStart(2, '0')
-                const dd = String(d.getDate()).padStart(2, '0')
-                const hh = String(d.getHours()).padStart(2, '0')
-                const mi = String(d.getMinutes()).padStart(2, '0')
-                return `${mm}/${dd} ${hh}:${mi}`
-              })()}
-            </span>
-          )}
+        <div className="flex items-center shrink-0 -mr-2">
           <Button
             variant="ghost"
             size="sm"
+            className="h-8 w-8 p-0"
             title="구성종목 보기"
             onClick={(e) => {
               e.stopPropagation()
@@ -129,6 +119,7 @@ function SortablePortfolioCard({
           <Button
             variant="ghost"
             size="sm"
+            className="h-8 w-8 p-0"
             title="복제"
             onClick={(e) => {
               e.stopPropagation()
@@ -140,7 +131,8 @@ function SortablePortfolioCard({
           <Button
             variant="ghost"
             size="sm"
-            className="text-destructive hover:text-destructive"
+            className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+            title="삭제"
             onClick={(e) => {
               e.stopPropagation()
               onDelete(p.id)
@@ -151,7 +143,6 @@ function SortablePortfolioCard({
         </div>
       </CardHeader>
       <CardContent>
-        <AccountTypeBadges types={p.account_types} className="mb-3" />
         {(() => {
           const hasData = p.snapshot_enabled && p.current_value != null && p.current_value_date
           return (
@@ -990,12 +981,21 @@ export default function PortfolioPage() {
     )
   }
 
+  // 가격 수집 시각은 모든 포트폴리오에 같은 값이라 목록 위에 한 번만 보여준다
+  const priceUpdatedAt = (() => {
+    const raw = portfolios.find((p) => p.current_value_updated_at)?.current_value_updated_at
+    if (!raw) return null
+    const d = new Date(raw + 'Z')  // 서버는 UTC를 시간대 없이 보낸다
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+  })()
+
   // List view
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-4">
-          <h1 className="text-2xl font-bold">포트폴리오</h1>
+          <h1 className="text-2xl font-bold whitespace-nowrap">포트폴리오</h1>
           <Button variant="outline" size="sm" onClick={() => navigate('/portfolio/dashboard')}>
             <BarChart3 className="w-4 h-4 mr-1" />
             통합 대시보드
@@ -1065,6 +1065,11 @@ export default function PortfolioPage() {
           </DialogContent>
         </Dialog>
       </div>
+      {priceUpdatedAt && (
+        <p className="text-xs text-muted-foreground -mt-2" title="평가금액 계산에 쓴 ETF 가격을 마지막으로 수집한 시각">
+          가격 기준 {priceUpdatedAt}
+        </p>
+      )}
 
       {totalSummary && portfolios.length > 0 && (
         <Card>

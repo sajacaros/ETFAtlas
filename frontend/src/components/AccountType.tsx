@@ -4,11 +4,18 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
-export function AccountTypeBadges({ types, className }: { types: AccountType[]; className?: string }) {
+/** compact면 제목 옆 한 줄에 들어가도록 작게 */
+export function AccountTypeBadges({ types, className, compact = false }: {
+  types: AccountType[]
+  className?: string
+  compact?: boolean
+}) {
   return (
     <div className={cn('flex flex-wrap gap-1', className)}>
       {types.map((t) => (
-        <Badge key={t} variant="outline">{accountTypeLabel(t)}</Badge>
+        <Badge key={t} variant="outline" className={cn(compact && 'px-1.5 py-0 text-[11px] font-medium')}>
+          {accountTypeLabel(t)}
+        </Badge>
       ))}
     </div>
   )

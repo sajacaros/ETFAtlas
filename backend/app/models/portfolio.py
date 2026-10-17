@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer, String, DateTime, Date, ForeignKey, Numeric, Boolean, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 from sqlalchemy.orm import relationship
 import uuid
 from ..database import Base
@@ -16,8 +16,6 @@ class Portfolio(Base):
     calculation_base = Column(String(20), nullable=False, default="CURRENT_TOTAL")
     target_total_amount = Column(Numeric(15, 2), nullable=True)
     display_order = Column(Integer, nullable=False, default=0)
-    is_shared = Column(Boolean, nullable=False, default=False)
-    share_token = Column(PG_UUID(as_uuid=True), unique=True, nullable=True)
     snapshot_enabled = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
@@ -73,3 +71,17 @@ class PortfolioSnapshot(Base):
     __table_args__ = (UniqueConstraint('portfolio_id', 'date', name='uq_portfolio_snapshot_date'),)
 
     portfolio = relationship("Portfolio", back_populates="snapshots")
+
+
+class SharedPortfolio(Base):
+    """공유 시점의 포트폴리오 구성을 그대로 담은 스냅샷. 원본을 고치거나 지워도 바뀌지 않는다."""
+    __tablename__ = "shared_portfolios"
+
+    id = Column(Integer, primary_key=True)
+    share_token = Column(PG_UUID(as_uuid=True), unique=True, nullable=False, default=uuid.uuid4)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete="SET NULL"), nullable=True)
+    name = Column(String(255), nullable=False)
+    # [{"ticker": "069500", "weight": 40.0}, ...] — weight는 목표 비중(%)
+    allocations = Column(JSONB, nullable=False)
+    created_at = Column(DateTime, default=utcnow)

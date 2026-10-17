@@ -240,8 +240,6 @@ export interface PortfolioDetail {
   name: string
   calculation_base: CalculationBase
   target_total_amount: number | null
-  is_shared: boolean
-  share_token: string | null
   snapshot_enabled: boolean
   target_allocations: TargetAllocationItem[]
   holdings: HoldingItem[]
@@ -504,22 +502,29 @@ export interface DashboardResponse {
 }
 
 // Shared Portfolio types
-export interface SharedPortfolioListItem {
-  portfolio_name: string
-  share_token: string
-  tickers_count: number
-  updated_at: string | null
-}
-
 export interface SharedAllocationItem {
   ticker: string
   name: string
   weight: number
 }
 
+export interface SharedPortfolioListItem {
+  portfolio_name: string
+  share_token: string
+  tickers_count: number
+  holdings: SharedAllocationItem[]
+  owner_id: number
+  owner_name: string
+  shared_at: string | null
+  is_owner: boolean
+}
+
 export interface SharedPortfolioDetail {
   portfolio_name: string
   allocations: SharedAllocationItem[]
+  owner_name: string
+  shared_at: string | null
+  is_owner: boolean
 }
 
 export interface SharedReturnsChartPoint {
@@ -540,10 +545,10 @@ export interface SharedReturnsSummary {
   returns_3m: number | null
 }
 
-export interface ShareToggleResponse {
-  is_shared: boolean
-  share_token: string | null
-  share_url: string | null
+export interface ShareCreateResponse {
+  share_token: string
+  share_url: string
+  created: boolean
 }
 
 // Risk Analysis types

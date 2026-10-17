@@ -264,6 +264,8 @@ export default function PortfolioPage() {
 
   // Delete confirmation
   const [deleteTargetId, setDeleteTargetId] = useState<number | null>(null)
+  const [shareOpen, setShareOpen] = useState(false)
+  const [sharing, setSharing] = useState(false)
 
   // Total summary
   const [totalSummary, setTotalSummary] = useState<DashboardSummary | null>(null)
@@ -423,6 +425,22 @@ export default function PortfolioPage() {
 
   const handleDelete = (id: number) => {
     setDeleteTargetId(id)
+  }
+
+  const handleShare = async () => {
+    if (!detail) return
+    setSharing(true)
+    try {
+      const res = await portfolioApi.share(detail.id)
+      setShareOpen(false)
+      toast(res.created
+        ? { title: '공유했습니다', description: '공유 포트폴리오에서 볼 수 있습니다' }
+        : { title: '이미 같은 구성으로 공유되어 있습니다', description: '새로 공유하지 않았습니다' })
+    } catch {
+      toast({ title: '공유하지 못했습니다', variant: 'destructive' })
+    } finally {
+      setSharing(false)
+    }
   }
 
   const confirmDelete = async () => {
@@ -769,22 +787,28 @@ export default function PortfolioPage() {
             {isEditing && <AddTickerDialog onAdd={handleAddTicker} />}
             {!isEditing && (
               <>
-                <Button
-                  variant={detail.is_shared ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={async () => {
-                    try {
-                      const res = await portfolioApi.toggleShare(detail.id, !detail.is_shared)
-                      setDetail({ ...detail, is_shared: res.is_shared, share_token: res.share_token })
-                      toast({ title: res.is_shared ? '공유되었습니다' : '공유가 해제되었습니다' })
-                    } catch {
-                      toast({ title: '공유 설정 변경 실패', variant: 'destructive' })
-                    }
-                  }}
-                >
+                <Button variant="outline" size="sm" onClick={() => setShareOpen(true)}>
                   <Share2 className="w-4 h-4 mr-1" />
-                  {detail.is_shared ? '공유 중' : '공유'}
+                  공유
                 </Button>
+                <Dialog open={shareOpen} onOpenChange={(open) => { if (!sharing) setShareOpen(open) }}>
+                  <DialogContent className="max-w-sm">
+                    <DialogHeader>
+                      <DialogTitle>포트폴리오 공유</DialogTitle>
+                      <DialogDescription>
+                        '{detail.name}'의 지금 목표 비중을 공유하시겠습니까? 공유한 뒤 포트폴리오를 고쳐도 공유된 내용은 바뀌지 않습니다.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter className="gap-2 sm:gap-0">
+                      <Button variant="outline" onClick={() => setShareOpen(false)} disabled={sharing}>
+                        취소
+                      </Button>
+                      <Button onClick={handleShare} disabled={sharing}>
+                        {sharing ? '공유 중...' : '공유'}
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
                 <Button
                   variant="outline"
                   size="sm"

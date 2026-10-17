@@ -1,13 +1,13 @@
 import uuid as uuid_module
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
-from sqlalchemy import func, text
-from decimal import Decimal
-from datetime import date, timedelta
+from sqlalchemy import text
+from datetime import UTC, date, datetime, timedelta
 
 from ..database import get_db
-from ..models.portfolio import Portfolio, TargetAllocation
+from ..models.portfolio import SharedPortfolio
+from ..models.user import User
 from ..schemas.portfolio import (
     SharedPortfolioListItem,
     SharedPortfolioDetail,
@@ -17,83 +17,120 @@ from ..schemas.portfolio import (
     SharedReturnsSummary,
 )
 from ..services.price_service import PriceService
+from ..utils.session import get_current_user_id
 
 router = APIRouter()
 
 
-@router.get("/", response_model=list[SharedPortfolioListItem])
-async def list_shared_portfolios(db: Session = Depends(get_db)):
-    ticker_count_sub = (
-        db.query(
-            TargetAllocation.portfolio_id,
-            func.count(TargetAllocation.id).label("tickers_count"),
-        )
-        .filter(TargetAllocation.ticker != "CASH")  # 현금은 종목 수에 넣지 않는다
-        .group_by(TargetAllocation.portfolio_id)
-        .subquery()
-    )
+def _owner_name(user: User) -> str:
+    return user.name or user.username
 
+
+def _iso_utc(dt: datetime | None) -> str | None:
+    # DB에는 시간대 없는 UTC로 저장돼 있어 브라우저가 현지 시각으로 읽도록 시간대를 붙인다
+    return dt.replace(tzinfo=UTC).isoformat() if dt else None
+
+
+@router.get("/", response_model=list[SharedPortfolioListItem])
+async def list_shared_portfolios(
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
     rows = (
-        db.query(
-            Portfolio,
-            func.coalesce(ticker_count_sub.c.tickers_count, 0).label("tickers_count"),
-        )
-        .outerjoin(ticker_count_sub, Portfolio.id == ticker_count_sub.c.portfolio_id)
-        .filter(Portfolio.is_shared.is_(True))
-        .order_by(Portfolio.updated_at.desc())
+        db.query(SharedPortfolio, User)
+        .join(User, SharedPortfolio.user_id == User.id)
+        .order_by(SharedPortfolio.created_at.desc(), SharedPortfolio.id.desc())
         .all()
     )
+    names = PriceService(db).get_etf_names(
+        list({a["ticker"] for s, _ in rows for a in s.allocations})
+    )
 
-    return [
-        SharedPortfolioListItem(
-            portfolio_name=p.name,
-            share_token=str(p.share_token),
-            tickers_count=tickers_count,
-            updated_at=p.updated_at.isoformat() if p.updated_at else None,
+    items = []
+    for s, owner in rows:
+        # 현금은 종목 수에 넣지 않는다
+        etfs = sorted(
+            (a for a in s.allocations if a["ticker"] != "CASH"),
+            key=lambda a: float(a["weight"]),
+            reverse=True,
         )
-        for p, tickers_count in rows
-    ]
+        items.append(SharedPortfolioListItem(
+            portfolio_name=s.name,
+            share_token=str(s.share_token),
+            tickers_count=len(etfs),
+            holdings=[
+                SharedAllocationItem(
+                    ticker=a["ticker"],
+                    name=names.get(a["ticker"], a["ticker"]),
+                    weight=float(a["weight"]),
+                )
+                for a in etfs
+            ],
+            owner_id=owner.id,
+            owner_name=_owner_name(owner),
+            shared_at=_iso_utc(s.created_at),
+            is_owner=s.user_id == user_id,
+        ))
+    return items
 
 
-def _get_shared_portfolio(db: Session, share_token: str) -> Portfolio:
+def _get_shared_portfolio(db: Session, share_token: str) -> SharedPortfolio:
     try:
         token_uuid = uuid_module.UUID(share_token)
     except ValueError:
         raise HTTPException(status_code=404, detail="Shared portfolio not found")
-    portfolio = db.query(Portfolio).filter(
-        Portfolio.share_token == token_uuid,
-        Portfolio.is_shared.is_(True),
-    ).first()
-    if not portfolio:
+    shared = db.query(SharedPortfolio).filter(SharedPortfolio.share_token == token_uuid).first()
+    if not shared:
         raise HTTPException(status_code=404, detail="Shared portfolio not found")
-    return portfolio
+    return shared
+
+
+def _etf_weights(shared: SharedPortfolio) -> dict[str, float]:
+    """현금을 뺀 종목별 비중(0~1). 수익률은 이 비중을 다시 정규화해 계산한다."""
+    return {
+        a["ticker"]: float(a["weight"]) / 100.0
+        for a in shared.allocations
+        if a["ticker"] != "CASH"
+    }
 
 
 @router.get("/{share_token}", response_model=SharedPortfolioDetail)
-async def get_shared_portfolio(share_token: str, db: Session = Depends(get_db)):
-    portfolio = _get_shared_portfolio(db, share_token)
-
-    allocations = (
-        db.query(TargetAllocation)
-        .filter(TargetAllocation.portfolio_id == portfolio.id)
-        .all()
-    )
-
-    price_service = PriceService(db)
-    tickers = [a.ticker for a in allocations]
-    names = price_service.get_etf_names(tickers)
+async def get_shared_portfolio(
+    share_token: str,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    shared = _get_shared_portfolio(db, share_token)
+    owner = db.get(User, shared.user_id)
+    names = PriceService(db).get_etf_names([a["ticker"] for a in shared.allocations])
 
     return SharedPortfolioDetail(
-        portfolio_name=portfolio.name,
+        portfolio_name=shared.name,
         allocations=[
             SharedAllocationItem(
-                ticker=a.ticker,
-                name=names.get(a.ticker, a.ticker),
-                weight=float(a.target_weight),
+                ticker=a["ticker"],
+                name=names.get(a["ticker"], a["ticker"]),
+                weight=float(a["weight"]),
             )
-            for a in allocations
+            for a in shared.allocations
         ],
+        owner_name=_owner_name(owner),
+        shared_at=_iso_utc(shared.created_at),
+        is_owner=shared.user_id == user_id,
     )
+
+
+@router.delete("/{share_token}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_shared_portfolio(
+    share_token: str,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    shared = _get_shared_portfolio(db, share_token)
+    if shared.user_id != user_id:
+        raise HTTPException(status_code=403, detail="공유한 사람만 삭제할 수 있습니다")
+    db.delete(shared)
+    db.commit()
 
 
 def _calc_return_rate(
@@ -142,15 +179,9 @@ async def get_shared_returns_summary(
     share_token: str,
     db: Session = Depends(get_db),
 ):
-    portfolio = _get_shared_portfolio(db, share_token)
-
-    allocations = (
-        db.query(TargetAllocation)
-        .filter(TargetAllocation.portfolio_id == portfolio.id)
-        .all()
-    )
-    tickers = [a.ticker for a in allocations if a.ticker != "CASH"]
-    weights = {a.ticker: float(a.target_weight) / 100.0 for a in allocations if a.ticker != "CASH"}
+    shared = _get_shared_portfolio(db, share_token)
+    weights = _etf_weights(shared)
+    tickers = list(weights)
 
     if not tickers:
         return SharedReturnsSummary()
@@ -199,18 +230,12 @@ async def get_shared_returns(
     period: str = Query(default="1m", pattern="^(1w|1m|3m)$"),
     db: Session = Depends(get_db),
 ):
-    portfolio = _get_shared_portfolio(db, share_token)
-
-    allocations = (
-        db.query(TargetAllocation)
-        .filter(TargetAllocation.portfolio_id == portfolio.id)
-        .all()
-    )
-    if not allocations:
+    shared = _get_shared_portfolio(db, share_token)
+    if not shared.allocations:
         raise HTTPException(status_code=404, detail="No allocations found")
 
-    tickers = [a.ticker for a in allocations if a.ticker != "CASH"]
-    weights = {a.ticker: float(a.target_weight) / 100.0 for a in allocations if a.ticker != "CASH"}
+    weights = _etf_weights(shared)
+    tickers = list(weights)
 
     if not tickers:
         raise HTTPException(status_code=400, detail="No ETF tickers in portfolio")

@@ -1,9 +1,24 @@
-import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { sharedApi } from '@/lib/api'
+import { formatDateTime } from '@/lib/utils'
 import type { SharedPortfolioListItem, SharedReturnsSummary } from '@/types/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Users } from 'lucide-react'
+import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Search, Users, X } from 'lucide-react'
+
+const SORTS = [
+  { key: 'latest', label: '최신순' },
+  { key: 'oldest', label: '오래된순' },
+  { key: 'returns_1w', label: '1주 수익률순' },
+  { key: 'returns_1m', label: '1달 수익률순' },
+  { key: 'returns_3m', label: '3달 수익률순' },
+] as const
+type SortKey = (typeof SORTS)[number]['key']
+
+const PREVIEW_COUNT = 3
 
 function ReturnBadge({ value }: { value: number | null }) {
   if (value === null) return <span className="text-muted-foreground">-</span>
@@ -17,6 +32,21 @@ export default function SharedPortfoliosPage() {
   const [portfolios, setPortfolios] = useState<SharedPortfolioListItem[]>([])
   const [loading, setLoading] = useState(true)
   const [returnsMap, setReturnsMap] = useState<Record<string, SharedReturnsSummary>>({})
+  // 상세에서 돌아와도 검색·필터가 남도록 URL에 둔다
+  const [searchParams, setSearchParams] = useSearchParams()
+  const query = searchParams.get('q') ?? ''
+  const owner = searchParams.get('owner') ?? ''  // '' 전체, 'me' 나, 그 외 공유자 id
+  const sortParam = searchParams.get('sort')
+  const sort: SortKey = SORTS.some((s) => s.key === sortParam) ? (sortParam as SortKey) : 'latest'
+
+  const setParam = (key: string, value: string) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      if (value) next.set(key, value)
+      else next.delete(key)
+      return next
+    }, { replace: true })
+  }
 
   useEffect(() => {
     sharedApi.getAll()
@@ -34,6 +64,35 @@ export default function SharedPortfoliosPage() {
       .finally(() => setLoading(false))
   }, [])
 
+  // 공유자 목록: 나를 빼고 공유한 개수가 많은 순
+  const owners = useMemo(() => {
+    const map = new Map<number, { id: number; name: string; count: number }>()
+    portfolios.filter((p) => !p.is_owner).forEach((p) => {
+      const o = map.get(p.owner_id) ?? { id: p.owner_id, name: p.owner_name, count: 0 }
+      o.count += 1
+      map.set(p.owner_id, o)
+    })
+    return [...map.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'ko'))
+  }, [portfolios])
+  const myCount = portfolios.filter((p) => p.is_owner).length
+
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    const filtered = portfolios.filter((p) => {
+      if (owner === 'me' ? !p.is_owner : owner && String(p.owner_id) !== owner) return false
+      if (!q) return true
+      return p.portfolio_name.toLowerCase().includes(q)
+        || p.holdings.some((h) => h.name.toLowerCase().includes(q) || h.ticker.includes(q))
+    })
+    if (sort === 'latest') return filtered  // 서버가 최신순으로 준다
+    if (sort === 'oldest') return [...filtered].reverse()
+    // 수익률이 없는 것은 뒤로 보낸다
+    const value = (p: SharedPortfolioListItem) => returnsMap[p.share_token]?.[sort] ?? -Infinity
+    return [...filtered].sort((a, b) => value(b) - value(a))
+  }, [portfolios, query, owner, sort, returnsMap])
+
+  const filtering = query !== '' || owner !== ''
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">공유 포트폴리오</h1>
@@ -47,26 +106,98 @@ export default function SharedPortfoliosPage() {
           </CardContent>
         </Card>
       ) : (
+      <>
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative flex-1 min-w-[200px] max-w-sm">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            className="pl-8"
+            placeholder="제목 또는 ETF 이름 검색"
+            value={query}
+            onChange={(e) => setParam('q', e.target.value)}
+          />
+        </div>
+        <select
+          aria-label="공유자"
+          className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+          value={owner}
+          onChange={(e) => setParam('owner', e.target.value)}
+        >
+          <option value="">전체 공유자</option>
+          {myCount > 0 && <option value="me">내가 공유한 것 ({myCount})</option>}
+          {owners.map((o) => (
+            <option key={o.id} value={String(o.id)}>{o.name} ({o.count})</option>
+          ))}
+        </select>
+        <select
+          aria-label="정렬"
+          className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+          value={sort}
+          onChange={(e) => setParam('sort', e.target.value === 'latest' ? '' : e.target.value)}
+        >
+          {SORTS.map((s) => (
+            <option key={s.key} value={s.key}>{s.label}</option>
+          ))}
+        </select>
+        {filtering && (
+          <Button variant="ghost" size="sm" onClick={() => setSearchParams(sort === 'latest' ? {} : { sort }, { replace: true })}>
+            <X className="w-4 h-4 mr-1" />
+            초기화
+          </Button>
+        )}
+        <span className="text-sm text-muted-foreground ml-auto">
+          {filtering ? `${visible.length} / ${portfolios.length}개` : `${portfolios.length}개`}
+        </span>
+      </div>
+      {visible.length === 0 ? (
+        <Card>
+          <CardContent className="py-12 text-center text-muted-foreground">
+            조건에 맞는 공유 포트폴리오가 없습니다
+          </CardContent>
+        </Card>
+      ) : (
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {portfolios.map((p) => {
+        {visible.map((p) => {
           const r = returnsMap[p.share_token]
           return (
             <Card
               key={p.share_token}
-              className="cursor-pointer hover:shadow-md transition-shadow"
+              className="cursor-pointer hover:shadow-md transition-shadow flex flex-col"
               onClick={() => navigate(`/shared/${p.share_token}`)}
             >
               <CardHeader className="pb-2">
-                <CardTitle className="text-lg">{p.portfolio_name}</CardTitle>
+                <div className="flex items-start gap-2">
+                  <CardTitle className="text-lg flex-1 break-words">{p.portfolio_name}</CardTitle>
+                  {p.is_owner && <Badge variant="secondary" className="shrink-0">내 공유</Badge>}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  <button
+                    type="button"
+                    className="font-medium text-foreground hover:underline"
+                    title={`${p.owner_name}님이 공유한 것만 보기`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setParam('owner', p.is_owner ? 'me' : String(p.owner_id))
+                    }}
+                  >
+                    {p.owner_name}
+                  </button>
+                  {p.shared_at && <> · {formatDateTime(p.shared_at)}</>}
+                </p>
               </CardHeader>
-              <CardContent>
-                <div className="text-sm text-muted-foreground space-y-1">
-                  <p>종목 {p.tickers_count}개</p>
-                  {p.updated_at && (
-                    <p className="text-xs">
-                      {new Date(p.updated_at).toLocaleDateString('ko-KR')}
-                    </p>
-                  )}
+              <CardContent className="flex-1 flex flex-col">
+                <div className="text-sm space-y-1 flex-1">
+                  {p.holdings.slice(0, PREVIEW_COUNT).map((h) => (
+                    <div key={h.ticker} className="flex justify-between gap-2">
+                      <span className="truncate">{h.name}</span>
+                      <span className="text-muted-foreground shrink-0">{h.weight.toFixed(1)}%</span>
+                    </div>
+                  ))}
+                  <p className="text-xs text-muted-foreground">
+                    {p.tickers_count > PREVIEW_COUNT
+                      ? `외 ${p.tickers_count - PREVIEW_COUNT}개 · 종목 ${p.tickers_count}개`
+                      : `종목 ${p.tickers_count}개`}
+                  </p>
                 </div>
                 <div className="mt-3 pt-3 border-t">
                   <div className="grid grid-cols-3 gap-2 text-center text-xs">
@@ -89,6 +220,8 @@ export default function SharedPortfoliosPage() {
           )
         })}
       </div>
+      )}
+      </>
       )}
     </div>
   )

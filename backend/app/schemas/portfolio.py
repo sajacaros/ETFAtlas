@@ -120,8 +120,6 @@ class PortfolioDetailResponse(BaseModel):
     name: str
     calculation_base: str
     target_total_amount: Optional[Decimal] = None
-    is_shared: bool = False
-    share_token: Optional[str] = None
     snapshot_enabled: bool = False
     target_allocations: list[TargetAllocationResponse] = []
     holdings: list[HoldingResponse] = []
@@ -197,21 +195,10 @@ class PortfolioBatchUpdate(BaseModel):
 
 
 # --- Sharing ---
-class ShareToggleRequest(BaseModel):
-    is_shared: bool
-
-
-class ShareToggleResponse(BaseModel):
-    is_shared: bool
-    share_token: Optional[str] = None
-    share_url: Optional[str] = None
-
-
-class SharedPortfolioListItem(BaseModel):
-    portfolio_name: str
+class ShareCreateResponse(BaseModel):
     share_token: str
-    tickers_count: int
-    updated_at: Optional[str] = None
+    share_url: str
+    created: bool  # False면 똑같은 구성의 기존 공유본을 돌려준 것
 
 
 class SharedAllocationItem(BaseModel):
@@ -220,9 +207,23 @@ class SharedAllocationItem(BaseModel):
     weight: float
 
 
+class SharedPortfolioListItem(BaseModel):
+    portfolio_name: str
+    share_token: str
+    tickers_count: int
+    holdings: list[SharedAllocationItem] = []  # 현금 제외, 비중 큰 순
+    owner_id: int
+    owner_name: str
+    shared_at: Optional[str] = None
+    is_owner: bool = False
+
+
 class SharedPortfolioDetail(BaseModel):
     portfolio_name: str
     allocations: list[SharedAllocationItem]
+    owner_name: str
+    shared_at: Optional[str] = None
+    is_owner: bool = False
 
 
 class SharedReturnsChartPoint(BaseModel):

@@ -1,6 +1,6 @@
 from .user import User
 from .etf import ETF
-from .portfolio import Portfolio, TargetAllocation, Holding
+from .portfolio import Portfolio, TargetAllocation, Holding, SharedPortfolio
 from .ticker_price import TickerPrice
 from .collection_run import CollectionRun
 from .chat import ChatLog, ChatLogStatus, ChatSession, ChatSlot
@@ -21,6 +21,7 @@ __all__ = [
     "Portfolio",
     "TargetAllocation",
     "Holding",
+    "SharedPortfolio",
     "TickerPrice",
     "CollectionRun",
     "ChatLog",

@@ -45,7 +45,7 @@ import type {
   SharedPortfolioDetail,
   SharedReturnsResponse,
   SharedReturnsSummary,
-  ShareToggleResponse,
+  ShareCreateResponse,
   RiskAnalysisResponse,
   ChatLogResult,
 } from '@/types/api'
@@ -278,8 +278,8 @@ export const portfolioApi = {
     const { data } = await api.get<TotalHoldingsResponse>('/portfolios/dashboard/total/holdings')
     return data
   },
-  toggleShare: async (portfolioId: number, isShared: boolean) => {
-    const { data } = await api.put<ShareToggleResponse>(`/portfolios/${portfolioId}/share`, { is_shared: isShared })
+  share: async (portfolioId: number) => {
+    const { data } = await api.post<ShareCreateResponse>(`/portfolios/${portfolioId}/share`)
     return data
   },
   getRiskAnalysis: async (portfolioId: number, period: string = '3m') => {
@@ -305,6 +305,9 @@ export const sharedApi = {
   getReturnsSummary: async (shareToken: string) => {
     const { data } = await api.get<SharedReturnsSummary>(`/shared/${shareToken}/returns-summary`)
     return data
+  },
+  delete: async (shareToken: string) => {
+    await api.delete(`/shared/${shareToken}`)
   },
 }
 

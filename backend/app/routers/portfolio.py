@@ -1,13 +1,13 @@
 import uuid
 import math
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, Response, status, Query
 from typing import List
 from decimal import Decimal
 from datetime import date, datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import func, text as sa_text
 from ..database import get_db
-from ..models.portfolio import Portfolio, TargetAllocation, Holding, PortfolioSnapshot
+from ..models.portfolio import Portfolio, TargetAllocation, Holding, PortfolioSnapshot, SharedPortfolio
 from ..models.ticker_price import TickerPrice
 from ..utils.session import get_current_user_id
 from ..schemas.portfolio import (
@@ -20,7 +20,7 @@ from ..schemas.portfolio import (
     DashboardResponse, DashboardSummary, DashboardSummaryItem, ChartDataPoint,
     TotalHoldingsResponse, TotalHoldingItem,
     PortfolioBatchUpdate,
-    ShareToggleRequest, ShareToggleResponse,
+    ShareCreateResponse,
     RiskAnalysisResponse, RiskChartPoint, DrawdownPoint,
 )
 from ..domain.portfolio_calculation import (
@@ -201,25 +201,52 @@ async def duplicate_portfolio(
     return copy
 
 
-@router.put("/{portfolio_id}/share", response_model=ShareToggleResponse)
-async def toggle_share(
+def _is_same_snapshot(name: str, allocations: list[dict], shared: SharedPortfolio) -> bool:
+    """이름과 종목별 비중이 모두 같으면 같은 공유본이다. 종목 순서는 보지 않는다."""
+    def weights(items: list[dict]) -> dict[str, float]:
+        return {a["ticker"]: float(a["weight"]) for a in items}
+    return shared.name == name and weights(shared.allocations) == weights(allocations)
+
+
+@router.post("/{portfolio_id}/share", response_model=ShareCreateResponse)
+async def share_portfolio(
     portfolio_id: int,
-    body: ShareToggleRequest,
+    response: Response,
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
+    """지금의 이름·목표 비중을 스냅샷으로 공유한다. 이후 포트폴리오를 고쳐도 공유본은 그대로다.
+
+    이 포트폴리오에서 똑같은 구성으로 공유한 것이 이미 있으면 새로 만들지 않고 그것을 돌려준다.
+    """
     portfolio = _get_portfolio_or_404(db, portfolio_id, user_id)
-    portfolio.is_shared = body.is_shared
-    if body.is_shared and not portfolio.share_token:
-        portfolio.share_token = uuid.uuid4()
-    db.commit()
-    db.refresh(portfolio)
-    token_str = str(portfolio.share_token) if portfolio.share_token else None
-    return ShareToggleResponse(
-        is_shared=portfolio.is_shared,
-        share_token=token_str,
-        share_url=f"/shared/{token_str}" if portfolio.is_shared and token_str else None,
-    )
+    if not portfolio.target_allocations:
+        raise HTTPException(status_code=400, detail="목표 비중이 없는 포트폴리오는 공유할 수 없습니다")
+    allocations = [
+        {"ticker": t.ticker, "weight": float(t.target_weight)}
+        for t in sorted(portfolio.target_allocations, key=lambda t: t.id)
+    ]
+
+    existing = db.query(SharedPortfolio).filter(
+        SharedPortfolio.portfolio_id == portfolio.id,
+        SharedPortfolio.user_id == user_id,
+    ).order_by(SharedPortfolio.created_at.desc()).all()
+    shared = next((s for s in existing if _is_same_snapshot(portfolio.name, allocations, s)), None)
+    created = shared is None
+    if created:
+        shared = SharedPortfolio(
+            share_token=uuid.uuid4(),
+            user_id=user_id,
+            portfolio_id=portfolio.id,
+            name=portfolio.name,
+            allocations=allocations,
+        )
+        db.add(shared)
+        db.commit()
+        response.status_code = status.HTTP_201_CREATED
+
+    token_str = str(shared.share_token)
+    return ShareCreateResponse(share_token=token_str, share_url=f"/shared/{token_str}", created=created)
 
 
 @router.get("/{portfolio_id}", response_model=PortfolioDetailResponse)
@@ -235,8 +262,6 @@ async def get_portfolio(
         calculation_base=portfolio.calculation_base,
         target_total_amount=portfolio.target_total_amount,
         snapshot_enabled=portfolio.snapshot_enabled,
-        is_shared=portfolio.is_shared,
-        share_token=str(portfolio.share_token) if portfolio.share_token else None,
         target_allocations=[TargetAllocationResponse.model_validate(t) for t in portfolio.target_allocations],
         holdings=[HoldingResponse.model_validate(h) for h in portfolio.holdings],
     )
@@ -405,8 +430,6 @@ async def batch_update_portfolio(
         calculation_base=portfolio.calculation_base,
         target_total_amount=portfolio.target_total_amount,
         snapshot_enabled=portfolio.snapshot_enabled,
-        is_shared=portfolio.is_shared,
-        share_token=str(portfolio.share_token) if portfolio.share_token else None,
         target_allocations=[TargetAllocationResponse.model_validate(t) for t in portfolio.target_allocations],
         holdings=[HoldingResponse.model_validate(h) for h in portfolio.holdings],
     )

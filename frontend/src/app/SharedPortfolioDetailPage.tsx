@@ -1,17 +1,26 @@
 import { useEffect, useState } from 'react'
 import { ETFLink } from '@/components/ETFInfo'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import { sharedApi } from '@/lib/api'
 import type { SharedPortfolioDetail, SharedReturnsResponse, SharedReturnsSummary } from '@/types/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, ChevronDown, ChevronUp, Copy, Download } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronUp, Copy, Download, Trash2 } from 'lucide-react'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
 } from 'recharts'
 import { generateSharedPdf } from '@/lib/sharedPdf'
 import { copyText } from '@/lib/clipboard'
 import { holdingsMarkdown } from '@/lib/holdingsMarkdown'
+import { formatDateTime } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
 
 const PERIODS = [
@@ -37,7 +46,23 @@ export default function SharedPortfolioDetailPage() {
   const [returnsError, setReturnsError] = useState<string | null>(null)
   const [chartOpen, setChartOpen] = useState(false)
   const [pdfLoading, setPdfLoading] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const { toast } = useToast()
+  const navigate = useNavigate()
+
+  const handleDelete = async () => {
+    if (!shareToken) return
+    setDeleting(true)
+    try {
+      await sharedApi.delete(shareToken)
+      toast({ title: '공유를 삭제했습니다' })
+      navigate('/shared')
+    } catch {
+      toast({ title: '삭제하지 못했습니다', variant: 'destructive' })
+      setDeleting(false)
+    }
+  }
 
   const handleCopy = async () => {
     if (!detail) return
@@ -96,6 +121,9 @@ export default function SharedPortfolioDetailPage() {
         </Link>
         <div className="flex-1">
           <h1 className="text-2xl font-bold">{detail.portfolio_name}</h1>
+          <p className="text-sm text-muted-foreground">
+            {detail.owner_name}님이 {detail.shared_at ? `${formatDateTime(detail.shared_at)}에 ` : ''}공유한 구성
+          </p>
         </div>
         <Button
           variant="outline"
@@ -117,7 +145,37 @@ export default function SharedPortfolioDetailPage() {
           <Download className="w-4 h-4 mr-1" />
           {pdfLoading ? '생성 중...' : 'PDF'}
         </Button>
+        {detail.is_owner && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setDeleteOpen(true)}
+            className="shrink-0"
+          >
+            <Trash2 className="w-4 h-4 mr-1" />
+            삭제
+          </Button>
+        )}
       </div>
+
+      <Dialog open={deleteOpen} onOpenChange={(open) => { if (!deleting) setDeleteOpen(open) }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>공유 삭제</DialogTitle>
+            <DialogDescription>
+              '{detail.portfolio_name}' 공유를 삭제하시겠습니까? 공유 링크로 더 이상 볼 수 없습니다. 원본 포트폴리오는 그대로 남습니다.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setDeleteOpen(false)} disabled={deleting}>
+              취소
+            </Button>
+            <Button variant="destructive" onClick={handleDelete} disabled={deleting}>
+              삭제
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* 가상 수익률 요약 + 접이식 차트 */}
       <Card>

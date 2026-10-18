@@ -19,7 +19,8 @@ function chartTheme(theme: string): ChartTheme {
   return {
     palette: theme === 'gameboy' ? GAMEBOY_PALETTE : PALETTE,
     tileText: theme === 'gameboy' ? cssColor('--foreground') : '#fff',
-    other: theme === 'gameboy' ? '#333333' : '#6b7280',
+    scale: theme === 'gameboy' ? ['#1f3a2a', '#2f7d48'] : ['#818cf8', '#3730a3'],
+    other: theme === 'gameboy' ? '#2a2f2c' : '#6b7280',
     text: cssColor('--foreground'),
     muted: cssColor('--muted-foreground'),
     border: cssColor('--border'),

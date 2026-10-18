@@ -9,6 +9,7 @@ import { axisFormatter, formatValue } from './format'
 export interface ChartTheme {
   palette: string[]
   tileText: string  // 색칠한 칸(트리맵) 위의 글씨
+  scale: [string, string]  // 트리맵: 작은 값 → 큰 값 색 (한 색의 진하기로 크기를 보인다)
   other: string  // '기타' 칸: 다른 칸보다 눈에 덜 띄게
   text: string
   muted: string
@@ -142,22 +143,28 @@ const donut: Builder<'donut'> = (view, content, theme) => {
   }
 }
 
+const TREEMAP_LABEL_MIN = 1.2  // 전체의 이 비율(%)보다 작은 칸은 글씨가 조각나므로 숨기고 툴팁으로만
+
 const treemap: Builder<'treemap'> = (view, content, theme) => {
   const format = fieldOf(content, view.value).format
+  const data = nameValue(content.dataset.rows, view.name, view.value, theme)
+  const total = data.reduce((sum, d) => sum + d.value, 0)
   return {
     ...base(theme),
     tooltip: { ...base(theme).tooltip as object, formatter: (p: { name: string; value: number }) => `${p.name}: ${formatValue(p.value, format)}` },
     series: [{
       type: 'treemap', roam: false, nodeClick: false, breadcrumb: { show: false },
       width: '100%', height: '100%', top: 0, left: 0,
+      // 받은 순서(비중 큰 순, '기타'는 맨 끝)대로 놓는다. 값으로 다시 정렬하면 '기타'가 가장 큰 칸이 된다
+      sort: false,
       // 칸 색이 밝든 어둡든 읽히도록 글씨에 그림자
       label: {
         formatter: (p: { name: string; value: number }) => `${p.name}\n${formatValue(p.value, format)}`,
         fontSize: 12, color: theme.tileText, textShadowColor: 'rgba(0,0,0,0.85)', textShadowBlur: 3,
       },
       itemStyle: { borderColor: theme.border, borderWidth: 1, gapWidth: 1 },
-      levels: [{ color: theme.palette, colorMappingBy: 'index' }],
-      data: nameValue(content.dataset.rows, view.name, view.value, theme),
+      levels: [{ color: theme.scale, colorMappingBy: 'value' }],
+      data: data.map((d) => (total > 0 && d.value / total * 100 < TREEMAP_LABEL_MIN ? { ...d, label: { show: false } } : d)),
     }],
   }
 }

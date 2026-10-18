@@ -299,7 +299,7 @@
   <h1>ETF Atlas <span>Story</span></h1>
   <div class="nav-controls">
     <button class="nav-btn" id="prevBtn" onclick="go(-1)">&larr;</button>
-    <span class="page-info" id="pageInfo">1 / 10</span>
+    <span class="page-info" id="pageInfo">1 / 11</span>
     <button class="nav-btn" id="nextBtn" onclick="go(1)">&rarr;</button>
   </div>
 </header>
@@ -314,10 +314,10 @@
   <h2 class="chapter-title">오프닝</h2>
   <div class="chapter-divider"></div>
 
-  <p><span class="hl-blue">ETF Atlas</span>는 한국 ETF 데이터를 매일 모아 그래프로 쌓고, 자연어로 물으면 표와 차트로 답하는 웹 서비스입니다. 기술 리서치 프로젝트로 시작해, 실제로 매일 돌아가는 서비스 수준까지 만들었습니다.</p>
+  <p><span class="hl-blue">ETF Atlas</span>는 한국 ETF 데이터를 매일 모아 그래프로 쌓고, 자연어로 물으면 표와 차트로 답하고, 조건을 이어 종목을 골라 그 결과를 날마다 채점하는 웹 서비스입니다. 기술 리서치 프로젝트로 시작해, 실제로 매일 돌아가는 서비스 수준까지 만들었습니다.</p>
 
   <h3 class="sub-title">풀고 싶었던 문제</h3>
-  <p>상장 ETF는 약 1,175개이고, 그중 국내 주식형·순자산 500억 원 이상만 골라도 190개, 이들이 담은 종목은 수천 건의 보유 관계를 이룹니다. "삼성전자를 가장 많이 담은 ETF는?", "KODEX 200과 비슷한 ETF는?" 같은 질문은 모두 <span class="hl-blue">관계 탐색</span>입니다.</p>
+  <p>상장 ETF는 약 1,175개이고, 그중 국내 주식형·순자산 500억 원 이상만 골라도 193개, 이들이 담은 종목은 수천 건의 보유 관계를 이룹니다. "삼성전자를 가장 많이 담은 ETF는?", "KODEX 200과 비슷한 ETF는?" 같은 질문은 모두 <span class="hl-blue">관계 탐색</span>입니다.</p>
   <p>여기에 두 가지를 더 원했습니다. 개발자가 아니어도 <span class="hl">자연어로 묻고 화면으로 답을 받는 것</span>, 그리고 이 데이터가 <span class="hl">매일 자동으로 쌓이는 것</span>입니다.</p>
 
   <div class="callout">관계 탐색은 <strong>Apache AGE</strong>, 자연어 질의는 <strong>pydantic-ai 기반 LLM 에이전트</strong>, 자동 수집은 <strong>Apache Airflow</strong>로 풀었습니다. 데이터 소스는 <strong>한국투자증권 KIS Open API</strong>입니다.</div>
@@ -356,8 +356,9 @@ $$) as (result agtype);</pre>
     <li><span class="hl-blue">ETF 탐색</span> &mdash; 검색, 테마 태그·액티브/패시브 필터, 상세(보유종목, 유사 ETF, 가격)</li>
     <li><span class="hl-blue">액티브 ETF 비중 변화</span> &mdash; 액티브 ETF가 종목 비중을 어떻게 바꿨는지 날짜별로</li>
     <li><span class="hl-blue">구성종목 분석</span> &mdash; ETF와 투자 비중을 넣으면 실제로 담기는 종목 비중을 계산</li>
-    <li><span class="hl-blue">포트폴리오</span> &mdash; 매수 기록, 목표 비중, 일별 스냅샷 대시보드, 공유</li>
+    <li><span class="hl-blue">포트폴리오</span> &mdash; 매수 기록, 목표 비중, 계좌 유형(IRP·연금저축), 일별 스냅샷 대시보드, 스냅샷 공유</li>
     <li><span class="hl-purple">AI 챗봇</span> &mdash; 자연어 질문에 표·차트·해설로 답하는 화면</li>
+    <li><span class="hl-purple">종목 스크리너</span> &mdash; 노드를 이어 종목을 고르고 AI로 근거를 정리, 고른 종목을 날마다 기록해 채점하고 자동 실행·알림</li>
     <li><span class="hl-blue">관리자</span> &mdash; 챗봇 로그 검수, 화면 설계 예시, ETF 태그, 알림 설정</li>
   </ul>
 
@@ -378,11 +379,12 @@ $$) as (result agtype);</pre>
       <text x="200" y="89" class="bsub">보수율</text>
       <rect x="246" y="46" width="80" height="60" rx="9" class="bbox ext"/>
       <text x="286" y="65" class="bname">yfinance</text>
-      <text x="286" y="83" class="bsub">보유 종목</text>
-      <text x="286" y="98" class="bsub">현재가</text>
-      <rect x="350" y="46" width="110" height="46" rx="9" class="bbox ext"/>
+      <text x="286" y="83" class="bsub">현재가</text>
+      <text x="286" y="98" class="bsub">1년 일봉</text>
+      <rect x="350" y="46" width="110" height="60" rx="9" class="bbox ext"/>
       <text x="405" y="65" class="bname">Discord</text>
-      <text x="405" y="82" class="bsub">비중 변화 알림</text>
+      <text x="405" y="83" class="bsub">비중 변화 알림</text>
+      <text x="405" y="98" class="bsub">스크리너 알림</text>
       <rect x="490" y="20" width="310" height="82" rx="12" class="bgroup "/>
       <text x="504" y="40" class="btitle">Frontend</text>
       <rect x="502" y="48" width="286" height="40" rx="9" class="bbox "/>
@@ -400,12 +402,15 @@ $$) as (result agtype);</pre>
       <text x="405" y="206" class="bsub">LLM · 임베딩</text>
       <rect x="490" y="140" width="310" height="92" rx="12" class="bgroup "/>
       <text x="504" y="160" class="btitle">Backend · FastAPI</text>
-      <rect x="502" y="168" width="136" height="50" rx="9" class="bbox "/>
-      <text x="570" y="189" class="bname">챗봇</text>
-      <text x="570" y="206" class="bsub">화면 설계 + 스킬</text>
-      <rect x="648" y="168" width="140" height="50" rx="9" class="bbox "/>
-      <text x="718" y="189" class="bname">API</text>
-      <text x="718" y="206" class="bsub">탐색·포트폴리오·관리</text>
+      <rect x="502" y="168" width="90" height="50" rx="9" class="bbox "/>
+      <text x="547" y="189" class="bname">챗봇</text>
+      <text x="547" y="206" class="bsub">설계·스킬</text>
+      <rect x="600" y="168" width="90" height="50" rx="9" class="bbox "/>
+      <text x="645" y="189" class="bname">스크리너</text>
+      <text x="645" y="206" class="bsub">자동 실행</text>
+      <rect x="698" y="168" width="90" height="50" rx="9" class="bbox "/>
+      <text x="743" y="189" class="bname">API</text>
+      <text x="743" y="206" class="bsub">탐색·관리</text>
       <rect x="20" y="280" width="780" height="136" rx="12" class="bgroup db"/>
       <text x="34" y="300" class="btitle">PostgreSQL · 하나의 DB</text>
       <rect x="36" y="308" width="240" height="92" rx="9" class="bbox graph"/>
@@ -415,17 +420,19 @@ $$) as (result agtype);</pre>
       <rect x="290" y="308" width="250" height="92" rx="9" class="bbox rel"/>
       <text x="415" y="344" class="bname">관계형 테이블</text>
       <text x="415" y="361" class="bsub">사용자 · 포트폴리오 · 스냅샷</text>
-      <text x="415" y="379" class="bsub">챗봇 대화 · 비중 변화</text>
+      <text x="415" y="379" class="bsub">챗봇 대화 · 비중 변화 · 스크리너 기록</text>
       <rect x="554" y="308" width="230" height="92" rx="9" class="bbox vec"/>
       <text x="669" y="344" class="bname">pgvector</text>
       <text x="669" y="361" class="bsub">챗봇 예시 임베딩</text>
       <text x="669" y="379" class="bsub">해결 절차 · 화면 설계</text>
       <line x1="100" y1="114" x2="100" y2="166" class="barrow" marker-end="url(#barrowhead)"/>
-      <line x1="290" y1="140" x2="372" y2="94" class="barrow" marker-end="url(#barrowhead)"/>
+      <line x1="290" y1="140" x2="368" y2="108" class="barrow" marker-end="url(#barrowhead)"/>
       <line x1="308" y1="193" x2="348" y2="193" class="barrow" marker-end="url(#barrowhead)"/>
       <line x1="502" y1="193" x2="462" y2="193" class="barrow" marker-end="url(#barrowhead)"/>
-      <line x1="645" y1="102" x2="645" y2="138" class="barrow" marker-end="url(#barrowhead)"/>
-      <text x="653" y="125" class="blabel">/api</text>
+      <line x1="760" y1="102" x2="760" y2="138" class="barrow" marker-end="url(#barrowhead)"/>
+      <text x="768" y="125" class="blabel">/api</text>
+      <polyline points="630,166 630,128 300,128 300,108" class="barrow" fill="none" marker-end="url(#barrowhead)"/>
+      <polyline points="660,166 660,122 430,122 430,108" class="barrow" fill="none" marker-end="url(#barrowhead)"/>
       <line x1="170" y1="232" x2="170" y2="278" class="barrow" marker-end="url(#barrowhead)"/>
       <text x="178" y="260" class="blabel">적재</text>
       <line x1="645" y1="232" x2="645" y2="278" class="barrow" marker-end="url(#barrowhead)"/>
@@ -434,7 +441,7 @@ $$) as (result agtype);</pre>
   </figure>
   <ul>
     <li><span class="tech">db</span> &mdash; PostgreSQL 18 + Apache AGE + pgvector + pg_trgm</li>
-    <li><span class="tech">backend</span> &mdash; FastAPI + pydantic-ai</li>
+    <li><span class="tech">backend</span> &mdash; FastAPI + pydantic-ai. 스크리너의 자동 실행도 백엔드 프로세스 안에서 돕니다</li>
     <li><span class="tech">frontend</span> &mdash; React + TypeScript + Vite, nginx가 정적 파일을 서빙하고 <span class="tech">/api</span>를 백엔드로 넘김</li>
     <li><span class="tech">airflow</span> &mdash; 3.x, 수집·태깅 DAG</li>
   </ul>
@@ -457,9 +464,9 @@ $$) as (result agtype);</pre>
     <li>ETF 구성종목 &mdash; 보유종목과 비중</li>
     <li>휴장일 &mdash; 개장 여부</li>
   </ul>
-  <p>총보수는 KIS가 주지 않아 네이버 증권에서, 포트폴리오의 장중 현재가는 yfinance에서 받습니다.</p>
+  <p>총보수는 KIS가 주지 않아 네이버 증권에서, 포트폴리오의 장중 현재가와 스크리너가 쓰는 1년 일봉은 yfinance에서 받습니다.</p>
 
-  <h3 class="sub-title">유니버스 &mdash; 190개 ETF</h3>
+  <h3 class="sub-title">유니버스 &mdash; 193개 ETF</h3>
   <p>레버리지·인버스·선물·합성·커버드콜, 채권·원자재·통화·리츠·해외 투자 ETF를 이름으로 거르고, 순자산 500억 원 이상만 남깁니다. 한 번 들어온 ETF는 빠지지 않고, 운용사는 이름 앞 브랜드(KODEX, TIGER…)로 연결합니다.</p>
 
   <h3 class="sub-title">수집 원칙</h3>
@@ -565,9 +572,9 @@ ORDER BY similarity DESC LIMIT 5</pre>
 
   <h3 class="sub-title">처리 순서</h3>
   <ul>
-    <li><span class="hl">질문 재작성</span> &mdash; 이전 대화가 있으면 "이거 구성종목은?"을 독립된 질문으로</li>
+    <li><span class="hl">질문 재작성</span> &mdash; 이전 대화가 있으면 "이거 구성종목은?"을 독립된 질문으로. 잘못 읽었으면 원문 그대로 다시 물을 수 있습니다</li>
     <li><span class="hl">화면 설계</span> &mdash; Planner(LLM)가 화면을 줄과 슬롯으로 나누고, 슬롯마다 스킬·표시 방식·인자를 정합니다. 비슷한 질문의 설계 예시를 참고합니다</li>
-    <li><span class="hl">슬롯 채우기</span> &mdash; 데이터 스킬이 그래프를 조회해 표·차트 데이터를 만듭니다. 서로 독립된 슬롯은 동시에 돌고, 끝나는 대로 화면에 나타납니다</li>
+    <li><span class="hl">슬롯 채우기</span> &mdash; 데이터 스킬이 그래프를 조회해 표·차트 데이터를 만듭니다. 서로 독립된 슬롯은 동시에 돌고, 끝나는 대로 화면에 나타납니다. "SK하이닉스를 담은 ETF 중 1주 수익률 상위 3개"처럼 한 슬롯의 결과를 다른 슬롯이 번호로 받아 정렬·필터합니다</li>
     <li><span class="hl">해설</span> &mdash; 마지막 슬롯이 앞 영역의 요약만 보고 해설을 흘려보냅니다</li>
   </ul>
 
@@ -582,23 +589,55 @@ ORDER BY similarity DESC LIMIT 5</pre>
     <li>어떤 도구를 어떤 인자로 불렀는지 화면에 단계별로 보여 줍니다</li>
   </ul>
 
-  <div class="callout">대상이 애매하면("반도체 ETF 구성종목") 하나를 추측하지 않고 후보를 보여 주며 되묻습니다. 관리자가 검수한 대화와 설계 예시가 다시 챗봇의 참고 자료가 됩니다.</div>
+  <div class="callout">대상이 애매하면("반도체 ETF 구성종목") 하나를 추측하지 않고 후보를 보여 주며 되묻습니다. 멈추면 화면은 바로 끝나고, 답변마다 완료·중지·실패·되묻기 중 어떻게 끝났는지 남습니다. 관리자가 검수한 대화와 설계 예시가 다시 챗봇의 참고 자료가 됩니다.</div>
 </section>
 
-<!-- ═══════════════ Chapter 8: 포트폴리오 ═══════════════ -->
-<section class="chapter" data-title="포트폴리오">
+<!-- ═══════════════ Chapter 8: 종목 스크리너 ═══════════════ -->
+<section class="chapter" data-title="종목 스크리너">
   <div class="chapter-num">Chapter 08</div>
+  <h2 class="chapter-title">종목 스크리너 &mdash; 고르고, 쌓고, 채점한다</h2>
+  <div class="chapter-divider"></div>
+
+  <p>챗봇이 "묻는 것"이라면 스크리너는 "고르는 것"입니다. 캔버스에 노드를 놓고 이어 <span class="hl-blue">대상 종목 &rarr; 필터 &rarr; AI 분석 &rarr; 결과</span> 순서를 만들고, 갈래를 나눠 따로 거른 뒤 교집합·합집합으로 합칠 수 있습니다. 자주 쓰는 조합은 추천 조합으로 바로 불러옵니다.</p>
+
+  <h3 class="sub-title">노드</h3>
+  <ul>
+    <li><span class="hl-blue">대상 종목</span> &mdash; ETF가 담은 전체 종목(559개), 특정 ETF의 구성종목, 내 포트폴리오가 ETF로 실제 담은 종목, 직접 입력</li>
+    <li><span class="hl-blue">차트 필터</span> &mdash; 이평 정배열, 고가 대비 위치, 20일 수익률, 거래량 배수, RSI, 간이 VCP</li>
+    <li><span class="hl-blue">ETF 신호 필터</span> &mdash; 담은 ETF 수, 최근 공시일에 액티브 ETF가 새로 편입하거나 비중을 늘린 수. 이 서비스가 매일 쌓는 데이터라 다른 스크리너에는 없는 조건입니다</li>
+    <li><span class="hl-purple">AI 분석</span> &mdash; 계산된 지표만 받아 종목마다 3문장으로 근거를 정리합니다. 매수·매도 권유와 예측은 쓰지 않습니다</li>
+  </ul>
+
+  <h3 class="sub-title">과거로 돌리지 않고 앞으로 쌓는다</h3>
+  <p>조건이 쓸모 있는지 보려면 백테스트를 떠올리지만, 구성종목 이력이 없어 "오늘 ETF가 담은 종목"으로 과거를 돌리게 됩니다. 이미 오른 종목만 고르는 <span class="hl">생존 편향</span>입니다. 그래서 저장한 스크리너는 돌릴 때마다 결과에 닿은 종목을 그날 날짜로 남기고, 나중에 채점합니다.</p>
+  <ul>
+    <li>기록한 날 <span class="hl">다음 거래일 종가</span>에 같은 금액으로 샀다고 봅니다. 장중에 돌렸거나 그날 종가를 보고 골랐어도 미래 값을 쓰지 않습니다</li>
+    <li>5·20·60거래일 뒤 수익률을 KODEX 200과 비교해 초과수익과 적중률(지수보다 많이 오른 종목 비율)을 냅니다</li>
+    <li>화면에서 고친 뒤 저장하지 않은 그래프의 결과는 남기지 않습니다. 무엇을 채점하는지 흐려지기 때문입니다</li>
+  </ul>
+
+  <h3 class="sub-title">자동 실행과 알림</h3>
+  <p>자동 실행을 켜면 영업일 장 마감 뒤 KODEX 200의 그날 일봉이 들어오는 대로 저장된 스크리너를 한 번 돌려 기록합니다. 휴장일은 일봉이 없어 저절로 건너뜁니다. 알림을 켜면 전날과 비교해 새로 들어오거나 빠진 종목만 Discord로 보냅니다.</p>
+
+  <div class="callout">숫자는 서버가 계산하고 LLM은 문장만 쓴다는 챗봇의 원칙을 그대로 따릅니다. 시세는 기능을 검증하는 단계라 yfinance에서 받고, 어떤 기간·지표가 필요한지 정해지면 KIS 일봉 수집으로 바꿀 수 있게 시세 공급원을 인터페이스 하나로 감쌌습니다.</div>
+</section>
+
+<!-- ═══════════════ Chapter 9: 포트폴리오 ═══════════════ -->
+<section class="chapter" data-title="포트폴리오">
+  <div class="chapter-num">Chapter 09</div>
   <h2 class="chapter-title">포트폴리오 관리 & 대시보드</h2>
   <div class="chapter-divider"></div>
 
   <p>사용자가 ETF와 주식의 매수 기록을 입력하면 현재가로 평가액을 계산하고, 목표 비중과의 차이로 리밸런싱을 보여 줍니다. 보유 수량·평균 단가·스냅샷 금액은 앱에서 AES-256-GCM으로 암호화해 저장합니다.</p>
-  <p>장중 10분마다 가격을 받은 직후 포트폴리오별 일별 스냅샷을 갱신하고, 대시보드는 그 추이를 그립니다. 포트폴리오는 다른 사용자에게 공유할 수 있습니다.</p>
+  <p>포트폴리오마다 계좌 유형(IRP·연금저축)을 하나 이상 붙입니다. 계좌마다 담을 수 있는 상품이 달라서입니다.</p>
+  <p>스냅샷을 켠 포트폴리오는 장중 10분마다 가격을 받은 직후 일별 스냅샷을 갱신하고, 대시보드는 그 추이를 그립니다. 스냅샷을 끄면 그동안의 기록을 지워, 다시 켰을 때 빈 기간이 섞이지 않게 합니다.</p>
+  <p>공유는 그 순간의 이름·계좌 유형·목표 비중을 <span class="hl">스냅샷으로 저장</span>합니다. 원본을 고쳐도 공유한 내용은 그대로이고, 공유 목록은 공유한 사람·계좌 유형으로 걸러 볼 수 있습니다.</p>
   <div class="callout-green">포트폴리오는 관계형 테이블을 씁니다. CRUD와 트랜잭션 중심 데이터는 관계형, 관계 탐색은 그래프라는 분리를 그대로 따릅니다.</div>
 </section>
 
-<!-- ═══════════════ Chapter 9: 설계 원칙 ═══════════════ -->
+<!-- ═══════════════ Chapter 10: 설계 원칙 ═══════════════ -->
 <section class="chapter" data-title="설계 원칙">
-  <div class="chapter-num">Chapter 09</div>
+  <div class="chapter-num">Chapter 10</div>
   <h2 class="chapter-title">만들며 정한 원칙</h2>
   <div class="chapter-divider"></div>
 
@@ -622,7 +661,7 @@ ORDER BY similarity DESC LIMIT 5</pre>
       <h4>관계형</h4>
       <ul>
         <li>사용자, 포트폴리오, 매수 기록</li>
-        <li>스냅샷, 챗봇 로그, 비중 변화</li>
+        <li>스냅샷, 챗봇 로그, 비중 변화, 스크리너 기록</li>
         <li>트랜잭션이 중요한 데이터</li>
       </ul>
     </div>
@@ -631,13 +670,16 @@ ORDER BY similarity DESC LIMIT 5</pre>
   <h3 class="sub-title">LLM은 결정적이지 않다</h3>
   <p>숫자는 LLM 밖에서 만들고, 한 번 정한 결과(태그)는 고정하며, 사람이 정한 값이 자동 결과보다 우선합니다. LLM이 쓴 쿼리는 금지어 목록 대신 <span class="hl">DB가 쓰기를 거부</span>하게 막습니다.</p>
 
+  <h3 class="sub-title">검증은 앞으로 쌓아서</h3>
+  <p>과거 데이터가 없는 것을 과거 데이터로 메우지 않습니다. 구성종목처럼 그날만 얻을 수 있는 데이터는 그날부터 쌓고, 스크리너의 쓸모도 백테스트 대신 기록한 날 이후의 실제 수익으로 따집니다.</p>
+
   <h3 class="sub-title">새는 것을 드러낸다</h3>
   <p>이름 기반 필터는 편리하지만 규칙에 없는 이름은 조용히 새어 나갑니다. 운용사 "기타", 미분류 태그처럼 새는 것을 보여 주는 지표를 주기적으로 확인합니다.</p>
 </section>
 
-<!-- ═══════════════ Chapter 10: 회고 ═══════════════ -->
+<!-- ═══════════════ Chapter 11: 회고 ═══════════════ -->
 <section class="chapter" data-title="회고">
-  <div class="chapter-num">Chapter 10</div>
+  <div class="chapter-num">Chapter 11</div>
   <h2 class="chapter-title">회고 & 마무리</h2>
   <div class="chapter-divider"></div>
 
@@ -667,6 +709,13 @@ ORDER BY similarity DESC LIMIT 5</pre>
     <div class="review-section"><div class="review-label good">Good</div><p>키 하나로 ETF 목록, 현재가, 일봉, 구성종목, 휴장일까지 얻습니다.</p></div>
     <div class="review-section"><div class="review-label bad">Bad</div><p>구성종목은 상위 30개뿐이고 과거 이력이 없습니다. 총보수는 제공하지 않습니다.</p></div>
     <div class="review-section"><div class="review-label rec">Recommend</div><p>국내 시세를 일 단위로 꾸준히 쌓는 개인·리서치 프로젝트.</p></div>
+  </div>
+
+  <div class="review-card">
+    <h4>yfinance</h4>
+    <div class="review-section"><div class="review-label good">Good</div><p>키 없이 수백 종목의 1년 일봉을 한 번에 받아, 스크리너의 지표를 먼저 써 보고 무엇을 수집할지 정할 수 있습니다.</p></div>
+    <div class="review-section"><div class="review-label bad">Bad</div><p>비공식 API라 막히거나 형식이 바뀔 수 있고, 코스피·코스닥 구분을 종목마다 찾아야 합니다.</p></div>
+    <div class="review-section"><div class="review-label rec">Recommend</div><p>기능 검증 단계의 시세. 운영 데이터는 확정 시세를 쌓는 쪽으로.</p></div>
   </div>
 
   <div class="callout" style="text-align:center">감사합니다.</div>

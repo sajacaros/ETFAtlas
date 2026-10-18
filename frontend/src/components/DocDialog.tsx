@@ -12,7 +12,7 @@ export interface DocPage {
 
 export const DOC_PAGES = {
   story: { src: '/story.html', title: 'ETF Atlas Story' },
-  architecture: { src: '/architecture.html', title: 'ETF Atlas Chatbot Architecture' },
+  architecture: { src: '/architecture.html', title: 'ETF Atlas Architecture' },
 } satisfies Record<string, DocPage>
 
 interface DocDialogProps {

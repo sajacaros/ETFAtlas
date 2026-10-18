@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ETF Atlas Chatbot Architecture</title>
+<title>ETF Atlas Architecture</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -50,9 +50,16 @@
     padding: 4px 10px; border-radius: 6px;
   }
   header nav a:hover { background: var(--primary-light); color: var(--primary); }
+  header nav a.active { background: var(--primary-light); color: var(--primary); font-weight: 600; }
 
   main { max-width: 980px; margin: 0 auto; padding: 32px 24px 64px; }
-  section { margin-bottom: 56px; scroll-margin-top: 72px; }
+  /* 메뉴마다 한 부분만 보인다 (주소의 #id로 고른다) */
+  main > section { display: none; }
+  main > section.active { display: block; }
+  .pager { display: flex; justify-content: space-between; gap: 12px; margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--border); }
+  .pager a { font-size: 14px; color: var(--primary); text-decoration: none; padding: 8px 14px; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+  .pager a:hover { background: var(--primary-light); }
+  .pager a.hidden { visibility: hidden; }
   h2 { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
   h2 + .lead { color: var(--muted); margin-bottom: 20px; }
   h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
@@ -217,19 +224,20 @@
 </head>
 <body>
 <header>
-  <h1>ETF Atlas<span>챗봇 아키텍처</span></h1>
+  <h1>ETF Atlas<span>아키텍처</span></h1>
   <nav>
-    <a href="#overview">한눈에</a>
+    <a href="#overview">챗봇</a>
     <a href="#query">질의 처리</a>
     <a href="#skills">스킬</a>
     <a href="#layout">레이아웃</a>
     <a href="#events">이벤트</a>
+    <a href="#screener">종목 스크리너</a>
   </nav>
 </header>
 
 <main>
   <section id="overview">
-    <h2>한눈에</h2>
+    <h2>챗봇 한눈에</h2>
     <p class="lead">질문이 들어오면 먼저 <b>화면을 설계</b>하고, 화면의 각 영역(슬롯)을 <b>스킬</b>이 채웁니다. 숫자는 DB에서 바로 오고, LLM은 설계와 해설만 맡습니다.</p>
 
     <div class="layer fe">
@@ -257,7 +265,7 @@
     <div class="layer skills">
       <div class="layer-title"><span class="dot"></span>Skills</div>
       <div class="row">
-        <div class="box"><div class="name">데이터 스킬 ×9</div><div class="desc">그래프를 조회해 표·차트 데이터를 만든다. LLM 없음</div></div>
+        <div class="box"><div class="name">데이터 스킬 ×11</div><div class="desc">그래프를 조회해 표·차트 데이터를 만든다. LLM 없음</div></div>
         <div class="box"><div class="name">narrative <span class="llm">LLM</span></div><div class="desc">다른 영역의 요약만 보고 해설</div></div>
         <div class="box agent"><div class="name">agent <span class="llm">LLM</span></div><div class="desc">스킬로 안 되는 질문을 도구 호출 에이전트로</div></div>
       </div>
@@ -348,14 +356,14 @@
       </svg>
     </figure>
     <div class="steps">
-      <div class="step"><div><div class="t">질문 재작성</div><div class="d">이전 대화가 있을 때만. "이거 구성종목은?" → "KODEX 반도체 구성종목은?"</div></div><div class="time">~0.5초</div></div>
+      <div class="step"><div><div class="t">질문 재작성</div><div class="d">이전 대화가 있을 때만. "이거 구성종목은?" → "KODEX 반도체 구성종목은?" 묻는 관계(담았다/추종한다, 포함/제외)는 질문의 것을 지킨다. 재작성이 잘못 읽으면 화면의 <b>원문으로 다시 묻기</b>로 재작성 없이 다시 보낸다</div></div><div class="time">~0.5초</div></div>
       <div class="step"><div><div class="t">설계 예시 찾기</div><div class="d">질문을 일반화("삼성전자" → "특정 종목")해 임베딩으로 비슷한 화면 설계 예시 후보를 뽑고, LLM이 그중 <b>질문 유형이 같은 것</b>만 고른다. 예시는 관리자 페이지에서 관리</div></div><div class="time"></div></div>
       <div class="step"><div><div class="t">화면 설계 (Planner)</div><div class="d">줄 목록, 줄마다 슬롯 1~3개(전체 8개 이하). 슬롯마다 <code>skill</code> · <code>display</code> · <code>title</code> · <code>args</code>. 출력 스키마는 등록된 스킬에서 자동으로 만든다. 참조 오류·없는 ETF 이름 같은 문제는 한꺼번에 돌려줘 다시 쓰게 하고, 그래도 실패하면 <code>agent</code> 슬롯 하나로</div></div><div class="time">2~6초</div></div>
       <div class="step"><div><div class="t">레이아웃 전송</div><div class="d">슬롯에 <code>s1</code>, <code>s2</code>… id를 붙여 저장하고 <code>layout</code> 이벤트로 보낸다. 프런트는 즉시 빈 자리를 그린다</div></div><div class="time">즉시</div></div>
-      <div class="step"><div><div class="t">데이터 슬롯 실행</div><div class="d">서로 의존하지 않는 슬롯은 동시에. 한 슬롯의 순위 결과를 다른 슬롯이 <code>@name.1</code>처럼 받아 쓰면 그 슬롯이 끝난 뒤에. 끝날 때마다 저장하고 <code>slot</code> 이벤트</div></div><div class="time">~0.1초씩</div></div>
+      <div class="step"><div><div class="t">데이터 슬롯 실행</div><div class="d">서로 의존하지 않는 슬롯은 동시에. 한 슬롯의 순위 결과를 다른 슬롯이 <code>@name.1</code>이나 <code>@name.1-3</code>처럼 번호로 받아 쓰면 그 슬롯이 끝난 뒤에. 범위가 통째로 결과 밖이면(필터로 결과가 적을 때) 다시 설계하지 않고 비운다. 끝날 때마다 저장하고 <code>slot</code> 이벤트</div></div><div class="time">~0.1초씩</div></div>
       <div class="step"><div><div class="t">한 번 다시 설계</div><div class="d">"ETF가 아니라 종목이었다"처럼 고칠 수 있는 이유로 빈 슬롯이 있으면, 실행 결과를 보여 주고 그 슬롯만 다시 설계·실행한다. 배치는 그대로</div></div><div class="time">필요할 때만</div></div>
       <div class="step"><div><div class="t">해설</div><div class="d"><code>narrative</code> 슬롯이 앞 영역들의 요약만 받아 글자 단위로 흘려보낸다. 요약에 없는 숫자는 쓰지 않는다</div></div><div class="time">2~3초</div></div>
-      <div class="step"><div><div class="t">답변 텍스트</div><div class="d">화면 전체를 텍스트로 옮겨 <code>answer</code>로 보낸다. 다음 질문의 대화 맥락과 관리자 검수에 쓴다</div></div><div class="time">즉시</div></div>
+      <div class="step"><div><div class="t">답변 텍스트</div><div class="d">화면 전체를 텍스트로 옮겨 <code>answer</code>로 보내고, 답변을 어떻게 마쳤는지(완료·중지·실패·되묻기)를 함께 기록한다. 다음 질문의 대화 맥락과 관리자 검수에 쓴다</div></div><div class="time">즉시</div></div>
     </div>
 
     <div class="two" style="margin-top:16px">
@@ -365,7 +373,7 @@
       </div>
       <div class="card">
         <h3>중지</h3>
-        <p style="font-size:13.5px">사용자가 멈추면 실행 중인 스킬은 스스로 멈추고, 아직 시작하지 않은 슬롯은 "중지했습니다"로 마감합니다. 연결이 끊겨도 남은 슬롯을 멈춥니다.</p>
+        <p style="font-size:13.5px">멈추면 화면의 답변은 바로 끝나 다음 질문을 할 수 있습니다. 서버에서는 실행 중인 스킬이 스스로 멈추고, 시작하지 않은 슬롯은 "중지했습니다"로 마감한 뒤 로그를 저장합니다. 연결이 끊겨도 같습니다. 중지·실패한 답변은 다시 열어도 그렇게 표시되고, 다음 질문의 대화 맥락에서는 빠집니다.</p>
       </div>
     </div>
     <div class="callout">데이터 영역은 레이아웃이 나오고 곧바로 채워집니다. 일반적인 ETF·종목 질문은 7~10초, <code>agent</code>로 가는 질문은 15~45초가 걸립니다.</div>
@@ -382,9 +390,11 @@
         <tr><td><code>period_returns</code></td><td>1일 ~ 1년 기간별 수익률</td><td>bar · table</td></tr>
         <tr><td><code>etf_compare</code></td><td>기본 정보 비교표</td><td>table</td></tr>
         <tr><td><code>etf_profile</code></td><td>전체 ETF 대비 백분위 점수 5개 축</td><td>radar · table</td></tr>
-        <tr><td><code>holdings</code> ⇢</td><td>구성종목 비중 (상위 30개)</td><td>treemap · donut · bar · table</td></tr>
-        <tr><td><code>stock_holders</code> ⇢</td><td>종목을 많이 담은 ETF 순위 (여러 종목이면 비중 합)</td><td>bar · table</td></tr>
-        <tr><td><code>portfolio_lookthrough</code> ⇢</td><td>여러 ETF를 섞었을 때 종목별 합산 비중</td><td>treemap · bar · donut · table</td></tr>
+        <tr><td><code>holdings</code> ⇢</td><td>구성종목 비중 (상위 30개, 최소 비중으로 거를 수 있음)</td><td>treemap · donut · bar · table</td></tr>
+        <tr><td><code>stock_holders</code> ⇢</td><td>종목을 많이 담은 ETF 순위 (여러 종목이면 비중 합, 최소 비중)</td><td>bar · table</td></tr>
+        <tr><td><code>portfolio_lookthrough</code> ⇢</td><td>여러 ETF를 섞었을 때 종목별 합산 비중 (최소 비중)</td><td>treemap · bar · donut · table</td></tr>
+        <tr><td><code>rank</code> ⇢</td><td>ETF·종목을 기간 수익률·순자산·보수로 정렬하고 범위로 거르기. 대상은 다른 슬롯의 결과, 이름, 테마 중 하나</td><td>bar · table</td></tr>
+        <tr><td><code>overlap</code> ⇢</td><td>두 ETF의 공통 종목·한쪽에만 있는 종목과 겹치는 비중</td><td>table · bar</td></tr>
         <tr><td><code>etf_choice</code></td><td>대상 ETF가 여럿일 때 후보를 보여 주고 되묻기</td><td>markdown</td></tr>
         <tr><td><code>narrative</code> <span class="llm">LLM</span></td><td>다른 영역이 끝난 뒤 해설</td><td>text</td></tr>
         <tr><td><code>agent</code> <span class="llm">LLM</span></td><td>스킬로 표현할 수 없는 질문. 도구 10개(검색·정보·유사 ETF·비교·읽기 전용 Cypher)를 가진 tool-calling 에이전트가 마크다운으로 답한다</td><td>markdown</td></tr>
@@ -456,9 +466,110 @@
       <div class="msg sse"><div class="who">서버 → 프런트</div><div class="bar"><b>slot</b> {s1 · s2 · s3, complete}</div></div>
       <div class="msg get"><div class="who">프런트 → 서버</div><div class="bar"><b>GET</b> /chat/logs/{id}/slots/s1 · s2 · s3 → 표 · 레이더 · 라인 차트</div></div>
       <div class="msg sse"><div class="who">서버 → 프런트</div><div class="bar"><b>slot_delta</b> {s4, "두 ETF 모두…"} ×N → 해설이 글자 단위로</div></div>
-      <div class="msg sse"><div class="who">서버 → 프런트</div><div class="bar"><b>slot</b> {s4, complete} · <b>answer</b> · [DONE]</div></div>
+      <div class="msg sse"><div class="who">서버 → 프런트</div><div class="bar"><b>slot</b> {s4, complete} · <b>answer</b> {answer, result: completed} · [DONE]</div></div>
     </div>
   </section>
+
+  <section id="screener">
+    <h2>종목 스크리너</h2>
+    <p class="lead">노드를 이어 만든 그래프를 서버가 <b>위상 순서로 한 노드씩</b> 실행합니다. 노드 사이로는 종목 집합(종목 행 + 열 정의)이 흐르고, 숫자는 서버가 계산하며 LLM은 근거 문장만 씁니다. 코드·API에서는 <code>flow</code>라고 부릅니다.</p>
+
+    <div class="layer fe">
+      <div class="layer-title"><span class="dot"></span>Frontend · React</div>
+      <div class="row">
+        <div class="box"><div class="name">FlowPage</div><div class="desc">팔레트 · 노드 캔버스(@xyflow/react) · 설정·결과 패널</div></div>
+        <div class="box"><div class="name">성과</div><div class="desc">자동 실행·알림 설정, 기간별 채점</div></div>
+      </div>
+    </div>
+
+    <div class="arrow both"><span><code>POST /api/flows/run</code> SSE</span><span class="line"></span><span><code>GET /flows/{id}/performance</code></span></div>
+
+    <div class="layer orch">
+      <div class="layer-title"><span class="dot"></span>Backend · services/flow</div>
+      <div class="row">
+        <div class="box"><div class="name">Executor</div><div class="desc">그래프 검사(순환·없는 노드) 후 위상 순서로 실행. 실패한 노드 뒤만 건너뛴다</div></div>
+        <div class="box"><div class="name">기록 · 채점</div><div class="desc">결과 노드의 종목을 날마다 기록, KODEX 200 대비 채점</div></div>
+        <div class="box"><div class="name">Scheduler</div><div class="desc">백엔드 프로세스 안. 영업일 장 마감 뒤 하루 한 번</div></div>
+      </div>
+    </div>
+
+    <div class="arrow"><span><code>node.run(params, inputs, ctx)</code></span><span class="line"></span><span>종목 집합 · 진행 상황</span></div>
+
+    <div class="layer skills">
+      <div class="layer-title"><span class="dot"></span>Nodes</div>
+      <div class="row">
+        <div class="box"><div class="name">대상 종목 · 필터 · 합치기 · 결과</div><div class="desc">종목을 정하고 거르고 합치고 정렬한다. LLM 없음</div></div>
+        <div class="box"><div class="name">AI 분석 <span class="llm">LLM</span></div><div class="desc">계산된 지표만 받아 종목마다 3문장 근거</div></div>
+      </div>
+    </div>
+
+    <div class="arrow"><span>시세 · Cypher · SQL</span><span class="line"></span><span></span></div>
+
+    <div class="layer data">
+      <div class="layer-title"><span class="dot"></span>Data</div>
+      <div class="row">
+        <div class="box"><div class="name">MarketData</div><div class="desc">yfinance 1년 일봉, 프로세스 메모리 6시간 캐시. DB 시세로 바꿀 수 있는 인터페이스</div></div>
+        <div class="box"><div class="name">AGE 그래프 · weight_changes</div><div class="desc">구성종목, 담은 ETF, 액티브 ETF 비중 변화</div></div>
+        <div class="box"><div class="name">analysis_flows · flow_runs</div><div class="desc">저장한 스크리너, 날마다 고른 종목</div></div>
+      </div>
+    </div>
+
+    <h3 style="margin-top:24px">노드</h3>
+    <div class="table-wrap">
+      <table>
+        <tr><th>노드</th><th>입력</th><th>하는 일</th></tr>
+        <tr><td>대상 종목 <code>source</code></td><td>0</td><td>ETF가 담은 전체 종목(559) / 특정 ETF 구성종목 / 내 포트폴리오 실보유 / 직접 입력</td></tr>
+        <tr><td>차트 필터 <code>chart_filter</code></td><td>1</td><td>이평 정배열, N일 이평 위, 고가 대비 하락폭, 20일 수익률 범위, 거래량 배수, RSI, 간이 VCP. 켠 조건을 모두 만족하는 종목만</td></tr>
+        <tr><td>ETF 신호 필터 <code>etf_signal</code></td><td>1</td><td>담은 ETF 수, 최근 N개 공시일에 액티브 ETF가 새로 편입하거나 비중을 늘린 수</td></tr>
+        <tr><td>합치기 <code>combine</code></td><td>2+</td><td>교집합 / 합집합</td></tr>
+        <tr><td>AI 분석 <code>ai_analysis</code> <span class="llm">LLM</span></td><td>1</td><td>앞에서부터 N종목. 한자가 섞이면 한 번 다시 쓰게 한다</td></tr>
+        <tr><td>결과 <code>result</code></td><td>1</td><td>정렬 기준·최대 종목 수로 표. 여기에 닿은 종목이 그날의 기록이 된다</td></tr>
+      </table>
+    </div>
+    <p style="font-size:12.5px;color:var(--muted);margin-top:8px">노드 1종 = 파일 1개. pydantic <code>Params</code>에서 설정 폼 명세를 만들어 팔레트와 폼이 따라 생긴다.</p>
+
+    <h3 style="margin-top:24px">실행 · 기록 · 채점</h3>
+    <div class="steps">
+      <div class="step"><div><div class="t">실행</div><div class="d">저장하지 않은 그래프도 바로 실행. 모양 오류는 스트림 전에 400, 노드의 입력 수·설정 오류와 실행 실패는 그 노드의 <code>node_error</code>로 알리고 그 뒤로 이어진 노드만 <code>node_skipped</code></div></div><div class="time">첫 실행 ~30초</div></div>
+      <div class="step"><div><div class="t">기록</div><div class="d"><code>flow_id</code>를 주고 그래프가 저장본과 같으면(위치 무시, 설정은 기본값을 채워 비교) 결과 노드의 종목을 오늘 날짜로 <code>flow_runs</code>에. 스크리너·날짜마다 한 행, 같은 날 다시 돌리면 덮어쓴다. <code>run_done.recorded</code>로 알림</div></div><div class="time">즉시</div></div>
+      <div class="step"><div><div class="t">채점</div><div class="d">기록한 날 <b>다음 거래일 종가</b>에 같은 금액으로 샀다고 보고 5·20·60거래일 뒤를 KODEX 200과 비교. 초과수익·적중률(지수보다 많이 오른 종목 비율), 기간이 지나지 않았으면 지금까지. 읽을 때마다 계산한다</div></div><div class="time">~4초</div></div>
+      <div class="step"><div><div class="t">자동 실행</div><div class="d">평일 16:10~20:00에 10분마다 확인. KODEX 200의 오늘 일봉이 들어와야 돌고(휴장일·지연이면 기다림), 장중에 받아 둔 미완성 일봉은 다시 받는다. 스크리너마다 조건부 UPDATE로 먼저 맡아 하루 한 번만</div></div><div class="time">하루 1회</div></div>
+      <div class="step"><div><div class="t">알림</div><div class="d">켜 두었으면 직전 기록과 비교해 새로 들어온·빠진 종목을 비중 변화 알림과 같은 디스코드 웹훅으로. 바뀐 게 없으면 보내지 않는다</div></div><div class="time"></div></div>
+    </div>
+
+    <div class="callout">과거 구성종목이 없어 백테스트는 오늘 ETF가 담은 종목으로 과거를 돌리는 생존 편향을 피할 수 없습니다. 그래서 스크리너는 <b>앞으로 쌓아 가며 채점</b>합니다. 이벤트: <code>run_start</code> · <code>node_start</code> · <code>node_progress</code> · <code>node_done {count, badge, dataset, notes}</code> · <code>node_error</code> · <code>node_skipped</code> · <code>run_done {recorded}</code></div>
+  </section>
+
+  <nav class="pager" aria-label="이전·다음 메뉴">
+    <a id="prev" href="#"></a>
+    <a id="next" href="#"></a>
+  </nav>
 </main>
+<script>
+  const sections = [...document.querySelectorAll('main > section')]
+  const links = [...document.querySelectorAll('header nav a')]
+  const label = (id) => links.find((a) => a.hash === '#' + id)?.textContent ?? ''
+
+  function show() {
+    const id = sections.some((s) => '#' + s.id === location.hash) ? location.hash.slice(1) : sections[0].id
+    const i = sections.findIndex((s) => s.id === id)
+    sections.forEach((s) => s.classList.toggle('active', s.id === id))
+    links.forEach((a) => a.classList.toggle('active', a.hash === '#' + id))
+    for (const [el, j, text] of [[prev, i - 1, (t) => '← ' + t], [next, i + 1, (t) => t + ' →']]) {
+      const target = sections[j]
+      el.classList.toggle('hidden', !target)
+      if (target) { el.href = '#' + target.id; el.textContent = text(label(target.id)) }
+    }
+    window.scrollTo(0, 0)
+  }
+
+  window.addEventListener('hashchange', show)
+  document.addEventListener('keydown', (e) => {
+    const i = sections.findIndex((s) => s.classList.contains('active'))
+    if (e.key === 'ArrowLeft' && sections[i - 1]) location.hash = sections[i - 1].id
+    if (e.key === 'ArrowRight' && sections[i + 1]) location.hash = sections[i + 1].id
+  })
+  show()
+</script>
 </body>
 </html>

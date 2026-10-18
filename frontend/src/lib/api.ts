@@ -157,8 +157,8 @@ export const etfsApi = {
     const { data } = await api.get<Holding[]>(`/etfs/${code}/holdings`, { params: { date } })
     return data
   },
-  getActiveChanges: async (baseDate?: string) => {
-    const params: Record<string, string> = {}
+  getActiveChanges: async (baseDate?: string, period = '1d') => {
+    const params: Record<string, string> = { period }
     if (baseDate) params.base_date = baseDate
     const { data } = await api.get<ActiveChangesResponse>('/etfs/active/changes', { params })
     return data

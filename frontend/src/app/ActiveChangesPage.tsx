@@ -21,6 +21,7 @@ import type { ActiveChange } from '@/types/api'
 
 type SortKey = 'etf_name' | 'stock_name' | 'change_type' | 'previous_weight' | 'current_weight' | 'weight_change'
 type SortDir = 'asc' | 'desc'
+type Period = '1d' | '1w' | '1m'
 
 export default function ActiveChangesPage() {
   const { isAuthenticated } = useAuth()
@@ -30,6 +31,7 @@ export default function ActiveChangesPage() {
   const [previousDate, setPreviousDate] = useState<string | null>(null)
   const [threshold, setThreshold] = useState<number | null>(null)
   const [baseDate, setBaseDate] = useState('')
+  const [period, setPeriod] = useState<Period>('1d')
   const [filter, setFilter] = useState<'all' | 'increased' | 'decreased'>('all')
   const [loading, setLoading] = useState(true)
   const [sortKey, setSortKey] = useState<SortKey>('weight_change')
@@ -49,7 +51,7 @@ export default function ActiveChangesPage() {
     }
     setLoading(true)
     etfsApi
-      .getActiveChanges(baseDate || undefined)
+      .getActiveChanges(baseDate || undefined, period)
       .then((res) => {
         setChanges(res.changes)
         setCurrentDate(res.current_date)
@@ -62,7 +64,7 @@ export default function ActiveChangesPage() {
         setPreviousDate(null)
       })
       .finally(() => setLoading(false))
-  }, [isAuthenticated, baseDate])
+  }, [isAuthenticated, baseDate, period])
 
   const filteredChanges = changes.filter((c) => {
     if (filter === 'increased') return c.change_type === 'increased' || c.change_type === 'added'
@@ -181,6 +183,18 @@ export default function ActiveChangesPage() {
             </Button>
           ))}
         </div>
+        <div className="flex gap-1">
+          {(['1d', '1w', '1m'] as const).map((p) => (
+            <Button
+              key={p}
+              size="sm"
+              variant={period === p ? 'default' : 'outline'}
+              onClick={() => setPeriod(p)}
+            >
+              {p}
+            </Button>
+          ))}
+        </div>
         <div className="flex items-center gap-1">
           <Calendar className="w-4 h-4 text-muted-foreground" />
           <Input
@@ -204,7 +218,15 @@ export default function ActiveChangesPage() {
             {currentDate.slice(2).replace(/-/g, '/')} ·{' '}
           </>
         )}
-        액티브 ETF 전체에서 이전 공시보다 비중이 {threshold ?? '-'}%p 넘게 바뀐 종목. 공시일의 변화는 직전 영업일 매매를 반영합니다 (디스코드 알림과 같은 내용)
+        {period === '1d' ? (
+          <>
+            액티브 ETF 전체에서 이전 공시보다 비중이 {threshold ?? '-'}%p 넘게 바뀐 종목. 공시일의 변화는 직전 영업일 매매를 반영합니다 (디스코드 알림과 같은 내용)
+          </>
+        ) : (
+          <>
+            액티브 ETF 전체에서 {period === '1w' ? '1주일' : '1달'} 전 공시보다 비중이 {threshold ?? '-'}%p 넘게 바뀐 종목. 기간이 길수록 매매가 없어도 주가 움직임만으로 비중이 바뀐 몫이 커지고, 상위 30개 밖으로 밀려난 종목은 편출로 보입니다
+          </>
+        )}
       </p>
 
       {loading ? (
@@ -213,10 +235,16 @@ export default function ActiveChangesPage() {
         <Card className="p-8">
           <div className="flex flex-col items-center gap-3 text-muted-foreground">
             <AlertCircle className="w-10 h-10" />
-            <p className="text-lg font-medium">비중 변화가 감지되지 않았습니다</p>
-            <p className="text-sm">
-              액티브 ETF들의 보유종목 비중이 기준값보다 크게 변하면 여기에 표시됩니다
-            </p>
+            {currentDate && !previousDate && period !== '1d' ? (
+              <p className="text-lg font-medium">비교할 {period === '1w' ? '1주일' : '1달'} 전 데이터가 아직 없습니다</p>
+            ) : (
+              <>
+                <p className="text-lg font-medium">비중 변화가 감지되지 않았습니다</p>
+                <p className="text-sm">
+                  액티브 ETF들의 보유종목 비중이 기준값보다 크게 변하면 여기에 표시됩니다
+                </p>
+              </>
+            )}
           </div>
         </Card>
       ) : (

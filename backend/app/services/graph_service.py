@@ -470,6 +470,89 @@ class GraphService:
             })
         return sorted(changes, key=lambda x: x["current_weight"], reverse=True), actual_date, prev_actual
 
+    def get_active_period_changes(self, current_date: str, days: int) -> tuple[List[Dict], str | None]:
+        """액티브 ETF 전체의 current_date 보유종목을 days일 전(그날 이하 마지막 HOLDS)과 비교. 변화 없는 종목은 뺀다.
+
+        weight_changes(직전 공시일 대비)와 같은 모양으로 돌려준다. 비교할 이전 HOLDS가 없는 ETF는 뺀다.
+        Returns: (changes_list, 비교한 이전 날짜 중 가장 최근)
+        """
+        from collections import defaultdict
+        from datetime import date, timedelta
+
+        ref = (date.fromisoformat(current_date) - timedelta(days=days)).isoformat()
+        prev_dates = {}
+        for row in self.execute_cypher("""
+            MATCH (e:ETF)-[h:HOLDS]->(:Stock)
+            WHERE e.active = true AND h.date <= $ref
+            WITH e.code as code, max(h.date) as d
+            RETURN {etf_code: code, date: d}
+        """, {"ref": ref}):
+            data = self.parse_agtype(row["result"])
+            prev_dates[data["etf_code"]] = data["date"]
+        if not prev_dates:
+            return [], None
+
+        holdings = defaultdict(lambda: defaultdict(dict))  # etf_code -> date -> stock_code -> {name, weight}
+        etf_names = {}
+
+        def add_rows(rows):
+            for row in rows:
+                data = self.parse_agtype(row["result"])
+                etf_names[data["etf_code"]] = data.get("etf_name") or data["etf_code"]
+                holdings[data["etf_code"]][data["date"]][data["stock_code"]] = {
+                    "name": data.get("stock_name") or data["stock_code"],
+                    "weight": float(data["weight"]) if data.get("weight") else 0,
+                }
+
+        add_rows(self.execute_cypher("""
+            MATCH (e:ETF)-[h:HOLDS {date: $date}]->(s:Stock)
+            WHERE e.active = true
+            RETURN {etf_code: e.code, etf_name: e.name, date: h.date,
+                    stock_code: s.code, stock_name: s.name, weight: h.weight}
+        """, {"date": current_date}))
+        # ETF마다 이전 날짜가 다를 수 있어(며칠 빠진 ETF) 범위로 읽고 ETF별 날짜만 쓴다
+        add_rows(self.execute_cypher("""
+            MATCH (e:ETF)-[h:HOLDS]->(s:Stock)
+            WHERE e.active = true AND h.date >= $since AND h.date <= $ref
+            RETURN {etf_code: e.code, etf_name: e.name, date: h.date,
+                    stock_code: s.code, stock_name: s.name, weight: h.weight}
+        """, {"since": min(prev_dates.values()), "ref": ref}))
+
+        changes = []
+        compared = []
+        for etf_code, by_date in holdings.items():
+            today_h = by_date.get(current_date)
+            prev_date = prev_dates.get(etf_code)
+            prev_h = by_date.get(prev_date) if prev_date else None
+            if not today_h or not prev_h:
+                continue
+            compared.append(prev_date)
+            for code in set(today_h) | set(prev_h):
+                curr, prev = today_h.get(code), prev_h.get(code)
+                cw = curr["weight"] if curr else 0
+                pw = prev["weight"] if prev else 0
+                diff = round(cw - pw, 4)
+                if diff == 0:
+                    continue
+                if curr and not prev:
+                    change_type = "added"
+                elif prev and not curr:
+                    change_type = "removed"
+                else:
+                    change_type = "increased" if diff > 0 else "decreased"
+                changes.append({
+                    "etf_code": etf_code,
+                    "etf_name": etf_names[etf_code],
+                    "prev_date": prev_date,
+                    "stock_code": code,
+                    "stock_name": (curr or prev)["name"],
+                    "change_type": change_type,
+                    "current_weight": cw,
+                    "previous_weight": pw,
+                    "weight_change": diff,
+                })
+        return changes, max(compared, default=None)
+
     def get_company_etfs(self, company_name: str = None) -> List[Dict]:
         """운용사별 ETF 목록 조회. company_name 없으면 전체 운용사 목록 + ETF 수 반환"""
         if company_name:

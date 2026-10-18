@@ -6,6 +6,7 @@ import {
   ReactFlow,
   ReactFlowProvider,
   addEdge,
+  reconnectEdge,
   useEdgesState,
   useNodesInitialized,
   useNodesState,
@@ -166,18 +167,37 @@ function FlowEditor() {
     if (spec) addNode(spec, screenToFlowPosition({ x: e.clientX - 96, y: e.clientY - 30 }))
   }
 
+  // 끝을 끌어 옮기는 중인 연결: 검사할 때 이 연결은 없는 것으로 친다
+  const reconnectingRef = useRef<{ id: string; done: boolean } | null>(null)
+
   const isValidConnection: IsValidConnection = useCallback((c) => {
     if (!c.source || !c.target || c.source === c.target) return false
     const target = nodes.find((n) => n.id === c.target)
     const max = target?.data.spec.max_inputs
     if (max === 0) return false
-    const incoming = edges.filter((e) => e.target === c.target)
+    const others = edges.filter((e) => e.id !== reconnectingRef.current?.id)
+    const incoming = others.filter((e) => e.target === c.target)
     if (incoming.some((e) => e.source === c.source)) return false
     if (max != null && incoming.length >= max) return false
-    return !createsCycle(edges, c.source, c.target)
+    return !createsCycle(others, c.source, c.target)
   }, [nodes, edges])
 
   const onConnect = useCallback((c: Connection) => setEdges((es) => addEdge(c, es)), [setEdges])
+
+  const onReconnectStart = useCallback((_: unknown, edge: Edge) => {
+    reconnectingRef.current = { id: edge.id, done: false }
+  }, [])
+
+  const onReconnect = useCallback((old: Edge, c: Connection) => {
+    if (reconnectingRef.current) reconnectingRef.current.done = true
+    setEdges((es) => reconnectEdge(old, c, es))
+  }, [setEdges])
+
+  // 빈 곳에 놓으면 그 연결을 지운다
+  const onReconnectEnd = useCallback((_: unknown, edge: Edge) => {
+    if (!reconnectingRef.current?.done) setEdges((es) => es.filter((e) => e.id !== edge.id))
+    reconnectingRef.current = null
+  }, [setEdges])
 
   const selected = nodes.find((n) => n.id === selectedId) ?? null
 
@@ -373,6 +393,9 @@ function FlowEditor() {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
+            onReconnectStart={onReconnectStart}
+            onReconnect={onReconnect}
+            onReconnectEnd={onReconnectEnd}
             isValidConnection={isValidConnection}
             onNodeClick={(_, n) => setSelectedId(n.id)}
             onPaneClick={() => setSelectedId(null)}
@@ -386,7 +409,7 @@ function FlowEditor() {
             <Controls showInteractive={false} />
             {!selected && (
               <Panel position="top-left" className="max-w-xs rounded-md border bg-background/90 px-3 py-2 text-xs text-muted-foreground shadow-sm">
-                노드를 눌러 설정하거나 결과를 봅니다. 노드 오른쪽 점을 다음 노드 왼쪽 점에 끌어 이으면 흐름이 되고, 고른 노드나 연결은 Delete 키로 지웁니다.
+                노드를 눌러 설정하거나 결과를 봅니다. 노드 오른쪽 점을 다음 노드 왼쪽 점에 끌어 이으면 흐름이 되고, 연결 끝을 끌어 다른 노드로 옮기거나 빈 곳에 놓아 지울 수 있고, 고른 노드나 연결은 Delete 키로 지웁니다.
               </Panel>
             )}
           </ReactFlow>

@@ -181,7 +181,7 @@
   .theme-gameboy .recharts-default-legend .recharts-legend-item-text { color: hsl(var(--muted-foreground)) !important; }
 }
 
-/* 분석 흐름 캔버스(React Flow): 자체 색 대신 앱 테마 토큰을 쓴다.
+/* 종목 스크리너 캔버스(React Flow): 자체 색 대신 앱 테마 토큰을 쓴다.
    colorMode="dark"는 캔버스에 .dark 클래스를 붙여 게임보이 색을 덮어쓰므로 쓰지 않는다 */
 .react-flow {
   --xy-background-color: hsl(var(--background));  /* 노드(카드 색)가 바탕 위로 뜨게 */

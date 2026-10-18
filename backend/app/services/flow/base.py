@@ -1,4 +1,4 @@
-"""노드: 분석 흐름의 한 단계. 노드 1종 = 파일 1개 (Params 스키마 + run).
+"""노드: 종목 스크리너의 한 단계. 노드 1종 = 파일 1개 (Params 스키마 + run).
 
 노드 사이로는 StockSet(종목 → 행)이 흐른다. 행에는 종목코드·이름과 앞 노드들이 계산한 값이 쌓이고,
 fields가 그 값의 이름·서식을 들고 다녀서 결과 표가 열을 따로 정하지 않아도 된다.
@@ -31,7 +31,7 @@ class StockSet:
         self.fields[key] = DataField(key=key, label=label, format=fmt)
 
     def derive(self, rows: Dict[str, Dict[str, Any]]) -> "StockSet":
-        """같은 열 정의로 행만 바꾼 새 집합 (거르기·정렬)."""
+        """같은 열 정의로 행만 바꾼 새 집합 (필터·정렬)."""
         return StockSet(rows=rows, fields=dict(self.fields), notes=list(self.notes))
 
     def dataset(self, limit: int = PREVIEW_ROWS) -> Dataset:

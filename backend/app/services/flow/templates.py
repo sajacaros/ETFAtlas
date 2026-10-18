@@ -67,4 +67,19 @@ TEMPLATES: List[Dict[str, Any]] = [
             [("src", "chart"), ("chart", "ai"), ("ai", "out")],
         ),
     },
+    {
+        "key": "active_buy",
+        "name": "액티브 ETF 매수 종목",
+        "description": "최근 5개 공시일에 액티브 ETF 2개 이상이 새로 담거나 비중을 늘린 종목 중 20일 이평 위 → AI 근거",
+        "graph": _graph(
+            [
+                ("src", "source", {"mode": "all"}, 0, 120),
+                ("signal", "etf_signal", {"active": "buy", "days": 5, "min_change": 0.5, "min_active_etfs": 2}, 280, 120),
+                ("chart", "chart_filter", {"above_ma": 20}, 560, 120),
+                ("ai", "ai_analysis", {"max_stocks": 10}, 840, 120),
+                ("out", "result", {"sort_by": "active_change"}, 1120, 120),
+            ],
+            [("src", "signal"), ("signal", "chart"), ("chart", "ai"), ("ai", "out")],
+        ),
+    },
 ]

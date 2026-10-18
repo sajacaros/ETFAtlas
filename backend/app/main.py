@@ -21,7 +21,13 @@ async def lifespan(_app: FastAPI):
     except RuntimeError as e:
         logger.error(f"Startup check failed: {e}")
         raise
-    yield
+    import asyncio
+    from .services.flow import scheduler
+    flow_scheduler = asyncio.create_task(scheduler.loop())  # 저장한 흐름의 장 마감 뒤 자동 실행
+    try:
+        yield
+    finally:
+        flow_scheduler.cancel()
 
 
 app = FastAPI(

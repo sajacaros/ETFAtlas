@@ -13,7 +13,7 @@ class ResultParams(BaseModel):
 
 class ResultNode(Node):
     type = "result"
-    label = "결과 확인"
+    label = "결과"
     category = "result"
     icon = "📋"
     description = "들어온 종목을 표로 모아 비교한다. 정렬 기준과 최대 종목 수를 정할 수 있다"

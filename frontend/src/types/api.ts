@@ -599,7 +599,7 @@ export interface CompositionResponse {
   as_of: string | null
 }
 
-// 분석 흐름 (노드 기반 종목 분석)
+// 종목 스크리너 (노드 기반 종목 분석, 코드에서는 flow)
 export type FlowCategory = 'source' | 'filter' | 'combine' | 'ai' | 'result'
 
 export interface FlowParamSpec {
@@ -645,7 +645,36 @@ export interface SavedFlow {
   id: number
   name: string
   updated_at: string | null
+  schedule_enabled: boolean  // 영업일 장 마감 뒤 자동 실행
+  notify: boolean  // 자동 실행에서 바뀐 종목을 디스코드로 알린다
   graph?: FlowGraphData
+}
+
+// 기록된 날 고른 종목을 다음 거래일 종가에 같은 금액으로 샀다고 보고 N거래일 뒤를 기준 지수와 비교한 값 (모두 %)
+export interface FlowScore {
+  exit_date: string
+  ret: number
+  bench: number
+  excess: number
+  hit: number  // 기준 지수보다 많이 오른 종목 비율
+  n: number
+}
+
+export interface FlowScoredRun {
+  run_date: string
+  trigger: 'manual' | 'schedule'
+  count: number
+  entry_date: string | null
+  horizons: Record<string, FlowScore | null>
+  so_far: FlowScore | null
+}
+
+export interface FlowPerformance {
+  benchmark: { code: string; name: string }
+  horizons: number[]
+  as_of: string | null
+  summary: Record<string, { runs: number; ret: number; excess: number; hit: number; beat_runs: number } | null>
+  runs: FlowScoredRun[]
 }
 
 export interface FlowNodeResult {
@@ -663,5 +692,6 @@ export interface FlowRunHandlers {
   onNodeDone?: (result: FlowNodeResult) => void
   onNodeError?: (id: string, message: string, skipped: boolean) => void
   onError: (message: string) => void
+  onRecorded?: () => void  // 저장한 스크리너를 고치지 않고 돌려 오늘 고른 종목이 기록됐을 때
   onDone?: () => void
 }

@@ -110,7 +110,7 @@ function SidebarBody({
     { to: '/shared', label: '공유 포트폴리오', icon: Share2 },
     { to: '/changes', label: '비중 변화', icon: Bell, dot: hasNew },
     { to: '/chat', label: 'ETF 챗봇', icon: MessageCircle },
-    { to: '/flows', label: '분석 흐름', icon: Workflow },
+    { to: '/flows', label: '종목 스크리너', icon: Workflow },
   ]
   const adminItems: NavItem[] = user?.is_admin ? [{ to: '/admin', label: '관리', icon: Shield }] : []
 

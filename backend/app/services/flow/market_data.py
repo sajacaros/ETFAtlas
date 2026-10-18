@@ -1,4 +1,4 @@
-"""분석 흐름의 시세 공급원.
+"""종목 스크리너의 시세 공급원.
 
 노드는 MarketData.bars()만 부른다. 지금은 기능을 먼저 검증하려고 yfinance로 받고,
 어떤 데이터를 쌓을지 정해지면 DB(AGE Price)를 읽는 구현체로 바꾼다.
@@ -21,6 +21,16 @@ class MarketData(Protocol):
     def bars(self, codes: Iterable[str]) -> Dict[str, List[Bar]]:
         """코드 → 날짜 오름차순 일봉. 받지 못한 종목은 빠진다."""
         ...
+
+
+class FreshMarketData:
+    """since(epoch 초) 전에 받아 둔 캐시는 다시 받는다. 자동 실행이 장중에 받아 둔 미완성 일봉을 쓰지 않게 한다."""
+
+    def __init__(self, base: "YFinanceMarketData", since: float):
+        self.base, self.since = base, since
+
+    def bars(self, codes: Iterable[str]) -> Dict[str, List[Bar]]:
+        return self.base.bars(codes, fetched_after=self.since)
 
 
 def _frame_bars(frame) -> List[Bar]:
@@ -46,11 +56,14 @@ class YFinanceMarketData:
         self._suffix: Dict[str, str] = {}
         self._lock = threading.Lock()
 
-    def bars(self, codes: Iterable[str]) -> Dict[str, List[Bar]]:
+    def bars(self, codes: Iterable[str], fetched_after: float = 0) -> Dict[str, List[Bar]]:
         codes = list(dict.fromkeys(codes))
         now = time.time()
         with self._lock:
-            missing = [c for c in codes if c not in self._cache or now - self._cache[c][0] > CACHE_TTL]
+            missing = [
+                c for c in codes
+                if c not in self._cache or now - self._cache[c][0] > CACHE_TTL or self._cache[c][0] < fetched_after
+            ]
             if missing:
                 self._fetch(missing, now)
             return {c: self._cache[c][1] for c in codes if c in self._cache and self._cache[c][1]}
@@ -106,7 +119,7 @@ class YFinanceMarketData:
 _default: Optional[YFinanceMarketData] = None
 
 
-def default_market_data() -> MarketData:
+def default_market_data() -> YFinanceMarketData:
     global _default
     if _default is None:
         _default = YFinanceMarketData()

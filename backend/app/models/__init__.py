@@ -14,7 +14,7 @@ from .ai_setting import AISetting
 from .invitation import Invitation
 from .auth_session import AuthSession
 from .password_reset import PasswordReset
-from .analysis_flow import AnalysisFlow
+from .analysis_flow import AnalysisFlow, FlowRun
 
 __all__ = [
     "User",
@@ -42,4 +42,5 @@ __all__ = [
     "AuthSession",
     "PasswordReset",
     "AnalysisFlow",
+    "FlowRun",
 ]

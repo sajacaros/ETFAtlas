@@ -38,7 +38,7 @@ class CombineNode(Node):
     label = "합치기"
     category = "combine"
     icon = "∩"
-    description = "두 개 이상의 흐름을 합친다. 교집합은 모든 입력에 있는 종목만, 합집합은 하나라도 있는 종목을 남긴다"
+    description = "두 개 이상의 갈래를 합친다. 교집합은 모든 입력에 있는 종목만, 합집합은 하나라도 있는 종목을 남긴다"
     Params = CombineParams
     min_inputs = 2
     max_inputs = None

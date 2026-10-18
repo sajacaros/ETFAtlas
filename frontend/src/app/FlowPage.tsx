@@ -16,11 +16,13 @@ import {
   type IsValidConnection,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { FilePlus, FolderOpen, Loader2, Play, Plus, Save, Square, Trash2 } from 'lucide-react'
+import { FilePlus, FolderOpen, LineChart, Loader2, Play, Plus, Save, Square, Trash2 } from 'lucide-react'
 import { flowApi, portfolioApi } from '@/lib/api'
 import type { FlowCatalog, FlowGraphData, FlowNodeResult, FlowNodeSpec, FlowTemplate, Portfolio, SavedFlow } from '@/types/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import {
@@ -36,9 +38,10 @@ import { FlowNodeCard, type FlowCanvasNode, type RunState } from '@/components/f
 import { NodePalette, DRAG_TYPE } from '@/components/flow/NodePalette'
 import { ParamForm } from '@/components/flow/ParamForm'
 import { NodeResultView } from '@/components/flow/NodeResultView'
+import { FlowPerformance } from '@/components/flow/FlowPerformance'
 
 const NODE_TYPES = { stock: FlowNodeCard }
-const DEFAULT_NAME = '새 분석 흐름'
+const DEFAULT_NAME = '새 스크리너'
 
 type RunStatus = { state: RunState; message?: string }
 
@@ -101,6 +104,8 @@ function FlowEditor() {
   const [results, setResults] = useState<Record<string, FlowNodeResult>>({})
   const [running, setRunning] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [schedule, setSchedule] = useState({ enabled: false, notify: false })
+  const [trackOpen, setTrackOpen] = useState(false)
   // 불러온 노드의 크기를 잰 뒤에 화면에 맞춘다 (재기 전에 맞추면 아주 작게 줌아웃된다)
   const [fitPending, setFitPending] = useState(false)
   const nodesInitialized = useNodesInitialized()
@@ -119,6 +124,11 @@ function FlowEditor() {
   }, [toast])
 
   useEffect(() => () => abortRef.current?.abort(), [])
+
+  // 저장하지 않은 스크리너에는 자동 실행 설정이 없다
+  useEffect(() => {
+    if (flowId === null) setSchedule({ enabled: false, notify: false })
+  }, [flowId])
 
   const clearRun = () => {
     setStatus({})
@@ -244,6 +254,7 @@ function FlowEditor() {
       },
       onNodeError: (id, message, skipped) => setStatus((s) => ({ ...s, [id]: { state: skipped ? 'skipped' : 'error', message } })),
       onError: (message) => toast({ title: '실행 실패', description: message, variant: 'destructive' }),
+      onRecorded: () => toast({ title: '오늘 고른 종목을 기록했습니다', description: '성과에서 나중에 채점 결과를 볼 수 있습니다' }),
       onDone: () => {
         setRunning(false)
         // 실행 중에 멈춘 노드는 중지로 표시한다
@@ -256,7 +267,7 @@ function FlowEditor() {
           setTimeout(() => fitView({ padding: 0.2, maxZoom: 1, duration: 200 }), 80)
         }
       },
-    })
+    }, flowId)
   }
 
   const save = async () => {
@@ -266,6 +277,7 @@ function FlowEditor() {
       const flow = flowId ? await flowApi.update(flowId, title, graph) : await flowApi.create(title, graph)
       setFlowId(flow.id)
       setName(flow.name)
+      setSchedule({ enabled: flow.schedule_enabled, notify: flow.notify })
       setSaved(await flowApi.list())
       toast({ title: '저장했습니다' })
     } catch {
@@ -278,6 +290,7 @@ function FlowEditor() {
       const flow = await flowApi.get(id)
       setFlowId(flow.id)
       setName(flow.name)
+      setSchedule({ enabled: flow.schedule_enabled, notify: flow.notify })
       if (flow.graph) loadGraph(flow.graph)
     } catch {
       toast({ title: '불러오기 실패', variant: 'destructive' })
@@ -285,10 +298,20 @@ function FlowEditor() {
   }
 
   const removeSaved = async (id: number) => {
-    if (!window.confirm('이 흐름을 삭제할까요?')) return
+    if (!window.confirm('이 스크리너를 삭제할까요?')) return
     await flowApi.remove(id)
     setSaved((s) => s.filter((f) => f.id !== id))
     if (flowId === id) setFlowId(null)
+  }
+
+  const changeSchedule = async (enabled: boolean, notify: boolean) => {
+    if (!flowId) return
+    try {
+      const flow = await flowApi.setSchedule(flowId, enabled, notify)
+      setSchedule({ enabled: flow.schedule_enabled, notify: flow.notify })
+    } catch {
+      toast({ title: '자동 실행 설정을 바꾸지 못했습니다', variant: 'destructive' })
+    }
   }
 
   const startNew = () => {
@@ -328,7 +351,7 @@ function FlowEditor() {
     <div className="flex flex-col gap-3 lg:h-[calc(100dvh-4rem)]">
       {/* 도구 막대 */}
       <div className="flex flex-wrap items-center gap-2">
-        <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={100} className="h-9 w-full sm:w-64" aria-label="흐름 이름" />
+        <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={100} className="h-9 w-full sm:w-64" aria-label="스크리너 이름" />
         <Button variant="outline" size="sm" onClick={() => setPaletteOpen(true)} className="lg:hidden">
           <Plus className="mr-1 h-4 w-4" /> 노드 추가
         </Button>
@@ -342,9 +365,9 @@ function FlowEditor() {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-64">
-            <DropdownMenuLabel>저장한 흐름</DropdownMenuLabel>
+            <DropdownMenuLabel>저장한 스크리너</DropdownMenuLabel>
             <DropdownMenuSeparator />
-            {saved.length === 0 && <div className="px-2 py-1.5 text-sm text-muted-foreground">저장한 흐름이 없습니다</div>}
+            {saved.length === 0 && <div className="px-2 py-1.5 text-sm text-muted-foreground">저장한 스크리너가 없습니다</div>}
             {saved.map((f) => (
               <DropdownMenuItem key={f.id} onSelect={() => openSaved(f.id)} className="flex items-center justify-between gap-2">
                 <span className="truncate">{f.name}</span>
@@ -366,6 +389,16 @@ function FlowEditor() {
         </DropdownMenu>
         <Button variant="outline" size="sm" onClick={save} disabled={!nodes.length}>
           <Save className="mr-1 h-4 w-4" /> 저장
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setTrackOpen(true)}
+          disabled={!flowId}
+          title={flowId ? undefined : '저장한 스크리너만 기록·자동 실행할 수 있습니다'}
+        >
+          <LineChart className="mr-1 h-4 w-4" /> 성과
+          {schedule.enabled && <span className="ml-1.5 rounded bg-primary/15 px-1 text-[10px] text-primary">자동</span>}
         </Button>
         <Button size="sm" onClick={run} disabled={!nodes.length && !running} className="ml-auto">
           {running ? <><Square className="mr-1 h-4 w-4" /> 중지</> : <><Play className="mr-1 h-4 w-4" /> 실행</>}
@@ -409,7 +442,7 @@ function FlowEditor() {
             <Controls showInteractive={false} />
             {!selected && (
               <Panel position="top-left" className="max-w-xs rounded-md border bg-background/90 px-3 py-2 text-xs text-muted-foreground shadow-sm">
-                노드를 눌러 설정하거나 결과를 봅니다. 노드 오른쪽 점을 다음 노드 왼쪽 점에 끌어 이으면 흐름이 되고, 연결 끝을 끌어 다른 노드로 옮기거나 빈 곳에 놓아 지울 수 있고, 고른 노드나 연결은 Delete 키로 지웁니다.
+                노드를 눌러 설정하거나 결과를 봅니다. 노드 오른쪽 점을 다음 노드 왼쪽 점에 끌어 이으면 순서대로 실행되고, 연결 끝을 끌어 다른 노드로 옮기거나 빈 곳에 놓아 지울 수 있고, 고른 노드나 연결은 Delete 키로 지웁니다.
               </Panel>
             )}
           </ReactFlow>
@@ -462,6 +495,40 @@ function FlowEditor() {
           </aside>
         )}
       </div>
+
+      {/* 성과·자동 실행 */}
+      <Dialog open={trackOpen} onOpenChange={setTrackOpen}>
+        <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>{name} — 성과·자동 실행</DialogTitle>
+          </DialogHeader>
+          {flowId && (
+            <div className="space-y-5">
+              <section className="space-y-2 rounded-lg border p-3">
+                <div className="flex items-center gap-3">
+                  <Switch id="flow-schedule" checked={schedule.enabled} onCheckedChange={(v) => changeSchedule(v, schedule.notify)} />
+                  <Label htmlFor="flow-schedule">영업일 장 마감 뒤 자동 실행</Label>
+                </div>
+                <div className="flex items-center gap-3">
+                  <Switch
+                    id="flow-notify"
+                    checked={schedule.notify}
+                    disabled={!schedule.enabled}
+                    onCheckedChange={(v) => changeSchedule(schedule.enabled, v)}
+                  />
+                  <Label htmlFor="flow-notify">새로 들어오거나 빠진 종목을 디스코드로 알리기</Label>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  평일 16:10 이후 그날 일봉이 들어오면 저장된 스크리너를 한 번 돌려 결과를 기록합니다 (휴장일은 건너뜁니다).
+                  알림은 관리자가 설정한 디스코드 채널로 가며 스크리너 이름·내 이름·종목 이름이 보입니다.
+                  화면에서 직접 실행해도 저장본을 고치지 않았다면 그날 결과로 기록됩니다.
+                </p>
+              </section>
+              <FlowPerformance flowId={flowId} />
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* 팔레트 (모바일) */}
       <Dialog open={paletteOpen} onOpenChange={setPaletteOpen}>

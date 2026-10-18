@@ -93,7 +93,7 @@ def conditions(p: ChartFilterParams) -> List[str]:
 
 class ChartFilterNode(Node):
     type = "chart_filter"
-    label = "차트로 거르기"
+    label = "차트 필터"
     category = "filter"
     icon = "📈"
     description = "일봉(최근 1년, yfinance)으로 이평·고가 위치·수익률·거래량·RSI·변동성 수축을 계산해 켠 조건을 모두 만족하는 종목만 남긴다"

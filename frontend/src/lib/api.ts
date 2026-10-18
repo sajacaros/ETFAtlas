@@ -40,6 +40,7 @@ import type {
   AdminAISettings,
   FlowCatalog,
   FlowGraphData,
+  FlowPerformance,
   FlowRunHandlers,
   SavedFlow,
   AdminAISettingField,
@@ -600,7 +601,7 @@ export const adminApi = {
 
 export default api
 
-// 분석 흐름
+// 종목 스크리너 (코드에서는 flow)
 export const flowApi = {
   getCatalog: async () => {
     const { data } = await api.get<FlowCatalog>('/flows/catalog')
@@ -625,13 +626,22 @@ export const flowApi = {
   remove: async (id: number) => {
     await api.delete(`/flows/${id}`)
   },
-  // 저장하지 않은 그래프도 그대로 실행한다. 중지하려면 돌려받은 AbortController를 abort한다
-  run: (graph: FlowGraphData, handlers: FlowRunHandlers) => {
+  setSchedule: async (id: number, scheduleEnabled: boolean, notify: boolean) => {
+    const { data } = await api.put<SavedFlow>(`/flows/${id}/schedule`, { schedule_enabled: scheduleEnabled, notify })
+    return data
+  },
+  getPerformance: async (id: number) => {
+    const { data } = await api.get<FlowPerformance>(`/flows/${id}/performance`)
+    return data
+  },
+  // 저장하지 않은 그래프도 그대로 실행한다. 중지하려면 돌려받은 AbortController를 abort한다.
+  // flowId를 주면 그래프가 저장본과 같을 때 고른 종목을 기록한다
+  run: (graph: FlowGraphData, handlers: FlowRunHandlers, flowId?: number | null) => {
     const abortController = new AbortController()
     fetch(`${API_URL}/api/flows/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ graph }),
+      body: JSON.stringify({ graph, flow_id: flowId ?? null }),
       signal: abortController.signal,
     })
       .then(async (response) => {
@@ -662,6 +672,7 @@ export const flowApi = {
               else if (event.type === 'node_done') handlers.onNodeDone?.(d)
               else if (event.type === 'node_error') handlers.onNodeError?.(d.id, d.message, false)
               else if (event.type === 'node_skipped') handlers.onNodeError?.(d.id, d.message, true)
+              else if (event.type === 'run_done' && d.recorded) handlers.onRecorded?.()
               else if (event.type === 'error') handlers.onError(d.message)
             } catch { /* ignore parse errors */ }
           }

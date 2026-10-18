@@ -59,7 +59,7 @@ def etf_holdings(db: Session, etf_codes: List[str]) -> List[Dict]:
 
 class SourceNode(Node):
     type = "source"
-    label = "종목 가져오기"
+    label = "대상 종목"
     category = "source"
     icon = "📥"
     description = "분석할 대상 종목을 정한다. ETF가 담은 전체 종목, 특정 ETF의 구성종목, 내 포트폴리오가 ETF로 실제 담고 있는 종목, 직접 고른 종목 중 하나"

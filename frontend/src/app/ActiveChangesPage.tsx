@@ -183,18 +183,6 @@ export default function ActiveChangesPage() {
             </Button>
           ))}
         </div>
-        <div className="flex gap-1">
-          {(['1d', '1w', '1m'] as const).map((p) => (
-            <Button
-              key={p}
-              size="sm"
-              variant={period === p ? 'default' : 'outline'}
-              onClick={() => setPeriod(p)}
-            >
-              {p}
-            </Button>
-          ))}
-        </div>
         <div className="flex items-center gap-1">
           <Calendar className="w-4 h-4 text-muted-foreground" />
           <Input
@@ -208,6 +196,18 @@ export default function ActiveChangesPage() {
               오늘
             </Button>
           )}
+        </div>
+        <div className="flex gap-1">
+          {(['1d', '1w', '1m'] as const).map((p) => (
+            <Button
+              key={p}
+              size="sm"
+              variant={period === p ? 'default' : 'outline'}
+              onClick={() => setPeriod(p)}
+            >
+              {p}
+            </Button>
+          ))}
         </div>
       </div>
 

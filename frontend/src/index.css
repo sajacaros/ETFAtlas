@@ -59,32 +59,34 @@
   /* 게임보이(터미널) 테마: 검은 바탕에 네온 그린, 고정폭 글꼴, 각진 모서리 */
   .theme-gameboy {
     color-scheme: dark;
-    --background: 0 0% 4%;
-    --foreground: 130 85% 62%;
-    --card: 0 0% 7.5%;
-    --card-foreground: 130 85% 62%;
-    --popover: 0 0% 9%;
-    --popover-foreground: 130 85% 62%;
-    --primary: 135 100% 50%;
-    --primary-foreground: 0 0% 4%;
-    --secondary: 0 0% 12%;
-    --secondary-foreground: 130 85% 62%;
-    --muted: 0 0% 12%;
-    --muted-foreground: 115 14% 58%;
-    --accent: 135 70% 12%;
-    --accent-foreground: 135 100% 58%;
-    --destructive: 0 85% 58%;
+    /* 오래 읽어도 눈이 덜 피곤하게: 순수한 검정 대신 초록빛이 도는 짙은 회색 바탕, 본문은 채도를 낮춘 연초록,
+       형광 초록(primary)은 버튼·선택·강조에만. 채도 높은 색을 검정 위에 넓게 깔면 글자가 번져 보인다 */
+    --background: 150 10% 8%;
+    --foreground: 115 22% 80%;
+    --card: 150 8% 11%;
+    --card-foreground: 115 22% 80%;
+    --popover: 150 8% 13%;
+    --popover-foreground: 115 22% 80%;
+    --primary: 138 65% 52%;
+    --primary-foreground: 150 10% 8%;
+    --secondary: 150 6% 15%;
+    --secondary-foreground: 115 22% 80%;
+    --muted: 150 6% 15%;
+    --muted-foreground: 115 10% 62%;
+    --accent: 138 35% 17%;
+    --accent-foreground: 138 60% 64%;
+    --destructive: 0 70% 58%;
     --destructive-foreground: 0 0% 100%;
-    --border: 0 0% 17%;
-    --input: 0 0% 22%;
-    --ring: 135 100% 50%;
+    --border: 150 6% 20%;
+    --input: 150 6% 25%;
+    --ring: 138 65% 52%;
     --radius: 0.25rem;
-    --sidebar: 0 0% 6%;
-    --chart-1: 135 100% 50%;
-    --chart-2: 135 100% 50%;
-    --chart-up: 0 100% 66%;
-    --chart-down: 210 100% 66%;
-    --chart-label: 115 14% 58%;
+    --sidebar: 150 10% 6.5%;
+    --chart-1: 138 65% 52%;
+    --chart-2: 138 65% 52%;
+    --chart-up: 0 75% 66%;
+    --chart-down: 212 80% 68%;
+    --chart-label: 115 10% 62%;
     --font-sans: 'D2 coding', 'D2Coding', ui-monospace, 'Cascadia Mono', Consolas, monospace;
   }
 }
@@ -136,10 +138,6 @@
 @layer utilities {
   .theme-gameboy body {
     font-feature-settings: normal;
-  }
-  .theme-gameboy h1,
-  .theme-gameboy h2 {
-    text-shadow: 0 0 10px hsl(var(--primary) / 0.35);
   }
   .theme-gameboy .shadow-sm,
   .theme-gameboy .shadow,

@@ -38,6 +38,11 @@ import type {
   AdminDiscordSettings,
   AdminDiscordNotificationLog,
   AdminAISettings,
+  FlowCatalog,
+  FlowGraphData,
+  FlowPerformance,
+  FlowRunHandlers,
+  SavedFlow,
   AdminAISettingField,
   AdminAITestResult,
   AdminInvitation,
@@ -595,3 +600,88 @@ export const adminApi = {
 }
 
 export default api
+
+// 종목 스크리너 (코드에서는 flow)
+export const flowApi = {
+  getCatalog: async () => {
+    const { data } = await api.get<FlowCatalog>('/flows/catalog')
+    return data
+  },
+  list: async () => {
+    const { data } = await api.get<SavedFlow[]>('/flows')
+    return data
+  },
+  get: async (id: number) => {
+    const { data } = await api.get<SavedFlow>(`/flows/${id}`)
+    return data
+  },
+  create: async (name: string, graph: FlowGraphData) => {
+    const { data } = await api.post<SavedFlow>('/flows', { name, graph })
+    return data
+  },
+  update: async (id: number, name: string, graph: FlowGraphData) => {
+    const { data } = await api.put<SavedFlow>(`/flows/${id}`, { name, graph })
+    return data
+  },
+  remove: async (id: number) => {
+    await api.delete(`/flows/${id}`)
+  },
+  setSchedule: async (id: number, scheduleEnabled: boolean, notify: boolean) => {
+    const { data } = await api.put<SavedFlow>(`/flows/${id}/schedule`, { schedule_enabled: scheduleEnabled, notify })
+    return data
+  },
+  getPerformance: async (id: number) => {
+    const { data } = await api.get<FlowPerformance>(`/flows/${id}/performance`)
+    return data
+  },
+  // 저장하지 않은 그래프도 그대로 실행한다. 중지하려면 돌려받은 AbortController를 abort한다.
+  // flowId를 주면 그래프가 저장본과 같을 때 고른 종목을 기록한다
+  run: (graph: FlowGraphData, handlers: FlowRunHandlers, flowId?: number | null) => {
+    const abortController = new AbortController()
+    fetch(`${API_URL}/api/flows/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ graph, flow_id: flowId ?? null }),
+      signal: abortController.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          const body = await response.json().catch(() => null)
+          handlers.onError(body?.detail ?? `서버 오류 (${response.status})`)
+          return
+        }
+        const reader = response.body?.getReader()
+        if (!reader) return
+        const decoder = new TextDecoder()
+        let buffer = ''
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          const chunks = buffer.split('\n\n')
+          buffer = chunks.pop() || ''
+          for (const chunk of chunks) {
+            if (chunk.startsWith(':')) continue  // 연결 유지용 heartbeat
+            const data = chunk.replace(/^data: /, '').trim()
+            if (!data || data === '[DONE]') continue
+            try {
+              const event = JSON.parse(data)
+              const d = event.data
+              if (event.type === 'node_start') handlers.onNodeStart?.(d.id)
+              else if (event.type === 'node_progress') handlers.onNodeProgress?.(d.id, d.message)
+              else if (event.type === 'node_done') handlers.onNodeDone?.(d)
+              else if (event.type === 'node_error') handlers.onNodeError?.(d.id, d.message, false)
+              else if (event.type === 'node_skipped') handlers.onNodeError?.(d.id, d.message, true)
+              else if (event.type === 'run_done' && d.recorded) handlers.onRecorded?.()
+              else if (event.type === 'error') handlers.onError(d.message)
+            } catch { /* ignore parse errors */ }
+          }
+        }
+      })
+      .catch((err) => {
+        if (err.name !== 'AbortError') handlers.onError(err.message)
+      })
+      .finally(() => handlers.onDone?.())
+    return abortController
+  },
+}

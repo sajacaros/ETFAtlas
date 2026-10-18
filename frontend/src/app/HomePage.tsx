@@ -72,7 +72,7 @@ function ETFExpandableCard({
           ) : (
             <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
           )}
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 2xl:flex-none 2xl:w-80">
             <div className="flex items-center gap-2 min-w-0">
               <Link
                 to={`/etf/${etf.code}`}
@@ -107,12 +107,14 @@ function ETFExpandableCard({
               </div>
             </div>
           </div>
-          {/* 넓을수록 열을 더 보여 준다: sm 1D·시총, md 1W·1M, xl 시총변화 */}
-          <div className="hidden sm:flex items-center gap-5 flex-shrink-0">
+          {/* 넓을수록 열을 더 보여 준다: sm 1D·시총, md 1W·1M, xl 시총변화.
+              2xl부터는 이름 칸 너비를 고정하고 남는 공간을 숫자 열 사이에 나눠 이름 옆이 비지 않게 한다 */}
+          <div className="hidden sm:flex items-center gap-5 flex-shrink-0 2xl:flex-1 2xl:justify-between 2xl:pl-6">
             <ReturnBadge label="1D" value={etf.return_1d} />
             <ReturnBadge label="1W" value={etf.return_1w} className="hidden md:block" />
             <ReturnBadge label="1M" value={etf.return_1m} className="hidden md:block" />
-            <div className="hidden text-right w-32 xl:block">
+            {/* 게임보이 테마는 고정폭 글꼴이라 '-2조 8,627억(-13.8%)'이 넓다 */}
+            <div className="hidden text-right w-52 xl:block">
               <div className="text-[10px] text-muted-foreground leading-none mb-0.5">시총변화(1W)</div>
               {etf.net_assets != null && etf.market_cap_change_1w != null ? (
                 <div className={`text-base font-medium whitespace-nowrap ${returnColor(etf.market_cap_change_1w)}`}>
@@ -122,7 +124,7 @@ function ETFExpandableCard({
                 <div className="text-base text-muted-foreground">-</div>
               )}
             </div>
-            <div className="text-right w-24">
+            <div className="text-right w-24 xl:w-28">
               <div className="text-[10px] text-muted-foreground leading-none mb-0.5">시총</div>
               <div className="text-base text-muted-foreground whitespace-nowrap">{etf.net_assets != null ? formatAmount(etf.net_assets) : '-'}</div>
             </div>

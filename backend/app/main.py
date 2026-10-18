@@ -5,7 +5,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
 from .utils.session import get_current_user_id
-from .routers import auth, etfs, watchlist, portfolio, tags, chat, notifications, admin, shared
+from .routers import auth, etfs, watchlist, portfolio, tags, chat, notifications, admin, shared, flows
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,13 @@ async def lifespan(_app: FastAPI):
     except RuntimeError as e:
         logger.error(f"Startup check failed: {e}")
         raise
-    yield
+    import asyncio
+    from .services.flow import scheduler
+    flow_scheduler = asyncio.create_task(scheduler.loop())  # 저장한 흐름의 장 마감 뒤 자동 실행
+    try:
+        yield
+    finally:
+        flow_scheduler.cancel()
 
 
 app = FastAPI(
@@ -55,6 +61,7 @@ app.include_router(tags.router, prefix="/api/tags", tags=["Tags"], dependencies=
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
 app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
+app.include_router(flows.router, prefix="/api/flows", tags=["Flows"])
 
 
 @app.get("/")

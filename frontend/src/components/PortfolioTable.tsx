@@ -109,9 +109,12 @@ export default function PortfolioTable({
     }
   }
 
+  // 현금은 정렬 기준·방향과 상관없이 항상 맨 아래에 둔다
   const sortedRows = useMemo(() => {
-    if (!sortKey) return rows
+    const isCash = (r: CalculationRow) => r.ticker === 'CASH'
+    if (!sortKey) return [...rows.filter((r) => !isCash(r)), ...rows.filter(isCash)]
     return [...rows].sort((a, b) => {
+      if (isCash(a) !== isCash(b)) return isCash(a) ? 1 : -1
       let cmp = 0
       if (sortKey === 'name') {
         cmp = a.name.localeCompare(b.name, 'ko')

@@ -298,6 +298,7 @@ RDB 스키마 변경은 `backend/migrations/versions/`의 Alembic 리비전으�
 | 0026 | `stock_report_summaries`(정기보고서 본문 요약 캐시, 접수번호 기준) + 기업 분석 레이아웃 예시에 `company_report` 슬롯 |
 | 0027 | 기업 분석 레이아웃 예시가 "최근 보고서" 대신 보고서 이름을 쓰게 |
 | 0028 | `stock_report_summaries.breakdowns` (보고서 표에서 뽑은 매출 구성, 차트용) |
+| 0029 | 레이아웃 시드 예시: 주요 고객·매출 구성 질문 → `company_report` + 해설 |
 
 새 리비전 만들기 (모델을 고친 뒤, DB가 떠 있는 상태에서):
 

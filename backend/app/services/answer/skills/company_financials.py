@@ -95,9 +95,21 @@ def _summary(name: str, fs: str, basis: str, periods: List[Dict], all_periods: L
         if changes:
             label = "전년 동기" if basis == "quarter" else "전년"
             lines.append(f"{last['period']}의 {label}({prev['period']}) 대비: {', '.join(changes)}")
+    above = net_above_revenue(periods)
+    lines.append(above or "보여 준 모든 기간에서 순이익은 매출액보다 작습니다")
     if debt_ratio:
         lines.append(debt_ratio)
     return "\n".join(lines)
+
+
+def net_above_revenue(periods: List[Dict]) -> Optional[str]:
+    """순이익이 매출액보다 큰 기간. 해설이 숫자를 직접 비교하다 틀리지 않게 사실로 적어 준다."""
+    hits = [p for p in periods if p["revenue"] and p["net_income"] is not None and p["net_income"] > p["revenue"]]
+    if not hits:
+        return None
+    detail = ", ".join(f"{p['period']} 순이익 {_krw(p['net_income'])} > 매출액 {_krw(p['revenue'])}" for p in hits)
+    return (f"순이익이 매출액보다 큰 기간이 있습니다: {detail}. 영업이익 밖의 이익(금융수익·처분이익 등)이 컸다는 뜻이며, "
+            "어떤 이익인지는 이 데이터(주요계정)에 없어 공시 본문에서 확인해야 합니다")
 
 
 def _debt_ratio(amounts: Amounts) -> Optional[str]:
@@ -146,6 +158,9 @@ class CompanyFinancialsSkill(DataSkill):
             notes.append("4분기는 사업보고서의 연간 금액에서 3분기 누적을 뺀 값입니다")
         if any(p[key] is None for p in periods for key, _ in INCOME):
             notes.append("빈 칸은 공시에 없는 값입니다")
+        above = net_above_revenue(periods)
+        if above:
+            notes.append(above)
         if debt_ratio:
             notes.append(debt_ratio)
 

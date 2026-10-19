@@ -196,6 +196,18 @@ def test_financials_prefer_consolidated_and_summarize_year_over_year(fake_stock_
     assert "부채비율 25.0% (2026년 1분기 기준" in summary
 
 
+def test_financials_state_when_net_income_exceeds_revenue(fake_stock_graph):
+    """SK하이닉스 2026년 2분기처럼 금융수익이 커서 순이익이 매출액보다 크면 해설이 비교하지 않아도 되게 적는다."""
+    rows = [_fin(2026, "11013", "매출액", 52_5762_8700_0000), _fin(2026, "11013", "당기순이익", 40_3459_0900_0000),
+            _fin(2026, "11012", "매출액", 79_3187_4600_0000), _fin(2026, "11012", "당기순이익", 93_9225_9300_0000)]
+    result = _run("company_financials", {"stock": "삼성전자"}, "bar", lambda: FakeDB(rows))
+    assert "순이익이 매출액보다 큰 기간이 있습니다: 2026.2Q 순이익 93조 9,225억원 > 매출액 79조 3,187억원" in result["summary"]
+    assert any(n.startswith("순이익이 매출액보다 큰 기간") for n in result["content"]["notes"])
+    rows = rows[:2]
+    assert "보여 준 모든 기간에서 순이익은 매출액보다 작습니다" in _run(
+        "company_financials", {"stock": "삼성전자"}, "bar", lambda: FakeDB(rows))["summary"]
+
+
 def test_financials_without_data_say_so(fake_stock_graph):
     result = _run("company_financials", {"stock": "삼성전자"}, "bar", lambda: FakeDB([]))
     assert result["status"] == "empty" and "DART 실적 데이터가 아직 없습니다" in result["message"]

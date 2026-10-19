@@ -104,6 +104,8 @@ class MySkill(DataSkill):
 | `portfolio_lookthrough` | treemap, bar, donut, table | 포트폴리오(ETF·종목과 비중)의 종목별 합산 비중. ETF는 구성종목으로 풀어 비중을 곱해 더하고(`domain/composition.py`와 같은 계산), 직접 담은 종목은 그대로 더한다. 구성종목 데이터가 없는 ETF(해외 ETF 등)는 ETF 한 행으로, ETF 안의 30위 밖·현금은 기타로 둔다 |
 | `stock_trend` | line, candlestick, table | 개별 종목 가격 추이 (`price_trend`와 같은 베이스) |
 | `stock_holders` | bar, table | 종목을 많이 담은 ETF 순위. 종목을 여러 개(최대 5개) 받으면 ETF마다 그 종목들의 비중을 더해 합계 순으로 매기고, 막대는 종목별 비중을 쌓는다 (상위 30개 밖 종목은 0%) |
+| `company_financials` | bar, line, table | 종목의 DART 주요계정 분기·연간 실적(매출액·영업이익·순이익·영업이익률)과 최근 부채비율. 연결이 있으면 연결, 없으면 별도(섞지 않는다). 4분기는 연간 − 3분기 누적, 공시에 없는 값은 비운다. 요약의 전년 동기 비교는 같은 분기끼리, 기준이 0 이하면 증감률 대신 값을 적는다 |
+| `company_disclosures` | markdown | 종목의 최근 DART 공시 표(접수일·제목 원문 링크·제출인). 해설에는 제목만 넘긴다 (본문은 읽지 않는다) |
 | `etf_choice` | markdown | ETF 하나가 필요한데 조건만 있어 여러 ETF가 해당할 때 후보를 보여 주고 되묻는다. `by=stock`(원익IPS가 들어간 ETF, 그 종목 비중 순) 또는 `by=theme`(반도체 ETF, 같은 이름의 태그가 있으면 그 태그, 없으면 이름에 그 단어가 든 ETF를 순자산 순으로) |
 | `narrative` | text | 앞 슬롯 요약을 바탕으로 한 해설 (토큰 스트리밍) |
 | `agent` | markdown | 기존 tool-calling 에이전트. 다른 스킬로 안 되는 질문과 레이아웃 설계 실패 시 폴백 |
@@ -179,6 +181,19 @@ LLM 출력은 실행마다 달라서 같은 설정에서도 통과율이 몇 % �
 리졸버는 그래프에 없는 ETF가 `etfs`에 코드나 정확한 이름으로 있으면 `UnmanagedETF`를 내고, 모든 데이터 스킬은 '찾지 못했다'가 아니라
 "ETF Atlas에서 관리하지 않는 ETF입니다: KODEX 레버리지(122630)"로 알린다. 여러 ETF를 받는 스킬은 주석에 "(관리하지 않는 ETF)"를 붙이고,
 `portfolio_lookthrough`는 구성종목 없이 ETF 한 행으로 둔다. 해설 슬롯은 앞 영역의 요약과 주석을 함께 받는다.
+
+## 분석하지 않는 종목
+
+종목은 그래프에 있는 것(수집하는 ETF가 비중 상위 30위 안에 담은 종목)만 분석한다. 리졸버는 그래프에서 못 찾은 종목을
+DART 고유번호(`dart_corps`, `dart_sync_rdb` DAG)에서 종목코드나 정확한 회사명으로 찾아 `UnmanagedStock`을 낸다.
+DART 회사명이 그래프 이름(KIS 약칭)과 달라도 종목코드가 그래프에 있으면 그 종목으로 풀고(`현대자동차` → `현대차`), 비슷한 이름의 다른 종목으로 바꾸지 않는다.
+
+- 모든 데이터 스킬이 같은 안내를 낸다(`DataSkill.run()` → `unmanaged_stock_result`, 다시 설계하지 않는다):
+  "ETF Atlas는 국내 주식형 ETF 중 순자산 500억 원 이상인 ETF(…)를 수집하고, 그 ETF들이 담은 종목(ETF마다 비중 상위 30개)만 분석합니다. 삼양식품(003230) 종목은 지금 수집하는 ETF 어디에도 담겨 있지 않아 분석할 수 없습니다"
+- 종목코드가 없는 회사는 "상장 종목이 아니어서", 여러 종목을 받는 스킬은 주석에 "(수집하는 ETF에 담기지 않은 종목)"을 붙인다.
+- 직접 담은 종목을 그대로 더하는 `portfolio_lookthrough`와 분석 흐름의 종목 입력은 그래프 밖 상장사도 종목코드로 쓴다.
+- 데이터 영역이 모두 같은 안내로 비면 해설 슬롯은 LLM을 부르지 않고 그 안내를 그대로 받고(`orchestrator.shared_notice`), 프런트는 영역마다 되풀이하지 않고 안내 한 줄만 보여 준다(`AnswerView`의 `sharedNotice`). 관리하지 않는 ETF에도 같다.
+- 유니버스 조건 문구는 `services/answer/universe.py` 한 곳에 있다. 수집 조건(`airflow/dags/age_utils.py`)을 바꾸면 같이 바꾼다.
 
 ## 대상을 정하지 못할 때: 되묻기
 

@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { AlertCircle, BarChart3, Table2 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
-import { MARKDOWN_PLUGINS } from '@/lib/markdown'
+import { MARKDOWN_COMPONENTS, MARKDOWN_PLUGINS } from '@/lib/markdown'
 import type { DataContent, LayoutNode, SlotContent, SlotState } from '@/types/api'
 import { chatApi } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -25,6 +25,9 @@ export function AnswerView({ chatLogId, layout, slots }: {
   layout: LayoutNode
   slots: Record<string, SlotState>
 }) {
+  // 모든 영역이 같은 안내로 비었으면(분석하지 않는 종목·ETF) 영역마다 되풀이하지 않고 한 번만 보여 준다
+  const notice = sharedNotice(layout, slots)
+  if (notice) return <Notice status="empty" message={notice} />
   const render = (node: LayoutNode, key: string): JSX.Element => {
     if (node.type === 'slot') {
       return <SlotView key={key} chatLogId={chatLogId} node={node} state={slots[node.id] ?? { status: 'pending' }} />
@@ -43,6 +46,29 @@ export function AnswerView({ chatLogId, layout, slots }: {
     )
   }
   return render(layout, 'root')
+}
+
+function slotIds(node: LayoutNode): string[] {
+  return node.type === 'slot' ? [node.id] : node.children.flatMap(slotIds)
+}
+
+function sharedNotice(layout: LayoutNode, slots: Record<string, SlotState>): string | undefined {
+  const states = slotIds(layout).map((id) => slots[id])
+  if (states.length < 2 || states.some((s) => s?.status !== 'empty' || !s.message)) return undefined
+  const messages = new Set(states.map((s) => s.message))
+  return messages.size === 1 ? states[0].message : undefined
+}
+
+function Notice({ status, message }: { status: SlotState['status']; message?: string }) {
+  return (
+    <div className={cn(
+      'flex items-center gap-2 rounded-md bg-muted/50 px-3 py-4 text-sm',
+      status === 'failed' ? 'text-destructive' : 'text-muted-foreground',
+    )}>
+      <AlertCircle className="w-4 h-4 shrink-0" />
+      {message ?? (status === 'stopped' ? '중지했습니다' : '데이터가 없습니다')}
+    </div>
+  )
 }
 
 function useSlotContent(chatLogId: number, node: SlotNode, state: SlotState): SlotContent | undefined {
@@ -80,20 +106,12 @@ function SlotView({ chatLogId, node, state }: { chatLogId: number; node: SlotNod
       ? <DataSlot content={content} display={node.display} />
       : (
         <div className={PROSE}>
-          <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS}>{content.text}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS} components={MARKDOWN_COMPONENTS}>{content.text}</ReactMarkdown>
           {state.status === 'running' && <span className="inline-block w-1.5 h-4 align-middle bg-foreground/60 animate-pulse" />}
         </div>
       )
   } else if (state.status === 'empty' || state.status === 'failed' || state.status === 'stopped') {
-    body = (
-      <div className={cn(
-        'flex items-center gap-2 rounded-md bg-muted/50 px-3 py-4 text-sm',
-        state.status === 'failed' ? 'text-destructive' : 'text-muted-foreground',
-      )}>
-        <AlertCircle className="w-4 h-4 shrink-0" />
-        {state.message ?? (state.status === 'stopped' ? '중지했습니다' : '데이터가 없습니다')}
-      </div>
-    )
+    body = <Notice status={state.status} message={state.message} />
   } else {
     body = <Skeleton node={node} />
   }

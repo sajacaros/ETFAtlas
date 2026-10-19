@@ -55,11 +55,17 @@
     {"q": "조선 태그 붙은 ETF 목록 다 보여줘", "must": ["agent"]},
     {"q": "KODEX 200이랑 비슷한 ETF 추천", "must": ["agent"]},
     {"q": "KODEX 200 구성종목 비중이 지난달이랑 어떻게 바뀌었어?", "must": ["agent"]},
+    {"q": "POSCO홀딩스 분석해줘", "must": ["company_financials", "company_disclosures"], "allowed": ["stock_trend", "stock_holders"], "names": ["POSCO홀딩스"]},
+    {"q": "SK하이닉스 영업이익 추이 어때", "must": ["company_financials"], "allowed": ["company_disclosures", "stock_trend"]},
+    {"q": "카카오 연간 실적 보여줘", "must": ["company_financials"], "allowed": ["company_disclosures"]},
+    {"q": "삼성SDI 요즘 무슨 공시 나왔어?", "must": ["company_disclosures"], "allowed": ["company_financials"]},
+
     {"q": "오늘 날씨 어때?", "must": ["agent"]},
 
     {"q": "kodex 레버리지 뭐 담고 있어?", "must": [], "allowed": ["holdings", "etf_choice"], "expect_message": "관리하지 않는 ETF"},
     {"q": "TIGER 미국S&P500 3개월 수익률 추이", "must": [], "allowed": ["price_trend", "period_returns"], "expect_message": "관리하지 않는 ETF"},
     {"q": "ACE KRX금현물이랑 KODEX 200 비교해줘", "must": [], "allowed": ["etf_compare", "etf_profile", "period_returns", "price_trend"], "expect_message": "관리하지 않는 ETF"},
-    {"q": "122630 구성종목", "must": [], "allowed": ["holdings"], "expect_message": "관리하지 않는 ETF"}
+    {"q": "122630 구성종목", "must": [], "allowed": ["holdings"], "expect_message": "관리하지 않는 ETF"},
+    {"q": "풀무원 기업 분석", "must": [], "allowed": ["company_financials", "company_disclosures", "stock_trend", "stock_holders"], "expect_message": "담겨 있지 않아"}
   ]
 }

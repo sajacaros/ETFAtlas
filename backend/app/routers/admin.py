@@ -18,6 +18,8 @@ from ..models.discord_setting import DiscordSetting
 from ..models.discord_notification_log import DiscordNotificationLog
 from ..models.ai_setting import AISetting
 from ..services.ai_config import AI_CONFIG_FIELDS, SECRET_FIELDS, load_ai_config, stored_value
+from ..models.dart import DartSetting
+from ..services.dart_config import check_dart_key, load_dart_key, stored_key
 from ..utils.encryption import encrypt_value
 from ..models.invitation import Invitation
 from ..models.user import User
@@ -32,6 +34,7 @@ from ..schemas.chat import (
     ETFTagsUpdate,
     DiscordSettingsUpdate,
     AISettingsUpdate,
+    DartSettingsUpdate,
 )
 
 logger = logging.getLogger(__name__)
@@ -760,6 +763,51 @@ async def test_ai_settings(
     import asyncio
 
     return await asyncio.to_thread(_check_ai_connection, load_ai_config(db))
+
+
+def _dart_settings_response(db: Session) -> dict:
+    return {
+        "api_key": {
+            "value": _mask_secret(load_dart_key(db)),
+            "source": "db" if stored_key(db.get(DartSetting, 1)) else "env",
+        },
+    }
+
+
+@router.get("/settings/dart")
+async def get_dart_settings(
+    db: Session = Depends(get_db),
+    admin_id: int = Depends(get_admin_user_id),
+):
+    return _dart_settings_response(db)
+
+
+@router.put("/settings/dart")
+async def update_dart_settings(
+    body: DartSettingsUpdate,
+    db: Session = Depends(get_db),
+    admin_id: int = Depends(get_admin_user_id),
+):
+    """None은 유지, ""는 지워서 환경변수로 되돌린다. 다음 수집(dart_sync DAG)부터 반영된다."""
+    if body.api_key is not None:
+        setting = db.get(DartSetting, 1)
+        if setting is None:
+            setting = DartSetting(id=1)
+            db.add(setting)
+        setting.api_key = encrypt_value(body.api_key) if body.api_key else None
+        db.commit()
+    return _dart_settings_response(db)
+
+
+@router.post("/settings/dart/test")
+async def test_dart_settings(
+    db: Session = Depends(get_db),
+    admin_id: int = Depends(get_admin_user_id),
+):
+    """지금 적용된 키로 DART 회사 개황을 한 번 조회해 본다."""
+    import asyncio
+
+    return await asyncio.to_thread(check_dart_key, load_dart_key(db))
 
 
 # === Member Invitations ===

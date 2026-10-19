@@ -101,6 +101,15 @@ export interface AdminAITestResult {
   embedding: { ok: boolean; error: string | null; dim: number | null }
 }
 
+export interface AdminDartSettings {
+  api_key: AdminAISettingItem
+}
+
+export interface AdminDartTestResult {
+  ok: boolean
+  error: string | null
+}
+
 export interface AdminDiscordSettings {
   enabled: boolean
   threshold: number

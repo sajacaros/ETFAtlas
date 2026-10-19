@@ -293,6 +293,8 @@ RDB 스키마 변경은 `backend/migrations/versions/`의 Alembic 리비전으�
 | 0007 | `chat_sessions` (챗봇 세션·요약), `chat_logs.session_id`(세션 삭제 시 `SET NULL`)·`refined_question` |
 | 0008 | `chat_logs.steps` (실행 과정 JSONB, 세션을 다시 열 때 표시) |
 | 0013 | `layout_examples` (레이아웃 플래너 few-shot 예시) + 시드 예시 18개 |
+| 0024 | `dart_settings`(DART 키, 암호문), `dart_corps`, `stock_financials`, `stock_disclosures` (챗봇 기업 분석) |
+| 0025 | 기업 분석 레이아웃 시드 예시 3개 |
 
 새 리비전 만들기 (모델을 고친 뒤, DB가 떠 있는 상태에서):
 

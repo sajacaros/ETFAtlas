@@ -13,7 +13,7 @@ from app.services.answer.planner import PlannedSlot, build_plan_model, examples_
 from app.services.answer.schemas import DataField, Dataset, LineView
 from app.services.answer.skills import REGISTRY
 from app.services.answer.skills import holdings as holdings_mod
-from app.services.answer.skills.base import Skill, data_result, text_result
+from app.services.answer.skills.base import Skill, data_result, empty, text_result
 from app.services.answer.skills.etf_profile import percentile
 from app.services.answer.skills.period_returns import period_return
 from app.services.chat_memory import ConversationContext
@@ -441,6 +441,7 @@ def fake_etf_graph(monkeypatch):
     unmanaged = {"122630": {"code": "122630", "name": "KODEX 레버리지"}}
     monkeypatch.setattr(resolver_mod, "_unmanaged_etf", lambda db, code, query: unmanaged.get(code) or next(
         (e for e in unmanaged.values() if e["name"].replace(" ", "").lower() == query), None))
+    monkeypatch.setattr(resolver_mod, "_dart_corp", lambda db, code, query: None)  # DART 고유번호 목록은 비어 있다
     return calls
 
 
@@ -777,7 +778,7 @@ def test_stock_holders_exports_etfs_in_rank_order(monkeypatch):
 
 # --- 레이아웃 예시 ---
 
-LAYOUT_SEED_MIGRATIONS = ("0013_layout_examples.py", "0021_layout_examples_rank_overlap.py")
+LAYOUT_SEED_MIGRATIONS = ("0013_layout_examples.py", "0021_layout_examples_rank_overlap.py", "0025_layout_examples_company.py")
 
 
 def _layout_seeds():
@@ -987,7 +988,8 @@ def test_keeps_the_first_results_when_replanning_gives_nothing(monkeypatch):
     events = _collect(service)
     assert Lookup.runs == ["틀린이름"]
     assert [e["type"] for e in events].count("layout") == 1
-    assert service._store.saved == {"s1": "empty", "s2": "complete"}
+    # 데이터 영역이 모두 같은 안내로 비었으니 해설도 그 안내만 남긴다
+    assert service._store.saved == {"s1": "empty", "s2": "empty"}
 
 
 def test_replan_must_keep_the_layout_and_the_slots_that_worked():
@@ -1223,3 +1225,31 @@ def test_cut_note_tells_how_many_passed_the_filter():
     from app.services.answer.skills.common import cut_note
     assert cut_note(8, 5, "ETF") == ["조건에 맞는 ETF 8개 중 상위 5개만 표시했습니다"]
     assert cut_note(3, 5, "ETF") == []
+
+
+class Notice(DataSkillStub):
+    """분석하지 않는 대상처럼 모든 영역이 같은 문구로 비는 스킬."""
+
+    def __init__(self, message):
+        self.message = message
+
+    async def run(self, args, display, ctx):
+        yield empty(self.message).event()
+
+
+def test_narrative_takes_the_shared_notice_instead_of_restating_it(monkeypatch):
+    notice = "삼양식품(003230) 종목은 지금 수집하는 ETF 어디에도 담겨 있지 않아 분석할 수 없습니다"
+    registry = {"a": Notice(notice), "b": Notice(notice), "narr": EchoNarrative()}
+    service = _service(monkeypatch, [[_slot("s1", "a"), _slot("s2", "b")], [_slot("s3", "narr", "해설")]], registry)
+    events = _collect(service)
+    assert service._store.saved == {"s1": "empty", "s2": "empty", "s3": "empty"}
+    narr = [e["data"] for e in events if e["type"] == "slot" and e["data"]["id"] == "s3"]
+    assert narr[-1]["message"] == notice
+    assert not any(e["type"] == "slot_delta" for e in events)  # 해설 LLM을 부르지 않는다
+
+
+def test_narrative_still_explains_different_notices(monkeypatch):
+    registry = {"a": Notice("가 없음"), "b": Notice("나 없음"), "narr": EchoNarrative()}
+    service = _service(monkeypatch, [[_slot("s1", "a"), _slot("s2", "b")], [_slot("s3", "narr", "해설")]], registry)
+    _collect(service)
+    assert service._store.saved["s3"] == "complete"

@@ -17,8 +17,9 @@ from sqlalchemy.orm import Session
 
 from ...ai_config import AIConfig
 from ...chat_memory import ConversationContext
-from ..resolver import CANDIDATE_LIMIT, AmbiguousETF, EntityResolver, UnmanagedETF, _normalize
+from ..resolver import CANDIDATE_LIMIT, AmbiguousETF, EntityResolver, UnmanagedETF, UnmanagedStock, _normalize
 from ..schemas import DataContent, Dataset, Source, TextContent
+from ..universe import STOCK_SCOPE
 from .common import format_value
 
 CHOICES_SHOWN = 10  # 되물을 때 보여주는 후보 수
@@ -93,7 +94,10 @@ def choice_result(question: str, header: List[str], rows: List[List[str]], foote
 
 
 def _is_stock_name(db: Session, resolver: EntityResolver, name: str) -> bool:
-    stock = resolver.stock(db, name)
+    try:
+        stock = resolver.stock(db, name)
+    except UnmanagedStock as e:  # 그래프 밖의 종목이어도 종목 이름이다 — 종목 스킬로 다시 설계하면 그쪽에서 안내한다
+        stock = e.corp
     return bool(stock) and _normalize(stock["name"]) == _normalize(name)
 
 
@@ -111,6 +115,13 @@ def ambiguous_etf_result(e: AmbiguousETF) -> SkillResult:
 
 def unmanaged_etf_result(e: UnmanagedETF) -> SkillResult:
     return empty(f"ETF Atlas에서 관리하지 않는 ETF입니다: {e.etf['name']}({e.etf['code']}). 구성종목·가격 데이터가 없습니다")
+
+
+def unmanaged_stock_result(e: UnmanagedStock) -> SkillResult:
+    name = f"{e.corp['name']}({e.corp['code']})" if e.corp["code"] else e.corp["name"]
+    if not e.listed:
+        return empty(f"{name}은(는) 상장 종목이 아니어서 분석할 수 없습니다. {STOCK_SCOPE}")
+    return empty(f"{STOCK_SCOPE} {name} 종목은 지금 수집하는 ETF 어디에도 담겨 있지 않아 분석할 수 없습니다")
 
 
 def text_result(text: str, kind: str = "text") -> SkillResult:
@@ -152,6 +163,8 @@ class DataSkill(Skill):
                 return ambiguous_etf_result(e)
             except UnmanagedETF as e:  # 상장 ETF지만 관리 대상이 아니면 '찾지 못했다'가 아니라 그렇다고 알린다
                 return unmanaged_etf_result(e)
+            except UnmanagedStock as e:  # 그래프 밖의 회사면 무엇을 분석하는지와 함께 왜 안 되는지 알린다
+                return unmanaged_stock_result(e)
             finally:
                 db.close()
 

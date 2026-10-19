@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Tuple, Union
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from ...models.dart import DartCorp
 from ...models.etf import ETF
 from ..graph_service import GraphService
 
@@ -49,11 +50,21 @@ class UnmanagedETF(Exception):
         self.etf = etf  # {code, name}
 
 
+class UnmanagedStock(Exception):
+    """그래프에 없는 종목 — ETF Atlas는 수집하는 ETF가 담은 종목만 분석한다. DART 고유번호(dart_corps)에서 찾은 회사.
+    listed=False면 상장사가 아니다(종목코드가 없다). 스킬은 이걸 받아 왜 분석할 수 없는지 알린다."""
+
+    def __init__(self, corp: Dict, listed: bool):
+        super().__init__(f"분석 대상이 아닌 종목입니다: {corp['name']}")
+        self.corp = corp  # {code(종목코드, 비상장이면 None), name}
+        self.listed = listed
+
+
 class EntityResolver:
     """슬롯마다 다른 DB 세션(스레드)에서 부르므로 캐시는 잠금으로 보호한다."""
 
     def __init__(self):
-        self._cache: Dict[Tuple[str, str], Union[Optional[Dict], AmbiguousETF, UnmanagedETF]] = {}
+        self._cache: Dict[Tuple[str, str], Union[Optional[Dict], AmbiguousETF, UnmanagedETF, UnmanagedStock]] = {}
         self._lock = threading.Lock()
 
     def etf(self, db: Session, name: str) -> Optional[Dict]:
@@ -62,6 +73,7 @@ class EntityResolver:
         return self._resolve(db, "ETF", name)
 
     def stock(self, db: Session, name: str) -> Optional[Dict]:
+        """{code, name} 또는 None. 그래프에 없지만 DART에 있는 회사의 종목코드나 정확한 이름이면 UnmanagedStock."""
         return self._resolve(db, "Stock", name)
 
     def etfs(self, db: Session, names: List[str]) -> Tuple[List[Dict], List[str]]:
@@ -74,7 +86,7 @@ class EntityResolver:
     def _resolve_all(self, db: Session, label: str, names: List[str]) -> Tuple[List[Dict], List[str]]:
         found: List[Dict] = []
         missing: List[str] = []
-        unmanaged: List[UnmanagedETF] = []
+        unmanaged: List[Union[UnmanagedETF, UnmanagedStock]] = []
         for name in names:
             try:
                 entity = self._resolve(db, label, name)
@@ -82,11 +94,15 @@ class EntityResolver:
                 unmanaged.append(e)
                 missing.append(f"{e.etf['name']}(관리하지 않는 ETF)")
                 continue
+            except UnmanagedStock as e:
+                unmanaged.append(e)
+                missing.append(f"{e.corp['name']}({'수집하는 ETF에 담기지 않은 종목' if e.listed else '비상장'})")
+                continue
             if entity is None:
                 missing.append(name)
             elif all(e["code"] != entity["code"] for e in found):
                 found.append(entity)
-        if len(names) == 1 and unmanaged:  # 하나만 물었으면 '찾지 못했다'가 아니라 단일 ETF와 같은 안내로
+        if len(names) == 1 and unmanaged:  # 하나만 물었으면 '찾지 못했다'가 아니라 단일 대상과 같은 안내로
             raise unmanaged[0]
         return found, missing
 
@@ -97,7 +113,7 @@ class EntityResolver:
         if cached is ...:
             try:
                 cached = self._lookup(db, label, name)
-            except (AmbiguousETF, UnmanagedETF) as e:
+            except (AmbiguousETF, UnmanagedETF, UnmanagedStock) as e:
                 cached = e
             with self._lock:
                 self._cache[key] = cached
@@ -116,9 +132,14 @@ class EntityResolver:
             )
             if rows:
                 return GraphService.parse_agtype(rows[0]["result"])
-            unmanaged = _unmanaged_etf(db, code.group(1), "") if label == "ETF" else None
-            if unmanaged:
-                raise UnmanagedETF(unmanaged)
+            if label == "ETF":
+                unmanaged = _unmanaged_etf(db, code.group(1), "")
+                if unmanaged:
+                    raise UnmanagedETF(unmanaged)
+            else:
+                corp = _dart_corp(db, code.group(1), "")
+                if corp:
+                    raise UnmanagedStock(corp, listed=True)
         query = _normalize(CODE_RE.sub("", name)) if code else _normalize(name)
         if not query:
             return None
@@ -134,6 +155,19 @@ class EntityResolver:
                 raise UnmanagedETF(unmanaged)
             if len(candidates) > 1:
                 raise AmbiguousETF(name, candidates)
+        if label == "Stock" and not exact:
+            # DART 회사명과 정확히 같으면 그 회사다 — 그래프의 이름(KIS 약칭)이 달라도 종목코드로 그래프에 있으면 그 종목,
+            # 없으면 비슷한 이름의 다른 종목으로 바꾸지 않고 분석 대상이 아니라고 알린다
+            corp = _dart_corp(db, None, query)
+            if corp:
+                if corp["code"]:
+                    rows = graph.execute_cypher(
+                        "MATCH (e:Stock {code: $code}) RETURN {code: e.code, name: e.name}",
+                        {"code": corp["code"]}, raise_errors=True,
+                    )
+                    if rows:
+                        return GraphService.parse_agtype(rows[0]["result"])
+                raise UnmanagedStock(corp, listed=bool(corp["code"]))
         found = (exact or candidates or [None])[0]
         return {"code": found["code"], "name": found["name"]} if found else None
 
@@ -146,6 +180,18 @@ def _unmanaged_etf(db: Session, code: Optional[str], query: str) -> Optional[Dic
     else:
         row = db.query(ETF).filter(func.lower(func.replace(ETF.name, " ", "")) == query).first()
     return {"code": row.code, "name": row.name} if row else None
+
+
+def _dart_corp(db: Session, stock_code: Optional[str], query: str) -> Optional[Dict]:
+    """DART 고유번호 목록에서 종목코드나 정확한 회사명(공백·대소문자 무시)으로. {code(종목코드|None), name} 또는 None.
+    같은 이름이 여럿이면 상장사를 먼저. dart_sync DAG가 아직 돌지 않았으면 비어 있다 — 그때는 '찾지 못했다'가 된다."""
+    q = db.query(DartCorp)
+    if stock_code:
+        q = q.filter(DartCorp.stock_code == stock_code)
+    else:
+        q = q.filter(func.lower(func.replace(DartCorp.corp_name, " ", "")) == query)
+    row = q.order_by(DartCorp.stock_code.is_(None)).first()
+    return {"code": row.stock_code, "name": row.corp_name} if row else None
 
 
 def is_etf_name(db: Session, name: str) -> bool:

@@ -45,6 +45,8 @@ import type {
   SavedFlow,
   AdminAISettingField,
   AdminAITestResult,
+  AdminDartSettings,
+  AdminDartTestResult,
   AdminInvitation,
   AdminMember,
   SharedPortfolioListItem,
@@ -566,6 +568,19 @@ export const adminApi = {
   },
   testAISettings: async () => {
     const { data } = await api.post<AdminAITestResult>('/admin/settings/ai/test')
+    return data
+  },
+  getDartSettings: async () => {
+    const { data } = await api.get<AdminDartSettings>('/admin/settings/dart')
+    return data
+  },
+  // api_key: ''면 지우고 서버 환경변수로 되돌림
+  updateDartSettings: async (body: { api_key: string }) => {
+    const { data } = await api.put<AdminDartSettings>('/admin/settings/dart', body)
+    return data
+  },
+  testDartSettings: async () => {
+    const { data } = await api.post<AdminDartTestResult>('/admin/settings/dart/test')
     return data
   },
   listInvitations: async () => {

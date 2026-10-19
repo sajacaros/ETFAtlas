@@ -134,9 +134,20 @@ class AISettingsUpdate(BaseModel):
     def strip(cls, v: Optional[str]) -> Optional[str]:
         return v.strip() if v is not None else None
 
+
     @field_validator("llm_api_base", "embedding_api_base")
     @classmethod
     def check_api_base(cls, v: Optional[str]) -> Optional[str]:
         if v and not v.startswith(("http://", "https://")):
             raise ValueError("주소는 http:// 또는 https://로 시작해야 합니다")
         return v.rstrip("/") if v else v
+
+
+class DartSettingsUpdate(BaseModel):
+    # None: 기존 값 유지, "": 지우고 서버 환경변수로 되돌림
+    api_key: Optional[str] = None
+
+    @field_validator("api_key")
+    @classmethod
+    def strip(cls, v: Optional[str]) -> Optional[str]:
+        return v.strip() if v is not None else None

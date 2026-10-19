@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from ....domain.composition import ETFAllocation, aggregate_composition
 from ...graph_service import GraphService
-from ..resolver import AmbiguousETF, EntityResolver, UnmanagedETF, _normalize
+from ..resolver import AmbiguousETF, EntityResolver, UnmanagedETF, UnmanagedStock, _normalize
 from ..schemas import BarView, DataField, Dataset, DonutView, Source, TableView, TreemapView
 from .base import DataSkill, SkillResult, data_result, empty, not_found
 from .common import cut_note, min_weight_field, node
@@ -62,14 +62,22 @@ def _find(db: Session, resolver: EntityResolver, asset: str) -> Optional[Tuple[s
     except UnmanagedETF as e:  # 관리하지 않는 ETF(해외 ETF 등)는 구성종목 없이 ETF 한 행으로
         return "unlisted", e.etf
     except AmbiguousETF:
-        stock = resolver.stock(db, asset)
+        stock = _stock(db, resolver, asset)
         if stock and _normalize(stock["name"]) == _normalize(asset):
             return "stock", stock
         raise
     if etf:
         return "etf", etf
-    stock = resolver.stock(db, asset)
+    stock = _stock(db, resolver, asset)
     return ("stock", stock) if stock else None
+
+
+def _stock(db: Session, resolver: EntityResolver, asset: str) -> Optional[Dict]:
+    """직접 담은 종목은 그 자체로 더하므로, ETF가 담지 않은(그래프 밖) 상장사도 종목코드가 있으면 쓴다."""
+    try:
+        return resolver.stock(db, asset)
+    except UnmanagedStock as e:
+        return e.corp if e.corp["code"] else None
 
 
 class PortfolioLookthroughSkill(DataSkill):

@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ....models.portfolio import Holding, Portfolio
-from ...answer.resolver import AmbiguousETF, EntityResolver, UnmanagedETF
+from ...answer.resolver import AmbiguousETF, EntityResolver, UnmanagedETF, UnmanagedStock
 from ...answer.skills.common import node as cypher
 from ...graph_service import GraphService
 from ..base import FlowContext, Node, StockSet, result
@@ -145,7 +145,10 @@ class SourceNode(Node):
         items = StockSet()
         missing = []
         for name in names:
-            stock = resolver.stock(db, name)
+            try:
+                stock = resolver.stock(db, name)
+            except UnmanagedStock as e:  # ETF가 담지 않은 상장사도 시세로 분석할 수 있다
+                stock = e.corp if e.corp["code"] else None
             if SAFE_CODE_RE.fullmatch(name.upper()):  # 코드는 그래프에 없어도 시세는 받을 수 있다
                 code = name.upper()
                 items.rows[code] = {"code": code, "name": stock["name"] if stock else code}

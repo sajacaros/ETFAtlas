@@ -11,6 +11,7 @@ AGE 수집 공용 로직은 `airflow/dags/age_utils.py`에 모여 있다.
 | `rdb_sync_metadata` | `sync_metadata_rdb.py` | `40 8 * * *` (매일 08:40 KST) | RDB | `etfs` 코드/이름 동기화 |
 | `rdb_realtime_prices` | `realtime_prices_rdb.py` | `*/10 9-15 * * 1-5` | RDB | 장중 현재가 + 포트폴리오 스냅샷 |
 | `embed_code_examples` | `embed_code_examples.py` | 수동 | RDB (pgvector) | 챗봇 코드·레이아웃 예제 임베딩 |
+| `dart_sync_rdb` | `dart_sync_rdb.py` | `20 19 * * 1-5` (평일 19:20 KST) | RDB | 챗봇 기업 분석의 DART 고유번호·공시·주요계정 |
 
 ### 데이터 소스
 
@@ -20,6 +21,7 @@ AGE 수집 공용 로직은 `airflow/dags/age_utils.py`에 모여 있다.
 | 한국투자증권 KIS Open API | ETF 현재가(NAV·순자산·상장주수), ETF/주식 일봉, ETF 현재 구성종목(HOLDS/CURRENT_HOLDS)·종목명, 영업일(기준 ETF 일봉), 휴장일 | `KIS_APP_KEY`, `KIS_APP_SECRET` (`KIS_BASE_URL` 선택) |
 | 네이버 증권 모바일 API (비공식) | 신규 ETF 보수율(`totalFee`) | 불필요 |
 | yfinance | 포트폴리오 보유 티커 현재가 (RDB) | 불필요 |
+| DART OpenAPI (opendart.fss.or.kr) | 회사 고유번호, 공시 목록, 다중회사 주요계정 | 관리자 페이지 > DART 탭의 키(`dart_settings`, 암호화), 없으면 `DART_API_KEY` |
 | LiteLLM 프록시 (OpenAI 호환) | ETF 태그 분류·질문 일반화(`LLM_MODEL`), 코드 예제 임베딩(`EMBEDDING_MODEL`) | `LLM_API_BASE`/`LLM_API_KEY`, `EMBEDDING_API_BASE`/`EMBEDDING_API_KEY` |
 
 ---
@@ -225,6 +227,23 @@ check_market_open → collect_prices → update_snapshots
 
 수동 트리거 전용. `code_examples`(agent 해결 절차)와 `layout_examples`(레이아웃 플래너 화면 설계)에서 테이블마다 태스크 하나씩(`embed_code_examples`, `embed_layout_examples`), `status='active'`(승인됨, 미임베딩) 레코드를 찾아 질문을 LLM(`LLM_MODEL`)으로 일반화한 뒤, `EMBEDDING_MODEL`(기본 `embedding-gemma-300m`, 768차원)로 임베딩을 생성하고 `status='embedded'`로 전환한다.
 
+## 6. dart_sync_rdb (RDB)
+
+챗봇 기업 분석(`company_financials`, `company_disclosures` 스킬)과 그래프 밖 종목 안내에 쓰는 DART 데이터를 받는다.
+대상은 그래프의 종목(`Stock`, ETF 제외) 중 DART에 종목코드가 있는 회사다.
+
+- **스케줄**: `20 19 * * 1-5` (평일 19:20 KST, 장 마감 후 공시까지)
+- **재시도**: 2회, 10분 간격 / **동시 실행**: 1개
+- **키**: `dart_settings`(관리자 페이지에서 저장, 암호문)가 우선, 없으면 `DART_API_KEY`. 둘 다 없으면 경고만 남기고 건너뛴다
+
+```
+sync_corps → [sync_disclosures, sync_financials]
+```
+
+- `sync_corps`: `corpCode.xml`(zip) 전체를 `dart_corps`에 upsert한다 (호출 1건). 리졸버는 이 표로 "상장사지만 수집 ETF가 담지 않은 종목"과 "없는 이름"을 구분한다.
+- `sync_disclosures`: 전체 회사의 최근 3일 공시(`list.json`, 100건씩 페이지)를 받아 그래프 종목만 `stock_disclosures`에 남긴다. 공시가 하나도 없는 종목은 회사별로 최근 90일을 백필한다 (첫 실행).
+- `sync_financials`: 최근 3개 사업연도 × 4개 보고서(1분기·반기·3분기·사업보고서)를 `fnlttMultiAcnt.json`으로 100개 회사씩 받아 `stock_financials`에 upsert한다. 매출액·영업이익·당기순이익·자산총계·부채총계·자본총계만, 연결(CFS)·별도(OFS) 모두 원본 그대로 저장한다 (분·반기 손익은 3개월 금액과 누적 금액). 하루 호출은 수십 건이다 (키당 일일 한도 2만 건).
+
 ---
 
 ## 저장 대상별 요약
@@ -243,6 +262,9 @@ check_market_open → collect_prices → update_snapshots
 | `market_calendar` | rdb_realtime_prices | check_market_open | 개장일 여부 캐시 (하루 1회) |
 | `code_examples` | embed_code_examples | embed_code_examples | 챗봇 few-shot 코드 예제 (vector(768)) |
 | `layout_examples` | embed_code_examples | embed_layout_examples | 레이아웃 플래너 few-shot 화면 설계 예제 (vector(768)) |
+| `dart_corps` | dart_sync_rdb | sync_corps | DART 고유번호 ↔ 종목코드, 그래프 밖 상장사 안내 |
+| `stock_disclosures` | dart_sync_rdb | sync_disclosures | 그래프 종목의 공시 목록 |
+| `stock_financials` | dart_sync_rdb | sync_financials | 그래프 종목의 주요계정 (분기·연간 실적) |
 
 ### Apache AGE
 
@@ -269,7 +291,8 @@ check_market_open → collect_prices → update_snapshots
 | `EMBEDDING_MODEL` | 임베딩 모델 (기본 `embedding-gemma-300m`, 768차원) |
 
 LLM/임베딩 항목(`LLM_*`, `EMBEDDING_*`)은 관리자 페이지 > AI 탭에서 저장한 값(`ai_settings`)이 우선하고, 비어 있는 항목만 환경변수를 쓴다 (`age_utils.load_ai_config`).
-| `ENCRYPTION_KEY` | 포트폴리오 금액 암호화 키 |
+| `ENCRYPTION_KEY` | 포트폴리오 금액·저장한 API 키 암호화 키 |
+| `DART_API_KEY` | (선택) DART OpenAPI 키. 관리자 페이지 > DART 탭에 저장한 키가 우선 |
 | `DISCORD_WEBHOOK_URL` | (선택) 수집 완료 디스코드 알림 |
 
 ## 의존성 (airflow/requirements.txt)

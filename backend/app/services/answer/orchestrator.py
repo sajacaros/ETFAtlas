@@ -55,6 +55,14 @@ def _related_text(result: Dict[str, Any]) -> str:
     return "\n".join([text, *(f"(참고) {n}" for n in notes)]) if notes else text
 
 
+def shared_notice(results: List[Dict[str, Any]]) -> Optional[str]:
+    """모든 결과가 같은 문구로 비었으면 그 문구. 하나라도 결과가 있거나 문구가 다르면 None."""
+    messages = {r.get("message") for r in results}
+    if not results or any(r.get("status") != "empty" for r in results) or len(messages) != 1:
+        return None
+    return messages.pop()
+
+
 def needs_replan(slots: List[PlannedSlot], results: Dict[str, Dict[str, Any]], stop: asyncio.Event) -> bool:
     """고칠 수 있는 실패가 있고, 중지·되묻기 중이 아니면 다시 설계한다."""
     if stop.is_set() or any(r.get("clarify") for r in results.values()):
@@ -243,7 +251,11 @@ class AnswerService:
             # 대상을 정하지 못해 되묻는 슬롯이 있으면 뒤 슬롯은 쓸 거리가 없다 — 사용자의 답을 기다린다
             if any(results.get(d, {}).get("clarify") for d in deps):
                 return {"status": "empty", "message": "대상을 정하면 이어서 보여 드립니다"}
-            for d in slot.depends_on:  # 참조한 슬롯은 결과가 있어야 한다 (after_others는 실패 문구도 해설한다)
+            if self._registry[slot.skill].after_others:
+                notice = shared_notice([results.get(d, {}) for d in deps])
+                if notice:  # 모든 영역이 같은 안내(분석하지 않는 종목 등)로 비었으면 해설도 그 안내만 — LLM이 되풀이할 것이 없다
+                    return {"status": "empty", "message": notice}
+            for d in slot.depends_on:  # 참조한 슬롯은 결과가 있어야 한다 (after_others는 결과와 실패 문구가 섞여 있으면 함께 해설한다)
                 if results.get(d, {}).get("status") != "complete":
                     title = by_id[d].title if d in by_id else d
                     return {"status": "empty", "message": f"'{title}' 영역의 결과가 없어 채우지 못했습니다"}

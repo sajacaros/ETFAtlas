@@ -605,23 +605,20 @@ function DartSettingsTab() {
     return <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin" /></div>
   }
 
-  const current = settings.api_key
+  const current = settings.api_key_masked
   return (
     <div className="max-w-xl space-y-6 py-2">
       <p className="text-sm text-muted-foreground">
         챗봇 기업 분석의 실적·공시는 DART OpenAPI(opendart.fss.or.kr)에서 매일 수집합니다.
-        여기서 저장한 키가 서버 환경변수(DART_API_KEY)보다 우선하며, 다음 DART 수집 DAG 실행부터 적용됩니다.
+        키는 여기서만 저장합니다(암호화해 DB에 보관). 다음 DART 수집 DAG 실행부터 적용되며, 키가 없으면 수집을 건너뜁니다.
       </p>
       <div className="space-y-2">
         <Label htmlFor="dart-api-key">API 키</Label>
         <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-          <span className="break-all">현재: {current.value ?? '없음'}</span>
-          <Badge variant={current.source === 'db' ? 'default' : 'outline'}>
-            {current.source === 'db' ? '관리자 설정' : '서버 환경변수'}
-          </Badge>
-          {current.source === 'db' && (
+          <span className="break-all">현재: {current ?? '없음'}</span>
+          {current && (
             <Button variant="ghost" size="sm" className="h-6 px-2" onClick={() => save('')} disabled={saving}>
-              <RotateCcw className="h-3 w-3 mr-1" />환경변수로 되돌리기
+              <Trash2 className="h-3 w-3 mr-1" />삭제
             </Button>
           )}
         </div>

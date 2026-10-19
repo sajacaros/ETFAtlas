@@ -2,7 +2,7 @@
 
 The chatbot's company snapshot reads quarterly financials and recent
 disclosures from DART. The DART key is entered on the admin page and kept
-encrypted in dart_settings (falls back to DART_API_KEY). dart_corps holds
+encrypted in dart_settings (no environment fallback). dart_corps holds
 every company DART knows, so a listed stock that no collected ETF holds can
 be told apart from a name that does not exist.
 

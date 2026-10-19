@@ -7,12 +7,11 @@ DART Sync DAG — 챗봇 기업 분석의 실적·공시
 - stock_financials: 그래프 종목의 주요계정(매출액·영업이익·순이익·자산·부채·자본).
   최근 3개 사업연도 × 4개 보고서를 매일 다시 받는다 (100개 회사씩 묶어 하루 수십 건).
 
-API 키는 관리자 페이지에 저장한 dart_settings가 우선, 없으면 환경변수 DART_API_KEY. 둘 다 없으면 건너뛴다.
+API 키는 관리자 페이지에서 저장한 dart_settings(암호문)만 쓴다. 없으면 건너뛴다.
 """
 
 from datetime import datetime, timedelta
 import logging
-import os
 
 from airflow.sdk import DAG
 from airflow.providers.standard.operators.python import PythonOperator
@@ -46,7 +45,7 @@ dag = DAG(
 
 
 def load_dart_key(conn) -> str:
-    """관리자 페이지에서 저장한 키(암호문)가 우선, 없거나 복호화 실패면 환경변수."""
+    """관리자 페이지에서 저장한 키(암호문). 없거나 복호화에 실패하면 빈 문자열."""
     # backend 암호화 유틸 (컨테이너 PYTHONPATH=/opt/backend)
     from app.utils.encryption import decrypt_value
 
@@ -60,8 +59,9 @@ def load_dart_key(conn) -> str:
         try:
             return decrypt_value(row[0])
         except Exception:
-            log.warning("Failed to decrypt dart_settings.api_key; using environment")
-    return os.environ.get('DART_API_KEY', '')
+            log.warning("Failed to decrypt dart_settings.api_key (ENCRYPTION_KEY가 바뀌었나?)")
+    return ''
+
 
 
 def _client():
@@ -73,7 +73,7 @@ def _client():
     finally:
         conn.close()
     if not key:
-        log.warning("DART API 키가 없습니다 (관리자 페이지 > DART 또는 DART_API_KEY) — 건너뜁니다")
+        log.warning("DART API 키가 없습니다 (관리자 페이지 > DART에서 저장) — 건너뜁니다")
         return None
     return DartClient(key)
 

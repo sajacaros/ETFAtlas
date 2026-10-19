@@ -19,7 +19,7 @@ from ..models.discord_notification_log import DiscordNotificationLog
 from ..models.ai_setting import AISetting
 from ..services.ai_config import AI_CONFIG_FIELDS, SECRET_FIELDS, load_ai_config, stored_value
 from ..models.dart import DartSetting
-from ..services.dart_config import check_dart_key, load_dart_key, stored_key
+from ..services.dart_config import check_dart_key, load_dart_key
 from ..utils.encryption import encrypt_value
 from ..models.invitation import Invitation
 from ..models.user import User
@@ -766,12 +766,7 @@ async def test_ai_settings(
 
 
 def _dart_settings_response(db: Session) -> dict:
-    return {
-        "api_key": {
-            "value": _mask_secret(load_dart_key(db)),
-            "source": "db" if stored_key(db.get(DartSetting, 1)) else "env",
-        },
-    }
+    return {"api_key_masked": _mask_secret(load_dart_key(db))}
 
 
 @router.get("/settings/dart")
@@ -788,7 +783,7 @@ async def update_dart_settings(
     db: Session = Depends(get_db),
     admin_id: int = Depends(get_admin_user_id),
 ):
-    """None은 유지, ""는 지워서 환경변수로 되돌린다. 다음 수집(dart_sync DAG)부터 반영된다."""
+    """None은 유지, ""는 지운다(키가 없으면 수집을 건너뛴다). 다음 수집(dart_sync DAG)부터 반영된다."""
     if body.api_key is not None:
         setting = db.get(DartSetting, 1)
         if setting is None:
@@ -804,7 +799,7 @@ async def test_dart_settings(
     db: Session = Depends(get_db),
     admin_id: int = Depends(get_admin_user_id),
 ):
-    """지금 적용된 키로 DART 회사 개황을 한 번 조회해 본다."""
+    """저장한 키로 DART 회사 개황을 한 번 조회해 본다."""
     import asyncio
 
     return await asyncio.to_thread(check_dart_key, load_dart_key(db))

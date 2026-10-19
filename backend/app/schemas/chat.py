@@ -144,7 +144,7 @@ class AISettingsUpdate(BaseModel):
 
 
 class DartSettingsUpdate(BaseModel):
-    # None: 기존 값 유지, "": 지우고 서버 환경변수로 되돌림
+    # None: 기존 값 유지, "": 삭제
     api_key: Optional[str] = None
 
     @field_validator("api_key")

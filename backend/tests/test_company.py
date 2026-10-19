@@ -252,20 +252,22 @@ class SettingDB:
         pass
 
 
-def test_dart_key_is_stored_encrypted_and_masked(encryption_key, monkeypatch):
+def test_dart_key_is_stored_encrypted_and_masked(encryption_key):
     from app.routers import admin
     from app.schemas.chat import DartSettingsUpdate
     from app.services import dart_config
 
-    class Env:
-        dart_api_key = "env-dart-key"
-    monkeypatch.setattr(dart_config, "get_settings", lambda: Env)
-
     db = SettingDB()
-    assert asyncio.run(admin.get_dart_settings(db=db, admin_id=1)) == {"api_key": {"value": "…-key", "source": "env"}}
+    assert asyncio.run(admin.get_dart_settings(db=db, admin_id=1)) == {"api_key_masked": None}
     response = asyncio.run(admin.update_dart_settings(DartSettingsUpdate(api_key=" secret-9876 "), db=db, admin_id=1))
-    assert isinstance(db.setting, DartSetting) and db.setting.api_key != "secret-9876"
+    assert isinstance(db.setting, DartSetting) and db.setting.api_key != "secret-9876"  # 평문으로 저장하지 않는다
     assert dart_config.load_dart_key(db) == "secret-9876"
-    assert response == {"api_key": {"value": "…9876", "source": "db"}}
+    assert response == {"api_key_masked": "…9876"}
     response = asyncio.run(admin.update_dart_settings(DartSettingsUpdate(api_key=""), db=db, admin_id=1))
-    assert db.setting.api_key is None and response["api_key"]["source"] == "env"
+    assert db.setting.api_key is None and response == {"api_key_masked": None}
+    assert dart_config.check_dart_key(dart_config.load_dart_key(db)) == {"ok": False, "error": "저장한 DART API 키가 없습니다"}
+
+
+def test_undecryptable_dart_key_counts_as_missing(encryption_key):
+    from app.services import dart_config
+    assert dart_config.load_dart_key(SettingDB(DartSetting(id=1, api_key="not-a-ciphertext"))) == ""

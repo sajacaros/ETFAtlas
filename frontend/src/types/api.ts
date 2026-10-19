@@ -102,7 +102,7 @@ export interface AdminAITestResult {
 }
 
 export interface AdminDartSettings {
-  api_key: AdminAISettingItem
+  api_key_masked: string | null  // 끝 4자리만
 }
 
 export interface AdminDartTestResult {

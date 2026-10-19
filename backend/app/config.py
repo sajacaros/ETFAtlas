@@ -23,9 +23,6 @@ class Settings(BaseSettings):
     embedding_api_key: str = ""
     embedding_model: str = "embedding-gemma-300m"  # 768차원
 
-    # DART OpenAPI (기업 분석 실적·공시). 관리자 페이지 > DART 탭에 저장한 키가 우선
-    dart_api_key: str = ""
-
     # Frontend
     frontend_url: str = "http://localhost:9600"
 

@@ -30,7 +30,6 @@ x-airflow-common: &airflow-common
     EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
     EMBEDDING_MODEL: ${EMBEDDING_MODEL:-embedding-gemma-300m}
     DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
-    DART_API_KEY: ${DART_API_KEY:-}
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - ./backend:/opt/backend:ro
@@ -83,7 +82,6 @@ services:
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-embedding-gemma-300m}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:9600}
-      DART_API_KEY: ${DART_API_KEY:-}  # 기업 분석 (관리자 페이지에 저장한 키가 우선)
       DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}  # 분석 흐름 자동 실행 알림 (관리자 페이지에 저장한 주소가 우선)
     ports:
       # 서버 자신(127.0.0.1)에만 연다 — 외부 요청은 frontend nginx가 /api로 받아 내부망으로 넘긴다

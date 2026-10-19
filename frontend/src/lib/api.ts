@@ -574,7 +574,7 @@ export const adminApi = {
     const { data } = await api.get<AdminDartSettings>('/admin/settings/dart')
     return data
   },
-  // api_key: ''면 지우고 서버 환경변수로 되돌림
+  // api_key: ''면 삭제
   updateDartSettings: async (body: { api_key: string }) => {
     const { data } = await api.put<AdminDartSettings>('/admin/settings/dart', body)
     return data

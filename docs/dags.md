@@ -21,7 +21,7 @@ AGE 수집 공용 로직은 `airflow/dags/age_utils.py`에 모여 있다.
 | 한국투자증권 KIS Open API | ETF 현재가(NAV·순자산·상장주수), ETF/주식 일봉, ETF 현재 구성종목(HOLDS/CURRENT_HOLDS)·종목명, 영업일(기준 ETF 일봉), 휴장일 | `KIS_APP_KEY`, `KIS_APP_SECRET` (`KIS_BASE_URL` 선택) |
 | 네이버 증권 모바일 API (비공식) | 신규 ETF 보수율(`totalFee`) | 불필요 |
 | yfinance | 포트폴리오 보유 티커 현재가 (RDB) | 불필요 |
-| DART OpenAPI (opendart.fss.or.kr) | 회사 고유번호, 공시 목록, 다중회사 주요계정 | 관리자 페이지 > DART 탭의 키(`dart_settings`, 암호화), 없으면 `DART_API_KEY` |
+| DART OpenAPI (opendart.fss.or.kr) | 회사 고유번호, 공시 목록, 다중회사 주요계정 | 관리자 페이지 > DART 탭의 키(`dart_settings`, 암호화). 환경변수는 쓰지 않는다 |
 | LiteLLM 프록시 (OpenAI 호환) | ETF 태그 분류·질문 일반화(`LLM_MODEL`), 코드 예제 임베딩(`EMBEDDING_MODEL`) | `LLM_API_BASE`/`LLM_API_KEY`, `EMBEDDING_API_BASE`/`EMBEDDING_API_KEY` |
 
 ---
@@ -234,7 +234,7 @@ check_market_open → collect_prices → update_snapshots
 
 - **스케줄**: `20 19 * * 1-5` (평일 19:20 KST, 장 마감 후 공시까지)
 - **재시도**: 2회, 10분 간격 / **동시 실행**: 1개
-- **키**: `dart_settings`(관리자 페이지에서 저장, 암호문)가 우선, 없으면 `DART_API_KEY`. 둘 다 없으면 경고만 남기고 건너뛴다
+- **키**: `dart_settings`(관리자 페이지에서 저장, 암호문)만 쓴다. 없으면 경고만 남기고 건너뛴다
 
 ```
 sync_corps → [sync_disclosures, sync_financials]
@@ -292,7 +292,6 @@ sync_corps → [sync_disclosures, sync_financials]
 
 LLM/임베딩 항목(`LLM_*`, `EMBEDDING_*`)은 관리자 페이지 > AI 탭에서 저장한 값(`ai_settings`)이 우선하고, 비어 있는 항목만 환경변수를 쓴다 (`age_utils.load_ai_config`).
 | `ENCRYPTION_KEY` | 포트폴리오 금액·저장한 API 키 암호화 키 |
-| `DART_API_KEY` | (선택) DART OpenAPI 키. 관리자 페이지 > DART 탭에 저장한 키가 우선 |
 | `DISCORD_WEBHOOK_URL` | (선택) 수집 완료 디스코드 알림 |
 
 ## 의존성 (airflow/requirements.txt)

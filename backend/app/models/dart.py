@@ -4,7 +4,7 @@ from ..utils.time import utcnow
 
 
 class DartSetting(Base):
-    """DART OpenAPI 키. 한 행(id=1)만 쓴다 — 비어 있으면 환경변수 DART_API_KEY를 쓴다.
+    """DART OpenAPI 키. 한 행(id=1)만 쓴다 — 환경변수 대체는 없다.
 
     키는 ENCRYPTION_KEY로 암호화해 저장한다 (app.utils.encryption).
     """

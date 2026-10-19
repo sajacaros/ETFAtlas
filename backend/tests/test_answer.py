@@ -169,6 +169,9 @@ class MemoryStore:
     def replace(self, chat_log_id, slots):
         self.saved.update({s.id: "pending" for s in slots})
 
+    def split(self, chat_log_id, slot_id, parts):
+        self.saved.update({s.id: "pending" for s in parts})
+
     def save(self, chat_log_id, slot_id, result):
         self.saved[slot_id] = result["status"]
 
@@ -237,6 +240,71 @@ def test_skill_can_retitle_its_slot_and_the_layout_is_sent_again(monkeypatch):
     # 해설과 답변 텍스트도 바뀐 제목을 쓴다
     assert "### 삼성전자 2026년 반기보고서 요약\nA요약" in events[-1]["data"]["answer"]
     assert "삼성전자 2026년 반기보고서 요약:A요약" in "".join(e["data"]["text"] for e in events if e["type"] == "slot_delta")
+
+
+class SplittingSkill(DataSkillStub):
+    """결과를 보고 차트 영역과 설명 영역으로 나눈다."""
+    async def run(self, args, display, ctx):
+        yield {"type": "split", "parts": [{"id": "chart", "title": "매출 구성", "display": "donut"},
+                                          {"id": "text", "title": "보고서 요약", "display": "markdown"}]}
+        async for e in super().run(args, display, ctx):
+            yield {**e, "part": "chart"}
+        yield {"type": "delta", "text": "요약 본문", "part": "text"}
+        yield {**text_result("요약 본문", kind="markdown").event(), "part": "text"}
+
+
+def test_skill_can_split_its_slot_into_a_chart_and_a_text(monkeypatch):
+    rows = [[_slot("s1", "data", "가"), _slot("s2", "split", "보고서")], [_slot("s3", "narr", "해설")]]
+    service = _service(monkeypatch, rows, {**REG, "split": SplittingSkill()})
+    events = _collect(service)
+
+    last = [e["data"]["layout"] for e in events if e["type"] == "layout"][-1]
+    # 나눈 자리에 차트, 그 아래 설명 — 원래 줄 배치는 그대로
+    assert last["children"][0]["children"][1] == {"type": "column", "children": [
+        {"type": "slot", "id": "s2-1", "slot": "chart", "display": "donut", "title": "매출 구성"},
+        {"type": "slot", "id": "s2-2", "slot": "markdown", "display": "markdown", "title": "보고서 요약"},
+    ]}
+    shown = {e["data"]["id"]: e["data"]["status"] for e in events if e["type"] == "slot" and e["data"]["status"] != "running"}
+    assert shown == {"s1": "complete", "s2-1": "complete", "s2-2": "complete", "s3": "complete"}  # 원래 영역은 화면에 없다
+    assert service._store.saved["s2"] == "complete"  # 원래 슬롯에는 나눈 영역들을 합친 결과
+    assert {"id": "s2-2", "text": "요약 본문"} in [e["data"] for e in events if e["type"] == "slot_delta"]
+    # 해설과 답변 텍스트는 나눈 영역을 각각 받는다
+    narration = "".join(e["data"]["text"] for e in events if e["type"] == "slot_delta" and e["data"]["id"] == "s3")
+    assert narration == "가:A요약 | 매출 구성:A요약 | 보고서 요약:요약 본문"
+    answer = events[-1]["data"]["answer"]
+    assert "### 매출 구성\nA요약" in answer and "### 보고서 요약\n요약 본문" in answer
+
+
+class HalfSplit(Skill):
+    """나눈 뒤 차트 하나만 내고 실패한다."""
+    name = "half"
+    description = "차트만 내고 끝난다"
+    Args = NoArgs
+    displays = ("markdown",)
+
+    async def run(self, args, display, ctx):
+        yield {"type": "split", "parts": [{"id": "a", "title": "A", "display": "table"},
+                                          {"id": "b", "title": "B", "display": "markdown"}]}
+        async for e in DataSkillStub().run(args, display, ctx):
+            yield {**e, "part": "a"}
+        raise RuntimeError("boom")
+
+
+def test_split_parts_without_a_result_are_closed(monkeypatch):
+    service = _service(monkeypatch, [[_slot("s1", "half", "보고서")]], {**REG, "half": HalfSplit()})
+    _collect(service)
+    assert service._store.saved == {"s1": "complete", "s1-1": "complete", "s1-2": "failed"}
+
+
+def test_layout_tree_puts_split_charts_side_by_side_above_the_text():
+    rows = [[_slot("s1", "data", "보고서")]]
+    parts = [PlannedSlot(id=f"s1-{i}", skill="data", title=t, display=d, args=NoArgs())
+             for i, (t, d) in enumerate([("가", "donut"), ("나", "bar"), ("요약", "markdown")], 1)]
+    tree = layout_tree(rows, {"s1": parts})
+    node = tree["children"][0]
+    assert node["type"] == "column"
+    assert [c["id"] for c in node["children"][0]["children"]] == ["s1-1", "s1-2"]
+    assert node["children"][1]["id"] == "s1-3"
 
 
 def test_stop_skips_slots_that_wait_for_others(monkeypatch):

@@ -31,7 +31,7 @@
 | `session` | `{session_id, title}` | |
 | `status` | `{stage: refining \| planning \| replanning \| filling \| searching_examples \| thinking}` | replanning·filling은 다시 설계, 뒤의 둘은 agent 슬롯 |
 | `refined_question` | `{question}` | |
-| `layout` | `{chat_log_id, layout}` | 슬롯 이벤트보다 항상 먼저. 다시 설계하거나 스킬이 영역 제목을 바꾸면(정기보고서 이름 등) 한 번 더 온다 (같은 슬롯 id, 이미 채운 영역은 그대로) |
+| `layout` | `{chat_log_id, layout}` | 슬롯 이벤트보다 항상 먼저. 다시 설계하거나, 스킬이 영역 제목을 바꾸거나(정기보고서 이름 등) 영역을 나누면 다시 온다 (같은 슬롯 id, 이미 채운 영역은 그대로. 나눈 영역은 `s5-1`, `s5-2` …) |
 | `slot` | `{id, status, message?}` | `running` → `complete \| empty \| failed \| stopped` |
 | `slot_delta` | `{id, text}` | 텍스트 슬롯의 조각 |
 | `step_start` / `step` / `matched_examples` | 기존 형식 + `slot_id` | agent 슬롯의 실행 과정 |
@@ -89,6 +89,7 @@ class MySkill(DataSkill):
 - 숫자는 스킬이 DB에서 만든다. LLM에는 `summary`(단위를 붙인 짧은 텍스트)만 넘어간다.
 - 도메인 규칙(여러 ETF는 누적 수익률로, 도넛은 8조각까지 등)은 스킬 안에서 처리한다.
 - 스트리밍이 필요하거나 DB가 아닌 곳을 쓰는 스킬은 `Skill.run()`을 직접 구현해 `delta` / `result` 이벤트를 낸다 (`narrative.py`, `agent.py` 참고).
+- 실행해 봐야 아는 것은 스킬이 화면에 반영한다: `title` 이벤트로 영역 제목을 바꾸고, `split` 이벤트(`parts: [{id, title, display}]`)로 영역을 차트와 설명 등으로 나눈다. 나눈 뒤의 `delta`·`result`에는 `part`를 붙이고 영역마다 `result`를 한 번 낸다. 오케스트레이터는 계획(플래너가 보는 슬롯)은 그대로 두고 화면 레이아웃·저장(`chat_slots`의 `s5-1` …)·해설에 넘기는 요약만 나눈 영역으로 펼친다. 원래 슬롯 행에는 합친 결과가 남아 다시 설계·해설 대기 판단에 쓰인다 (`company_report.py` 참고).
 - 다른 슬롯의 결과가 필요하면 `after_others = True` — `ctx.related`로 앞 슬롯들의 (제목, 요약)을 받는다.
 - 결과에 순위가 있는 ETF·종목 목록이 있으면 `exports`(무엇을 내보내는지 설명)를 적고 `data_result(..., exports=[{code, name}, ...])`로 순위 순으로 담는다. 그러면 다른 슬롯이 참조할 수 있다.
 

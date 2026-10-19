@@ -3,7 +3,8 @@
 이벤트 (SSE로 그대로 나간다):
   status {stage: refining | planning}
   refined_question {question}
-  layout {chat_log_id, layout}            슬롯 이벤트보다 항상 먼저
+  layout {chat_log_id, layout}            슬롯 이벤트보다 항상 먼저. 다시 설계하거나 스킬이 영역 제목을 바꾸거나
+                                          영역을 나누면 다시 온다 (나눈 영역은 '원래 id-1', '원래 id-2' …)
   slot {id, status, message?}             running → complete | empty | failed | stopped
   slot_delta {id, text}                   텍스트 슬롯이 흘려보내는 조각
   step_start / step / matched_examples    agent 스킬의 실행 과정 (data에 slot_id)
@@ -86,10 +87,26 @@ def _rerun_ids(old: List[PlannedSlot], new: List[PlannedSlot], results: Dict[str
     return rerun
 
 
-def answer_text(slots: List[PlannedSlot], results: Dict[str, Dict[str, Any]]) -> str:
+def shown_slots(slots: List[PlannedSlot], splits: Dict[str, List[PlannedSlot]]) -> List[PlannedSlot]:
+    """화면에 보이는 영역: 스킬이 나눈 슬롯은 나눈 영역들로."""
+    return [part for s in slots for part in splits.get(s.id, [s])]
+
+
+def split_result(parts: List[PlannedSlot], results: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """나눈 슬롯의 원래 id에 남기는 결과: 다시 설계·되묻기·해설 대기 같은 슬롯 단위 판단이 그대로 쓴다."""
+    states = [results.get(p.id, {}) for p in parts]
+    complete = [r for r in states if r.get("status") == "complete"]
+    if not complete:
+        return states[0] if states else {"status": "failed", "message": "결과가 없습니다"}
+    summary = "\n\n".join(f"{p.title}: {r.get('summary') or r.get('message') or ''}" for p, r in zip(parts, states))
+    return {"status": "complete", "summary": summary}
+
+
+def answer_text(slots: List[PlannedSlot], results: Dict[str, Dict[str, Any]],
+                splits: Optional[Dict[str, List[PlannedSlot]]] = None) -> str:
     """화면을 텍스트로: 텍스트 슬롯은 본문, 데이터 슬롯은 요약."""
     parts = []
-    for slot in slots:
+    for slot in shown_slots(slots, splits or {}):
         result = results.get(slot.id) or {}
         body = result.get("summary") or result.get("message") or ""
         if body:
@@ -123,11 +140,24 @@ class SlotStore:
         finally:
             db.close()
 
+    def split(self, chat_log_id: int, slot_id: str, parts: List[PlannedSlot]) -> None:
+        """스킬이 영역을 나눴다: 나눈 영역의 행을 만든다. 원래 슬롯의 행에는 나눈 영역들을 합친 결과가 남는다."""
+        db = self._session_factory()
+        try:
+            for s in parts:
+                db.merge(ChatSlot(chat_log_id=chat_log_id, slot_id=s.id, skill=s.skill, status="pending",
+                                  updated_at=utcnow()))
+            db.commit()
+        finally:
+            db.close()
+
     def replace(self, chat_log_id: int, slots: List[PlannedSlot]) -> None:
-        """다시 설계해 다시 실행할 슬롯: 스킬을 바꾸고 결과를 비운다."""
+        """다시 설계해 다시 실행할 슬롯: 스킬을 바꾸고 결과를 비운다. 나눴던 영역은 지운다."""
         db = self._session_factory()
         try:
             for s in slots:
+                db.query(ChatSlot).filter(ChatSlot.chat_log_id == chat_log_id,
+                                          ChatSlot.slot_id.like(f"{s.id}-%")).delete(synchronize_session=False)
                 row = db.get(ChatSlot, (chat_log_id, s.id))
                 if row is not None:
                     row.skill, row.status, row.content, row.summary, row.message = s.skill, "pending", None, None, None
@@ -184,18 +214,22 @@ class AnswerService:
         rows = await planner.plan(question, context)
         slots = [s for row in rows for s in row]
         await asyncio.to_thread(self._store.create, chat_log_id, slots)
-        yield _event("layout", {"chat_log_id": chat_log_id, "layout": layout_tree(rows)})
+        splits: Dict[str, List[PlannedSlot]] = {}  # 스킬이 나눈 슬롯 id → 나눈 영역. 계획(rows)은 그대로 둔다
 
-        def retitled(event: Dict[str, Any]) -> Dict[str, Any]:
-            # 스킬이 실행하며 제목을 정하면(보고서 이름 등) 레이아웃을 다시 보낸다. 마지막 레이아웃이 저장된다
-            return _event("layout", {"chat_log_id": chat_log_id, "layout": layout_tree(rows)}) \
-                if event["type"] == "slot_title" else event
+        def layout() -> Dict[str, Any]:
+            return _event("layout", {"chat_log_id": chat_log_id, "layout": layout_tree(rows, splits)})
+
+        yield layout()
+
+        def relayout(event: Dict[str, Any]) -> Dict[str, Any]:
+            # 스킬이 실행하며 제목을 정하거나(보고서 이름 등) 영역을 나누면 레이아웃을 다시 보낸다. 마지막 레이아웃이 저장된다
+            return layout() if event["type"] in ("slot_title", "slot_split") else event
 
         # 데이터 슬롯 → (고칠 수 있는 실패가 있으면) 한 번 다시 설계해 그 슬롯만 다시 실행 → 해설 같은 after_others 슬롯
         results: Dict[str, Dict[str, Any]] = {}
         data = [s for s in slots if not self._registry[s.skill].after_others]
-        async for event in self._run_slots(data, question, context, chat_log_id, stop, results, all_slots=slots):
-            yield retitled(event)
+        async for event in self._run_slots(data, question, context, chat_log_id, stop, results, splits, all_slots=slots):
+            yield relayout(event)
 
         if needs_replan(slots, results, stop) and hasattr(planner, "replan"):
             yield _event("status", {"stage": "replanning"})
@@ -213,28 +247,33 @@ class AnswerService:
                     await asyncio.to_thread(self._store.replace, chat_log_id, again)
                     for s in again:
                         results.pop(s.id, None)
-                    yield _event("layout", {"chat_log_id": chat_log_id, "layout": layout_tree(rows)})
+                        for part in splits.pop(s.id, []):
+                            results.pop(part.id, None)
+                    yield layout()
                     yield _event("status", {"stage": "filling"})
                     data_again = [s for s in again if not self._registry[s.skill].after_others]
                     async for event in self._run_slots(data_again, question, context, chat_log_id, stop, results,
-                                                       all_slots=slots):
-                        yield retitled(event)
+                                                       splits, all_slots=slots):
+                        yield relayout(event)
 
         later = [s for s in slots if self._registry[s.skill].after_others]
-        async for event in self._run_slots(later, question, context, chat_log_id, stop, results, all_slots=slots):
-            yield retitled(event)
-        yield _event("answer", {"answer": answer_text(slots, results), "result": answer_result(slots, results, stop)})
+        async for event in self._run_slots(later, question, context, chat_log_id, stop, results, splits, all_slots=slots):
+            yield relayout(event)
+        yield _event("answer", {"answer": answer_text(slots, results, splits),
+                                "result": answer_result(slots, results, stop)})
 
     async def _run_slots(
         self, slots: List[PlannedSlot], question: str, context: ConversationContext,
         chat_log_id: int, stop: asyncio.Event, results: Dict[str, Dict[str, Any]],
-        all_slots: Optional[List[PlannedSlot]] = None,
+        splits: Optional[Dict[str, List[PlannedSlot]]] = None, all_slots: Optional[List[PlannedSlot]] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
         """slots를 실행한다. 슬롯은 의존하는 슬롯이 끝나기를 기다렸다가 돌고, 서로 의존하지 않는 슬롯은 동시에 돈다.
         의존: '@이름.순위'로 참조한 슬롯, after_others 스킬은 after_others가 아닌 슬롯 전부.
         all_slots는 화면의 슬롯 전부 — 이번에 돌지 않는 슬롯의 결과는 results에 이미 있다.
-        중지는 스킬이 ctx.stop을 보고 스스로 멈추고, 아직 시작하지 않은 슬롯은 stopped로 마감한다."""
+        중지는 스킬이 ctx.stop을 보고 스스로 멈추고, 아직 시작하지 않은 슬롯은 stopped로 마감한다.
+        스킬이 split 이벤트로 영역을 나누면 splits에 남기고, 그 뒤의 delta·result는 part로 나눈 영역을 가리킨다."""
         all_slots = all_slots or slots
+        splits = {} if splits is None else splits
         queue: asyncio.Queue = asyncio.Queue()
         done = object()
         resolver = EntityResolver()
@@ -248,10 +287,12 @@ class AnswerService:
                 deps += [s.id for s in all_slots if not self._registry[s.skill].after_others and s.id not in deps]
             return deps
 
-        async def finish(slot: PlannedSlot, result: Dict[str, Any], announce: Optional[str] = None) -> None:
+        async def finish(slot: PlannedSlot, result: Dict[str, Any], announce: Optional[str] = None,
+                         shown: bool = True) -> None:
             results[slot.id] = result
             await asyncio.to_thread(self._store.save, chat_log_id, slot.id, result)
-            await queue.put(_slot_event(slot.id, result["status"], announce))
+            if shown:  # 나눈 슬롯의 원래 영역은 화면에 없다
+                await queue.put(_slot_event(slot.id, result["status"], announce))
 
         def blocked(slot: PlannedSlot, deps: List[str]) -> Optional[Dict[str, Any]]:
             """의존한 슬롯 결과로는 돌 수 없으면 그 슬롯에 남길 결과."""
@@ -299,20 +340,35 @@ class AnswerService:
                         await finish(slot, {"status": "empty", "message": message, "retryable": retryable}, message)
                         return
 
-                related = [(by_id[d].title, _related_text(results[d])) for d in deps if d in results]
+                related = [(s.title, _related_text(results[s.id]))
+                           for s in shown_slots([by_id[d] for d in deps if d in by_id], splits) if s.id in results]
                 ctx = SkillContext(
                     question=question, conversation=context, session_factory=self._session_factory,
                     resolver=resolver, ai_config=self._config, stop=stop, related=related,
                 )
                 await queue.put(_slot_event(slot.id, "running"))
                 result: Dict[str, Any] = {"status": "failed", "message": "결과가 없습니다"}
+                parts: Dict[str, PlannedSlot] = {}  # 스킬이 나눈 영역: part id → 하위 슬롯
                 try:
                     async for event in self._registry[slot.skill].run(args, slot.display, ctx):
                         kind = event["type"]
-                        if kind == "result":
+                        part = parts.get(event.get("part", ""))
+                        if kind == "split":
+                            subs = [PlannedSlot(id=f"{slot.id}-{n}", skill=slot.skill, title=p["title"],
+                                                display=p["display"], args=slot.args)
+                                    for n, p in enumerate(event["parts"], 1)]
+                            parts = {p["id"]: sub for p, sub in zip(event["parts"], subs)}
+                            splits[slot.id] = subs
+                            await asyncio.to_thread(self._store.split, chat_log_id, slot.id, subs)
+                            await queue.put(_event("slot_split", {"id": slot.id}))
+                            for sub in subs:
+                                await queue.put(_slot_event(sub.id, "running"))
+                        elif kind == "result" and part:
+                            await finish(part, event, event.get("message"))
+                        elif kind == "result":
                             result = event
                         elif kind == "delta":
-                            await queue.put(_event("slot_delta", {"id": slot.id, "text": event["text"]}))
+                            await queue.put(_event("slot_delta", {"id": (part or slot).id, "text": event["text"]}))
                         elif kind == "title":
                             slot.title = event["title"]
                             await queue.put(_event("slot_title", {"id": slot.id, "title": slot.title}))
@@ -321,6 +377,13 @@ class AnswerService:
                 except Exception:
                     logger.exception("Slot %s (%s) failed", slot.id, slot.skill)
                     result = {"status": "failed", "message": "이 영역을 채우지 못했습니다"}
+                if parts:
+                    for sub in parts.values():  # 결과를 내지 못하고 끝난 영역
+                        if sub.id not in results:
+                            await finish(sub, {"status": "stopped", "message": "중지했습니다"} if stop.is_set()
+                                         else {"status": "failed", "message": "이 영역을 채우지 못했습니다"})
+                    await finish(slot, split_result(list(parts.values()), results), shown=False)
+                    return
                 content = result.get("content")
                 if ref_notes and content and content.get("type") == "data":  # 어느 대상을 받아 그렸는지 남긴다
                     content["notes"] = [*ref_notes, *content.get("notes", [])]

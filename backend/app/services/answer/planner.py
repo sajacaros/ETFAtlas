@@ -300,9 +300,19 @@ def fallback_rows(question: str) -> List[List[PlannedSlot]]:
                          args=skill.Args(question=question))]]
 
 
-def layout_tree(rows: List[List[PlannedSlot]]) -> Dict[str, Any]:
-    def slot_node(s: PlannedSlot) -> Dict[str, Any]:
+def layout_tree(rows: List[List[PlannedSlot]], splits: Optional[Dict[str, List[PlannedSlot]]] = None) -> Dict[str, Any]:
+    """splits: 스킬이 실행하며 나눈 슬롯 id → 나눈 영역. 그 자리에 차트는 한 줄로 나란히, 텍스트는 그 아래로 놓는다."""
+    def leaf(s: PlannedSlot) -> Dict[str, Any]:
         return {"type": "slot", "id": s.id, "slot": slot_type(s.display), "display": s.display, "title": s.title}
+
+    def slot_node(s: PlannedSlot) -> Dict[str, Any]:
+        parts = (splits or {}).get(s.id)
+        if not parts:
+            return leaf(s)
+        charts = [leaf(p) for p in parts if slot_type(p.display) not in ("text", "markdown")]
+        texts = [leaf(p) for p in parts if slot_type(p.display) in ("text", "markdown")]
+        top = [charts[0]] if len(charts) == 1 else [{"type": "row", "children": charts}] if charts else []
+        return {"type": "column", "children": top + texts}
 
     children = [slot_node(r[0]) if len(r) == 1 else {"type": "row", "children": [slot_node(s) for s in r]}
                 for r in rows]

@@ -11,7 +11,7 @@ from .discord_setting import DiscordSetting
 from .discord_notification_log import DiscordNotificationLog
 from .weight_change import WeightChange, WeightChangeDate
 from .ai_setting import AISetting
-from .dart import DartSetting, DartCorp, StockFinancial, StockDisclosure
+from .dart import DartSetting, DartCorp, StockFinancial, StockDisclosure, StockReportSummary
 from .invitation import Invitation
 from .auth_session import AuthSession
 from .password_reset import PasswordReset
@@ -43,6 +43,7 @@ __all__ = [
     "DartCorp",
     "StockFinancial",
     "StockDisclosure",
+    "StockReportSummary",
     "Invitation",
     "AuthSession",
     "PasswordReset",

@@ -5,6 +5,7 @@ from .agent import AgentSkill
 from .base import Skill
 from .company_disclosures import CompanyDisclosuresSkill
 from .company_financials import CompanyFinancialsSkill
+from .company_report import CompanyReportSkill
 from .etf_choice import ETFChoiceSkill
 from .etf_compare import ETFCompareSkill
 from .etf_profile import ETFProfileSkill
@@ -31,6 +32,7 @@ REGISTRY: Dict[str, Skill] = {
         StockHoldersSkill(),
         CompanyFinancialsSkill(),
         CompanyDisclosuresSkill(),
+        CompanyReportSkill(),
         RankSkill(),
         OverlapSkill(),
         ETFChoiceSkill(),

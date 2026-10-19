@@ -27,7 +27,7 @@ class CompanyDisclosuresSkill(DataSkill):
     name = "company_disclosures"
     description = (
         "개별 종목(상장사)의 최근 DART 공시 목록: 접수일, 공시 제목(원문 링크), 제출인. "
-        "기업 분석, 최근 공시·이슈·사업보고서·자사주·유상증자 등을 물을 때. 종목 하나만 받는다"
+        "기업 분석, 최근 공시·이슈·자사주·유상증자 등을 물을 때 (보고서 본문은 company_report). 종목 하나만 받는다"
     )
     Args = CompanyDisclosuresArgs
     displays = ("markdown",)

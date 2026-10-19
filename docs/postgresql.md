@@ -295,6 +295,7 @@ RDB 스키마 변경은 `backend/migrations/versions/`의 Alembic 리비전으�
 | 0013 | `layout_examples` (레이아웃 플래너 few-shot 예시) + 시드 예시 18개 |
 | 0024 | `dart_settings`(DART 키, 암호문), `dart_corps`, `stock_financials`, `stock_disclosures` (챗봇 기업 분석) |
 | 0025 | 기업 분석 레이아웃 시드 예시 3개 |
+| 0026 | `stock_report_summaries`(정기보고서 본문 요약 캐시, 접수번호 기준) + 기업 분석 레이아웃 예시에 `company_report` 슬롯 |
 
 새 리비전 만들기 (모델을 고친 뒤, DB가 떠 있는 상태에서):
 

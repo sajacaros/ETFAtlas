@@ -89,6 +89,7 @@ def _run(skill_name, args, display, db_factory=_Closable):
     ("stock_holders", {"stocks": ["삼양식품"]}, "bar"),
     ("company_financials", {"stock": "삼양식품"}, "bar"),
     ("company_disclosures", {"stock": "삼양식품"}, "markdown"),
+    ("company_report", {"stock": "삼양식품"}, "markdown"),
 ])
 def test_stock_skills_explain_why_a_listed_stock_cannot_be_analyzed(fake_stock_graph, skill, args, display):
     result = _run(skill, args, display)
@@ -283,3 +284,117 @@ def test_dart_key_is_stored_encrypted_and_masked(encryption_key):
 def test_undecryptable_dart_key_counts_as_missing(encryption_key):
     from app.services import dart_config
     assert dart_config.load_dart_key(SettingDB(DartSetting(id=1, api_key="not-a-ciphertext"))) == ""
+
+
+# --- 최근 정기보고서 ---
+
+REPORT_XML = """<DOCUMENT><BODY>
+<COVER-TITLE ATOC="Y">반 기 보 고 서</COVER-TITLE><P>표지</P>
+<SECTION-1><TITLE ATOC="Y">I. 회사의 개요</TITLE><P>회사의 개요는 읽지 않는다 """ + "가" * 200 + """</P></SECTION-1>
+<SECTION-1><TITLE ATOC="Y">II. 사업의 내용</TITLE>
+<SECTION-2><TITLE ATOC="Y">1. 사업의 개요</TITLE><P>당사는 메모리 반도체를 만듭니다. """ + "나" * 100 + """</P></SECTION-2>
+<SECTION-2><TITLE ATOC="Y">2. 주요 제품 및 서비스</TITLE>
+<TABLE><TR><TH>품목</TH><TH>매출액(비율)</TH></TR><TR><TD>DRAM</TD><TD>131,895,033(100%)</TD></TR></TABLE>
+<P>""" + "다" * 100 + """</P></SECTION-2></SECTION-1>
+<SECTION-1><TITLE ATOC="Y">III. 재무에 관한 사항</TITLE>
+<SECTION-2><TITLE ATOC="Y">4. 영업부문 (연결)</TITLE><P>단일 영업부문 """ + "라" * 100 + """</P></SECTION-2>
+<SECTION-2><TITLE ATOC="Y">5. 금융위험관리 (연결)</TITLE><P>""" + "마" * 200 + """</P></SECTION-2>
+<SECTION-2><TITLE ATOC="Y">3. 영업부문</TITLE><P>별도 """ + "바" * 100 + """</P></SECTION-2></SECTION-1>
+<SECTION-1><TITLE ATOC="Y">IV. 이사의 경영진단 및 분석의견</TITLE>
+<SECTION-2><TITLE ATOC="Y">1. 개요</TITLE><P>기업공시서식 작성기준에 따라 분기ㆍ반기보고서에 기재하지 않습니다.</P></SECTION-2></SECTION-1>
+<SECTION-1><TITLE ATOC="Y">XI. 그 밖에 투자자 보호를 위하여 필요한 사항</TITLE>
+<SECTION-2><TITLE ATOC="Y">3. 제재 등과 관련된 사항</TITLE><P>가동중지명령을 받았습니다 &amp; 개선 중 """ + "사" * 100 + """</P></SECTION-2></SECTION-1>
+</BODY></DOCUMENT>"""
+
+
+def test_report_sections_keep_narrative_chapters_and_tables():
+    from app.services.dart_document import extract_sections
+    sections = extract_sections(REPORT_XML)
+    assert [s.path for s in sections] == [
+        "II. 사업의 내용 > 1. 사업의 개요",
+        "II. 사업의 내용 > 2. 주요 제품 및 서비스",
+        "XI. 그 밖에 투자자 보호를 위하여 필요한 사항 > 3. 제재 등과 관련된 사항",
+        "재무제표 주석 > 4. 영업부문 (연결)",  # 연결이 있으면 별도 영업부문은 뺀다
+    ]  # 회사의 개요·금융위험관리 주석, 반기라 비어 있는 경영진단은 읽지 않는다
+    assert "DRAM | 131,895,033(100%)" in sections[1].text
+    assert "가동중지명령을 받았습니다 & 개선 중" in sections[2].text
+
+
+def test_report_sections_are_clipped():
+    from app.services import dart_document
+    xml = REPORT_XML.replace("나" * 100, "나" * (dart_document.SECTION_CHARS + 500))
+    text = dart_document.extract_sections(xml)[0].text
+    assert len(text) < dart_document.SECTION_CHARS + 20 and text.endswith("(…이하 생략)")
+
+
+class ReportDB(FakeDB):
+    def __init__(self, rows, cached=None):
+        super().__init__(rows)
+        self.cached = cached
+        self.saved = []
+
+    def get(self, model, key):
+        return self.cached if self.cached and self.cached.rcept_no == key else None
+
+    def merge(self, obj):
+        self.saved.append(obj)
+
+    def commit(self):
+        pass
+
+
+def test_latest_report_is_the_newest_filing_and_prefers_the_disclosure_title():
+    from app.services.answer.skills.company_report import latest_report
+    rows = [_fin(2026, "11013", "매출액", 1, rcept="20260515000100"), _fin(2026, "11012", "매출액", 1, rcept="20260814000200"),
+            _disc(60, "반기보고서 (2026.06)", "20260814000200"), _disc(30, "주요사항보고서(자기주식취득결정)", "20260901000300")]
+    report = latest_report(ReportDB(rows), "005930")
+    assert (report.rcept_no, report.report_nm, report.filed) == ("20260814000200", "반기보고서 (2026.06)", "2026-08-14")
+    rows.append(_disc(10, "[기재정정]반기보고서 (2026.06)", "20261009000400"))  # 정정본이 최신 보고서다
+    assert latest_report(ReportDB(rows), "005930").report_nm == "[기재정정]반기보고서 (2026.06)"
+    # 공시 목록(최근 90일 백필)에 없으면 주요계정의 접수번호로 찾는다
+    assert latest_report(ReportDB(rows[:2]), "005930").report_nm == "2026년 반기보고서"
+    assert latest_report(ReportDB([]), "005930") is None
+
+
+def test_company_report_summarizes_the_document_once_and_caches_it(fake_stock_graph, monkeypatch):
+    from pydantic_ai.models.test import TestModel
+    from app.models.dart import StockReportSummary
+    from app.services.answer.skills import company_report
+
+    class Config:
+        llm_model = "test"
+
+    prompts = []
+    model = TestModel(custom_output_text="#### 사업 구조\n- 메모리 반도체")
+    monkeypatch.setattr(company_report, "build_model", lambda config: model)
+    monkeypatch.setattr(company_report, "load_dart_key", lambda db: "key")
+    monkeypatch.setattr(company_report, "fetch_document", lambda key, no: prompts.append(no) or REPORT_XML)
+    db = ReportDB([_disc(60, "반기보고서 (2026.06)", "20260814000200")])
+
+    async def run():
+        from app.services.answer.resolver import EntityResolver
+        from app.services.answer.skills.base import SkillContext
+        ctx = SkillContext(question="q", conversation=ConversationContext(), session_factory=lambda: db,
+                           resolver=EntityResolver(), ai_config=Config(), stop=asyncio.Event())
+        skill = REGISTRY["company_report"]
+        return [e async for e in skill.run(skill.Args(stock="삼성전자"), "markdown", ctx)]
+
+    events = asyncio.run(run())
+    result = events[-1]
+    assert result["status"] == "complete" and prompts == ["20260814000200"]
+    streamed = "".join(e["text"] for e in events if e["type"] == "delta")
+    assert streamed.strip() == result["content"]["text"].strip()  # 화면은 흘려받은 텍스트를 그대로 둔다
+    assert "[DART 원문](https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20260814000200)" in result["content"]["text"]
+    assert result["summary"].startswith("삼성전자의 최근 정기보고서 반기보고서 (2026.06) (2026-08-14 접수) 본문 요약:")
+    assert "메모리 반도체" in result["summary"]
+    saved = db.saved[0]
+    assert saved.rcept_no == "20260814000200" and "II. 사업의 내용 > 1. 사업의 개요" in saved.sections
+
+    db.cached = StockReportSummary(rcept_no="20260814000200", summary="#### 사업 구조\n- 캐시된 요약")
+    result = asyncio.run(run())[-1]
+    assert "캐시된 요약" in result["content"]["text"] and prompts == ["20260814000200"]  # 원문을 다시 받지 않는다
+
+
+def test_company_report_without_a_report_says_so(fake_stock_graph):
+    result = _run("company_report", {"stock": "삼성전자"}, "markdown", lambda: ReportDB([]))
+    assert result["status"] == "empty" and "정기보고서를 찾지 못했습니다" in result["message"]

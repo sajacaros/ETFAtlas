@@ -52,3 +52,17 @@ class StockDisclosure(Base):
     rcept_dt = Column(Date, nullable=False)
     flr_nm = Column(Text, nullable=True)
     rm = Column(Text, nullable=True)
+
+
+class StockReportSummary(Base):
+    """정기보고서 본문 요약 캐시. company_report 스킬이 처음 물을 때 원문(document.xml)을 읽어 요약하고 접수번호로 남긴다.
+    정정보고서는 접수번호가 달라 새로 요약한다."""
+    __tablename__ = "stock_report_summaries"
+
+    rcept_no = Column(String(14), primary_key=True)
+    stock_code = Column(String(6), nullable=False, index=True)
+    report_nm = Column(Text, nullable=False)
+    sections = Column(Text, nullable=False)  # 읽은 장 목록 (줄바꿈 구분)
+    summary = Column(Text, nullable=False)
+    model = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utcnow)

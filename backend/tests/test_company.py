@@ -348,12 +348,21 @@ def test_latest_report_is_the_newest_filing_and_prefers_the_disclosure_title():
     rows = [_fin(2026, "11013", "매출액", 1, rcept="20260515000100"), _fin(2026, "11012", "매출액", 1, rcept="20260814000200"),
             _disc(60, "반기보고서 (2026.06)", "20260814000200"), _disc(30, "주요사항보고서(자기주식취득결정)", "20260901000300")]
     report = latest_report(ReportDB(rows), "005930")
-    assert (report.rcept_no, report.report_nm, report.filed) == ("20260814000200", "반기보고서 (2026.06)", "2026-08-14")
+    assert (report.rcept_no, report.report_nm, report.filed) == ("20260814000200", "2026년 반기보고서", "2026-08-14")
     rows.append(_disc(10, "[기재정정]반기보고서 (2026.06)", "20261009000400"))  # 정정본이 최신 보고서다
-    assert latest_report(ReportDB(rows), "005930").report_nm == "[기재정정]반기보고서 (2026.06)"
+    assert latest_report(ReportDB(rows), "005930").report_nm == "2026년 반기보고서 (기재정정)"
     # 공시 목록(최근 90일 백필)에 없으면 주요계정의 접수번호로 찾는다
     assert latest_report(ReportDB(rows[:2]), "005930").report_nm == "2026년 반기보고서"
     assert latest_report(ReportDB([]), "005930") is None
+
+
+def test_report_name_tells_first_and_third_quarter_apart():
+    from app.services.answer.skills.company_report import report_name
+    # 공시 제목은 1·3분기 모두 '분기보고서'다 — 주요계정의 보고서 코드가 있으면 그것을, 없으면 기간 끝 달을 본다
+    assert report_name("분기보고서 (2026.03)", None) == "2026년 1분기보고서"
+    assert report_name("분기보고서 (2025.09)", None) == "2025년 3분기보고서"
+    assert report_name("분기보고서 (2026.03)", _fin(2025, "11014", "매출액", 1)) == "2025년 3분기보고서"
+    assert report_name("[첨부정정]사업보고서 (2025.12)", None) == "2025년 사업보고서 (첨부정정)"
 
 
 def test_company_report_summarizes_the_document_once_and_caches_it(fake_stock_graph, monkeypatch):
@@ -380,12 +389,13 @@ def test_company_report_summarizes_the_document_once_and_caches_it(fake_stock_gr
         return [e async for e in skill.run(skill.Args(stock="삼성전자"), "markdown", ctx)]
 
     events = asyncio.run(run())
+    assert events[0] == {"type": "title", "title": "삼성전자 2026년 반기보고서 요약"}  # 영역 제목을 보고서 이름으로
     result = events[-1]
     assert result["status"] == "complete" and prompts == ["20260814000200"]
     streamed = "".join(e["text"] for e in events if e["type"] == "delta")
     assert streamed.strip() == result["content"]["text"].strip()  # 화면은 흘려받은 텍스트를 그대로 둔다
     assert "[DART 원문](https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20260814000200)" in result["content"]["text"]
-    assert result["summary"].startswith("삼성전자의 최근 정기보고서 반기보고서 (2026.06) (2026-08-14 접수) 본문 요약:")
+    assert result["summary"].startswith("삼성전자의 2026년 반기보고서 (2026-08-14 접수) 본문 요약:")
     assert "메모리 반도체" in result["summary"]
     saved = db.saved[0]
     assert saved.rcept_no == "20260814000200" and "II. 사업의 내용 > 1. 사업의 개요" in saved.sections

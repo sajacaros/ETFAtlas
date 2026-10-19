@@ -31,7 +31,7 @@
 | `session` | `{session_id, title}` | |
 | `status` | `{stage: refining \| planning \| replanning \| filling \| searching_examples \| thinking}` | replanning·filling은 다시 설계, 뒤의 둘은 agent 슬롯 |
 | `refined_question` | `{question}` | |
-| `layout` | `{chat_log_id, layout}` | 슬롯 이벤트보다 항상 먼저. 다시 설계하면 한 번 더 온다 (같은 슬롯 id, 이미 채운 영역은 그대로) |
+| `layout` | `{chat_log_id, layout}` | 슬롯 이벤트보다 항상 먼저. 다시 설계하거나 스킬이 영역 제목을 바꾸면(정기보고서 이름 등) 한 번 더 온다 (같은 슬롯 id, 이미 채운 영역은 그대로) |
 | `slot` | `{id, status, message?}` | `running` → `complete \| empty \| failed \| stopped` |
 | `slot_delta` | `{id, text}` | 텍스트 슬롯의 조각 |
 | `step_start` / `step` / `matched_examples` | 기존 형식 + `slot_id` | agent 슬롯의 실행 과정 |

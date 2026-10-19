@@ -17,9 +17,10 @@ from .base import Skill, SkillContext, SkillResult, empty, not_found, text_resul
 from .company_disclosures import DART_VIEWER
 
 # "반기보고서 (2026.06)", "[기재정정]사업보고서 (2025.12)" — 정정이 나오면 정정본이 완전한 최신 보고서다
-PERIODIC = re.compile(r"^(?:\[[^\]]*\]\s*)?(사업|반기|분기)보고서\s*\(\d{4}\.\d{2}\)")
-# 공시 목록에 없을 때(백필 90일 밖) 주요계정의 접수번호로 찾는다
+PERIODIC = re.compile(r"^(?:\[([^\]]*)\]\s*)?(사업|반기|분기)보고서\s*\((\d{4})\.(\d{2})\)")
 REPORT_LABEL = {"11013": "1분기보고서", "11012": "반기보고서", "11014": "3분기보고서", "11011": "사업보고서"}
+# 공시 제목은 1·3분기를 모두 '분기보고서'라 쓴다. 주요계정에 같은 접수번호가 없으면 기간 끝 달로 가린다 (12월 결산 기준)
+QUARTER_BY_MONTH = {"03": "1분기보고서", "09": "3분기보고서"}
 
 REPORT_PROMPT = """당신은 DART 정기보고서 본문을 요약합니다. 아래 '보고서 본문'은 보고서에서 사업의 내용, 경영진단, 투자자 보호 사항, 영업부문 주석만 뽑은 것입니다.
 - 본문에 있는 사실만 쓰세요. 본문에 없는 수치·전망·평가를 만들지 마세요.
@@ -51,32 +52,44 @@ class Report:
         return date(int(self.rcept_no[:4]), int(self.rcept_no[4:6]), int(self.rcept_no[6:8])).isoformat()
 
 
+def report_name(title: Optional[str], financial: Optional[StockFinancial]) -> str:
+    """'2026년 반기보고서', '2026년 1분기보고서', '2025년 사업보고서 (기재정정)'. 보고서 종류는 주요계정의 보고서 코드를 먼저 믿는다."""
+    m = PERIODIC.match(title) if title else None
+    if financial is not None and financial.reprt_code in REPORT_LABEL:
+        name = f"{financial.bsns_year}년 {REPORT_LABEL[financial.reprt_code]}"
+    elif m:
+        kind = f"{m.group(2)}보고서" if m.group(2) != "분기" else QUARTER_BY_MONTH.get(m.group(4), "분기보고서")
+        name = f"{m.group(3)}년 {kind}"
+    else:
+        name = "정기보고서"
+    return f"{name} ({m.group(1)})" if m and m.group(1) else name
+
+
 def latest_report(db: Session, stock_code: str) -> Optional[Report]:
-    """가장 최근에 접수된 정기보고서 (사업·반기·분기, 정정 포함). 공시 목록과 주요계정 중 접수번호가 큰 쪽."""
-    candidates = {}
-    for r in db.query(StockFinancial).filter(StockFinancial.stock_code == stock_code).all():
-        if r.rcept_no:
-            candidates[r.rcept_no] = f"{r.bsns_year}년 {REPORT_LABEL.get(r.reprt_code, '정기보고서')}"
-    for r in db.query(StockDisclosure).filter(StockDisclosure.stock_code == stock_code).all():
-        if PERIODIC.match(r.report_nm):
-            candidates[r.rcept_no] = r.report_nm  # 같은 접수번호면 공시 제목이 더 정확하다
-    if not candidates:
+    """가장 최근에 접수된 정기보고서 (사업·반기·분기, 정정 포함). 공시 목록과 주요계정 중 접수번호가 큰 쪽.
+    공시 목록(최근 90일 백필)에 없으면 주요계정의 접수번호로 찾는다."""
+    financials = {r.rcept_no: r for r in db.query(StockFinancial).filter(StockFinancial.stock_code == stock_code).all()
+                  if r.rcept_no}
+    titles = {r.rcept_no: r.report_nm for r in db.query(StockDisclosure).filter(StockDisclosure.stock_code == stock_code).all()
+              if PERIODIC.match(r.report_nm)}
+    if not financials and not titles:
         return None
-    rcept_no = max(candidates)
-    return Report(rcept_no, candidates[rcept_no])
+    rcept_no = max([*financials, *titles])
+    return Report(rcept_no, report_name(titles.get(rcept_no), financials.get(rcept_no)))
 
 
 FOOTER = "\n\n_보고서 본문(사업의 내용·투자자 보호 사항 등)을 AI가 요약했습니다. 정확한 내용은 원문을 확인하세요._"
 
 
 def _header(report: Report) -> str:
-    return f"**{report.report_nm}** · {report.filed} 접수 · [DART 원문]({DART_VIEWER}{report.rcept_no})\n\n"
+    # 보고서 이름은 영역 제목에 있다
+    return f"{report.filed} 접수 · [DART 원문]({DART_VIEWER}{report.rcept_no})\n\n"
 
 
 def _result(name: str, report: Report, summary: str) -> SkillResult:
     # 화면은 흘려받은 텍스트를 그대로 두므로 본문은 머리줄 + 요약 + 꼬리말, 흘려보낸 순서와 같게 만든다
     result = text_result(_header(report) + summary + FOOTER, kind="markdown")
-    result.summary = f"{name}의 최근 정기보고서 {report.report_nm} ({report.filed} 접수) 본문 요약:\n{summary}"
+    result.summary = f"{name}의 {report.report_nm} ({report.filed} 접수) 본문 요약:\n{summary}"
     return result
 
 
@@ -135,6 +148,8 @@ class CompanyReportSkill(Skill):
             yield prepared.event()
             return
         stock, report, cached, sections = prepared
+        # 계획 단계에서는 어느 보고서인지 모르므로 영역 제목을 실제 보고서 이름으로 바꾼다
+        yield {"type": "title", "title": f"{stock['name']} {report.report_nm} 요약"}
         if cached is not None:
             yield _result(stock["name"], report, cached).event()
             return

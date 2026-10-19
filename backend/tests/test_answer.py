@@ -219,6 +219,26 @@ def test_stream_sends_layout_first_then_fills_slots(monkeypatch):
     assert events[-1]["data"]["result"] == "completed"  # 일부 영역만 실패하면 완료로 본다
 
 
+class TitledSkill(DataSkillStub):
+    async def run(self, args, display, ctx):
+        yield {"type": "title", "title": "삼성전자 2026년 반기보고서 요약"}
+        async for e in super().run(args, display, ctx):
+            yield e
+
+
+def test_skill_can_retitle_its_slot_and_the_layout_is_sent_again(monkeypatch):
+    rows = [[_slot("s1", "titled", "삼성전자 보고서 요약")], [_slot("s2", "narr", "해설")]]
+    service = _service(monkeypatch, rows, {**REG, "titled": TitledSkill()})
+    events = _collect(service)
+
+    layouts = [e["data"]["layout"] for e in events if e["type"] == "layout"]
+    assert [l["children"][0]["title"] for l in layouts] == ["삼성전자 보고서 요약", "삼성전자 2026년 반기보고서 요약"]
+    assert not any(e["type"] == "slot_title" for e in events)  # 화면에는 레이아웃으로만 알린다
+    # 해설과 답변 텍스트도 바뀐 제목을 쓴다
+    assert "### 삼성전자 2026년 반기보고서 요약\nA요약" in events[-1]["data"]["answer"]
+    assert "삼성전자 2026년 반기보고서 요약:A요약" in "".join(e["data"]["text"] for e in events if e["type"] == "slot_delta")
+
+
 def test_stop_skips_slots_that_wait_for_others(monkeypatch):
     stop = asyncio.Event()
 
@@ -972,6 +992,16 @@ def test_replans_a_slot_that_can_be_fixed_before_the_narrative(monkeypatch):
     narrative = next(e for e in events if e["type"] == "answer")["data"]["answer"]
     assert "찾음 맞는이름" in narrative and service._store.saved["s1"] == "complete"
     assert sum(1 for e in events if e["type"] == "slot" and e["data"] == {"id": "s2", "status": "running"}) == 1
+
+
+def test_replan_keeps_a_title_the_skill_set_on_a_slot_that_does_not_rerun(monkeypatch):
+    rows = [[_lookup("s1", "틀린이름"), _slot("s2", "titled", "보고서 요약")], [_slot("s3", "narr", "해설")]]
+    fixed = [[_lookup("s1", "맞는이름"), _slot("s2", "titled", "보고서 요약")], [_slot("s3", "narr", "해설")]]
+    service = _service(monkeypatch, rows, {**REPLAN_REG, "titled": TitledSkill()})
+    service._planner = ReplanningPlanner(rows, fixed)
+    events = _collect(service)
+    last = [e["data"]["layout"] for e in events if e["type"] == "layout"][-1]
+    assert last["children"][0]["children"][1]["title"] == "삼성전자 2026년 반기보고서 요약"
 
 
 def test_does_not_replan_failures_that_a_new_plan_cannot_fix(monkeypatch):

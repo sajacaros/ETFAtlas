@@ -186,18 +186,27 @@ class AnswerService:
         await asyncio.to_thread(self._store.create, chat_log_id, slots)
         yield _event("layout", {"chat_log_id": chat_log_id, "layout": layout_tree(rows)})
 
+        def retitled(event: Dict[str, Any]) -> Dict[str, Any]:
+            # 스킬이 실행하며 제목을 정하면(보고서 이름 등) 레이아웃을 다시 보낸다. 마지막 레이아웃이 저장된다
+            return _event("layout", {"chat_log_id": chat_log_id, "layout": layout_tree(rows)}) \
+                if event["type"] == "slot_title" else event
+
         # 데이터 슬롯 → (고칠 수 있는 실패가 있으면) 한 번 다시 설계해 그 슬롯만 다시 실행 → 해설 같은 after_others 슬롯
         results: Dict[str, Dict[str, Any]] = {}
         data = [s for s in slots if not self._registry[s.skill].after_others]
         async for event in self._run_slots(data, question, context, chat_log_id, stop, results, all_slots=slots):
-            yield event
+            yield retitled(event)
 
         if needs_replan(slots, results, stop) and hasattr(planner, "replan"):
             yield _event("status", {"stage": "replanning"})
             new_rows = await planner.replan(question, context, rows, results)
             if new_rows:
                 rows, rerun = new_rows, _rerun_ids(slots, [s for row in new_rows for s in row], results)
+                shown = {s.id: s.title for s in slots}
                 slots = [s for row in rows for s in row]
+                for s in slots:  # 다시 돌지 않는 슬롯은 화면의 제목(스킬이 정한 제목 포함)을 그대로 둔다
+                    if s.id not in rerun and s.id in shown:
+                        s.title = shown[s.id]
                 if rerun:
                     again = [s for s in slots if s.id in rerun]
                     logger.info("Replanned slots %s", sorted(rerun))
@@ -209,11 +218,11 @@ class AnswerService:
                     data_again = [s for s in again if not self._registry[s.skill].after_others]
                     async for event in self._run_slots(data_again, question, context, chat_log_id, stop, results,
                                                        all_slots=slots):
-                        yield event
+                        yield retitled(event)
 
         later = [s for s in slots if self._registry[s.skill].after_others]
         async for event in self._run_slots(later, question, context, chat_log_id, stop, results, all_slots=slots):
-            yield event
+            yield retitled(event)
         yield _event("answer", {"answer": answer_text(slots, results), "result": answer_result(slots, results, stop)})
 
     async def _run_slots(
@@ -304,6 +313,9 @@ class AnswerService:
                             result = event
                         elif kind == "delta":
                             await queue.put(_event("slot_delta", {"id": slot.id, "text": event["text"]}))
+                        elif kind == "title":
+                            slot.title = event["title"]
+                            await queue.put(_event("slot_title", {"id": slot.id, "title": slot.title}))
                         else:
                             await queue.put(_event(kind, {**event["data"], "slot_id": slot.id}))
                 except Exception:

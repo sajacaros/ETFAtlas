@@ -5,6 +5,7 @@
 
 run()이 내는 이벤트 (dict):
   {"type": "delta", "text"}                         텍스트를 흘려보낼 때
+  {"type": "title", "title"}                        실행해 봐야 아는 제목으로 영역 제목을 바꿀 때 (보고서 이름 등)
   {"type": "step_start" | "step" | "matched_examples", "data"}  실행 과정(디버그 패널용)
   {"type": "result", ...SkillResult}                마지막에 한 번
 """

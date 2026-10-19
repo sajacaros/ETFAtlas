@@ -314,13 +314,13 @@
   <h2 class="chapter-title">오프닝</h2>
   <div class="chapter-divider"></div>
 
-  <p><span class="hl-blue">ETF Atlas</span>는 한국 ETF 데이터를 매일 모아 그래프로 쌓고, 자연어로 물으면 표와 차트로 답하고, 조건을 이어 종목을 골라 그 결과를 날마다 채점하는 웹 서비스입니다. 기술 리서치 프로젝트로 시작해, 실제로 매일 돌아가는 서비스 수준까지 만들었습니다.</p>
+  <p><span class="hl-blue">ETF Atlas</span>는 한국 ETF 데이터를 매일 모아 그래프로 쌓고, 자연어로 물으면 표와 차트로 답하고(ETF가 담은 기업은 DART 공시·실적·정기보고서로 분석까지), 조건을 이어 종목을 골라 그 결과를 날마다 채점하는 웹 서비스입니다. 기술 리서치 프로젝트로 시작해, 실제로 매일 돌아가는 서비스 수준까지 만들었습니다.</p>
 
   <h3 class="sub-title">풀고 싶었던 문제</h3>
   <p>상장 ETF는 약 1,175개이고, 그중 국내 주식형·순자산 500억 원 이상만 골라도 193개, 이들이 담은 종목은 수천 건의 보유 관계를 이룹니다. "삼성전자를 가장 많이 담은 ETF는?", "KODEX 200과 비슷한 ETF는?" 같은 질문은 모두 <span class="hl-blue">관계 탐색</span>입니다.</p>
   <p>여기에 두 가지를 더 원했습니다. 개발자가 아니어도 <span class="hl">자연어로 묻고 화면으로 답을 받는 것</span>, 그리고 이 데이터가 <span class="hl">매일 자동으로 쌓이는 것</span>입니다.</p>
 
-  <div class="callout">관계 탐색은 <strong>Apache AGE</strong>, 자연어 질의는 <strong>pydantic-ai 기반 LLM 에이전트</strong>, 자동 수집은 <strong>Apache Airflow</strong>로 풀었습니다. 데이터 소스는 <strong>한국투자증권 KIS Open API</strong>입니다.</div>
+  <div class="callout">관계 탐색은 <strong>Apache AGE</strong>, 자연어 질의는 <strong>pydantic-ai 기반 LLM 에이전트</strong>, 자동 수집은 <strong>Apache Airflow</strong>로 풀었습니다. 데이터 소스는 ETF·시세는 <strong>한국투자증권 KIS Open API</strong>, 기업 공시·실적·보고서는 <strong>금융감독원 DART OpenAPI</strong>입니다.</div>
 </section>
 
 <!-- ═══════════════ Chapter 2: 기술 스택 ═══════════════ -->
@@ -354,46 +354,50 @@ $$) as (result agtype);</pre>
   <h3 class="sub-title">기능</h3>
   <ul>
     <li><span class="hl-blue">ETF 탐색</span> &mdash; 검색, 테마 태그·액티브/패시브 필터, 상세(보유종목, 유사 ETF, 가격)</li>
-    <li><span class="hl-blue">액티브 ETF 비중 변화</span> &mdash; 액티브 ETF가 종목 비중을 어떻게 바꿨는지 날짜별로</li>
+    <li><span class="hl-blue">액티브 ETF 비중 변화</span> &mdash; 액티브 ETF가 종목 비중을 어떻게 바꿨는지 날짜별로, 전날·1주·1개월 전과 비교</li>
     <li><span class="hl-blue">구성종목 분석</span> &mdash; ETF와 투자 비중을 넣으면 실제로 담기는 종목 비중을 계산</li>
     <li><span class="hl-blue">포트폴리오</span> &mdash; 매수 기록, 목표 비중, 계좌 유형(IRP·연금저축), 일별 스냅샷 대시보드, 스냅샷 공유</li>
-    <li><span class="hl-purple">AI 챗봇</span> &mdash; 자연어 질문에 표·차트·해설로 답하는 화면</li>
+    <li><span class="hl-purple">AI 챗봇</span> &mdash; 자연어 질문에 표·차트·해설로 답하는 화면. ETF뿐 아니라 ETF가 담은 기업을 실적·공시·정기보고서로 분석</li>
     <li><span class="hl-purple">종목 스크리너</span> &mdash; 노드를 이어 종목을 고르고 AI로 근거를 정리, 고른 종목을 날마다 기록해 채점하고 자동 실행·알림</li>
-    <li><span class="hl-blue">관리자</span> &mdash; 챗봇 로그 검수, 화면 설계 예시, ETF 태그, 알림 설정</li>
+    <li><span class="hl-blue">관리자</span> &mdash; 챗봇 로그 검수, 화면 설계 예시, ETF 태그, 알림 설정, DART 키</li>
   </ul>
 
   <h3 class="sub-title">구성 요소</h3>
   <figure class="graph-figure">
-    <svg viewBox="0 0 820 430" role="img" aria-label="외부 데이터를 Airflow가 받아 PostgreSQL에 적재하고, 프런트엔드가 백엔드 API를 거쳐 같은 PostgreSQL을 조회하는 구성. PostgreSQL 안에 그래프, 관계형, 벡터 저장소가 있다">
+    <svg viewBox="0 0 820 430" role="img" aria-label="외부 데이터(KIS, 네이버, yfinance, DART)를 Airflow가 받아 PostgreSQL에 적재하고, 프런트엔드가 백엔드 API를 거쳐 같은 PostgreSQL을 조회하는 구성. 챗봇은 DART 정기보고서 원문을 묻는 때에 직접 받는다. PostgreSQL 안에 그래프, 관계형, 벡터 저장소가 있다">
       <defs>
         <marker id="barrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
       </defs>
-      <rect x="20" y="20" width="316" height="94" rx="12" class="bgroup "/>
+      <rect x="20" y="20" width="420" height="94" rx="12" class="bgroup "/>
       <text x="34" y="40" class="btitle">외부 데이터</text>
-      <rect x="30" y="46" width="124" height="60" rx="9" class="bbox ext"/>
-      <text x="92" y="65" class="bname">KIS Open API</text>
-      <text x="92" y="83" class="bsub">ETF 목록 · 시세</text>
-      <text x="92" y="98" class="bsub">구성종목 · 휴장일</text>
-      <rect x="160" y="46" width="80" height="60" rx="9" class="bbox ext"/>
-      <text x="200" y="71" class="bname">네이버 증권</text>
-      <text x="200" y="89" class="bsub">보수율</text>
-      <rect x="246" y="46" width="80" height="60" rx="9" class="bbox ext"/>
-      <text x="286" y="65" class="bname">yfinance</text>
-      <text x="286" y="83" class="bsub">현재가</text>
-      <text x="286" y="98" class="bsub">1년 일봉</text>
-      <rect x="350" y="46" width="110" height="60" rx="9" class="bbox ext"/>
-      <text x="405" y="65" class="bname">Discord</text>
-      <text x="405" y="83" class="bsub">비중 변화 알림</text>
-      <text x="405" y="98" class="bsub">스크리너 알림</text>
-      <rect x="490" y="20" width="310" height="82" rx="12" class="bgroup "/>
-      <text x="504" y="40" class="btitle">Frontend</text>
-      <rect x="502" y="48" width="286" height="40" rx="9" class="bbox "/>
-      <text x="645" y="73" class="bname">React · nginx</text>
+      <rect x="30" y="46" width="110" height="60" rx="9" class="bbox ext"/>
+      <text x="85" y="65" class="bname">KIS Open API</text>
+      <text x="85" y="83" class="bsub">ETF 목록 · 시세</text>
+      <text x="85" y="98" class="bsub">구성종목 · 휴장일</text>
+      <rect x="146" y="46" width="76" height="60" rx="9" class="bbox ext"/>
+      <text x="184" y="71" class="bname">네이버 증권</text>
+      <text x="184" y="89" class="bsub">보수율</text>
+      <rect x="228" y="46" width="76" height="60" rx="9" class="bbox ext"/>
+      <text x="266" y="65" class="bname">yfinance</text>
+      <text x="266" y="83" class="bsub">현재가</text>
+      <text x="266" y="98" class="bsub">1년 일봉</text>
+      <rect x="310" y="46" width="120" height="60" rx="9" class="bbox ext"/>
+      <text x="370" y="65" class="bname">DART OpenAPI</text>
+      <text x="370" y="83" class="bsub">공시 · 주요계정</text>
+      <text x="370" y="98" class="bsub">정기보고서 원문</text>
+      <rect x="456" y="46" width="104" height="60" rx="9" class="bbox ext"/>
+      <text x="508" y="65" class="bname">Discord</text>
+      <text x="508" y="83" class="bsub">비중 변화 알림</text>
+      <text x="508" y="98" class="bsub">스크리너 알림</text>
+      <rect x="590" y="20" width="210" height="82" rx="12" class="bgroup "/>
+      <text x="604" y="40" class="btitle">Frontend</text>
+      <rect x="602" y="48" width="186" height="40" rx="9" class="bbox "/>
+      <text x="695" y="73" class="bname">React · nginx</text>
       <rect x="20" y="140" width="300" height="92" rx="12" class="bgroup "/>
       <text x="34" y="160" class="btitle">Airflow</text>
       <rect x="32" y="168" width="136" height="50" rx="9" class="bbox "/>
       <text x="100" y="189" class="bname">수집 DAG</text>
-      <text x="100" y="206" class="bsub">매일 아침 · 장중 10분</text>
+      <text x="100" y="206" class="bsub">아침 · 장중 · 저녁</text>
       <rect x="176" y="168" width="132" height="50" rx="9" class="bbox "/>
       <text x="242" y="189" class="bname">태깅 DAG</text>
       <text x="242" y="206" class="bsub">신규 ETF 테마</text>
@@ -420,19 +424,20 @@ $$) as (result agtype);</pre>
       <rect x="290" y="308" width="250" height="92" rx="9" class="bbox rel"/>
       <text x="415" y="344" class="bname">관계형 테이블</text>
       <text x="415" y="361" class="bsub">사용자 · 포트폴리오 · 스냅샷</text>
-      <text x="415" y="379" class="bsub">챗봇 대화 · 비중 변화 · 스크리너 기록</text>
+      <text x="415" y="379" class="bsub">챗봇 대화 · 비중 변화 · 스크리너 · DART</text>
       <rect x="554" y="308" width="230" height="92" rx="9" class="bbox vec"/>
       <text x="669" y="344" class="bname">pgvector</text>
       <text x="669" y="361" class="bsub">챗봇 예시 임베딩</text>
       <text x="669" y="379" class="bsub">해결 절차 · 화면 설계</text>
       <line x1="100" y1="114" x2="100" y2="166" class="barrow" marker-end="url(#barrowhead)"/>
-      <line x1="290" y1="140" x2="368" y2="108" class="barrow" marker-end="url(#barrowhead)"/>
+      <line x1="310" y1="140" x2="470" y2="108" class="barrow" marker-end="url(#barrowhead)"/>
       <line x1="308" y1="193" x2="348" y2="193" class="barrow" marker-end="url(#barrowhead)"/>
       <line x1="502" y1="193" x2="462" y2="193" class="barrow" marker-end="url(#barrowhead)"/>
       <line x1="760" y1="102" x2="760" y2="138" class="barrow" marker-end="url(#barrowhead)"/>
       <text x="768" y="125" class="blabel">/api</text>
-      <polyline points="630,166 630,128 300,128 300,108" class="barrow" fill="none" marker-end="url(#barrowhead)"/>
-      <polyline points="660,166 660,122 430,122 430,108" class="barrow" fill="none" marker-end="url(#barrowhead)"/>
+      <polyline points="630,166 630,128 266,128 266,108" class="barrow" fill="none" marker-end="url(#barrowhead)"/>
+      <polyline points="660,166 660,122 508,122 508,108" class="barrow" fill="none" marker-end="url(#barrowhead)"/>
+      <polyline points="502,180 476,180 476,134 370,134 370,108" class="barrow" fill="none" marker-end="url(#barrowhead)"/>
       <line x1="170" y1="232" x2="170" y2="278" class="barrow" marker-end="url(#barrowhead)"/>
       <text x="178" y="260" class="blabel">적재</text>
       <line x1="645" y1="232" x2="645" y2="278" class="barrow" marker-end="url(#barrowhead)"/>
@@ -443,7 +448,7 @@ $$) as (result agtype);</pre>
     <li><span class="tech">db</span> &mdash; PostgreSQL 18 + Apache AGE + pgvector + pg_trgm</li>
     <li><span class="tech">backend</span> &mdash; FastAPI + pydantic-ai. 스크리너의 자동 실행도 백엔드 프로세스 안에서 돕니다</li>
     <li><span class="tech">frontend</span> &mdash; React + TypeScript + Vite, nginx가 정적 파일을 서빙하고 <span class="tech">/api</span>를 백엔드로 넘김</li>
-    <li><span class="tech">airflow</span> &mdash; 3.x, 수집·태깅 DAG</li>
+    <li><span class="tech">airflow</span> &mdash; 3.x, 수집·태깅 DAG. 부팅 직후 DAG 폴더 마운트가 비어 있으면 컨테이너가 스스로 끝나 재시작됩니다</li>
   </ul>
   <p>모두 Docker Compose로 띄웁니다. 외부에 열린 포트는 프런트엔드 하나이고, 백엔드·DB·Airflow는 내부에만 바인딩합니다. 가입은 초대 링크로 하고, 처음 만든 계정이 관리자가 됩니다.</p>
 
@@ -466,6 +471,15 @@ $$) as (result agtype);</pre>
   </ul>
   <p>총보수는 KIS가 주지 않아 네이버 증권에서, 포트폴리오의 장중 현재가와 스크리너가 쓰는 1년 일봉은 yfinance에서 받습니다.</p>
 
+  <h3 class="sub-title">DART에서 받는 것</h3>
+  <p>챗봇의 기업 분석은 금융감독원 DART OpenAPI를 씁니다. 대상은 ETF들이 담은 종목(559개) 중 DART에 종목코드가 있는 회사입니다. 키는 관리자 페이지에서 등록하고 DB에 암호화해 둡니다.</p>
+  <ul>
+    <li>회사 고유번호 &mdash; 상장사 전체. 수집 ETF가 담지 않은 상장사를 물으면 "분석 대상이 아니다"라고 구분해 알립니다</li>
+    <li>공시 목록 &mdash; 매일 최근 3일 치를 받아 담은 종목 것만 남깁니다</li>
+    <li>주요계정 &mdash; 최근 3개 사업연도의 분기·반기·사업보고서 매출·영업이익·순이익·자산·부채·자본 (연결·별도 모두)</li>
+    <li>정기보고서 원문 &mdash; 수집하지 않고, 챗봇이 처음 물을 때 받아 요약·매출 구성과 함께 접수번호로 남깁니다</li>
+  </ul>
+
   <h3 class="sub-title">유니버스 &mdash; 193개 ETF</h3>
   <p>레버리지·인버스·선물·합성·커버드콜, 채권·원자재·통화·리츠·해외 투자 ETF를 이름으로 거르고, 순자산 500억 원 이상만 남깁니다. 한 번 들어온 ETF는 빠지지 않고, 운용사는 이름 앞 브랜드(KODEX, TIGER…)로 연결합니다.</p>
 
@@ -482,6 +496,7 @@ $$) as (result agtype);</pre>
     <li><span class="tech">rdb_sync_metadata</span> (매일 08:40) &mdash; 종목 마스터 &rarr; 관계형 ETF 목록</li>
     <li><span class="tech">age_sync_universe</span> (매일 08:50) &mdash; 영업일 &rarr; 유니버스·가격 &rarr; 구성종목 &rarr; 주식 가격 &rarr; 수익률 &rarr; 액티브 ETF 비중 변화 &rarr; 신규 ETF 태깅 &rarr; 수집 기록·Discord 알림</li>
     <li><span class="tech">rdb_realtime_prices</span> (평일 장중 10분마다) &mdash; 보유 티커 현재가 &rarr; 포트폴리오 스냅샷</li>
+    <li><span class="tech">dart_sync_rdb</span> (평일 19:20) &mdash; DART 고유번호 &rarr; 공시 목록 · 주요계정</li>
     <li><span class="tech">age_tagging</span> (토 03:00) &mdash; 테마 태깅</li>
     <li><span class="tech">embed_code_examples</span> (수동) &mdash; 챗봇 예시 임베딩</li>
   </ul>
@@ -544,6 +559,7 @@ ORDER BY similarity DESC LIMIT 5</pre>
 
   <h3 class="sub-title">액티브 ETF 비중 변화</h3>
   <p>수집이 끝나면 Airflow가 모든 액티브 ETF를 직전 수집일과 비교해 신규 편입·편출·비중 증감을 계산하고 한 테이블에 저장합니다. 웹의 비중 변화 화면, 메뉴 배지, Discord 알림이 모두 이 결과를 읽으므로 서로 다른 숫자가 나오지 않습니다. 알림 기준(%p)은 관리자 페이지에서 정하고 읽을 때 적용합니다.</p>
+  <p>화면에서는 비교 기간을 고릅니다. 전날 비교는 위의 결과를 그대로 읽고, 1주·1개월은 <span class="tech">HOLDS</span> 이력에서 7일·30일 전 또는 그 이전의 마지막 수집일과 비교합니다.</p>
 </section>
 
 <!-- ═══════════════ Chapter 6: 테마 태깅 ═══════════════ -->
@@ -579,7 +595,16 @@ ORDER BY similarity DESC LIMIT 5</pre>
   </ul>
 
   <h3 class="sub-title">숫자는 LLM을 거치지 않는다</h3>
-  <p>표와 차트의 숫자는 DB에서 곧바로 옵니다. LLM은 화면 설계와 해설만 하고, 해설에는 단위를 붙인 짧은 요약만 넘어갑니다. 그래서 숫자를 지어낼 틈이 없고, 일반 질문은 7~10초 안에 답합니다.</p>
+  <p>표와 차트의 숫자는 DB에서 곧바로 옵니다. LLM은 화면 설계와 해설만 하고, 해설에는 단위를 붙인 짧은 요약만 넘어갑니다. 그래서 숫자를 지어낼 틈이 없고, 일반 질문은 7~10초 안에 답합니다. 예외는 정기보고서처럼 원문이 글과 표뿐인 경우이고, 이때는 아래처럼 LLM이 옮긴 숫자를 원문과 대조합니다.</p>
+
+  <h3 class="sub-title">기업 분석</h3>
+  <p>"삼성전자 분석해줘"에는 주가 추이와 담은 ETF(이 서비스만의 데이터) 옆에 DART 분기 실적, 최근 공시, 가장 최근 정기보고서 요약을 놓고 해설로 묶습니다. 실적·공시는 매일 수집한 DB에서, 보고서는 처음 물을 때 원문을 받아 읽습니다.</p>
+  <ul>
+    <li><span class="hl">보고서 요약</span> &mdash; 원문에서 사업의 내용, 경영진단, 투자자 보호 사항, 영업부문 주석만 뽑아 사업 구조·영업 상황·위험·소송으로 요약합니다. 수치는 원문 단위 그대로 옮기고, 영역 제목은 "2026년 반기보고서"처럼 어느 보고서인지 밝힙니다</li>
+    <li><span class="hl">매출 구성 차트</span> &mdash; 보고서 표에서 부문·제품·지역·주요 고객별 매출을 LLM이 옮기되, 값과 항목 이름이 원문에 그대로 있을 때만 씁니다. 합계와 맞으면 도넛, 내부거래가 섞여 합이 전체가 아니면 막대로 그립니다</li>
+    <li><span class="hl">영역을 스스로 나눈다</span> &mdash; 계획에는 "보고서 요약" 슬롯 하나만 있고, 스킬이 원문을 읽고 매출 구성이 있으면 그 자리를 차트와 요약으로 나눕니다. 무엇이 나올지는 원문을 봐야 알기 때문입니다</li>
+  </ul>
+  <p>요약과 매출 구성은 접수번호로 캐시해, 같은 보고서는 다음부터 바로 나옵니다. 정정 보고서가 나오면 접수번호가 달라 새로 읽습니다.</p>
 
   <h3 class="sub-title">스킬로 안 되는 질문 &mdash; agent</h3>
   <p>스킬로 표현할 수 없는 질문은 <span class="tech">agent</span> 슬롯 하나로 넘깁니다. 안에서는 도구 10개를 가진 tool-calling 에이전트가 돌고, 그중 <span class="tech">graph_query</span>는 LLM이 쓴 Cypher를 직접 실행합니다.</p>
@@ -662,13 +687,14 @@ ORDER BY similarity DESC LIMIT 5</pre>
       <ul>
         <li>사용자, 포트폴리오, 매수 기록</li>
         <li>스냅샷, 챗봇 로그, 비중 변화, 스크리너 기록</li>
+        <li>DART 공시·실적, 보고서 요약 캐시</li>
         <li>트랜잭션이 중요한 데이터</li>
       </ul>
     </div>
   </div>
 
   <h3 class="sub-title">LLM은 결정적이지 않다</h3>
-  <p>숫자는 LLM 밖에서 만들고, 한 번 정한 결과(태그)는 고정하며, 사람이 정한 값이 자동 결과보다 우선합니다. LLM이 쓴 쿼리는 금지어 목록 대신 <span class="hl">DB가 쓰기를 거부</span>하게 막습니다.</p>
+  <p>숫자는 LLM 밖에서 만들고, 한 번 정한 결과(태그, 보고서 요약)는 고정하며, 사람이 정한 값이 자동 결과보다 우선합니다. LLM이 쓴 쿼리는 금지어 목록 대신 <span class="hl">DB가 쓰기를 거부</span>하게 막습니다. LLM이 원문에서 옮긴 숫자는 믿지 않고 <span class="hl">원문에 그대로 있는지 대조</span>해, 하나라도 없으면 그 표를 버립니다.</p>
 
   <h3 class="sub-title">검증은 앞으로 쌓아서</h3>
   <p>과거 데이터가 없는 것을 과거 데이터로 메우지 않습니다. 구성종목처럼 그날만 얻을 수 있는 데이터는 그날부터 쌓고, 스크리너의 쓸모도 백테스트 대신 기록한 날 이후의 실제 수익으로 따집니다.</p>
@@ -709,6 +735,13 @@ ORDER BY similarity DESC LIMIT 5</pre>
     <div class="review-section"><div class="review-label good">Good</div><p>키 하나로 ETF 목록, 현재가, 일봉, 구성종목, 휴장일까지 얻습니다.</p></div>
     <div class="review-section"><div class="review-label bad">Bad</div><p>구성종목은 상위 30개뿐이고 과거 이력이 없습니다. 총보수는 제공하지 않습니다.</p></div>
     <div class="review-section"><div class="review-label rec">Recommend</div><p>국내 시세를 일 단위로 꾸준히 쌓는 개인·리서치 프로젝트.</p></div>
+  </div>
+
+  <div class="review-card">
+    <h4>DART OpenAPI</h4>
+    <div class="review-section"><div class="review-label good">Good</div><p>키 하나로 상장사 공시 목록, 여러 회사의 주요계정, 정기보고서 원문까지 받습니다. 하루 2만 건 한도면 559개 회사를 매일 갱신하고도 남습니다.</p></div>
+    <div class="review-section"><div class="review-label bad">Bad</div><p>원문은 목차만 서식이 정해져 있고 표 모양은 회사마다 달라 규칙으로 파싱하기 어렵습니다. 매출 구성 같은 숫자는 표에서 옮긴 뒤 원문과 대조해야 합니다.</p></div>
+    <div class="review-section"><div class="review-label rec">Recommend</div><p>국내 상장사의 실적·공시를 정형 데이터로 쌓고, 보고서 본문은 필요할 때 읽어 요약하는 용도.</p></div>
   </div>
 
   <div class="review-card">

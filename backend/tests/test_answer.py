@@ -867,7 +867,8 @@ def test_stock_holders_exports_etfs_in_rank_order(monkeypatch):
 # --- 레이아웃 예시 ---
 
 LAYOUT_SEED_MIGRATIONS = ("0013_layout_examples.py", "0021_layout_examples_rank_overlap.py", "0025_layout_examples_company.py",
-                          "0026_report_summaries.py", "0029_layout_example_customers.py")
+                          "0026_report_summaries.py", "0029_layout_example_customers.py",
+                          "0030_revenue_mix_skill.py")
 
 
 def _layout_seeds():

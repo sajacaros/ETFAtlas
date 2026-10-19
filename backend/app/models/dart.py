@@ -55,7 +55,7 @@ class StockDisclosure(Base):
 
 
 class StockReportSummary(Base):
-    """정기보고서 본문 요약 캐시. company_report 스킬이 처음 물을 때 원문(document.xml)을 읽어 요약하고 접수번호로 남긴다.
+    """정기보고서 본문 요약·매출 구성 캐시. company_report·company_revenue_mix 스킬이 처음 물을 때 원문(document.xml)을 읽어 접수번호로 남긴다.
     정정보고서는 접수번호가 달라 새로 요약한다."""
     __tablename__ = "stock_report_summaries"
 
@@ -63,7 +63,7 @@ class StockReportSummary(Base):
     stock_code = Column(String(6), nullable=False, index=True)
     report_nm = Column(Text, nullable=False)
     sections = Column(Text, nullable=False)  # 읽은 장 목록 (줄바꿈 구분)
-    summary = Column(Text, nullable=False)
+    summary = Column(Text, nullable=True)  # NULL이면 아직 요약하지 않았다 — company_revenue_mix가 매출 구성만 뽑은 보고서
     # 원문 표에서 뽑아 검사를 통과한 매출 구성 (JSON 목록). NULL이면 아직 뽑지 않았다 — 0028 이전에 요약만 남긴 보고서
     breakdowns = Column(Text, nullable=True)
     model = Column(Text, nullable=True)

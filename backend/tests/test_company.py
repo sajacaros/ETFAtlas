@@ -90,6 +90,7 @@ def _run(skill_name, args, display, db_factory=_Closable):
     ("company_financials", {"stock": "삼양식품"}, "bar"),
     ("company_disclosures", {"stock": "삼양식품"}, "markdown"),
     ("company_report", {"stock": "삼양식품"}, "markdown"),
+    ("company_revenue_mix", {"stock": "삼양식품"}, "bar"),
 ])
 def test_stock_skills_explain_why_a_listed_stock_cannot_be_analyzed(fake_stock_graph, skill, args, display):
     result = _run(skill, args, display)
@@ -336,8 +337,9 @@ class ReportDB(FakeDB):
     def get(self, model, key):
         return self.cached if self.cached and self.cached.rcept_no == key else None
 
-    def merge(self, obj):
+    def add(self, obj):
         self.saved.append(obj)
+        self.cached = obj
 
     def expunge(self, obj):
         pass
@@ -513,3 +515,66 @@ def test_company_report_splits_into_revenue_mix_charts_and_the_summary(fake_stoc
     assert "장비" in results["text"]["content"]["text"]
     assert extracted  # 요약은 캐시에 있어도 원문을 읽어 구성을 뽑았다
     assert db.cached.breakdowns and "고객 A" in db.cached.breakdowns  # 뽑은 구성을 캐시에 남긴다
+
+
+def _skill_events(skill_name, db, question, config=None):
+    async def run():
+        from app.services.answer.resolver import EntityResolver
+        from app.services.answer.skills.base import SkillContext
+        ctx = SkillContext(question=question, conversation=ConversationContext(), session_factory=lambda: db,
+                           resolver=EntityResolver(), ai_config=config, stop=asyncio.Event())
+        skill = REGISTRY[skill_name]
+        return [e async for e in skill.run(skill.Args(stock="삼성전자"), skill.displays[0], ctx)]
+    return asyncio.run(run())
+
+
+def test_revenue_mix_shows_only_charts_and_leaves_the_summary_to_company_report(fake_stock_graph, monkeypatch):
+    from pydantic_ai.models.test import TestModel
+    from app.services.answer.skills import company_report
+    from app.services.answer.skills.report_breakdowns import check
+
+    class Config:
+        llm_model = "test"
+
+    mixes = [check(_mix("customer", [("고객 A", "21,316,082"), ("고객 B", "5,619,282")]), MIX_SOURCE)]
+    extracted, fetched = [], []
+
+    async def extract(config, sections):
+        extracted.append(len(sections))
+        return mixes
+    monkeypatch.setattr(company_report.report_breakdowns, "extract", extract)
+    monkeypatch.setattr(company_report, "load_dart_key", lambda db: "key")
+    monkeypatch.setattr(company_report, "fetch_document", lambda key, no: fetched.append(no) or REPORT_XML)
+    monkeypatch.setattr(company_report, "build_model", lambda config: TestModel(custom_output_text="#### 사업 구조\n- 장비"))
+    db = ReportDB([_disc(60, "반기보고서 (2026.06)", "20260814000200")])
+
+    events = _skill_events("company_revenue_mix", db, "삼성전자 주 고객은?", Config())
+    assert events[0] == {"type": "split", "parts": [
+        {"id": "chart1", "title": "삼성전자 주요 고객별 매출 · 당반기", "display": "bar"}]}  # 요약 영역은 없다
+    assert [e["part"] for e in events if e["type"] == "result"] == ["chart1"]
+    assert not any(e["type"] == "delta" for e in events)
+    assert db.cached.summary is None and "고객 A" in db.cached.breakdowns  # 매출 구성만 남긴다
+
+    _skill_events("company_revenue_mix", db, "삼성전자 주 고객은?", Config())
+    assert fetched == ["20260814000200"]  # 다음부터는 캐시
+
+    # 같은 보고서를 요약해 달라면 원문을 다시 읽어 요약만 만들고, 구성은 캐시를 쓴다
+    events = _skill_events("company_report", db, "삼성전자 분석해줘", Config())
+    assert [p["id"] for p in events[0]["parts"]] == ["chart1", "text"]
+    assert "장비" in events[-1]["content"]["text"]
+    assert len(fetched) == 2 and len(extracted) == 1
+    assert db.cached.summary == "#### 사업 구조\n- 장비" and "고객 A" in db.cached.breakdowns
+
+
+def test_revenue_mix_without_tables_says_so(fake_stock_graph, monkeypatch):
+    from app.services.answer.skills import company_report
+
+    async def extract(config, sections):
+        return []
+    monkeypatch.setattr(company_report.report_breakdowns, "extract", extract)
+    monkeypatch.setattr(company_report, "load_dart_key", lambda db: "key")
+    monkeypatch.setattr(company_report, "fetch_document", lambda key, no: REPORT_XML)
+    db = ReportDB([_disc(60, "반기보고서 (2026.06)", "20260814000200")])
+    result = _skill_events("company_revenue_mix", db, "삼성전자 주 고객은?")[-1]
+    assert result["status"] == "empty" and "매출 구성" in result["message"]
+    assert db.cached.breakdowns == "[]"  # 표가 없었다는 것도 남겨 다시 뽑지 않는다

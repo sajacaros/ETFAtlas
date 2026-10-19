@@ -5,6 +5,8 @@ x-airflow-common: &airflow-common
   image: etf-atlas-airflow:3.3.2
   environment: &airflow-common-env
     TZ: Asia/Seoul
+    # Airflow CLI(cli_config.py)가 Python 3.14에서 폐기 예정인 argparse.FileType을 써서 명령마다 찍히는 경고 — 이 문구만 숨긴다
+    PYTHONWARNINGS: "ignore:FileType is deprecated:PendingDeprecationWarning"
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__CORE__DEFAULT_TIMEZONE: Asia/Seoul
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'

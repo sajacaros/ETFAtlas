@@ -278,6 +278,12 @@ sync_corps → [sync_disclosures, sync_financials]
 | ETF 수익률 속성 | update_etf_returns | 1D/1W/1M 수익률 |
 | `Tag`, `TAGGED`, `ETF.tagged_at` | age_tagging, tag_new_etfs | ETF 테마 분류 |
 
+## 컨테이너 시작 확인 (빈 DAG 폴더)
+
+WSL 부팅 직후 Airflow 컨테이너가 바인드 마운트가 준비되기 전에 붙으면 `/opt/airflow/dags`가 빈 채로 보인다. 스케줄러는 떠 있지만 DAG를 못 읽어 실행을 만들지 않고 오류도 없다 (2026-10-14~18 수집 누락, 그 사이 구성종목은 KIS가 과거 날짜를 주지 않아 복구 불가).
+그래서 api-server·scheduler·dag-processor는 시작할 때 `/opt/airflow/dags`와 `/opt/backend`가 비어 있으면 종료하고(`docker-compose.yml`의 `airflow-mount-guard`), `restart: unless-stopped`가 다시 띄운다. 재시작하면 마운트가 제대로 붙는다.
+계속 비어 있으면 컨테이너가 재시작을 반복하므로 `docker ps`의 Restarting으로 드러난다.
+
 ## 환경 변수
 
 | 변수 | 용도 |

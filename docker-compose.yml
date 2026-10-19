@@ -121,6 +121,23 @@ services:
   airflow-apiserver:
     <<: *airflow-common
     container_name: etf-atlas-airflow
+    # WSL 부팅 직후 바인드 마운트가 빈 채로 붙으면 DAG를 하나도 못 읽고 조용히 멈춘다 (2026-10-14~18 수집 누락).
+    # 비어 있으면 종료해 restart 정책이 다시 띄우게 한다 — 재시작하면 마운트가 제대로 붙는다
+    entrypoint: &airflow-mount-guard
+      - /usr/bin/dumb-init
+      - --
+      - /bin/bash
+      - -c
+      - |
+        for d in /opt/airflow/dags /opt/backend; do
+          if [ -z "$$(ls -A "$$d" 2>/dev/null)" ]; then
+            echo "$$d is empty (bind mount not ready) - exiting so Docker restarts this container" >&2
+            sleep 5
+            exit 1
+          fi
+        done
+        exec /entrypoint "$$@"
+      - mount-guard
     command: api-server
     ports:
       # 서버 자신(127.0.0.1)에만 연다 — 외부에서는 SSH 터널로 접근 (ssh -L 9603:localhost:9603 서버)
@@ -140,6 +157,7 @@ services:
   airflow-scheduler:
     <<: *airflow-common
     container_name: etf-atlas-airflow-scheduler
+    entrypoint: *airflow-mount-guard
     command: scheduler
     depends_on:
       <<: *airflow-common-depends-on
@@ -150,6 +168,7 @@ services:
   airflow-dag-processor:
     <<: *airflow-common
     container_name: etf-atlas-airflow-dag-processor
+    entrypoint: *airflow-mount-guard
     command: dag-processor
     depends_on:
       <<: *airflow-common-depends-on

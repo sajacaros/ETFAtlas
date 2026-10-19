@@ -339,6 +339,9 @@ class ReportDB(FakeDB):
     def merge(self, obj):
         self.saved.append(obj)
 
+    def expunge(self, obj):
+        pass
+
     def commit(self):
         pass
 
@@ -378,6 +381,10 @@ def test_company_report_summarizes_the_document_once_and_caches_it(fake_stock_gr
     monkeypatch.setattr(company_report, "build_model", lambda config: model)
     monkeypatch.setattr(company_report, "load_dart_key", lambda db: "key")
     monkeypatch.setattr(company_report, "fetch_document", lambda key, no: prompts.append(no) or REPORT_XML)
+
+    async def no_breakdowns(config, sections):
+        return []
+    monkeypatch.setattr(company_report.report_breakdowns, "extract", no_breakdowns)
     db = ReportDB([_disc(60, "반기보고서 (2026.06)", "20260814000200")])
 
     async def run():
@@ -400,7 +407,8 @@ def test_company_report_summarizes_the_document_once_and_caches_it(fake_stock_gr
     saved = db.saved[0]
     assert saved.rcept_no == "20260814000200" and "II. 사업의 내용 > 1. 사업의 개요" in saved.sections
 
-    db.cached = StockReportSummary(rcept_no="20260814000200", summary="#### 사업 구조\n- 캐시된 요약")
+    assert saved.breakdowns == "[]"  # 매출 구성 표가 없었다는 것도 남겨 다시 뽑지 않는다
+    db.cached = StockReportSummary(rcept_no="20260814000200", summary="#### 사업 구조\n- 캐시된 요약", breakdowns="[]")
     result = asyncio.run(run())[-1]
     assert "캐시된 요약" in result["content"]["text"] and prompts == ["20260814000200"]  # 원문을 다시 받지 않는다
 
@@ -408,3 +416,100 @@ def test_company_report_summarizes_the_document_once_and_caches_it(fake_stock_gr
 def test_company_report_without_a_report_says_so(fake_stock_graph):
     result = _run("company_report", {"stock": "삼성전자"}, "markdown", lambda: ReportDB([]))
     assert result["status"] == "empty" and "정기보고서를 찾지 못했습니다" in result["message"]
+
+
+# HPSP 반기보고서 영업부문 주석 (단위 : 천원)
+MIX_SOURCE = """제품과 용역에 대한 공시
+장비매출 | 부품매출 | 용역수익 | 제품과 용역 합계
+고객과의 계약에서 생기는 수익 | 69,624,089 | 4,991,080 | 3,447,782 | 78,062,951
+주요 고객에 대한 공시
+고객 A | 고객 B | 고객 C | 고객 D
+수익 | 21,316,082 | 5,619,282 | 758,622 | 273,555"""
+
+
+def _mix(kind, items, total=None, unit="천원"):
+    from app.services.answer.skills.report_breakdowns import ExtractedBreakdown, ExtractedItem
+    return ExtractedBreakdown(kind=kind, period="당반기", unit=unit, total=total,
+                              items=[ExtractedItem(name=n, value=v) for n, v in items])
+
+
+def test_revenue_mix_is_a_donut_only_when_the_items_add_up_to_the_stated_total():
+    from app.services.answer.skills.report_breakdowns import check
+    products = [("장비매출", "69,624,089"), ("부품매출", "4,991,080"), ("용역수익", "3,447,782")]
+    whole = check(_mix("product", products, total="78,062,951"), MIX_SOURCE)
+    assert whole["whole"] and [i["value"] for i in whole["items"]] == [69624089, 4991080, 3447782]
+    # 합계가 없거나(일부 고객만) 맞지 않으면 막대 — 비중을 말할 수 없다
+    customers = [("고객 A", "21,316,082"), ("고객 B", "5,619,282")]
+    assert check(_mix("customer", customers), MIX_SOURCE)["whole"] is False
+    assert check(_mix("product", products, total="88,242,097"), MIX_SOURCE) is not None
+    assert check(_mix("product", products, total="88,242,097"), MIX_SOURCE)["whole"] is False
+    # 합계 행은 항목에서 뺀다
+    assert len(check(_mix("product", [*products, ("합 계", "78,062,951")], total="78,062,951"), MIX_SOURCE)["items"]) == 3
+
+
+def test_revenue_mix_with_a_number_not_in_the_report_is_dropped():
+    from app.services.answer.skills.report_breakdowns import check
+    # 지어낸 값, 다른 숫자의 일부로만 있는 값('624,089'), 단위를 바꾼 값은 표 전체를 버린다
+    for value in ("70,000,000", "624,089", "696억"):
+        assert check(_mix("product", [("장비매출", value), ("부품매출", "4,991,080")]), MIX_SOURCE) is None
+    assert check(_mix("product", [("장비매출", "69,624,089")]), MIX_SOURCE) is None  # 항목 하나는 구성이 아니다
+    # 이름이 표의 셀이 아니면(셀을 이어 붙이거나 지어낸 이름) 표를 잘못 읽은 것이다
+    for name in ("장비매출 | 부품매출", "출수"):
+        assert check(_mix("product", [(name, "69,624,089"), ("부품매출", "4,991,080")]), MIX_SOURCE) is None
+    assert check(_mix("region", [("국내", "40"), ("해외", "60")], unit="%"), "국내 | 40 | 해외 | 60")["whole"]
+    assert check(_mix("product", [("장비 매출", "69,624,089"), ("부품매출", "4,991,080")]), MIX_SOURCE)  # 띄어쓰기 차이는 본다
+
+
+def test_revenue_mix_shows_what_the_question_asks_first():
+    from app.services.answer.skills.report_breakdowns import choose
+    mixes = [{"kind": k} for k in ("customer", "region", "product", "segment")]
+    assert [b["kind"] for b in choose(mixes, "HPSP 분석해줘")] == ["segment", "product"]
+    assert [b["kind"] for b in choose(mixes, "HPSP의 주 고객은 누구야?")] == ["customer", "segment"]
+    assert [b["kind"] for b in choose(mixes[:1], "HPSP 분석해줘")] == ["customer"]
+
+
+def test_company_report_splits_into_revenue_mix_charts_and_the_summary(fake_stock_graph, monkeypatch):
+    from app.models.dart import StockReportSummary
+    from app.services.answer.skills import company_report
+    from app.services.answer.skills.report_breakdowns import check
+
+    mixes = [check(_mix("product", [("장비매출", "69,624,089"), ("부품매출", "4,991,080"), ("용역수익", "3,447,782")],
+                        total="78,062,951"), MIX_SOURCE),
+             check(_mix("customer", [("고객 A", "21,316,082"), ("고객 B", "5,619,282")]), MIX_SOURCE)]
+    extracted = []
+
+    async def extract(config, sections):
+        extracted.append(len(sections))
+        return mixes
+    monkeypatch.setattr(company_report.report_breakdowns, "extract", extract)
+    monkeypatch.setattr(company_report, "load_dart_key", lambda db: "key")
+    monkeypatch.setattr(company_report, "fetch_document", lambda key, no: REPORT_XML)
+    # 매출 구성을 뽑기 전에 요약만 남긴 보고서: 원문을 다시 읽어 구성만 뽑고 요약은 캐시를 쓴다
+    db = ReportDB([_disc(60, "반기보고서 (2026.06)", "20260814000200")],
+                  cached=StockReportSummary(rcept_no="20260814000200", summary="#### 사업 구조\n- 장비"))
+    db.commit = lambda: None
+
+    async def run():
+        from app.services.answer.resolver import EntityResolver
+        from app.services.answer.skills.base import SkillContext
+        ctx = SkillContext(question="삼성전자 주 고객은?", conversation=ConversationContext(),
+                           session_factory=lambda: db, resolver=EntityResolver(), ai_config=None, stop=asyncio.Event())
+        skill = REGISTRY["company_report"]
+        return [e async for e in skill.run(skill.Args(stock="삼성전자"), "markdown", ctx)]
+
+    events = asyncio.run(run())
+    split = events[0]
+    assert split == {"type": "split", "parts": [
+        {"id": "chart1", "title": "삼성전자 주요 고객별 매출 · 당반기", "display": "bar"},  # 질문이 고객을 묻는다
+        {"id": "chart2", "title": "삼성전자 제품별 매출 · 당반기", "display": "donut"},
+        {"id": "text", "title": "삼성전자 2026년 반기보고서 요약", "display": "markdown"},
+    ]}
+    results = {e["part"]: e for e in events if e["type"] == "result"}
+    assert set(results) == {"chart1", "chart2", "text"}
+    donut = results["chart2"]
+    assert donut["content"]["view"]["kind"] == "donut"
+    assert donut["summary"] == "삼성전자 제품별 매출 · 당반기: 장비매출 69,624,089천원(89.2%), 부품매출 4,991,080천원(6.4%), 용역수익 3,447,782천원(4.4%)"
+    assert results["chart1"]["content"]["notes"]  # 막대는 합이 전체가 아니라고 밝힌다
+    assert "장비" in results["text"]["content"]["text"]
+    assert extracted  # 요약은 캐시에 있어도 원문을 읽어 구성을 뽑았다
+    assert db.cached.breakdowns and "고객 A" in db.cached.breakdowns  # 뽑은 구성을 캐시에 남긴다

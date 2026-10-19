@@ -64,5 +64,7 @@ class StockReportSummary(Base):
     report_nm = Column(Text, nullable=False)
     sections = Column(Text, nullable=False)  # 읽은 장 목록 (줄바꿈 구분)
     summary = Column(Text, nullable=False)
+    # 원문 표에서 뽑아 검사를 통과한 매출 구성 (JSON 목록). NULL이면 아직 뽑지 않았다 — 0028 이전에 요약만 남긴 보고서
+    breakdowns = Column(Text, nullable=True)
     model = Column(Text, nullable=True)
     created_at = Column(DateTime, default=utcnow)

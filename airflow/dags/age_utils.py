@@ -374,7 +374,10 @@ def holdings_target_date(now: datetime) -> str | None:
 
 
 def get_last_collected_date() -> str | None:
-    """AGE에서 마지막 수집된 Price 날짜 조회. YYYYMMDD 또는 None."""
+    """AGE에서 마지막 수집된 Price 날짜 조회. YYYYMMDD, Price가 하나도 없으면 None.
+
+    조회 실패를 None(빈 AGE = 첫 실행)으로 돌려주면 빠진 날짜를 건너뛰므로 예외를 그대로 올린다.
+    """
     conn = get_db_connection()
     cur = init_age(conn)
     try:
@@ -388,9 +391,6 @@ def get_last_collected_date() -> str | None:
             raw = _parse_age_value(results[0][0])
             if raw and raw != 'null':
                 return raw.replace('-', '')
-        return None
-    except Exception as e:
-        log.warning(f"Failed to query last collected date: {e}")
         return None
     finally:
         cur.close()
@@ -765,6 +765,92 @@ def collect_universe_and_prices(dates: list[str]) -> tuple[set[str], list[dict],
     finally:
         cur.close()
         conn.close()
+
+
+# 가격이 빠진 (ETF, 날짜)를 다시 받는 범위. 날짜 하나로 증분하면 일부 ETF만 실패한 날이 영구히 빈다
+PRICE_REFILL_BUSINESS_DAYS = 10
+
+
+def find_missing_price_dates(codes, days: list[str], existing: set[tuple[str, str]]) -> dict[str, list[str]]:
+    """ETF마다 days(YYYYMMDD) 중 existing((코드, YYYYMMDD))에 없는 날짜. 빠진 날이 없는 ETF는 뺀다."""
+    missing = {}
+    for code in sorted(codes):
+        gaps = [d for d in days if (code, d) not in existing]
+        if gaps:
+            missing[code] = gaps
+    return missing
+
+
+def refill_missing_etf_prices() -> int:
+    """최근 PRICE_REFILL_BUSINESS_DAYS 영업일 중 Price가 빠진 (ETF, 날짜)를 KIS 일봉으로 채운다. 채운 개수를 돌려준다.
+
+    빠진 날만 새로 만들고 이미 있는 Price는 건드리지 않는다. NAV·순자산·시가총액은 현재가 API라
+    날짜 지정이 안 되므로 채운 날에는 비워 둔다. 상장 전이거나 거래정지인 날은 KIS가 봉을 주지 않아 빈 채로 남는다.
+    """
+    kis = get_kis_client()
+    if kis is None:
+        log.warning("Skipping price refill (KIS credentials missing)")
+        return 0
+
+    end = last_settled_day(datetime.now())
+    start = (datetime.strptime(end, '%Y%m%d') - timedelta(days=PRICE_REFILL_BUSINESS_DAYS * 2)).strftime('%Y%m%d')
+    days = get_business_days(start, end)[-PRICE_REFILL_BUSINESS_DAYS:]
+    if not days:
+        return 0
+
+    conn = get_db_connection()
+    cur = init_age(conn)
+    try:
+        codes = get_etf_codes_from_age()
+        existing = set()
+        results = execute_cypher(cur, """
+            MATCH (e:ETF)-[:HAS_PRICE]->(p:Price)
+            WHERE p.date >= $from_date AND p.date <= $to_date
+            RETURN e.code + '|' + p.date
+        """, {'from_date': _dash_date(days[0]), 'to_date': _dash_date(days[-1])})
+        for row in results:
+            key = _parse_age_value(row[0]) if row[0] else ''
+            if '|' in key:
+                code, date_str = key.split('|', 1)
+                existing.add((code, date_str.replace('-', '')))
+
+        missing = find_missing_price_dates(codes, days, existing)
+        log.info(f"Price refill: {len(missing)}/{len(codes)} ETFs miss prices in {days[0]}~{days[-1]}")
+
+        items = []
+        for code, gaps in missing.items():
+            try:
+                bars = kis.get_daily_bars(code, gaps[0], gaps[-1])
+            except Exception as e:
+                log.warning(f"Failed ETF daily bars for refill {code}: {e}")
+                continue
+            items.extend({
+                'code': code, 'date': _dash_date(bar.date),
+                'open': bar.open, 'high': bar.high, 'low': bar.low, 'close': bar.close,
+                'volume': bar.volume, 'trade_value': bar.trade_value,
+            } for bar in bars if bar.date in gaps)
+
+        if items:
+            execute_cypher_batch(cur, """
+                MATCH (e:ETF {code: item.code})
+                OPTIONAL MATCH (e)-[:HAS_PRICE]->(existing:Price {date: item.date})
+                WITH e, existing, item WHERE existing IS NULL
+                CREATE (e)-[:HAS_PRICE]->(:Price {date: item.date, open: item.open, high: item.high,
+                    low: item.low, close: item.close, volume: item.volume, trade_value: item.trade_value})
+                RETURN e
+            """, items)
+            conn.commit()
+        filled = sorted({it['code'] for it in items})
+        log.info(f"Price refill: filled {len(items)} prices for {len(filled)} ETFs {filled}")
+        return len(items)
+    finally:
+        cur.close()
+        conn.close()
+
+
+def _dash_date(d: str) -> str:
+    """YYYYMMDD → YYYY-MM-DD (Price.date 형식)."""
+    return f"{d[:4]}-{d[4:6]}-{d[6:8]}"
 
 
 def get_kis_client():

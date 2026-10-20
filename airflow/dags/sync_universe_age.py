@@ -3,6 +3,8 @@ ETF Universe Sync DAG (Apache AGE) — 일일 증분 수집
 
 마지막 수집일 이후 ~ 종가가 확정된 마지막 날까지 누락된 영업일의 데이터를 자동 수집.
 AGE가 비어 있으면(첫 실행) 최근 거래일 하루만 수집한다 — 과거 이력 백필은 하지 않는다.
+증분 기준은 전체 최근 날짜 하나라 일부 ETF만 실패한 날은 그 뒤에 다시 받지 않으므로,
+최근 영업일 몇 날의 빠진 (ETF, 날짜)를 매번 다시 채운다(refill_missing_etf_prices).
 구성종목(HOLDS)은 KIS API가 날짜 지정을 지원하지 않아 항상 최근 거래일 스냅샷만 수집한다.
 수집 로직은 age_utils 공용 함수 사용. 태그는 age_tagging DAG에서 부여.
 """
@@ -16,7 +18,7 @@ import logging
 from age_utils import (
     get_db_connection, init_age, execute_cypher_batch,
     get_business_days, last_settled_day, get_last_collected_date, get_etf_codes_from_age,
-    collect_universe_and_prices, collect_holdings, compute_weight_changes,
+    collect_universe_and_prices, refill_missing_etf_prices, collect_holdings, compute_weight_changes,
     collect_stock_prices_for_dates,
     record_collection_run, send_discord_notification,
     update_etf_returns,
@@ -79,17 +81,17 @@ def fetch_trading_dates(**context):
 
 
 def sync_universe_and_prices(**context):
-    """ETF 유니버스 + 가격 증분 수집."""
+    """ETF 유니버스 + 가격 증분 수집. 새 날짜가 없어도 최근 빠진 가격은 다시 채운다."""
     ti = context['ti']
     dates = ti.xcom_pull(task_ids='fetch_trading_dates')
-    if not dates:
-        return
+    if dates:
+        _, new_etfs, actual_dates = collect_universe_and_prices(dates)
+        if new_etfs:
+            ti.xcom_push(key='new_etfs', value=new_etfs)
+        if actual_dates:
+            ti.xcom_push(key='actual_dates', value=actual_dates)
 
-    _, new_etfs, actual_dates = collect_universe_and_prices(dates)
-    if new_etfs:
-        ti.xcom_push(key='new_etfs', value=new_etfs)
-    if actual_dates:
-        ti.xcom_push(key='actual_dates', value=actual_dates)
+    refill_missing_etf_prices()
 
 
 # 구성종목 조회 실패가 이 비율 이상이면 태스크를 실패시켜 Airflow 재시도로 빠진 ETF만 다시 받는다

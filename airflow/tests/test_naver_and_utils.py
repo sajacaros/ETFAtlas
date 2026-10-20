@@ -92,6 +92,17 @@ def test_check_new_universe_candidates():
     assert [c["code"] for c in result] == ["091160"]
 
 
+def test_find_missing_price_dates_keeps_only_gaps():
+    age_utils = pytest.importorskip("age_utils")
+    days = ["20261015", "20261016", "20261017"]
+    existing = {
+        ("069500", "20261015"), ("069500", "20261016"), ("069500", "20261017"),  # 빠진 날 없음
+        ("091160", "20261015"), ("091160", "20261017"),                          # 중간 하루 빠짐
+    }
+    result = age_utils.find_missing_price_dates({"069500", "091160", "102110"}, days, existing)
+    assert result == {"091160": ["20261016"], "102110": days}
+
+
 @pytest.mark.parametrize("now, expected", [
     ("2026-10-01 08:30", "20260930"),  # 스케줄 실행(장 시작 전)
     ("2026-10-01 10:16", "20260930"),  # 장중

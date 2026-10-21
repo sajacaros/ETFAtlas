@@ -8,7 +8,7 @@ Airflow가 수집 후 한 번 계산해 `weight_changes` 테이블에 저장하�
 ## 아키텍처
 
 ```
-DAG age_sync_universe (매일 08:50, 구성종목은 개장일에만 그날 공시분)
+DAG age_sync_universe (매일 08:50·16:30, 구성종목은 개장일에만 그날 공시분)
   └─ HOLDS 수집 완료 (KIS API, 최근 거래일)
   └─ sync_weight_changes — 액티브 ETF 비중 변화 계산 → weight_changes 저장
   └─ record_collection — collection_runs INSERT + NOTIFY new_collection (계산 실패해도 실행)

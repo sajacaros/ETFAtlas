@@ -6,7 +6,7 @@ AGE 수집 공용 로직은 `airflow/dags/age_utils.py`에 모여 있다.
 
 | DAG ID | 파일 | 스케줄 | 저장소 | 역할 |
 |--------|------|--------|--------|------|
-| `age_sync_universe` | `sync_universe_age.py` | `50 8 * * *` (매일 08:50 KST) | AGE | 일일 증분 수집 |
+| `age_sync_universe` | `sync_universe_age.py` | `50 8 * * *`, `30 16 * * *` (매일 08:50·16:30 KST) | AGE | 일일 증분 수집 |
 | `age_tagging` | `age_tagging.py` | `0 3 * * 6` (토 03:00 KST) | AGE | 신규 ETF 태깅 (`full_rebuild`로 전체 재태깅) |
 | `rdb_sync_metadata` | `sync_metadata_rdb.py` | `40 8 * * *` (매일 08:40 KST) | RDB | `etfs` 코드/이름 동기화 |
 | `rdb_realtime_prices` | `realtime_prices_rdb.py` | `*/10 9-15 * * 1-5` | RDB | 장중 현재가 + 포트폴리오 스냅샷 |
@@ -30,7 +30,9 @@ AGE 수집 공용 로직은 `airflow/dags/age_utils.py`에 모여 있다.
 
 마지막 수집일 이후 ~ 오늘까지 누락된 영업일의 데이터를 자동 수집한다.
 
-- **스케줄**: `50 8 * * *` (매일 08:50 KST). 가격은 매일 따라잡고, 구성종목은 개장일에만 받는다
+- **스케줄**: `MultipleCronTriggerTimetable('50 8 * * *', '30 16 * * *')` (매일 08:50·16:30 KST). 가격은 매일 따라잡고, 구성종목은 개장일에만 받는다
+  - 16:30: 그날 종가가 확정된 뒤라(`MARKET_SETTLED_TIME` 16:00) 그날 가격을 받는다. 구성종목은 아침에 이미 받았으니 빠진 ETF만 다시 받고, 끝나면 일일 리포트를 디스코드로 보낸다
+  - 08:50: 새 날짜가 없으면(전날 16:30에 받음) 전날 Price의 NAV·순자산·시가총액만 지금 현재가로 다시 쓴다(`refresh_latest_snapshot_values`). 16:30 값이 확정치인지 확인하지 못해서 예전처럼 다음 날 아침 값을 남긴다. 구성종목은 그날 공시분을 받는다
 - **재시도**: 3회, 5분 간격
 - **Catchup**: 비활성화
 - **동시 실행**: 1개 (`max_active_runs=1`)
@@ -42,12 +44,13 @@ start
   └─ fetch_trading_dates
        └─ sync_universe_and_prices
             ├─ sync_holdings
-            │    ├─ sync_stock_prices ──────────────────────┐
-            │    └─ sync_weight_changes                     │
-            │         ├─ record_collection (all_done) ──────┤
+            │    ├─ sync_stock_prices ─────┐
+            │    └─ sync_weight_changes    │
+            │         ├─ record_collection (all_done) ──────┐
             │         └─ notify_discord ────────────────────┤
-            ├─ sync_returns ────────────────────────────────┤
-            └─ tag_new_etfs ────────────────────────────────┘
+            ├─ sync_returns ───────────────┤                │
+            │                              └─ notify_daily_report (all_done) ─┤
+            └─ tag_new_etfs ────────────────────────────────┤
                                                            end
 ```
 
@@ -60,7 +63,7 @@ AGE가 비어 있으면(첫 실행) 최근 10일 중 마지막 거래일 하루�
 
 #### 2. sync_universe_and_prices
 
-`collect_universe_and_prices(dates)`를 호출하고, 신규 편입 ETF(`new_etfs`)와 실제로 ETF Price가 저장된 거래일(`actual_dates`)을 XCom으로 push한다.
+`collect_universe_and_prices(dates)`를 호출하고, 신규 편입 ETF(`new_etfs`)와 실제로 ETF Price가 저장된 거래일(`actual_dates`)을 XCom으로 push한다. 새 날짜가 없으면 대신 `refresh_latest_snapshot_values()`로 마지막 수집일 NAV·순자산·시가총액을 다시 쓴다(장중에는 건너뜀).
 KIS 종목 마스터에 없는(상장폐지) 유니버스 ETF는 Price 노드와 함께 지우고, 이름이 바뀐 ETF는 이름과 운용사(MANAGED_BY)를 고친다(`sync_universe_listing`). 마스터에서 유니버스의 10%(최소 5개)를 넘게 사라지면 마스터 이상으로 보고 지우지 않는다.
 
 #### 3. sync_holdings
@@ -94,6 +97,13 @@ KIS는 과거 구성종목을 주지 않으므로 그날 놓치면 복구할 수
 #### 7. tag_new_etfs
 
 신규 편입 ETF에 룰 기반 태그(`코스피`, `코스닥`)만 부여한다 (`INDEX_TAG_PATTERNS`). LLM 태깅은 `age_tagging`에서 수행한다.
+
+#### 8. notify_daily_report
+
+그날 종가를 받은 실행(`actual_dates`의 마지막이 오늘, 즉 16:30)에서만 `send_daily_report(date, new_etfs)`를 호출한다. 디스코드 알림이 꺼져 있거나 웹훅이 없거나 그날 이미 보냈으면(`discord_notification_logs.kind = 'daily_report'`) 건너뛴다.
+- 수집 결과: ETF 가격(빠진 코드), 구성종목, 주식 가격 개수와 신규 편입 ETF
+- 상승 ETF: 1일 수익률이 `discord_settings.rise_threshold`(기본 3%, 관리자 페이지) 이상인 ETF 전부. 비중 상위 5개 구성종목의 비중·1일 수익률과, 어느 종목이 오름을 이끌었는지 LLM이 쓴 한두 문장(`analyze_rising_etfs`, 추론 끔, 10개씩)을 붙인다. LLM이 실패하면 분석 없이 보낸다
+- 주식 가격·구성종목이 일부 실패해도 보낸다(`all_done`) — 요약에 빠진 수가 드러난다
 
 ---
 

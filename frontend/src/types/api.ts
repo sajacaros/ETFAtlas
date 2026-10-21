@@ -113,6 +113,7 @@ export interface AdminDartTestResult {
 export interface AdminDiscordSettings {
   enabled: boolean
   threshold: number
+  rise_threshold: number  // 일일 리포트: 1일 수익률이 이 값(%) 이상인 ETF
   webhook_url_masked: string | null
   configured: boolean  // false: 웹에서 저장한 적 없음 (DAG는 서버 환경변수 사용)
 }

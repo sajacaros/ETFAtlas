@@ -577,10 +577,12 @@ def _mask_webhook(url: str | None) -> str | None:
 
 def _discord_settings_response(setting: DiscordSetting | None) -> dict:
     if setting is None:
-        return {"enabled": True, "threshold": 3.0, "webhook_url_masked": None, "configured": False}
+        return {"enabled": True, "threshold": 3.0, "rise_threshold": 3.0,
+                "webhook_url_masked": None, "configured": False}
     return {
         "enabled": setting.enabled,
         "threshold": setting.threshold,
+        "rise_threshold": setting.rise_threshold,
         "webhook_url_masked": _mask_webhook(setting.webhook_url),
         "configured": True,
     }
@@ -607,6 +609,8 @@ async def update_discord_settings(
         db.add(setting)
     setting.enabled = body.enabled
     setting.threshold = body.threshold
+    if body.rise_threshold is not None:
+        setting.rise_threshold = body.rise_threshold
     if body.webhook_url is not None:
         setting.webhook_url = body.webhook_url or None
     db.commit()
@@ -647,8 +651,8 @@ async def get_discord_notification_logs(
     db: Session = Depends(get_db),
     admin_id: int = Depends(get_admin_user_id),
 ):
-    """디스코드 비중변화 알림 발송 이력 (최근 순)."""
-    q = db.query(DiscordNotificationLog)
+    """디스코드 비중변화 알림 발송 이력 (최근 순). 일일 리포트 이력은 뺀다."""
+    q = db.query(DiscordNotificationLog).filter(DiscordNotificationLog.kind == "weight_change")
     rows = q.order_by(DiscordNotificationLog.sent_at.desc(), DiscordNotificationLog.id.desc()) \
         .offset(offset).limit(limit).all()
     return {

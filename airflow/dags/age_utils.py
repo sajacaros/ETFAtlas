@@ -302,6 +302,7 @@ def _parse_age_value(raw):
 
 
 BUSINESS_DAY_REFERENCE_CODE = '069500'  # KODEX 200 — 모든 거래일에 거래됨
+MARKET_OPEN_TIME = time(9, 0)
 MARKET_SETTLED_TIME = time(16, 0)  # 15:30 종가 확정 후 여유
 # KIS 구성종목(PDF)은 영업일 08:30에 그날 공시분(직전 영업일 장 마감 후 보유)으로 갱신된다 — 갱신 뒤에 받는다
 HOLDINGS_PUBLISH_TIME = time(8, 35)
@@ -315,6 +316,11 @@ def last_settled_day(now: datetime) -> str:
     """
     day = now if now.time() >= MARKET_SETTLED_TIME else now - timedelta(days=1)
     return day.strftime('%Y%m%d')
+
+
+def snapshot_is_settled(now: datetime) -> bool:
+    """지금 받는 현재가(NAV·순자산)가 last_settled_day의 값인지. 장중(개장~종가 확정)에는 그날 움직이는 값이다."""
+    return not (MARKET_OPEN_TIME <= now.time() < MARKET_SETTLED_TIME)
 
 
 def get_business_days(from_date: str, to_date: str) -> list[str]:
@@ -848,6 +854,57 @@ def refill_missing_etf_prices() -> int:
         conn.close()
 
 
+def refresh_latest_snapshot_values() -> int:
+    """마지막 수집일 Price의 NAV·순자산·시가총액을 지금 받은 현재가로 다시 쓴다. 고친 개수를 돌려준다.
+
+    장 마감 뒤 실행이 그날 Price를 만들면 다음 날 아침 실행은 새 날짜가 없어 현재가를 받지 않으므로
+    NAV·순자산이 장 마감 직후 값으로 남는다. 새 날짜가 없는 실행이 이 함수로 마지막 수집일 값을 다시 쓴다.
+    장중에는 현재가가 그날 값이라 쓰지 않는다(snapshot_is_settled).
+    """
+    if not snapshot_is_settled(datetime.now()):
+        log.info("Skipping snapshot refresh during market hours")
+        return 0
+    kis = get_kis_client()
+    if kis is None:
+        log.warning("Skipping snapshot refresh (KIS credentials missing)")
+        return 0
+    last = get_last_collected_date()
+    if not last:
+        return 0
+
+    items = []
+    for code in sorted(get_etf_codes_from_age()):
+        try:
+            snap = kis.get_etf_snapshot(code)
+        except Exception as e:
+            log.warning(f"Failed ETF snapshot for refresh {code}: {e}")
+            continue
+        items.append({'code': code, 'date': _dash_date(last), 'nav': snap.nav,
+                      'net_assets': snap.net_assets, 'listed_shares': snap.listed_shares})
+
+    conn = get_db_connection()
+    cur = init_age(conn)
+    try:
+        execute_cypher_batch(cur, """
+            MATCH (e:ETF {code: item.code})-[:HAS_PRICE]->(p:Price {date: item.date})
+            SET p.nav = item.nav, p.net_assets = item.net_assets,
+                p.market_cap = p.close * item.listed_shares
+            RETURN p
+        """, items)
+        valid_na = [it for it in items if it['net_assets']]
+        execute_cypher_batch(cur, """
+            MATCH (e:ETF {code: item.code})
+            SET e.net_assets = item.net_assets
+            RETURN e
+        """, valid_na)
+        conn.commit()
+        log.info(f"Snapshot refresh: {len(items)} ETFs on {last}")
+        return len(items)
+    finally:
+        cur.close()
+        conn.close()
+
+
 def _dash_date(d: str) -> str:
     """YYYYMMDD → YYYY-MM-DD (Price.date 형식)."""
     return f"{d[:4]}-{d[4:6]}-{d[6:8]}"
@@ -1262,15 +1319,15 @@ def load_ai_config(conn) -> dict:
 def _load_discord_settings(conn) -> dict:
     """디스코드 알림 설정. 웹(관리자 페이지)에서 저장한 discord_settings가 우선,
     저장 전이거나 주소가 비었으면 환경변수 DISCORD_WEBHOOK_URL을 쓴다."""
-    settings = {'enabled': True, 'webhook_url': None, 'threshold': 3.0}
+    settings = {'enabled': True, 'webhook_url': None, 'threshold': 3.0, 'rise_threshold': 3.0}
     cur = conn.cursor()
     try:
-        cur.execute("SELECT enabled, webhook_url, threshold FROM discord_settings WHERE id = 1")
+        cur.execute("SELECT enabled, webhook_url, threshold, rise_threshold FROM discord_settings WHERE id = 1")
         row = cur.fetchone()
     finally:
         cur.close()
     if row:
-        settings.update(enabled=row[0], webhook_url=row[1], threshold=row[2])
+        settings.update(enabled=row[0], webhook_url=row[1], threshold=row[2], rise_threshold=row[3])
     if not settings['webhook_url']:
         settings['webhook_url'] = os.environ.get('DISCORD_WEBHOOK_URL')
     return settings
@@ -1318,18 +1375,18 @@ def _split_discord_messages(header: str, blocks: list[str], limit: int = DISCORD
 CHANGE_TYPE_LABELS = {'added': '신규편입', 'removed': '편출', 'increased': '증가', 'decreased': '감소'}
 
 
-def _record_discord_notification(conn, date_str: str, threshold: float, items: list[dict],
-                                 message_count: int, error: str | None = None):
-    """디스코드로 보낸(또는 보내다 실패한) 비중변화를 discord_notification_logs에 남긴다."""
+def _record_discord_notification(conn, date_str: str, threshold: float, items,
+                                 message_count: int, error: str | None = None, kind: str = 'weight_change'):
+    """디스코드로 보낸(또는 보내다 실패한) 알림을 discord_notification_logs에 남긴다."""
     import json
 
     cur = conn.cursor()
     try:
         cur.execute(
             "INSERT INTO discord_notification_logs "
-            "(base_date, status, threshold, items, message_count, error, sent_at) "
-            "VALUES (%s, %s, %s, %s::jsonb, %s, %s, now() AT TIME ZONE 'utc')",
-            (date_str, 'failed' if error else 'sent', threshold,
+            "(kind, base_date, status, threshold, items, message_count, error, sent_at) "
+            "VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, now() AT TIME ZONE 'utc')",
+            (kind, date_str, 'failed' if error else 'sent', threshold,
              json.dumps(items, ensure_ascii=False), message_count, error),
         )
         conn.commit()
@@ -1452,14 +1509,34 @@ def compute_weight_changes():
         conn.close()
 
 
+def _post_discord_messages(webhook_url: str, messages: list[str]) -> str | None:
+    """메시지들을 차례로 보낸다. 실패하면 오류 설명을 돌려준다(성공이면 None).
+
+    httpx 예외 메시지엔 웹훅 주소(토큰 포함)가 들어가므로 종류·상태코드만 남긴다.
+    """
+    import httpx
+
+    try:
+        with httpx.Client(timeout=10) as client:
+            for message in messages:
+                resp = client.post(webhook_url, json={"content": message})
+                if resp.status_code == 429:  # rate limit — 안내된 만큼 기다렸다 한 번 재시도
+                    import time as _time
+                    _time.sleep(float(resp.json().get('retry_after', 1)))
+                    resp = client.post(webhook_url, json={"content": message})
+                resp.raise_for_status()
+    except httpx.HTTPError as e:
+        status = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else None
+        return f"{type(e).__name__} status={status}"
+    return None
+
+
 def send_discord_notification(date_str: str):
     """weight_changes에 저장된 액티브 ETF 비중변화 중 기준값을 넘는 것을 디스코드로 발송.
 
     이미 보낸 날짜(발송 이력에 성공 기록)면 건너뛴다. 발송에 실패하면 이력에 남기고 예외를 올려
     Airflow 재시도가 다시 보내게 한다.
     """
-    import httpx
-
     conn = get_db_connection()
     cur = conn.cursor()
 
@@ -1474,7 +1551,8 @@ def send_discord_notification(date_str: str):
             return
         threshold = settings['threshold']
 
-        cur.execute("SELECT 1 FROM discord_notification_logs WHERE base_date = %s AND status = 'sent' LIMIT 1",
+        cur.execute("SELECT 1 FROM discord_notification_logs "
+                    "WHERE kind = 'weight_change' AND base_date = %s AND status = 'sent' LIMIT 1",
                     (date_str,))
         if cur.fetchone():
             log.info(f"Discord notification for {date_str} already sent — skipping")
@@ -1519,28 +1597,289 @@ def send_discord_notification(date_str: str):
         # 날짜는 구성종목 공시일 — 실제 매매는 직전 영업일 장중에 일어난 것
         messages = _split_discord_messages(f"📊 **ETF 비중 변화 알림** ({date_str} 공시)", changes_summary)
 
-        try:
-            with httpx.Client(timeout=10) as client:
-                for message in messages:
-                    resp = client.post(webhook_url, json={"content": message})
-                    if resp.status_code == 429:  # rate limit — 안내된 만큼 기다렸다 한 번 재시도
-                        import time as _time
-                        _time.sleep(float(resp.json().get('retry_after', 1)))
-                        resp = client.post(webhook_url, json={"content": message})
-                    resp.raise_for_status()
-        except httpx.HTTPError as e:
-            # httpx 예외 메시지엔 웹훅 주소(토큰 포함)가 들어가므로 종류·상태코드만 남긴다
-            status = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else None
-            error = f"{type(e).__name__} status={status}"
+        error = _post_discord_messages(webhook_url, messages)
+        if error:
             _record_discord_notification(conn, date_str, threshold, items, len(messages), error)
             # 예외 체인에도 웹훅 주소가 남지 않게 새 예외로 올린다
-            raise RuntimeError(f"Discord notification failed: {error}") from None
+            raise RuntimeError(f"Discord notification failed: {error}")
 
         _record_discord_notification(conn, date_str, threshold, items, len(messages))
         log.info(f"Discord notification sent: {len(items)} ETFs with changes in {len(messages)} message(s)")
     finally:
         cur.close()
         conn.close()
+
+
+# 일일 리포트: 상승 ETF마다 보여 줄 구성종목 수, LLM 한 번에 넘기는 ETF 수, 빠진 코드를 나열하는 최대 개수
+REPORT_TOP_HOLDINGS = 5
+REPORT_LLM_BATCH = 10
+REPORT_MAX_LISTED = 10
+
+
+def daily_return(prices: list[tuple[str, float]], date_str: str) -> float | None:
+    """(날짜, 종가) 목록에서 date_str(YYYY-MM-DD) 종가의 직전 거래일 대비 수익률(%). 그날 가격이나 직전 가격이 없으면 None."""
+    by_date = dict(prices)
+    close = by_date.get(date_str)
+    prev = [d for d in by_date if d < date_str]
+    if not close or not prev:
+        return None
+    prev_close = by_date[max(prev)]
+    if not prev_close:
+        return None
+    return round((close - prev_close) / prev_close * 100, 2)
+
+
+def find_rising_etfs(prices: dict[str, list[tuple[str, float]]], names: dict[str, str],
+                     date_str: str, threshold: float) -> list[dict]:
+    """ETF별 (날짜, 종가)로 date_str 1일 수익률이 threshold(%) 이상인 ETF. 많이 오른 순."""
+    rising = []
+    for code, rows in prices.items():
+        ret = daily_return(rows, date_str)
+        if ret is not None and ret >= threshold:
+            rising.append({'etf_code': code, 'etf_name': names.get(code) or code, 'return_1d': ret})
+    rising.sort(key=lambda r: r['return_1d'], reverse=True)
+    return rising
+
+
+def _price_rows(rows) -> dict[str, list[tuple[str, float]]]:
+    """{code, date, close} agtype 행 → code별 (날짜, 종가) 목록."""
+    import json
+    from collections import defaultdict
+
+    out = defaultdict(list)
+    for row in rows:
+        if not row[0]:
+            continue
+        data = json.loads(_parse_age_value(row[0]))
+        if data.get('date') and data.get('close') is not None:
+            out[data['code']].append((data['date'], float(data['close'])))
+    return out
+
+
+def collect_daily_report(date_str: str, rise_threshold: float) -> dict:
+    """date_str(YYYY-MM-DD) 수집 결과 요약과 rise_threshold(%) 이상 오른 ETF(상위 구성종목·등락 포함)."""
+    import json
+
+    since = (datetime.strptime(date_str, '%Y-%m-%d') - timedelta(days=14)).strftime('%Y-%m-%d')
+    conn = get_db_connection()
+    cur = init_age(conn)
+    try:
+        names = {}
+        for row in execute_cypher(cur, "MATCH (e:ETF) RETURN {code: e.code, name: e.name}"):
+            if row[0]:
+                data = json.loads(_parse_age_value(row[0]))
+                names[data['code']] = data.get('name')
+
+        etf_prices = _price_rows(execute_cypher(cur, """
+            MATCH (e:ETF)-[:HAS_PRICE]->(p:Price)
+            WHERE p.date >= $from_date AND p.date <= $to_date
+            RETURN {code: e.code, date: p.date, close: p.close}
+        """, {'from_date': since, 'to_date': date_str}))
+        priced = {c for c, rows in etf_prices.items() if any(d == date_str for d, _ in rows)}
+
+        held = set()
+        for row in execute_cypher(cur, """
+            MATCH (e:ETF)-[h:HOLDS {date: $date}]->(:Stock)
+            WITH DISTINCT e.code AS code
+            RETURN code
+        """, {'date': date_str}):
+            if row[0]:
+                held.add(_parse_age_value(row[0]))
+
+        stock_total = stock_priced = 0
+        rows = execute_cypher(cur, "MATCH (s:Stock) WHERE s.is_etf = false RETURN count(s)")
+        if rows and rows[0][0]:
+            stock_total = int(_parse_age_value(rows[0][0]))
+        rows = execute_cypher(cur, """
+            MATCH (s:Stock)-[:HAS_PRICE]->(p:Price {date: $date})
+            WHERE s.is_etf = false
+            RETURN count(s)
+        """, {'date': date_str})
+        if rows and rows[0][0]:
+            stock_priced = int(_parse_age_value(rows[0][0]))
+
+        rising = find_rising_etfs(etf_prices, names, date_str, rise_threshold)
+        for etf in rising:
+            holdings, stock_prices = {}, {}
+            for row in execute_cypher(cur, """
+                MATCH (e:ETF {code: $code})-[h:CURRENT_HOLDS]->(s:Stock)
+                OPTIONAL MATCH (s)-[:HAS_PRICE]->(p:Price)
+                WHERE p.date >= $from_date AND p.date <= $to_date
+                RETURN {code: s.code, name: s.name, weight: h.weight, date: p.date, close: p.close}
+            """, {'code': etf['etf_code'], 'from_date': since, 'to_date': date_str}):
+                if not row[0]:
+                    continue
+                data = json.loads(_parse_age_value(row[0]))
+                holdings[data['code']] = {'stock_name': data.get('name') or data['code'],
+                                          'weight': data.get('weight') or 0}
+                if data.get('date') and data.get('close') is not None:
+                    stock_prices.setdefault(data['code'], []).append((data['date'], float(data['close'])))
+            top = sorted(holdings.items(), key=lambda kv: kv[1]['weight'], reverse=True)[:REPORT_TOP_HOLDINGS]
+            etf['holdings'] = [{'stock_code': code, **h, 'return_1d': daily_return(stock_prices.get(code, []), date_str)}
+                               for code, h in top]
+    finally:
+        cur.close()
+        conn.close()
+
+    summary = {
+        'etf_total': len(names),
+        'etf_priced': len(priced),
+        'etf_missing': sorted(set(names) - priced),
+        'holdings_etfs': len(held),
+        'stock_total': stock_total,
+        'stock_priced': stock_priced,
+    }
+    return {'summary': summary, 'rising': rising}
+
+
+def analyze_rising_etfs(rising: list[dict]) -> dict[str, str]:
+    """상승 ETF마다 어떤 구성종목이 오름을 이끌었는지 LLM으로 한두 문장. ETF 코드 → 분석.
+
+    LLM 설정이 없거나 호출이 실패한 ETF는 빠진다 — 리포트는 분석 없이도 보낸다.
+    """
+    import json
+    from openai import OpenAI
+    from pydantic import BaseModel
+
+    if not rising:
+        return {}
+    conn = get_db_connection()
+    try:
+        ai = load_ai_config(conn)
+    finally:
+        conn.close()
+    if not ai['llm_api_key']:
+        log.warning("LLM API key not set (admin page or LLM_API_KEY), skipping rising ETF analysis")
+        return {}
+
+    class ETFAnalysis(BaseModel):
+        code: str
+        analysis: str
+
+    class ETFAnalysisBatch(BaseModel):
+        results: list[ETFAnalysis]
+
+    system_prompt = """한국 ETF 시장 분석가입니다.
+그날 많이 오른 ETF마다 이름, 1일 수익률, 비중 상위 구성종목(비중·1일 수익률)을 받습니다.
+ETF마다 상승을 이끈 구성종목과 그 정도를 한두 문장으로 씁니다.
+
+규칙:
+- 주어진 숫자만 근거로 쓴다. 뉴스·실적·정책 같은 상승 원인은 추측하지 않는다
+- 레버리지·인버스 ETF는 그 구조(예: 기초지수 2배, 지수 하락에 수익)를 짚는다
+- 구성종목 수익률이 비어 있으면 그 종목은 언급하지 않는다
+- ETF 이름과 ETF 수익률은 메시지에 이미 있으니 되풀이하지 않는다
+- 존댓말 대신 "~했다" 체로 쓴다"""
+
+    def describe(etf: dict) -> str:
+        parts = [f"{h['stock_name']} 비중 {h['weight']:.1f}%"
+                 + (f" {h['return_1d']:+.2f}%" if h['return_1d'] is not None else "")
+                 for h in etf.get('holdings', [])]
+        return f"- [{etf['etf_code']}] {etf['etf_name']} {etf['return_1d']:+.2f}%: " + ", ".join(parts)
+
+    client = OpenAI(base_url=ai['llm_api_base'], api_key=ai['llm_api_key'], timeout=120)
+    result = {}
+    for i in range(0, len(rising), REPORT_LLM_BATCH):
+        batch = rising[i:i + REPORT_LLM_BATCH]
+        try:
+            completion = client.chat.completions.parse(
+                model=ai['llm_model'],
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": "\n".join(describe(e) for e in batch)},
+                ],
+                response_format=ETFAnalysisBatch,
+                temperature=0.3,
+                max_tokens=4096,
+                # 숫자를 옮겨 쓰는 짧은 글이라 추론을 끈다 — 켜 두면 추론만으로 토큰 한도를 넘긴다
+                extra_body={'chat_template_kwargs': {'enable_thinking': False}},
+            )
+            parsed = completion.choices[0].message.parsed
+            if parsed is None:
+                raise ValueError("LLM returned no parsable result")
+            codes = {e['etf_code'] for e in batch}
+            result.update({r.code: r.analysis.strip() for r in parsed.results if r.code in codes})
+        except Exception as e:
+            log.warning(f"Rising ETF analysis failed for {[e_['etf_code'] for e_ in batch]}: {e}")
+    log.info(f"Rising ETF analysis: {len(result)}/{len(rising)} ETFs")
+    return result
+
+
+def format_daily_report(date_str: str, report: dict, threshold: float, new_etfs: list[dict]) -> tuple[str, list[str]]:
+    """일일 리포트 → (디스코드 헤더, 블록들). 블록은 _split_discord_messages가 2,000자에 맞춰 묶는다."""
+    s = report['summary']
+    missing = s['etf_missing']
+    lines = [f"**수집 결과**",
+             f"  ETF 가격: {s['etf_priced']}/{s['etf_total']}"
+             + (f" (빠짐: {', '.join(missing[:REPORT_MAX_LISTED])}"
+                + (f" 외 {len(missing) - REPORT_MAX_LISTED}개" if len(missing) > REPORT_MAX_LISTED else "") + ")"
+                if missing else ""),
+             f"  구성종목: {s['holdings_etfs']}/{s['etf_total']} ETF",
+             f"  주식 가격: {s['stock_priced']}/{s['stock_total']}"]
+    if new_etfs:
+        lines.append("  신규 편입: " + ", ".join(f"{e['name']}({e['code']})" for e in new_etfs))
+    blocks = ["\n".join(lines)]
+
+    rising = report['rising']
+    if not rising:
+        blocks.append(f"1일 {threshold:+.1f}% 이상 오른 ETF가 없습니다.")
+    else:
+        blocks.append(f"**상승 ETF** (1일 {threshold:+.1f}% 이상, {len(rising)}개)")
+    for etf in rising:
+        block = f"**{etf['etf_name']}** ({etf['etf_code']}) {etf['return_1d']:+.2f}%"
+        holdings = [f"{h['stock_name']} {h['weight']:.1f}%"
+                    + (f" {h['return_1d']:+.2f}%" if h['return_1d'] is not None else "")
+                    for h in etf.get('holdings', [])]
+        if holdings:
+            block += "\n  " + " · ".join(holdings)
+        if etf.get('analysis'):
+            block += f"\n  💬 {etf['analysis']}"
+        blocks.append(block)
+    return f"📈 **ETF 일일 리포트** ({date_str})", blocks
+
+
+def send_daily_report(date_str: str, new_etfs: list[dict] | None = None):
+    """date_str(YYYY-MM-DD) 수집 결과 요약과 상승 ETF를 디스코드로 보낸다. 알림이 꺼져 있거나 이미 보낸 날짜면 건너뛴다.
+
+    발송에 실패하면 이력에 남기고 예외를 올려 Airflow 재시도가 다시 보내게 한다.
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        settings = _load_discord_settings(conn)
+        if not settings['enabled']:
+            log.info("Discord notification disabled — skipping daily report")
+            return
+        webhook_url = settings['webhook_url']
+        if not webhook_url:
+            log.info("Discord webhook URL not set — skipping daily report")
+            return
+        cur.execute("SELECT 1 FROM discord_notification_logs "
+                    "WHERE kind = 'daily_report' AND base_date = %s AND status = 'sent' LIMIT 1",
+                    (date_str,))
+        if cur.fetchone():
+            log.info(f"Daily report for {date_str} already sent — skipping")
+            return
+    finally:
+        cur.close()
+        conn.close()
+
+    threshold = settings['rise_threshold']
+    report = collect_daily_report(date_str, threshold)
+    analyses = analyze_rising_etfs(report['rising'])
+    for etf in report['rising']:
+        etf['analysis'] = analyses.get(etf['etf_code'])
+    header, blocks = format_daily_report(date_str, report, threshold, new_etfs or [])
+    messages = _split_discord_messages(header, blocks)
+
+    error = _post_discord_messages(webhook_url, messages)
+    conn = get_db_connection()
+    try:
+        _record_discord_notification(conn, date_str, threshold, report, len(messages), error, kind='daily_report')
+    finally:
+        conn.close()
+    if error:
+        raise RuntimeError(f"Discord daily report failed: {error}")
+    log.info(f"Daily report sent: {len(report['rising'])} rising ETFs in {len(messages)} message(s)")
 
 
 def update_etf_returns():

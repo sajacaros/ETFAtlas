@@ -141,6 +141,7 @@ function DiscordSettingsTab() {
   const [settings, setSettings] = useState<AdminDiscordSettings | null>(null)
   const [enabled, setEnabled] = useState(true)
   const [threshold, setThreshold] = useState('3')
+  const [riseThreshold, setRiseThreshold] = useState('3')
   const [webhookUrl, setWebhookUrl] = useState('')  // 비워 두면 기존 주소 유지
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
@@ -149,6 +150,7 @@ function DiscordSettingsTab() {
     setSettings(s)
     setEnabled(s.enabled)
     setThreshold(String(s.threshold))
+    setRiseThreshold(String(s.rise_threshold))
     setWebhookUrl('')
   }, [])
 
@@ -160,7 +162,8 @@ function DiscordSettingsTab() {
 
   const save = async (body: { webhook_url?: string } = {}) => {
     const value = Number(threshold)
-    if (!(value > 0 && value <= 100)) {
+    const riseValue = Number(riseThreshold)
+    if (!(value > 0 && value <= 100 && riseValue > 0 && riseValue <= 100)) {
       toast({ title: '기준값은 0보다 크고 100 이하여야 합니다', variant: 'destructive' })
       return
     }
@@ -170,6 +173,7 @@ function DiscordSettingsTab() {
       apply(await adminApi.updateDiscordSettings({
         enabled,
         threshold: value,
+        rise_threshold: riseValue,
         ...(url ? { webhook_url: url } : {}),
         ...body,
       }))
@@ -206,6 +210,7 @@ function DiscordSettingsTab() {
     <div className="max-w-xl space-y-6 py-2">
       <p className="text-sm text-muted-foreground">
         개장일마다 구성종목 공시를 받으면 액티브 ETF 전체에서 이전 공시보다 비중이 기준값보다 크게 바뀐 종목을 디스코드로 보냅니다. 웹의 비중 변화 화면도 같은 기준값을 씁니다.
+        개장일 16:30 수집이 끝나면 수집 결과 요약과 기준값 이상 오른 ETF(구성종목 등락·LLM 분석 포함)를 일일 리포트로 보냅니다.
         메시지가 2,000자를 넘으면 나눠서 보냅니다.
       </p>
 
@@ -241,6 +246,21 @@ function DiscordSettingsTab() {
           className="w-32"
         />
         <p className="text-sm text-muted-foreground">이 값보다 크게 바뀐 종목만 알립니다.</p>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="discord-rise-threshold">일일 리포트 상승 기준 (%)</Label>
+        <Input
+          id="discord-rise-threshold"
+          type="number"
+          min={0.1}
+          max={100}
+          step={0.5}
+          value={riseThreshold}
+          onChange={(e) => setRiseThreshold(e.target.value)}
+          className="w-32"
+        />
+        <p className="text-sm text-muted-foreground">그날 1일 수익률이 이 값 이상인 ETF를 모두 보냅니다.</p>
       </div>
 
       <div className="flex flex-wrap gap-2">

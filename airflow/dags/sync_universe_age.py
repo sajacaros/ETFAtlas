@@ -6,11 +6,13 @@ AGE가 비어 있으면(첫 실행) 최근 거래일 하루만 수집한다 — 
 증분 기준은 전체 최근 날짜 하나라 일부 ETF만 실패한 날은 그 뒤에 다시 받지 않으므로,
 최근 영업일 몇 날의 빠진 (ETF, 날짜)를 매번 다시 채운다(refill_missing_etf_prices).
 구성종목(HOLDS)은 KIS API가 날짜 지정을 지원하지 않아 항상 최근 거래일 스냅샷만 수집한다.
+16:30 실행은 그날 종가를 받고 일일 리포트(수집 요약·상승 ETF)를 디스코드로 보낸다.
 수집 로직은 age_utils 공용 함수 사용. 태그는 age_tagging DAG에서 부여.
 """
 
 from datetime import datetime, timedelta
 from airflow.sdk import DAG
+from airflow.timetables.trigger import MultipleCronTriggerTimetable
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.providers.standard.operators.empty import EmptyOperator
 import logging
@@ -18,9 +20,9 @@ import logging
 from age_utils import (
     get_db_connection, init_age, execute_cypher_batch,
     get_business_days, last_settled_day, get_last_collected_date, get_etf_codes_from_age,
-    collect_universe_and_prices, refill_missing_etf_prices, collect_holdings, compute_weight_changes,
+    collect_universe_and_prices, refill_missing_etf_prices, refresh_latest_snapshot_values, collect_holdings, compute_weight_changes,
     collect_stock_prices_for_dates,
-    record_collection_run, send_discord_notification,
+    record_collection_run, send_discord_notification, send_daily_report,
     update_etf_returns,
     INDEX_TAG_PATTERNS, RULE_ONLY_TAGS, holdings_target_date,
 )
@@ -40,7 +42,9 @@ dag = DAG(
     'age_sync_universe',
     default_args=default_args,
     description='ETF 데이터 일일 증분 수집 (Apache AGE)',
-    schedule='50 8 * * *',  # 매일 08:50 KST — 구성종목은 개장일에만 그날 날짜로 받는다 (holdings_target_date)
+    # 매일 08:50·16:30 KST. 16:30은 그날 종가를 받고, 다음 날 08:50은 그날 NAV·순자산을 다시 쓴다.
+    # 구성종목은 개장일에만 그날 날짜로 받으며(holdings_target_date) 16:30에는 아침에 빠진 ETF만 다시 받는다
+    schedule=MultipleCronTriggerTimetable('50 8 * * *', '30 16 * * *', timezone='Asia/Seoul'),
     catchup=False,
     max_active_runs=1,  # 수동 실행이 정기 실행과 겹치면 Price 노드가 중복될 수 있다
     tags=['etf', 'daily', 'age'],
@@ -81,7 +85,10 @@ def fetch_trading_dates(**context):
 
 
 def sync_universe_and_prices(**context):
-    """ETF 유니버스 + 가격 증분 수집. 새 날짜가 없어도 최근 빠진 가격은 다시 채운다."""
+    """ETF 유니버스 + 가격 증분 수집. 새 날짜가 없어도 최근 빠진 가격은 다시 채운다.
+
+    새 날짜가 없으면(전날 16:30에 받은 뒤의 아침 실행) 마지막 수집일 NAV·순자산을 지금 현재가로 다시 쓴다.
+    """
     ti = context['ti']
     dates = ti.xcom_pull(task_ids='fetch_trading_dates')
     if dates:
@@ -90,6 +97,8 @@ def sync_universe_and_prices(**context):
             ti.xcom_push(key='new_etfs', value=new_etfs)
         if actual_dates:
             ti.xcom_push(key='actual_dates', value=actual_dates)
+    else:
+        refresh_latest_snapshot_values()
 
     refill_missing_etf_prices()
 
@@ -158,6 +167,21 @@ def notify_discord(**context):
     date_str = _latest_collected_date(context['ti'])
     if date_str:
         send_discord_notification(date_str)
+
+
+def notify_daily_report(**context):
+    """장 마감 뒤 실행이면 그날 수집 결과 요약과 많이 오른 ETF를 디스코드로 보낸다.
+
+    그날 종가를 받은 실행(16:30)만 보낸다 — 아침 실행이 받는 전날 가격은 리포트하지 않는다.
+    """
+    ti = context['ti']
+    dates = ti.xcom_pull(task_ids='sync_universe_and_prices', key='actual_dates')
+    today = datetime.now().strftime('%Y%m%d')
+    if not dates or dates[-1] != today:
+        log.info(f"No closing prices for today ({today}) in this run — skipping daily report")
+        return
+    new_etfs = ti.xcom_pull(task_ids='sync_universe_and_prices', key='new_etfs')
+    send_daily_report(f"{today[:4]}-{today[4:6]}-{today[6:8]}", new_etfs)
 
 
 def sync_returns(**context):
@@ -237,15 +261,20 @@ t_returns = PythonOperator(task_id='sync_returns',
                             python_callable=sync_returns, dag=dag)
 t_tags = PythonOperator(task_id='tag_new_etfs',
                          python_callable=tag_new_etfs, dag=dag)
+# 주식 가격·구성종목이 일부 실패해도 리포트는 보낸다 — 요약에 빠진 수가 드러난다
+t_report = PythonOperator(task_id='notify_daily_report',
+                           python_callable=notify_daily_report, trigger_rule='all_done', dag=dag)
 
 # 의존 관계:
 # start → fetch_trading_dates → sync_universe_and_prices
 #   → sync_holdings → [sync_stock_prices, sync_weight_changes → [record_collection, notify_discord]]
 #   → sync_returns (가격 수집 후)
+#   → [sync_stock_prices, sync_returns] → notify_daily_report (16:30 실행만)
 #   → tag_new_etfs (유니버스 수집 후)
 # → end
 start >> t_dates >> t_universe
 t_universe >> [t_holdings, t_returns, t_tags]
 t_holdings >> [t_stock_prices, t_changes]
 t_changes >> [t_record, t_discord]
-[t_stock_prices, t_record, t_discord, t_returns, t_tags] >> end
+[t_stock_prices, t_returns] >> t_report
+[t_report, t_record, t_discord, t_tags] >> end

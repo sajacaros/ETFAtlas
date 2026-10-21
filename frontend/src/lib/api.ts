@@ -543,7 +543,7 @@ export const adminApi = {
     return data
   },
   // webhook_url: undefined면 기존 주소 유지, ''면 삭제
-  updateDiscordSettings: async (body: { enabled: boolean; threshold: number; webhook_url?: string }) => {
+  updateDiscordSettings: async (body: { enabled: boolean; threshold: number; rise_threshold: number; webhook_url?: string }) => {
     const { data } = await api.put<AdminDiscordSettings>('/admin/settings/discord', body)
     return data
   },

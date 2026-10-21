@@ -116,6 +116,18 @@ def test_last_settled_day(now, expected):
     assert age_utils.last_settled_day(datetime.strptime(now, "%Y-%m-%d %H:%M")) == expected
 
 
+@pytest.mark.parametrize("now, expected", [
+    ("2026-10-21 08:50", True),   # 개장 전: 직전 거래일 값
+    ("2026-10-21 09:00", False),  # 장중: 그날 움직이는 값
+    ("2026-10-21 15:59", False),
+    ("2026-10-21 16:30", True),   # 종가 확정 뒤: 그날 값
+])
+def test_snapshot_is_settled(now, expected):
+    from datetime import datetime
+    age_utils = pytest.importorskip("age_utils")
+    assert age_utils.snapshot_is_settled(datetime.strptime(now, "%Y-%m-%d %H:%M")) is expected
+
+
 @pytest.mark.parametrize("name, ok", [
     ("1Q 은액티브", False),
     ("TIGER 은액티브", False),
@@ -175,3 +187,44 @@ def test_diff_etf_profiles_keeps_only_changed_fields():
         "091160": {"expense_ratio": 0.09, "description": "반도체", "listed_date": "2006-06-27"},
         "0091P0": {"expense_ratio": 0.5},
     }
+
+
+def test_daily_return():
+    age_utils = pytest.importorskip("age_utils")
+    prices = [("2026-10-16", 100.0), ("2026-10-20", 110.0), ("2026-10-21", 99.0)]
+    assert age_utils.daily_return(prices, "2026-10-21") == -10.0
+    assert age_utils.daily_return(prices, "2026-10-20") == 10.0  # 주말을 건너 직전 거래일과 비교
+    assert age_utils.daily_return(prices, "2026-10-16") is None  # 직전 가격 없음
+    assert age_utils.daily_return(prices, "2026-10-22") is None  # 그날 가격 없음
+
+
+def test_find_rising_etfs_sorted_and_thresholded():
+    age_utils = pytest.importorskip("age_utils")
+    prices = {
+        "A": [("2026-10-20", 100.0), ("2026-10-21", 103.0)],
+        "B": [("2026-10-20", 100.0), ("2026-10-21", 110.0)],
+        "C": [("2026-10-20", 100.0), ("2026-10-21", 102.9)],
+        "D": [("2026-10-20", 100.0)],  # 그날 가격 없음
+    }
+    result = age_utils.find_rising_etfs(prices, {"A": "에이"}, "2026-10-21", 3.0)
+    assert [(r["etf_code"], r["etf_name"], r["return_1d"]) for r in result] == [("B", "B", 10.0), ("A", "에이", 3.0)]
+
+
+def test_format_daily_report():
+    age_utils = pytest.importorskip("age_utils")
+    report = {
+        "summary": {"etf_total": 3, "etf_priced": 2, "etf_missing": ["C"], "holdings_etfs": 3,
+                    "stock_total": 10, "stock_priced": 9},
+        "rising": [{"etf_code": "B", "etf_name": "비", "return_1d": 5.0, "analysis": "삼성전자가 이끌었다.",
+                    "holdings": [{"stock_code": "005930", "stock_name": "삼성전자", "weight": 20.0, "return_1d": 6.0},
+                                 {"stock_code": "X", "stock_name": "현금", "weight": 1.0, "return_1d": None}]}],
+    }
+    header, blocks = age_utils.format_daily_report("2026-10-21", report, 3.0, [{"code": "N", "name": "새"}])
+    assert header == "📈 **ETF 일일 리포트** (2026-10-21)"
+    assert "ETF 가격: 2/3 (빠짐: C)" in blocks[0]
+    assert "신규 편입: 새(N)" in blocks[0]
+    assert blocks[1] == "**상승 ETF** (1일 +3.0% 이상, 1개)"
+    assert blocks[2] == "**비** (B) +5.00%\n  삼성전자 20.0% +6.00% · 현금 1.0%\n  💬 삼성전자가 이끌었다."
+
+    _, blocks = age_utils.format_daily_report("2026-10-21", {**report, "rising": []}, 3.0, [])
+    assert blocks[1] == "1일 +3.0% 이상 오른 ETF가 없습니다."

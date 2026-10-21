@@ -1610,10 +1610,10 @@ def send_discord_notification(date_str: str):
         conn.close()
 
 
-# 일일 리포트: 상승 ETF마다 보여 줄 구성종목 수, LLM 한 번에 넘기는 ETF 수, 빠진 코드를 나열하는 최대 개수
+# 일일 리포트: 목록에 보일 상승 ETF 수, 특징 요약에 넘길 최대 ETF 수, 상승 ETF마다 넘길 구성종목 수
+REPORT_TOP_RISING = 10
+REPORT_LLM_MAX_ETFS = 100
 REPORT_TOP_HOLDINGS = 5
-REPORT_LLM_BATCH = 10
-REPORT_MAX_LISTED = 10
 
 
 def daily_return(prices: list[tuple[str, float]], date_str: str) -> float | None:
@@ -1657,7 +1657,7 @@ def _price_rows(rows) -> dict[str, list[tuple[str, float]]]:
 
 
 def collect_daily_report(date_str: str, rise_threshold: float) -> dict:
-    """date_str(YYYY-MM-DD) 수집 결과 요약과 rise_threshold(%) 이상 오른 ETF(상위 구성종목·등락 포함)."""
+    """date_str(YYYY-MM-DD)에 rise_threshold(%) 이상 오른 ETF(상위 구성종목·등락 포함)와 시장(KODEX 200) 수익률."""
     import json
 
     since = (datetime.strptime(date_str, '%Y-%m-%d') - timedelta(days=14)).strftime('%Y-%m-%d')
@@ -1675,28 +1675,6 @@ def collect_daily_report(date_str: str, rise_threshold: float) -> dict:
             WHERE p.date >= $from_date AND p.date <= $to_date
             RETURN {code: e.code, date: p.date, close: p.close}
         """, {'from_date': since, 'to_date': date_str}))
-        priced = {c for c, rows in etf_prices.items() if any(d == date_str for d, _ in rows)}
-
-        held = set()
-        for row in execute_cypher(cur, """
-            MATCH (e:ETF)-[h:HOLDS {date: $date}]->(:Stock)
-            WITH DISTINCT e.code AS code
-            RETURN code
-        """, {'date': date_str}):
-            if row[0]:
-                held.add(_parse_age_value(row[0]))
-
-        stock_total = stock_priced = 0
-        rows = execute_cypher(cur, "MATCH (s:Stock) WHERE s.is_etf = false RETURN count(s)")
-        if rows and rows[0][0]:
-            stock_total = int(_parse_age_value(rows[0][0]))
-        rows = execute_cypher(cur, """
-            MATCH (s:Stock)-[:HAS_PRICE]->(p:Price {date: $date})
-            WHERE s.is_etf = false
-            RETURN count(s)
-        """, {'date': date_str})
-        if rows and rows[0][0]:
-            stock_priced = int(_parse_age_value(rows[0][0]))
 
         rising = find_rising_etfs(etf_prices, names, date_str, rise_threshold)
         for etf in rising:
@@ -1721,124 +1699,102 @@ def collect_daily_report(date_str: str, rise_threshold: float) -> dict:
         cur.close()
         conn.close()
 
-    summary = {
-        'etf_total': len(names),
-        'etf_priced': len(priced),
-        'etf_missing': sorted(set(names) - priced),
-        'holdings_etfs': len(held),
-        'stock_total': stock_total,
-        'stock_priced': stock_priced,
-    }
-    return {'summary': summary, 'rising': rising}
+    market_return = daily_return(etf_prices.get(BUSINESS_DAY_REFERENCE_CODE, []), date_str)
+    return {'rising': rising, 'market_return': market_return}
 
 
-def analyze_rising_etfs(rising: list[dict]) -> dict[str, str]:
-    """상승 ETF마다 어떤 구성종목이 오름을 이끌었는지 LLM으로 한두 문장. ETF 코드 → 분석.
+def summarize_rising_etfs(rising: list[dict], market_return: float | None) -> list[str]:
+    """상승 ETF 전체와 시장 수익률(KODEX 200)을 보고 오늘 장만의 특징을 LLM으로 몇 줄 정리한다.
 
-    LLM 설정이 없거나 호출이 실패한 ETF는 빠진다 — 리포트는 분석 없이도 보낸다.
+    LLM 설정이 없거나 호출이 실패하면 빈 목록 — 리포트는 특징 없이도 보낸다.
     """
-    import json
     from openai import OpenAI
     from pydantic import BaseModel
 
     if not rising:
-        return {}
+        return []
     conn = get_db_connection()
     try:
         ai = load_ai_config(conn)
     finally:
         conn.close()
     if not ai['llm_api_key']:
-        log.warning("LLM API key not set (admin page or LLM_API_KEY), skipping rising ETF analysis")
-        return {}
+        log.warning("LLM API key not set (admin page or LLM_API_KEY), skipping daily features")
+        return []
 
-    class ETFAnalysis(BaseModel):
-        code: str
-        analysis: str
-
-    class ETFAnalysisBatch(BaseModel):
-        results: list[ETFAnalysis]
+    class DailyFeatures(BaseModel):
+        features: list[str]
 
     system_prompt = """한국 ETF 시장 분석가입니다.
-그날 많이 오른 ETF마다 이름, 1일 수익률, 비중 상위 구성종목(비중·1일 수익률)을 받습니다.
-ETF마다 상승을 이끈 구성종목과 그 정도를 한두 문장으로 씁니다.
+그날 시장 수익률(KODEX 200)과 많이 오른 ETF 목록(이름, 1일 수익률, 비중 상위 구성종목의 비중·1일 수익률)을 받습니다.
+오늘 장에서만 볼 수 있는 특징을 1~3개 항목으로 정리합니다.
 
 규칙:
-- 주어진 숫자만 근거로 쓴다. 뉴스·실적·정책 같은 상승 원인은 추측하지 않는다
-- 레버리지·인버스 ETF는 그 구조(예: 기초지수 2배, 지수 하락에 수익)를 짚는다
-- 구성종목 수익률이 비어 있으면 그 종목은 언급하지 않는다
-- ETF 이름과 ETF 수익률은 메시지에 이미 있으니 되풀이하지 않는다
-- 존댓말 대신 "~했다" 체로 쓴다"""
+- 시장보다 뚜렷하게 더 오른 테마 묶음, 그 묶음을 끌어올린 종목, 혼자 크게 튄 종목·ETF를 쓴다
+- 시장만큼 오른 ETF(지수 추종, 시가총액 상위 종목 위주 ETF)는 쓰지 않는다. 대형주 비중이 커서 함께 올랐다는 식의 구조 설명도 쓰지 않는다
+- 비슷한 ETF는 하나로 묶고 개별 ETF를 하나씩 나열하지 않는다
+- 항목끼리 같은 내용을 되풀이하지 않는다. 쓸 만한 특징이 하나뿐이면 하나만 쓴다
+- 주어진 숫자만 쓴다. 지수 내 비중처럼 주어지지 않은 숫자를 만들지 않고, 뉴스·실적·정책 같은 상승 원인도 추측하지 않는다
+- 항목마다 한 문장, "~했다" 체로 쓴다"""
 
     def describe(etf: dict) -> str:
-        parts = [f"{h['stock_name']} 비중 {h['weight']:.1f}%"
+        parts = [f"{h['stock_name']} {h['weight']:.1f}%"
                  + (f" {h['return_1d']:+.2f}%" if h['return_1d'] is not None else "")
                  for h in etf.get('holdings', [])]
-        return f"- [{etf['etf_code']}] {etf['etf_name']} {etf['return_1d']:+.2f}%: " + ", ".join(parts)
+        return f"- {etf['etf_name']} {etf['return_1d']:+.2f}%: " + ", ".join(parts)
+
+    shown = rising[:REPORT_LLM_MAX_ETFS]
+    user = [f"시장(KODEX 200) {market_return:+.2f}%" if market_return is not None else "시장 수익률 없음",
+            f"상승 ETF {len(rising)}개" + (f" (많이 오른 {len(shown)}개만)" if len(shown) < len(rising) else "")]
+    user += [describe(e) for e in shown]
 
     client = OpenAI(base_url=ai['llm_api_base'], api_key=ai['llm_api_key'], timeout=120)
-    result = {}
-    for i in range(0, len(rising), REPORT_LLM_BATCH):
-        batch = rising[i:i + REPORT_LLM_BATCH]
-        try:
-            completion = client.chat.completions.parse(
-                model=ai['llm_model'],
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": "\n".join(describe(e) for e in batch)},
-                ],
-                response_format=ETFAnalysisBatch,
-                temperature=0.3,
-                max_tokens=4096,
-                # 숫자를 옮겨 쓰는 짧은 글이라 추론을 끈다 — 켜 두면 추론만으로 토큰 한도를 넘긴다
-                extra_body={'chat_template_kwargs': {'enable_thinking': False}},
-            )
-            parsed = completion.choices[0].message.parsed
-            if parsed is None:
-                raise ValueError("LLM returned no parsable result")
-            codes = {e['etf_code'] for e in batch}
-            result.update({r.code: r.analysis.strip() for r in parsed.results if r.code in codes})
-        except Exception as e:
-            log.warning(f"Rising ETF analysis failed for {[e_['etf_code'] for e_ in batch]}: {e}")
-    log.info(f"Rising ETF analysis: {len(result)}/{len(rising)} ETFs")
-    return result
+    try:
+        completion = client.chat.completions.parse(
+            model=ai['llm_model'],
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": "\n".join(user)},
+            ],
+            response_format=DailyFeatures,
+            temperature=0.3,
+            max_tokens=2048,
+            # 숫자를 묶어 옮기는 짧은 글이라 추론을 끈다 — 켜 두면 추론만으로 토큰 한도를 넘긴다
+            extra_body={'chat_template_kwargs': {'enable_thinking': False}},
+        )
+        parsed = completion.choices[0].message.parsed
+        if parsed is None:
+            raise ValueError("LLM returned no parsable result")
+    except Exception as e:
+        log.warning(f"Daily features failed: {e}")
+        return []
+    features = [f.strip() for f in parsed.features if f.strip()]
+    log.info(f"Daily features: {len(features)} items from {len(rising)} rising ETFs")
+    return features
 
 
 def format_daily_report(date_str: str, report: dict, threshold: float, new_etfs: list[dict]) -> tuple[str, list[str]]:
     """일일 리포트 → (디스코드 헤더, 블록들). 블록은 _split_discord_messages가 2,000자에 맞춰 묶는다."""
-    s = report['summary']
-    missing = s['etf_missing']
-    lines = [f"**수집 결과**",
-             f"  ETF 가격: {s['etf_priced']}/{s['etf_total']}"
-             + (f" (빠짐: {', '.join(missing[:REPORT_MAX_LISTED])}"
-                + (f" 외 {len(missing) - REPORT_MAX_LISTED}개" if len(missing) > REPORT_MAX_LISTED else "") + ")"
-                if missing else ""),
-             f"  구성종목: {s['holdings_etfs']}/{s['etf_total']} ETF",
-             f"  주식 가격: {s['stock_priced']}/{s['stock_total']}"]
+    blocks = []
     if new_etfs:
-        lines.append("  신규 편입: " + ", ".join(f"{e['name']}({e['code']})" for e in new_etfs))
-    blocks = ["\n".join(lines)]
+        blocks.append("신규 편입: " + ", ".join(f"{e['name']}({e['code']})" for e in new_etfs))
 
     rising = report['rising']
     if not rising:
         blocks.append(f"1일 {threshold:+.1f}% 이상 오른 ETF가 없습니다.")
-    else:
-        blocks.append(f"**상승 ETF** (1일 {threshold:+.1f}% 이상, {len(rising)}개)")
-    for etf in rising:
-        block = f"**{etf['etf_name']}** ({etf['etf_code']}) {etf['return_1d']:+.2f}%"
-        holdings = [f"{h['stock_name']} {h['weight']:.1f}%"
-                    + (f" {h['return_1d']:+.2f}%" if h['return_1d'] is not None else "")
-                    for h in etf.get('holdings', [])]
-        if holdings:
-            block += "\n  " + " · ".join(holdings)
-        if etf.get('analysis'):
-            block += f"\n  💬 {etf['analysis']}"
-        blocks.append(block)
+        return f"📈 **ETF 일일 리포트** ({date_str})", blocks
+    if report.get('features'):
+        blocks.append("**오늘의 특징**\n" + "\n".join(f"• {f}" for f in report['features']))
+    top = rising[:REPORT_TOP_RISING]
+    title = f"**상승 ETF** (1일 {threshold:+.1f}% 이상 {len(rising)}개"
+    title += f" 중 상위 {len(top)}개)" if len(top) < len(rising) else ")"
+    blocks.append(title + "\n" + "\n".join(
+        f"{i}. {etf['etf_name']} ({etf['etf_code']}) {etf['return_1d']:+.2f}%" for i, etf in enumerate(top, 1)))
     return f"📈 **ETF 일일 리포트** ({date_str})", blocks
 
 
 def send_daily_report(date_str: str, new_etfs: list[dict] | None = None):
-    """date_str(YYYY-MM-DD) 수집 결과 요약과 상승 ETF를 디스코드로 보낸다. 알림이 꺼져 있거나 이미 보낸 날짜면 건너뛴다.
+    """date_str(YYYY-MM-DD) 오늘의 특징과 상승 ETF를 디스코드로 보낸다. 알림이 꺼져 있거나 이미 보낸 날짜면 건너뛴다.
 
     발송에 실패하면 이력에 남기고 예외를 올려 Airflow 재시도가 다시 보내게 한다.
     """
@@ -1865,9 +1821,7 @@ def send_daily_report(date_str: str, new_etfs: list[dict] | None = None):
 
     threshold = settings['rise_threshold']
     report = collect_daily_report(date_str, threshold)
-    analyses = analyze_rising_etfs(report['rising'])
-    for etf in report['rising']:
-        etf['analysis'] = analyses.get(etf['etf_code'])
+    report['features'] = summarize_rising_etfs(report['rising'], report['market_return'])
     header, blocks = format_daily_report(date_str, report, threshold, new_etfs or [])
     messages = _split_discord_messages(header, blocks)
 

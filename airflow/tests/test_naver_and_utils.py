@@ -212,19 +212,22 @@ def test_find_rising_etfs_sorted_and_thresholded():
 
 def test_format_daily_report():
     age_utils = pytest.importorskip("age_utils")
+    rising = [{"etf_code": f"E{i}", "etf_name": f"이티에프{i}", "return_1d": 20.0 - i, "holdings": []} for i in range(12)]
     report = {
-        "summary": {"etf_total": 3, "etf_priced": 2, "etf_missing": ["C"], "holdings_etfs": 3,
-                    "stock_total": 10, "stock_priced": 9},
-        "rising": [{"etf_code": "B", "etf_name": "비", "return_1d": 5.0, "analysis": "삼성전자가 이끌었다.",
-                    "holdings": [{"stock_code": "005930", "stock_name": "삼성전자", "weight": 20.0, "return_1d": 6.0},
-                                 {"stock_code": "X", "stock_name": "현금", "weight": 1.0, "return_1d": None}]}],
+        "rising": rising,
+        "features": ["반도체 ETF 8개가 SK하이닉스 상승에 함께 올랐다."],
     }
     header, blocks = age_utils.format_daily_report("2026-10-21", report, 3.0, [{"code": "N", "name": "새"}])
     assert header == "📈 **ETF 일일 리포트** (2026-10-21)"
-    assert "ETF 가격: 2/3 (빠짐: C)" in blocks[0]
-    assert "신규 편입: 새(N)" in blocks[0]
-    assert blocks[1] == "**상승 ETF** (1일 +3.0% 이상, 1개)"
-    assert blocks[2] == "**비** (B) +5.00%\n  삼성전자 20.0% +6.00% · 현금 1.0%\n  💬 삼성전자가 이끌었다."
+    assert blocks[0] == "신규 편입: 새(N)"
+    assert blocks[1] == "**오늘의 특징**\n• 반도체 ETF 8개가 SK하이닉스 상승에 함께 올랐다."
+    lines = blocks[2].split("\n")
+    assert lines[0] == "**상승 ETF** (1일 +3.0% 이상 12개 중 상위 10개)"
+    assert lines[1] == "1. 이티에프0 (E0) +20.00%"
+    assert len(lines) == 11
+
+    _, blocks = age_utils.format_daily_report("2026-10-21", {**report, "rising": rising[:2], "features": []}, 3.0, [])
+    assert blocks[0].split("\n")[0] == "**상승 ETF** (1일 +3.0% 이상 2개)"
 
     _, blocks = age_utils.format_daily_report("2026-10-21", {**report, "rising": []}, 3.0, [])
-    assert blocks[1] == "1일 +3.0% 이상 오른 ETF가 없습니다."
+    assert blocks == ["1일 +3.0% 이상 오른 ETF가 없습니다."]

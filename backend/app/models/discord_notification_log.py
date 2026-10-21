@@ -15,7 +15,7 @@ class DiscordNotificationLog(Base):
     threshold = Column(Float, nullable=False)
     # [{etf_code, etf_name, prev_date, changes: [{stock_code, stock_name, change_type,
     #   previous_weight, current_weight, weight_change}]}]  (weight_change)
-    # {summary: {...}, rising: [{etf_code, etf_name, return_1d, analysis}]}  (daily_report)
+    # {rising: [{etf_code, etf_name, return_1d, holdings}], market_return, features: [str]}  (daily_report)
     items = Column(JSONB, nullable=False)
     message_count = Column(Integer, nullable=False)
     error = Column(Text, nullable=True)

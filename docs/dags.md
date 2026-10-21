@@ -101,9 +101,10 @@ KIS는 과거 구성종목을 주지 않으므로 그날 놓치면 복구할 수
 #### 8. notify_daily_report
 
 그날 종가를 받은 실행(`actual_dates`의 마지막이 오늘, 즉 16:30)에서만 `send_daily_report(date, new_etfs)`를 호출한다. 디스코드 알림이 꺼져 있거나 웹훅이 없거나 그날 이미 보냈으면(`discord_notification_logs.kind = 'daily_report'`) 건너뛴다.
-- 수집 결과: ETF 가격(빠진 코드), 구성종목, 주식 가격 개수와 신규 편입 ETF
-- 상승 ETF: 1일 수익률이 `discord_settings.rise_threshold`(기본 3%, 관리자 페이지) 이상인 ETF 전부. 비중 상위 5개 구성종목의 비중·1일 수익률과, 어느 종목이 오름을 이끌었는지 LLM이 쓴 한두 문장(`analyze_rising_etfs`, 추론 끔, 10개씩)을 붙인다. LLM이 실패하면 분석 없이 보낸다
-- 주식 가격·구성종목이 일부 실패해도 보낸다(`all_done`) — 요약에 빠진 수가 드러난다
+- 신규 편입 ETF(있을 때만)
+- 오늘의 특징: 1일 수익률이 `discord_settings.rise_threshold`(기본 3%, 관리자 페이지) 이상인 ETF 전부(많이 오른 100개까지)의 비중 상위 5개 구성종목과 시장 수익률(KODEX 200)을 LLM에 한 번 넘겨, 시장보다 더 오른 테마 묶음과 이끈 종목, 혼자 튄 종목만 1~3줄로 정리한다. 시장만큼 오른 지수형 ETF와 대형주 비중 같은 구조 설명은 쓰지 않는다(`summarize_rising_etfs`, 추론 끔). LLM이 실패하면 특징 없이 보낸다
+- 상승 ETF: 많이 오른 순 상위 10개의 이름·코드·1일 수익률만 나열한다. 전체 개수는 제목에 적는다
+- 주식 가격·구성종목이 일부 실패해도 보낸다(`all_done`)
 
 ---
 

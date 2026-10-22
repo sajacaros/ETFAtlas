@@ -50,9 +50,9 @@ last_notification_checked_at TIMESTAMP
 | 채널 | 대상 | ETF 소스 | 트리거 | 임계값 |
 |------|------|----------|--------|--------|
 | 인앱 (빨간 점 + `/changes` 페이지) | 모든 회원 (같은 내용) | 액티브 ETF 전체 | pg_notify → SSE push | 기준값 초과 (이전 공시일 대비) |
-| 디스코드 | 웹훅 채널 | 액티브 ETF 전체 | DAG 수집 완료 | 기준값 초과 (기본 3%p, 이전 공시일 대비) |
+| 디스코드 | 웹훅 채널 | 액티브 ETF 전체 | DAG 수집 완료 | 기준값 초과 (기본 3%p, 신규편입 2%p, 이전 공시일 대비) |
 
-기준값은 관리자 페이지 디스코드 탭에서 설정하며 웹과 디스코드가 같은 값을 쓴다. `weight_changes`에는 변화가 있는 종목을 크기와 상관없이 모두 저장하고 기준값은 읽을 때 적용한다.
+기준값은 관리자 페이지 디스코드 탭에서 설정하며 웹과 디스코드가 같은 값을 쓴다. 신규편입은 따로 둔 신규편입 기준값(기본 2%p)을 쓴다. `weight_changes`에는 변화가 있는 종목을 크기와 상관없이 모두 저장하고 기준값은 읽을 때 적용한다.
 
 ## Backend API
 
@@ -66,12 +66,12 @@ SSE도 같은 출처라 `EventSource`가 세션 쿠키를 자동으로 보낸다
 
 ### 디스코드 알림 설정 (관리자)
 
-관리자 페이지 「알림」 탭에서 켜기/끄기, 웹훅 주소, 비중 변화 기준값(%p)을 바꾼다. RDB `discord_settings`(id=1 한 행)에 저장되고, DAG가 발송할 때마다 읽으므로 재시작 없이 다음 수집부터 반영된다.
+관리자 페이지 「알림」 탭에서 켜기/끄기, 웹훅 주소, 비중 변화 기준값(%p), 신규편입 기준값(%p)을 바꾼다. RDB `discord_settings`(id=1 한 행)에 저장되고, DAG가 발송할 때마다 읽으므로 재시작 없이 다음 수집부터 반영된다.
 
 | 엔드포인트 | 메서드 | 설명 |
 |---|---|---|
 | `/api/admin/settings/discord` | GET | 설정 조회. 웹훅 주소는 끝 4자리만 보인다 (`webhook_url_masked`) |
-| `/api/admin/settings/discord` | PUT | `{enabled, threshold, webhook_url?}` 저장. `webhook_url` 생략 시 기존 주소 유지, `""`이면 삭제 |
+| `/api/admin/settings/discord` | PUT | `{enabled, threshold, added_threshold?, rise_threshold?, webhook_url?}` 저장. `added_threshold`·`rise_threshold` 생략 시 기존 값 유지. `webhook_url` 생략 시 기존 주소 유지, `""`이면 삭제 |
 | `/api/admin/settings/discord/test` | POST | 저장된 주소로 테스트 메시지 발송 |
 
 - 웹훅 주소는 `https://discord.com/api/webhooks/`(또는 `discordapp.com`)로 시작해야 한다.

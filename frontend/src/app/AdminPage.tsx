@@ -141,6 +141,7 @@ function DiscordSettingsTab() {
   const [settings, setSettings] = useState<AdminDiscordSettings | null>(null)
   const [enabled, setEnabled] = useState(true)
   const [threshold, setThreshold] = useState('3')
+  const [addedThreshold, setAddedThreshold] = useState('2')
   const [riseThreshold, setRiseThreshold] = useState('3')
   const [webhookUrl, setWebhookUrl] = useState('')  // 비워 두면 기존 주소 유지
   const [saving, setSaving] = useState(false)
@@ -150,6 +151,7 @@ function DiscordSettingsTab() {
     setSettings(s)
     setEnabled(s.enabled)
     setThreshold(String(s.threshold))
+    setAddedThreshold(String(s.added_threshold))
     setRiseThreshold(String(s.rise_threshold))
     setWebhookUrl('')
   }, [])
@@ -162,8 +164,9 @@ function DiscordSettingsTab() {
 
   const save = async (body: { webhook_url?: string } = {}) => {
     const value = Number(threshold)
+    const addedValue = Number(addedThreshold)
     const riseValue = Number(riseThreshold)
-    if (!(value > 0 && value <= 100 && riseValue > 0 && riseValue <= 100)) {
+    if (![value, addedValue, riseValue].every((v) => v > 0 && v <= 100)) {
       toast({ title: '기준값은 0보다 크고 100 이하여야 합니다', variant: 'destructive' })
       return
     }
@@ -173,6 +176,7 @@ function DiscordSettingsTab() {
       apply(await adminApi.updateDiscordSettings({
         enabled,
         threshold: value,
+        added_threshold: addedValue,
         rise_threshold: riseValue,
         ...(url ? { webhook_url: url } : {}),
         ...body,
@@ -246,6 +250,21 @@ function DiscordSettingsTab() {
           className="w-32"
         />
         <p className="text-sm text-muted-foreground">이 값보다 크게 바뀐 종목만 알립니다.</p>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="discord-added-threshold">신규편입 기준 (%p)</Label>
+        <Input
+          id="discord-added-threshold"
+          type="number"
+          min={0.1}
+          max={100}
+          step={0.5}
+          value={addedThreshold}
+          onChange={(e) => setAddedThreshold(e.target.value)}
+          className="w-32"
+        />
+        <p className="text-sm text-muted-foreground">새로 편입된 종목은 비중이 이 값보다 크면 알립니다.</p>
       </div>
 
       <div className="space-y-2">

@@ -30,6 +30,7 @@ export default function ActiveChangesPage() {
   const [currentDate, setCurrentDate] = useState<string | null>(null)
   const [previousDate, setPreviousDate] = useState<string | null>(null)
   const [threshold, setThreshold] = useState<number | null>(null)
+  const [addedThreshold, setAddedThreshold] = useState<number | null>(null)
   const [baseDate, setBaseDate] = useState('')
   const [period, setPeriod] = useState<Period>('1d')
   const [filter, setFilter] = useState<'all' | 'increased' | 'decreased'>('all')
@@ -57,6 +58,7 @@ export default function ActiveChangesPage() {
         setCurrentDate(res.current_date)
         setPreviousDate(res.previous_date)
         setThreshold(res.threshold)
+        setAddedThreshold(res.added_threshold)
       })
       .catch(() => {
         setChanges([])
@@ -220,11 +222,11 @@ export default function ActiveChangesPage() {
         )}
         {period === '1d' ? (
           <>
-            액티브 ETF 전체에서 이전 공시보다 비중이 {threshold ?? '-'}%p 넘게 바뀐 종목. 공시일의 변화는 직전 영업일 매매를 반영합니다 (디스코드 알림과 같은 내용)
+            액티브 ETF 전체에서 이전 공시보다 비중이 {threshold ?? '-'}%p 넘게 바뀐 종목(신규편입은 {addedThreshold ?? '-'}%p). 공시일의 변화는 직전 영업일 매매를 반영합니다 (디스코드 알림과 같은 내용)
           </>
         ) : (
           <>
-            액티브 ETF 전체에서 {period === '1w' ? '1주일' : '1달'} 전 공시보다 비중이 {threshold ?? '-'}%p 넘게 바뀐 종목. 기간이 길수록 매매가 없어도 주가 움직임만으로 비중이 바뀐 몫이 커지고, 상위 30개 밖으로 밀려난 종목은 편출로 보입니다
+            액티브 ETF 전체에서 {period === '1w' ? '1주일' : '1달'} 전 공시보다 비중이 {threshold ?? '-'}%p 넘게 바뀐 종목(신규편입은 {addedThreshold ?? '-'}%p). 기간이 길수록 매매가 없어도 주가 움직임만으로 비중이 바뀐 몫이 커지고, 상위 30개 밖으로 밀려난 종목은 편출로 보입니다
           </>
         )}
       </p>

@@ -105,6 +105,8 @@ DISCORD_WEBHOOK_PREFIXES = (
 class DiscordSettingsUpdate(BaseModel):
     enabled: bool
     threshold: float = Field(gt=0, le=100)
+    # 신규편입 비중 기준(%p). None: 기존 값 유지
+    added_threshold: Optional[float] = Field(default=None, gt=0, le=100)
     # 일일 리포트 상승 ETF 기준(%). None: 기존 값 유지
     rise_threshold: Optional[float] = Field(default=None, gt=0, le=100)
     # None: 기존 주소 유지, "": 주소 삭제

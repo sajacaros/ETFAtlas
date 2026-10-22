@@ -577,11 +577,12 @@ def _mask_webhook(url: str | None) -> str | None:
 
 def _discord_settings_response(setting: DiscordSetting | None) -> dict:
     if setting is None:
-        return {"enabled": True, "threshold": 3.0, "rise_threshold": 3.0,
+        return {"enabled": True, "threshold": 3.0, "added_threshold": 2.0, "rise_threshold": 3.0,
                 "webhook_url_masked": None, "configured": False}
     return {
         "enabled": setting.enabled,
         "threshold": setting.threshold,
+        "added_threshold": setting.added_threshold,
         "rise_threshold": setting.rise_threshold,
         "webhook_url_masked": _mask_webhook(setting.webhook_url),
         "configured": True,
@@ -609,6 +610,8 @@ async def update_discord_settings(
         db.add(setting)
     setting.enabled = body.enabled
     setting.threshold = body.threshold
+    if body.added_threshold is not None:
+        setting.added_threshold = body.added_threshold
     if body.rise_threshold is not None:
         setting.rise_threshold = body.rise_threshold
     if body.webhook_url is not None:

@@ -113,6 +113,7 @@ export interface AdminDartTestResult {
 export interface AdminDiscordSettings {
   enabled: boolean
   threshold: number
+  added_threshold: number  // 신규편입은 이 값(%p)을 넘으면 알린다
   rise_threshold: number  // 일일 리포트: 1일 수익률이 이 값(%) 이상인 ETF
   webhook_url_masked: string | null
   configured: boolean  // false: 웹에서 저장한 적 없음 (DAG는 서버 환경변수 사용)
@@ -473,6 +474,7 @@ export interface ActiveChangesResponse {
   current_date: string | null
   previous_date: string | null
   threshold: number  // 이 값(%p)을 넘는 변화만 담긴다 (디스코드 알림과 같은 기준값)
+  added_threshold: number  // 신규편입은 이 값(%p)을 넘으면 담긴다
   changes: ActiveChange[]
 }
 

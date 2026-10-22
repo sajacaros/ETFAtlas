@@ -35,9 +35,9 @@ async def get_notification_status(
 
     # 액티브 ETF에 실제 기준값 초과 비중 변화(이전 공시일 대비)가 있을 때만 빨간 점 표시
     if has_new:
-        from ..services.weight_changes import get_alert_threshold, get_significant_changes, resolve_change_date
+        from ..services.weight_changes import get_alert_thresholds, get_significant_changes, resolve_change_date
         change_date = resolve_change_date(db)
-        has_new = bool(change_date) and bool(get_significant_changes(db, change_date, get_alert_threshold(db)))
+        has_new = bool(change_date) and bool(get_significant_changes(db, change_date, *get_alert_thresholds(db)))
 
     return {
         "has_new": has_new,

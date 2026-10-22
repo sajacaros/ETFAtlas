@@ -5,7 +5,9 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..services.graph_service import GraphService
 from ..services.etf_service import ETFService
-from ..services.weight_changes import get_alert_threshold, get_significant_changes, resolve_change_date
+from ..services.weight_changes import (
+    get_alert_thresholds, get_significant_changes, is_significant, resolve_change_date,
+)
 from ..models.etf import ETF
 from ..domain.composition import ETFAllocation, aggregate_composition
 
@@ -54,6 +56,7 @@ class ActiveChangesResponse(BaseModel):
     current_date: str | None = None
     previous_date: str | None = None
     threshold: float
+    added_threshold: float
     changes: List[ActiveChangeResponse]
 
 
@@ -216,25 +219,27 @@ async def get_active_changes(
     1w/1m은 7일/30일 전(그날 이하 마지막 공시일)의 HOLDS와 바로 비교한다.
     base_date를 주면 그날 이전에 계산된 가장 최근 날짜를 쓴다.
     """
-    threshold = get_alert_threshold(db)
+    threshold, added_threshold = get_alert_thresholds(db)
     current_date = resolve_change_date(db, base_date)
     if not current_date:
-        return ActiveChangesResponse(threshold=threshold, changes=[])
+        return ActiveChangesResponse(threshold=threshold, added_threshold=added_threshold, changes=[])
     if period == "1d":
-        changes = get_significant_changes(db, current_date, threshold)
+        changes = get_significant_changes(db, current_date, threshold, added_threshold)
         previous_date = max((c.prev_date for c in changes), default=None)
     else:
         all_changes, previous_date = GraphService(db).get_active_period_changes(
             current_date, 7 if period == "1w" else 30
         )
         changes = sorted(
-            (c for c in all_changes if abs(c["weight_change"]) > threshold),
+            (c for c in all_changes
+             if is_significant(c["change_type"], c["weight_change"], threshold, added_threshold)),
             key=lambda c: (-abs(c["weight_change"]), c["etf_code"], c["stock_code"]),
         )
     return ActiveChangesResponse(
         current_date=current_date,
         previous_date=previous_date,
         threshold=threshold,
+        added_threshold=added_threshold,
         changes=[
             ActiveChangeResponse.model_validate(c, from_attributes=not isinstance(c, dict)) for c in changes
         ],

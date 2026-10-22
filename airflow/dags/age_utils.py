@@ -1319,15 +1319,17 @@ def load_ai_config(conn) -> dict:
 def _load_discord_settings(conn) -> dict:
     """디스코드 알림 설정. 웹(관리자 페이지)에서 저장한 discord_settings가 우선,
     저장 전이거나 주소가 비었으면 환경변수 DISCORD_WEBHOOK_URL을 쓴다."""
-    settings = {'enabled': True, 'webhook_url': None, 'threshold': 3.0, 'rise_threshold': 3.0}
+    settings = {'enabled': True, 'webhook_url': None, 'threshold': 3.0, 'added_threshold': 2.0, 'rise_threshold': 3.0}
     cur = conn.cursor()
     try:
-        cur.execute("SELECT enabled, webhook_url, threshold, rise_threshold FROM discord_settings WHERE id = 1")
+        cur.execute("SELECT enabled, webhook_url, threshold, added_threshold, rise_threshold "
+                    "FROM discord_settings WHERE id = 1")
         row = cur.fetchone()
     finally:
         cur.close()
     if row:
-        settings.update(enabled=row[0], webhook_url=row[1], threshold=row[2], rise_threshold=row[3])
+        settings.update(enabled=row[0], webhook_url=row[1], threshold=row[2],
+                        added_threshold=row[3], rise_threshold=row[4])
     if not settings['webhook_url']:
         settings['webhook_url'] = os.environ.get('DISCORD_WEBHOOK_URL')
     return settings
@@ -1549,7 +1551,7 @@ def send_discord_notification(date_str: str):
         if not webhook_url:
             log.info("Discord webhook URL not set — skipping Discord notification")
             return
-        threshold = settings['threshold']
+        threshold, added_threshold = settings['threshold'], settings['added_threshold']
 
         cur.execute("SELECT 1 FROM discord_notification_logs "
                     "WHERE kind = 'weight_change' AND base_date = %s AND status = 'sent' LIMIT 1",
@@ -1561,9 +1563,10 @@ def send_discord_notification(date_str: str):
         cur.execute(
             "SELECT etf_code, etf_name, prev_date, stock_code, stock_name, change_type, "
             "previous_weight, current_weight, weight_change "
-            "FROM weight_changes WHERE base_date = %s AND abs(weight_change) > %s "
+            "FROM weight_changes WHERE base_date = %s "
+            "AND abs(weight_change) > CASE WHEN change_type = 'added' THEN %s ELSE %s END "
             "ORDER BY abs(weight_change) DESC",
-            (date_str, threshold),
+            (date_str, added_threshold, threshold),
         )
         # ETF는 가장 큰 변화가 큰 순, 종목은 변화량 큰 순
         items, by_etf = [], {}

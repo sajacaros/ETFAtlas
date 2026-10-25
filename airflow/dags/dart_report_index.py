@@ -37,6 +37,9 @@ SUMMARY_MINUTES = 600
 # 챗봇이 같은 LLM을 쓰므로 6개로 여유를 둔다
 SUMMARY_WORKERS = 6
 SUMMARY_TIMEOUT = 180
+# 요약은 한 줄(40토큰 안팎)이다. 상한이 없으면 드물게 끝없이 이어 쓰는 노드가 시간 초과·재시도까지 묶음 전체를 붙잡는다
+SUMMARY_MAX_TOKENS = 256
+SUMMARY_RETRIES = 1
 # 보고서마다 노드를 다 받은 뒤 다음으로 넘어가면 마지막 몇 개를 기다리는 동안 다른 자리가 논다. 동시 수의 이 배수만큼 노드를 모아 보낸다
 SUMMARY_BATCH_FACTOR = 4
 READY = ('tree', 'summarized')
@@ -258,7 +261,7 @@ class SummarySlots:
         self.size = sum(e['workers'] for e in endpoints)
         self.free = queue.Queue()
         for e in endpoints:
-            client = OpenAI(base_url=e['base_url'], api_key=e['api_key'])
+            client = OpenAI(base_url=e['base_url'], api_key=e['api_key'], max_retries=SUMMARY_RETRIES)
             for _ in range(e['workers']):
                 self.free.put((client, e['model']))
 
@@ -275,7 +278,7 @@ def _summarize(client, model: str, node) -> str | None:
 
     try:
         res = client.chat.completions.create(
-            model=model, temperature=0, timeout=SUMMARY_TIMEOUT,
+            model=model, temperature=0, timeout=SUMMARY_TIMEOUT, max_tokens=SUMMARY_MAX_TOKENS,
             messages=[{'role': 'system', 'content': SUMMARY_PROMPT}, {'role': 'user', 'content': summary_prompt(node)}],
             # 추론을 켜 두면 노드 하나에 몇 분씩 걸린다
             extra_body={'chat_template_kwargs': {'enable_thinking': False}},

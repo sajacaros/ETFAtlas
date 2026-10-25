@@ -25,7 +25,7 @@ def test_summary_slots_never_exceed_each_servers_workers(monkeypatch):
     active, peak, lock = {}, {}, threading.Lock()
 
     class FakeOpenAI:
-        def __init__(self, base_url, api_key):
+        def __init__(self, base_url, api_key, **kwargs):
             self.base_url = base_url
 
     def fake_summarize(client, model, node):

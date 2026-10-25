@@ -1,4 +1,4 @@
-from sqlalchemy import BigInteger, Column, Date, DateTime, Integer, String, Text
+from sqlalchemy import BigInteger, Column, Date, DateTime, ForeignKey, Integer, LargeBinary, String, Text
 from ..database import Base
 from ..utils.time import utcnow
 
@@ -54,17 +54,51 @@ class StockDisclosure(Base):
     rm = Column(Text, nullable=True)
 
 
-class StockReportSummary(Base):
-    """정기보고서 본문 요약·매출 구성 캐시. company_report·company_revenue_mix 스킬이 처음 물을 때 원문(document.xml)을 읽어 접수번호로 남긴다.
-    정정보고서는 접수번호가 달라 새로 요약한다."""
-    __tablename__ = "stock_report_summaries"
+class StockReport(Base):
+    """색인한 정기보고서 (사업·반기·분기, 정정 포함). dart_report_index DAG가 채우고, 종목마다 최근 1년만 남긴다.
+    status: pending(원문 받기 전) → tree(목차 트리만, 제목으로 고른다) → summarized(노드 요약까지) | failed.
+    overview·breakdowns는 company_report·company_revenue_mix가 처음 물을 때 만들어 남기는 캐시 (NULL이면 아직)."""
+    __tablename__ = "stock_reports"
 
     rcept_no = Column(String(14), primary_key=True)
     stock_code = Column(String(6), nullable=False, index=True)
-    report_nm = Column(Text, nullable=False)
-    sections = Column(Text, nullable=False)  # 읽은 장 목록 (줄바꿈 구분)
-    summary = Column(Text, nullable=True)  # NULL이면 아직 요약하지 않았다 — company_revenue_mix가 매출 구성만 뽑은 보고서
-    # 원문 표에서 뽑아 검사를 통과한 매출 구성 (JSON 목록). NULL이면 아직 뽑지 않았다 — 0028 이전에 요약만 남긴 보고서
-    breakdowns = Column(Text, nullable=True)
-    model = Column(Text, nullable=True)
+    report_nm = Column(Text, nullable=False)  # '2026년 반기보고서', '2025년 사업보고서 (기재정정)'
+    period = Column(String(7), nullable=True)  # 'YYYY.MM' — 정정보고서는 원래 보고서와 같다
+    status = Column(String(12), nullable=False, default="pending")
+    parser_version = Column(Integer, nullable=True)
+    error = Column(Text, nullable=True)
+    indexed_at = Column(DateTime, nullable=True)
+    summarized_at = Column(DateTime, nullable=True)
+    overview = Column(Text, nullable=True)
+    breakdowns = Column(Text, nullable=True)  # 원문 표에서 뽑아 검사를 통과한 매출 구성 (JSON 목록)
+    model = Column(Text, nullable=True)  # overview를 만든 모델
     created_at = Column(DateTime, default=utcnow)
+
+
+class StockReportDoc(Base):
+    """DART에서 받은 원문 zip 그대로. 파서를 고치면 DART를 다시 부르지 않고 이것으로 트리를 다시 만든다."""
+    __tablename__ = "stock_report_docs"
+
+    rcept_no = Column(String(14), ForeignKey("stock_reports.rcept_no", ondelete="CASCADE"), primary_key=True)
+    zip = Column(LargeBinary, nullable=False)
+    fetched_at = Column(DateTime, default=utcnow)
+
+
+class ReportNode(Base):
+    """보고서 목차 트리의 노드 (장·절·주석, 긴 절은 '가.' 소제목마다 하위 노드). 본문은 blocks에 구조로 둔다 —
+    [{kind: heading|para, text} | {kind: table, table: {caption, unit, header, rows}}] (app.services.report_tree).
+    summary는 노드에 든 항목을 등록된 LLM이 한 줄로 적은 색인 — 목차에서 노드를 고를 때 쓴다."""
+    __tablename__ = "report_nodes"
+
+    rcept_no = Column(String(14), ForeignKey("stock_reports.rcept_no", ondelete="CASCADE"), primary_key=True)
+    node_id = Column(String(24), primary_key=True)  # 원문 ATOCID, 나눈 하위 노드는 '27-5'
+    parent_id = Column(String(24), nullable=True)
+    seq = Column(Integer, nullable=False)  # 문서 순서
+    level = Column(Integer, nullable=False)
+    title = Column(Text, nullable=False)
+    path = Column(Text, nullable=False)  # 'II. 사업의 내용 > 6. 주요계약 및 연구개발활동'
+    chars = Column(Integer, nullable=False)
+    blocks = Column(Text, nullable=False)
+    content_hash = Column(String(40), nullable=False)
+    summary = Column(Text, nullable=True)
+    summary_model = Column(Text, nullable=True)

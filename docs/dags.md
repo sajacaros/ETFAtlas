@@ -12,6 +12,7 @@ AGE 수집 공용 로직은 `airflow/dags/age_utils.py`에 모여 있다.
 | `rdb_realtime_prices` | `realtime_prices_rdb.py` | `*/10 9-15 * * 1-5` | RDB | 장중 현재가 + 포트폴리오 스냅샷 |
 | `embed_code_examples` | `embed_code_examples.py` | 수동 | RDB (pgvector) | 챗봇 코드·레이아웃 예제 임베딩 |
 | `dart_sync_rdb` | `dart_sync_rdb.py` | `20 19 * * 1-5` (평일 19:20 KST) | RDB | 챗봇 기업 분석의 DART 고유번호·공시·주요계정 |
+| `dart_report_index` | `dart_report_index.py` | `0 21 * * *` (매일 21:00 KST) | RDB, LLM | 정기보고서 목차 트리 색인 (원문 → 트리 → 등록 LLM 노드 요약) |
 
 ### 데이터 소스
 
@@ -255,6 +256,23 @@ sync_corps → [sync_disclosures, sync_financials]
 - `sync_disclosures`: 전체 회사의 최근 3일 공시(`list.json`, 100건씩 페이지)를 받아 그래프 종목만 `stock_disclosures`에 남긴다. 공시가 하나도 없는 종목은 회사별로 최근 90일을 백필한다 (첫 실행).
 - `sync_financials`: 최근 3개 사업연도 × 4개 보고서(1분기·반기·3분기·사업보고서)를 `fnlttMultiAcnt.json`으로 100개 회사씩 받아 `stock_financials`에 upsert한다. 매출액·영업이익·당기순이익·자산총계·부채총계·자본총계만, 연결(CFS)·별도(OFS) 모두 원본 그대로 저장한다 (분·반기 손익은 3개월 금액과 누적 금액). 하루 호출은 수십 건이다 (키당 일일 한도 2만 건).
 
+## 7. dart_report_index (RDB, LLM)
+
+정기보고서를 목차 트리로 색인한다 (PageIndex 방식, 설계는 [report-index.md](report-index.md)). 파서와 노드 요약 프롬프트는 backend의 `app.services.report_tree`를 그대로 import한다.
+
+- **스케줄**: `0 21 * * *` (매일 21:00 KST — 평일엔 `dart_sync_rdb`가 공시·주요계정을 받은 뒤, 주말엔 밀린 요약)
+- **재시도**: 1회 / **동시 실행**: 1개 / 처음 등록될 때부터 켜져 있다 (`is_paused_upon_creation=False`)
+- **키**: DART 키는 `dart_settings`, LLM은 등록된 설정(`ai_settings`, 없으면 `LLM_API_*` 환경변수). DART 키가 없으면 새 원문은 받지 않고, LLM 키가 없으면 요약을 건너뛴다
+
+```
+queue_reports → build_trees → summarize_nodes → prune_reports
+```
+
+- `queue_reports`: 그래프 종목의 최근 1년 정기보고서를 `stock_reports`에 `pending`으로 올린다. 접수번호는 `stock_financials`(보고서 코드)와 `stock_disclosures`(공시 제목, 정정 표시)에서 모으고, 같은 종목·기간이면 가장 최근 접수(정정본)만 (`report_tree.latest_reports`).
+- `build_trees`: 원문 zip(`document.xml`)을 받아 `stock_report_docs`에 보관하고 트리를 만들어 `report_nodes`에 쓴다 → `tree`. 종목별 최신 보고서부터, 실행당 90분. 파서 버전(`PARSER_VERSION`)이 오른 보고서는 보관한 원문으로 다시 만들고, 내용이 같은 노드(`content_hash`)는 요약을 이어받는다. 실패하면 `failed`로 남기고 다음 실행에서 다시 한다.
+- `summarize_nodes`: `tree` 보고서의 노드마다 '이 절에 든 항목' 한 줄 요약을 등록된 LLM으로 만든다 (추론 끔, 동시 4개, 노드 입력 8천 자 — 긴 노드는 소제목·표 제목 목록 + 앞부분). 100자 미만 노드, 재무제표 본표, XII 상세표는 요약하지 않는다. 다 되면 `summarized`, 실패한 노드가 있으면 `tree`로 두고 다음 실행에서 남은 노드만. 실행당 240분 — 처음에는 보고서가 수천 건이라 며칠에 나눠 끝난다 (보고서당 약 1분). 트리만 있어도 챗봇은 제목으로 고른다.
+- `prune_reports`: 정정본이 색인된 같은 기간의 원래 보고서와, 1년 지난 보고서(종목마다 가장 최근 색인본 1건은 남긴다)를 지운다 (원문·노드는 FK CASCADE).
+
 ---
 
 ## 저장 대상별 요약
@@ -276,6 +294,7 @@ sync_corps → [sync_disclosures, sync_financials]
 | `dart_corps` | dart_sync_rdb | sync_corps | DART 고유번호 ↔ 종목코드, 그래프 밖 상장사 안내 |
 | `stock_disclosures` | dart_sync_rdb | sync_disclosures | 그래프 종목의 공시 목록 |
 | `stock_financials` | dart_sync_rdb | sync_financials | 그래프 종목의 주요계정 (분기·연간 실적) |
+| `stock_reports`, `stock_report_docs`, `report_nodes` | dart_report_index | queue_reports, build_trees, summarize_nodes | 정기보고서 목차 트리 색인 (`company_report`·`company_revenue_mix`) |
 
 ### Apache AGE
 

@@ -98,3 +98,11 @@ def test_rate_limit_is_retried_and_other_errors_raise():
 def test_corp_codes_rejects_an_error_instead_of_a_zip():
     with pytest.raises(DartError):
         _client([FakeResponse(content=b"<result><status>010</status></result>")]).corp_codes()
+
+
+def test_document_returns_the_report_zip_and_rejects_an_error():
+    client = _client([FakeResponse(content=b"PK\x03\x04zip")])
+    assert client.document("20260814000200") == b"PK\x03\x04zip"
+    assert client.session.params[0]["rcept_no"] == "20260814000200"
+    with pytest.raises(DartError):
+        _client([FakeResponse(content='{"status":"014","message":"파일이 존재하지 않습니다"}'.encode())]).document("1")

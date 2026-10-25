@@ -1,6 +1,7 @@
 """정기보고서 표 → 매출 구성 차트 (제품·부문·지역·주요 고객별).
 
-표 모양이 회사마다 달라 규칙으로 파싱하지 않고 LLM이 정해진 형식으로 옮긴다. 대신 옮긴 값을 믿지 않는다:
+표는 목차 트리의 블록(병합 셀을 푼 마크다운, app.services.report_tree)으로 받는다. 어느 행·열이 매출 구성인지는
+회사마다 달라 규칙으로 고르지 않고 LLM이 정해진 형식으로 옮긴다. 대신 옮긴 값을 믿지 않는다:
   - 값은 원문에 적힌 그대로(쉼표 포함)여야 하고, 원문에 그 숫자가 다른 숫자의 일부가 아닌 채로 있어야 한다.
   - 항목 이름도 원문에 있는 셀 하나여야 한다 (여러 셀을 이어 붙이거나 지어낸 이름이면 표를 잘못 읽은 것이다).
   - 항목이 2개 이상, 모두 양수.
@@ -14,14 +15,10 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
-from ...dart_document import Section
 from ..llm import NO_THINKING, build_model
 from ..schemas import BarView, DataField, Dataset, DonutView, Source
 from .base import SkillResult, data_result
 
-# 표가 있는 곳: 매출 및 수주상황, 주요 제품(매출 비중), 영업부문 주석
-SOURCE_SECTIONS = ("매출", "주요 제품", "영업부문")
-SOURCE_CHARS = 16000
 MAX_CHARTS = 2
 DONUT_MAX_ITEMS = 8  # 이보다 많으면 도넛 조각이 읽히지 않아 막대로
 TOTAL_TOLERANCE = 0.005  # 항목 합과 합계의 차이 (반올림)
@@ -44,6 +41,8 @@ EXTRACT_PROMPT = """당신은 DART 정기보고서의 표에서 매출 구성을
 - 한 구성의 items는 한 가지 기준으로만 나눈 것이어야 합니다. 제품×지역처럼 두 기준이 섞인 표(제품별 수출·내수)에서는
   한 기준의 소계·합계 행만 쓰세요. 영업부문 주석의 '제품과 용역에 대한 공시', '지역에 대한 공시'처럼 합계까지 한 줄에
   나온 표가 있으면 그것을 먼저 쓰세요.
+- 표 머리말의 'A / B'는 위 단계 / 아래 단계 머리말입니다 (예: 'DX 부문 / 3개월', 'DX 부문 / 누적'). 3개월과 누적 열이 함께 있으면
+  누적 열을 쓰고, period에 그 머리말을 적으세요 (예: '당반기 누적').
 - 영업부문 주석의 '주요 고객에 대한 공시'에 고객별 수익 금액이 있으면 customer로 옮기세요.
 - name은 표의 셀 글자 그대로 하나만 쓰세요 (예: 표에 '제품매출'이 있으면 '제품매출'). 셀을 이어 붙이거나 이름을 새로 짓지 마세요.
 - 가장 최근 기간(이번 보고서 기간) 열의 값만 옮기세요. period에는 그 열 제목을 그대로 적습니다 (예: '제00기 반기', '당반기').
@@ -70,11 +69,6 @@ class ExtractedBreakdown(BaseModel):
 
 class Extraction(BaseModel):
     breakdowns: List[ExtractedBreakdown] = Field(default_factory=list)
-
-
-def source_text(sections: List[Section]) -> str:
-    picked = [s for s in sections if any(k in s.path for k in SOURCE_SECTIONS)]
-    return "\n\n".join(f"## {s.path}\n{s.text}" for s in picked)[:SOURCE_CHARS]
 
 
 def _in_source(value: str, source: str) -> bool:
@@ -121,10 +115,8 @@ def check(b: ExtractedBreakdown, source: str) -> Optional[Dict[str, Any]]:
     return {"kind": b.kind, "period": b.period.strip(), "unit": b.unit.strip(), "items": items, "whole": whole}
 
 
-async def extract(config, sections: List[Section]) -> List[Dict[str, Any]]:
-    source = source_text(sections)
-    if not source:
-        return []
+async def extract(config, source: str) -> List[Dict[str, Any]]:
+    """source: 매출·부문 절의 마크다운 (company_report.mix_sources). 값·이름 검사도 이 글에 대고 한다."""
     # 같은 보고서면 같은 표를 고르도록 (결과를 캐시하므로 한 번 빗나가면 그대로 남는다)
     agent = Agent(build_model(config), output_type=Extraction, instructions=EXTRACT_PROMPT,
                   model_settings={**NO_THINKING, "temperature": 0})

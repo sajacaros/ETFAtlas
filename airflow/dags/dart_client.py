@@ -152,6 +152,10 @@ class DartClient:
                 return
             page += 1
 
+    def document(self, rcept_no: str) -> bytes:
+        """공시 원문 zip (document.xml). 정기보고서 색인(dart_report_index)이 보관한다."""
+        return self._get("document.xml", {"rcept_no": rcept_no}, raw=True)
+
     def financials(self, corp_codes: list[str], bsns_year: int, reprt_code: str) -> list[dict]:
         """다중회사 주요계정 원본 행 (회사 100개까지)."""
         body = self._get("fnlttMultiAcnt.json", {

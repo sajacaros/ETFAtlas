@@ -300,6 +300,7 @@ RDB 스키마 변경은 `backend/migrations/versions/`의 Alembic 리비전으�
 | 0028 | `stock_report_summaries.breakdowns` (보고서 표에서 뽑은 매출 구성, 차트용) |
 | 0029 | 레이아웃 시드 예시: 주요 고객·매출 구성 질문 → `company_report` + 해설 |
 | 0030 | `stock_report_summaries.summary` NULL 허용 (`company_revenue_mix`가 매출 구성만 먼저 남긴 보고서) + 0029 예시를 `company_revenue_mix` + 해설로 |
+| 0033 | 정기보고서 목차 트리 색인: `stock_reports`(색인 상태·개요·매출 구성 캐시), `stock_report_docs`(원문 zip), `report_nodes`(목차 노드·본문 블록·노드 요약). `stock_report_summaries` 삭제 + 보고서 사실 조회 레이아웃 예시 3개 (`company_report` + `need`) |
 
 새 리비전 만들기 (모델을 고친 뒤, DB가 떠 있는 상태에서):
 

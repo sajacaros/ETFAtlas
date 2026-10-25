@@ -30,6 +30,9 @@ class _NullStore:
     def save(self, *args):
         pass
 
+    def split(self, *args):  # 스킬이 영역을 나눌 때 (company_report의 매출 구성 차트 등)
+        pass
+
 
 class RecordingPlanner(Planner):
     """세운 계획(처음·다시 설계)을 모두 남긴다 — 화면 레이아웃 이벤트에는 스킬·인자가 없다."""

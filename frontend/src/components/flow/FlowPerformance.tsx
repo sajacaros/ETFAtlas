@@ -11,7 +11,7 @@ const tone = (v: number | null | undefined) => (v == null || v === 0 ? '' : v > 
 function ScoreCell({ score }: { score: FlowScore | null | undefined }) {
   if (!score) return <TableCell className="text-right text-muted-foreground">-</TableCell>
   return (
-    <TableCell className="text-right" title={`${score.exit_date} 종가 기준 · 평균 ${signed(score.ret, '%')} (지수 ${signed(score.bench, '%')}) · 적중 ${score.hit}% · ${score.n}종목`}>
+    <TableCell className="text-right" title={`${score.exit_date} 종가 기준 · 평균 ${signed(score.ret, '%')} (지수 ${signed(score.bench, '%')}) · 적중 ${score.hit}% · 이긴 종목 ${signed(score.won)} · 진 종목 ${signed(score.lost)} · ${score.n}종목`}>
       <span className={tone(score.excess)}>{signed(score.excess)}</span>
     </TableCell>
   )
@@ -65,6 +65,11 @@ export function FlowPerformance({ flowId }: { flowId: number }) {
                   <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
                     <div>평균 수익률 {signed(s.ret, '%')}</div>
                     <div>지수를 이긴 기록 {s.beat_runs}% · 종목 적중 {s.hit}%</div>
+                    <div title="이긴 종목·진 종목의 평균 초과수익. 손익비 = 이긴 폭 ÷ 진 폭">
+                      이긴 종목 {signed(s.won)} · 진 종목 {signed(s.lost)}
+                      {s.payoff != null && ` · 손익비 ${s.payoff.toFixed(2)}`}
+                    </div>
+                    <div>가장 나빴던 기록 <span className={tone(s.worst)}>{signed(s.worst)}</span></div>
                     <div>채점된 기록 {s.runs}개</div>
                   </div>
                 </>

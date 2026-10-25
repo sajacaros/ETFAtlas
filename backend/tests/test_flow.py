@@ -63,6 +63,39 @@ def test_vcp_needs_shrinking_ranges_near_high_with_drying_volume():
     assert ind.is_vcp(bars[:50]) is None
 
 
+def test_days_since_golden_cross_counts_from_the_crossing_day():
+    assert ind.days_since_golden_cross([1, 1, 3, 4], [2, 2, 2, 2]) == 1  # 셋째 날에 뚫었다
+    assert ind.days_since_golden_cross([1, 3], [2, 2]) == 0
+    assert ind.days_since_golden_cross([3, 1], [2, 2]) is None  # 지금은 아래
+    assert ind.days_since_golden_cross([3, 3], [2, 2]) is None  # 내내 위라 교차를 못 봤다
+
+
+def test_macd_crosses_up_after_a_fall_turns_into_a_rise():
+    closes = [float(c) for c in list(range(200, 140, -1)) + list(range(140, 160))]
+    line, signal = ind.macd(closes)
+    assert len(line) == len(signal) == len(closes) - 33
+    days = ind.days_since_golden_cross(line, signal)
+    assert days is not None and days < 20
+    assert ind.macd(closes[:34]) is None  # 시그널선이 하나뿐이면 교차를 못 본다
+
+
+def test_stoch_slow_is_high_in_uptrend_and_low_in_downtrend():
+    k, d = ind.stoch_slow(_bars(range(100, 140)))
+    assert len(k) == len(d) and k[-1] > 70  # 고가가 종가보다 1% 위라 100까지는 못 간다
+    k, _ = ind.stoch_slow(_bars(range(140, 100, -1)))
+    assert k[-1] < 30
+    flat = [{"date": "d", "open": 1, "high": 1, "low": 1, "close": 1, "volume": 1}] * 20
+    assert ind.stoch_slow(flat)[0][-1] == 50.0
+    assert ind.stoch_slow(_bars(range(10))) is None
+
+
+def test_bollinger_pctb_places_close_inside_or_outside_the_band():
+    assert ind.bollinger_pctb([100.0, 102.0] * 10) == pytest.approx(75)  # 마지막이 평균 + 1σ, 밴드는 ±2σ
+    assert ind.bollinger_pctb([100.0] * 19 + [90.0]) < 0  # 급락은 하단 밖
+    assert ind.bollinger_pctb([100.0] * 20) is None
+    assert ind.bollinger_pctb([100.0] * 5) is None
+
+
 # --- chart filter ---
 
 def test_filter_conditions_are_anded_and_missing_values_fail():
@@ -73,6 +106,24 @@ def test_filter_conditions_are_anded_and_missing_values_fail():
     assert passes(up, ChartFilterParams(ma_aligned=True, rsi_max=50)) is False  # 계속 오르면 RSI 100
     assert passes({**up, "rsi": None}, ChartFilterParams(rsi_min=10)) is False
     assert passes(up, ChartFilterParams()) is True  # 켠 조건이 없으면 통과
+
+
+def test_cross_and_bollinger_conditions():
+    m = {"macd_cross": 2, "stoch_cross": 0, "stoch_cross_k": 15.0, "bb_pctb": 5.0}
+    assert passes(m, ChartFilterParams(macd_cross_days=3)) is True
+    assert passes(m, ChartFilterParams(macd_cross_days=2)) is False  # 1이면 마지막 거래일만
+    assert passes(m, ChartFilterParams(stoch_cross_days=1, stoch_cross_below=20)) is True
+    assert passes(m, ChartFilterParams(stoch_cross_days=1, stoch_cross_below=10)) is False
+    assert passes(m, ChartFilterParams(bb_pctb_max=10)) is True
+    assert passes(m, ChartFilterParams(bb_pctb_min=10)) is False
+    assert passes({**m, "macd_cross": None}, ChartFilterParams(macd_cross_days=20)) is False
+
+
+def test_metrics_report_crosses_from_bars():
+    m = metrics(_bars(list(range(200, 140, -1)) + list(range(140, 160))), ChartFilterParams())
+    assert m["macd_cross"] is not None and m["stoch_k"] > 70 and m["bb_pctb"] > 50
+    if m["stoch_cross"] is not None:
+        assert m["stoch_cross_k"] is not None
 
 
 class FakeMarket:

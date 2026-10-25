@@ -672,6 +672,8 @@ export interface FlowScore {
   excess: number
   hit: number  // 기준 지수보다 많이 오른 종목 비율
   n: number
+  won: number | null  // 이긴 종목의 평균 초과수익
+  lost: number | null  // 진 종목의 평균 초과수익
 }
 
 export interface FlowScoredRun {
@@ -687,7 +689,10 @@ export interface FlowPerformance {
   benchmark: { code: string; name: string }
   horizons: number[]
   as_of: string | null
-  summary: Record<string, { runs: number; ret: number; excess: number; hit: number; beat_runs: number } | null>
+  summary: Record<string, {
+    runs: number; ret: number; excess: number; hit: number; beat_runs: number
+    won: number | null; lost: number | null; payoff: number | null; worst: number
+  } | null>
   runs: FlowScoredRun[]
 }
 

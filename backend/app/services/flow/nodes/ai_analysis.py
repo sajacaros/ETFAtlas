@@ -25,7 +25,7 @@ PROMPT = """당신은 ETF Atlas의 종목 분석 보조입니다. 주어진 '사
 - 사실에 없는 수치·뉴스·실적·업황을 만들지 마세요. 모르는 것은 쓰지 않습니다.
 - 매수·매도 권유, 목표가, 앞으로 오르거나 내릴 것이라는 예측은 쓰지 마세요.
 - 한글로만 3문장 이내로 씁니다 (한자·중국어 낱말을 섞지 않습니다. RSI·ETF 같은 지표 이름은 그대로 씁니다). 첫 문장은 핵심 근거, 둘째는 수치로 본 특징, 셋째는 주의할 점(사실에서 보이는 위험).
-- 지표는 적힌 정의대로만 해석하세요. 거래량 배수 = 마지막 날 거래량 ÷ 직전 20일 평균, 고가 대비 = 기간 최고가에서 몇 % 아래인지.
+- 지표는 적힌 정의대로만 해석하세요. 거래량 배수 = 마지막 날 거래량 ÷ 직전 20일 평균, 고가 대비 = 기간 최고가에서 몇 % 아래인지, 볼린저 %B = 0이면 하단 밴드·100이면 상단 밴드, 스토캐스틱 %K = 최근 5일 가격 범위에서 종가의 위치(0~100), 교차 후 일수 = 0이면 마지막 거래일에 교차.
 - 담은 ETF는 몇 개 ETF가 얼마나 담았는지만 쓰고, 그것이 주가에 어떤 의미인지는 추측하지 마세요."""
 
 
@@ -52,7 +52,14 @@ def facts(row: Dict[str, Any], bars: List[ind.Bar], held_by: List[Dict], fields)
             "거래량 배수": ind.volume_ratio([b["volume"] for b in bars]),
             "이평 정배열(5>20>60)": ind.ma_aligned(closes),
             "변동성 수축(간이 VCP)": ind.is_vcp(bars),
+            "볼린저 %B": ind.bollinger_pctb(closes),
         }
+        stoch = ind.stoch_slow(bars)
+        if stoch:
+            computed["스토캐스틱 %K"] = stoch[0][-1]
+        macd_lines = ind.macd(closes)
+        if macd_lines:
+            computed["MACD선이 시그널선 위"] = macd_lines[0][-1] > macd_lines[1][-1]
         shown = {line.split(":")[0] for line in lines}  # 앞 노드가 이미 계산한 값은 다시 넣지 않는다
         for label, v in computed.items():
             if v is None or label in shown:

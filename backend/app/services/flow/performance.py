@@ -4,6 +4,7 @@
 - 청산: 진입일에서 N거래일 뒤 종가. 거래일 달력은 기준 지수(KODEX 200)의 일봉 날짜를 쓴다.
 - 그날 종가가 없는 종목(거래정지·시세 없음)은 그 기간 계산에서 뺀다.
 - 수익률·초과수익은 단순 평균(동일 비중), 적중률은 기준 지수보다 많이 오른 종목 비율.
+- 이긴·진 종목의 평균 초과수익을 따로 내서, 적중률이 낮아도 크게 이기는지(손익비)를 본다.
 - 매일 기록하면 기간이 겹치므로 기록 수만큼 독립적인 표본은 아니다.
 """
 from bisect import bisect_right
@@ -42,13 +43,17 @@ def score_run(picks: List[Dict[str, str]], run_date: str, calendar: List[str],
         if not rets:
             return None
         avg = sum(rets) / len(rets)
+        won = [r - bench_ret for r in rets if r > bench_ret]
+        lost = [r - bench_ret for r in rets if r <= bench_ret]
         return {
             "exit_date": exit_day,
             "ret": round(avg, 2),
             "bench": round(bench_ret, 2),
             "excess": round(avg - bench_ret, 2),
-            "hit": round(sum(r > bench_ret for r in rets) / len(rets) * 100, 1),
+            "hit": round(len(won) / len(rets) * 100, 1),
             "n": len(rets),
+            "won": round(sum(won) / len(won), 2) if won else None,  # 이긴 종목의 평균 초과수익
+            "lost": round(sum(lost) / len(lost), 2) if lost else None,  # 진 종목의 평균 초과수익 (0 이하)
         }
 
     for h in HORIZONS:
@@ -67,12 +72,20 @@ def summarize(scored: List[Dict[str, Any]]) -> Dict[int, Optional[Dict[str, Any]
             summary[h] = None
             continue
         mean = lambda key: round(sum(d[key] for d in done) / len(done), 2)  # noqa: E731
+        won = [d["won"] for d in done if d.get("won") is not None]
+        lost = [d["lost"] for d in done if d.get("lost") is not None]
+        won_avg = round(sum(won) / len(won), 2) if won else None
+        lost_avg = round(sum(lost) / len(lost), 2) if lost else None
         summary[h] = {
             "runs": len(done),
             "ret": mean("ret"),
             "excess": mean("excess"),
             "hit": mean("hit"),
             "beat_runs": round(sum(d["excess"] > 0 for d in done) / len(done) * 100, 1),  # 지수를 이긴 기록 비율
+            "won": won_avg,
+            "lost": lost_avg,
+            "payoff": round(won_avg / -lost_avg, 2) if won_avg is not None and lost_avg else None,  # 손익비
+            "worst": min(d["excess"] for d in done),  # 가장 나빴던 기록의 초과수익
         }
     return summary
 

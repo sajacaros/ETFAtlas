@@ -42,6 +42,8 @@ def test_score_enters_at_next_trading_day_close_and_compares_with_benchmark(monk
     assert h["ret"] == pytest.approx(round(a_ret / 2, 2))
     assert h["bench"] == pytest.approx(round((106 / 101 - 1) * 100, 2))
     assert h["hit"] == 50.0  # A만 지수보다 많이 올랐다
+    assert h["won"] == pytest.approx(round(a_ret - h["bench"], 2), abs=0.01)
+    assert h["lost"] == pytest.approx(-h["bench"], abs=0.01)  # B는 그대로라 지수만큼 졌다
 
 
 def test_score_waits_until_the_horizon_has_passed():
@@ -55,12 +57,13 @@ def test_score_waits_until_the_horizon_has_passed():
 
 def test_summary_averages_only_matured_runs():
     runs = [
-        {"horizons": {5: {"ret": 2, "excess": 1, "hit": 60}, 20: None, 60: None}},
-        {"horizons": {5: {"ret": -1, "excess": -2, "hit": 20}, 20: None, 60: None}},
+        {"horizons": {5: {"ret": 2, "excess": 1, "hit": 60, "won": 4, "lost": -2}, 20: None, 60: None}},
+        {"horizons": {5: {"ret": -1, "excess": -2, "hit": 20, "won": 2, "lost": -4}, 20: None, 60: None}},
         {"horizons": {5: None, 20: None, 60: None}},
     ]
     s = summarize(runs)
-    assert s[5] == {"runs": 2, "ret": 0.5, "excess": -0.5, "hit": 40.0, "beat_runs": 50.0}
+    assert s[5] == {"runs": 2, "ret": 0.5, "excess": -0.5, "hit": 40.0, "beat_runs": 50.0,
+                    "won": 3.0, "lost": -3.0, "payoff": 1.0, "worst": -2}
     assert s[20] is None
 
 

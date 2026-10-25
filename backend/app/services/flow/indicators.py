@@ -2,7 +2,7 @@
 
 bars: 날짜 오름차순 [{date, open, high, low, close, volume}]. 기간이 모자라면 None을 돌려준다.
 """
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 Bar = Dict[str, float]
 
@@ -88,3 +88,70 @@ def is_vcp(bars: Sequence[Bar], last_range_max: float = 10.0, near_high_pct: flo
         and position >= -near_high_pct
         and sum(last) < sum(first)
     )
+
+
+def _rolling_mean(values: Sequence[float], n: int) -> List[float]:
+    """길이 n 창의 단순 평균 시계열 (len(values) - n + 1개)."""
+    return [sum(values[i - n + 1: i + 1]) / n for i in range(n - 1, len(values))]
+
+
+def ema_series(values: Sequence[float], n: int) -> List[float]:
+    """지수이동평균 시계열 (len(values) - n + 1개). 처음 n개의 단순 평균에서 시작한다."""
+    if n <= 0 or len(values) < n:
+        return []
+    alpha = 2 / (n + 1)
+    out = [sum(values[:n]) / n]
+    for v in values[n:]:
+        out.append(out[-1] + alpha * (v - out[-1]))
+    return out
+
+
+def macd(closes: Sequence[float], fast: int = 12, slow: int = 26, signal: int = 9) -> Optional[Tuple[List[float], List[float]]]:
+    """(MACD선, 시그널선), 끝을 맞춘 같은 길이. MACD = 단기 EMA − 장기 EMA, 시그널 = MACD의 EMA."""
+    slow_e = ema_series(closes, slow)
+    fast_e = ema_series(closes, fast)[-len(slow_e):] if slow_e else []
+    line = [f - s for f, s in zip(fast_e, slow_e)]
+    sig = ema_series(line, signal)
+    if len(sig) < 2:
+        return None
+    return line[-len(sig):], sig
+
+
+def stoch_slow(bars: Sequence[Bar], n: int = 5, k: int = 3, d: int = 3) -> Optional[Tuple[List[float], List[float]]]:
+    """스토캐스틱 슬로우 (%K, %D), 끝을 맞춘 같은 길이.
+    Fast %K = (종가 − n일 최저가) / (n일 최고가 − n일 최저가), Slow %K = Fast %K의 k일 단순 평균, Slow %D = Slow %K의 d일 단순 평균.
+    n일 동안 가격이 그대로면 Fast %K는 50으로 둔다."""
+    if len(bars) < n + k + d:
+        return None
+    fast_k = []
+    for i in range(n - 1, len(bars)):
+        window = bars[i - n + 1: i + 1]
+        high = max(b["high"] for b in window)
+        low = min(b["low"] for b in window)
+        fast_k.append((bars[i]["close"] - low) / (high - low) * 100 if high > low else 50.0)
+    slow_k = _rolling_mean(fast_k, k)
+    slow_d = _rolling_mean(slow_k, d)
+    return slow_k[-len(slow_d):], slow_d
+
+
+def days_since_golden_cross(a: Sequence[float], b: Sequence[float]) -> Optional[int]:
+    """a가 b를 위로 뚫은 뒤 지금도 위에 있다면 그 교차가 며칠 전인지 (0 = 마지막 거래일).
+    지금 a가 b 위가 아니거나, 받은 기간 내내 위여서 교차를 못 봤으면 None. a·b는 끝을 맞춘 같은 길이."""
+    i = len(a) - 1
+    if i < 1 or a[i] <= b[i]:
+        return None
+    while i > 0 and a[i - 1] > b[i - 1]:
+        i -= 1
+    return len(a) - 1 - i if i > 0 else None
+
+
+def bollinger_pctb(closes: Sequence[float], n: int = 20, k: float = 2.0) -> Optional[float]:
+    """볼린저 %B(%): 0이면 하단 밴드, 100이면 상단 밴드, 밴드 밖이면 0 미만·100 초과. 밴드 = n일 이평 ± k × 표준편차(모집단)."""
+    if len(closes) < n:
+        return None
+    window = closes[-n:]
+    mid = sum(window) / n
+    std = (sum((c - mid) ** 2 for c in window) / n) ** 0.5
+    if not std:
+        return None
+    return (closes[-1] - (mid - k * std)) / (2 * k * std) * 100

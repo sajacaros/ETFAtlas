@@ -54,6 +54,20 @@ TEMPLATES: List[Dict[str, Any]] = [
         ),
     },
     {
+        "key": "pullback",
+        "name": "상승 추세 속 눌림목",
+        "description": "60일 이평 위에 있으면서 스토캐스틱이 과매도(20 이하)에서 3거래일 안에 골든크로스한 종목 → AI 근거",
+        "graph": _graph(
+            [
+                ("src", "source", {"mode": "all"}, 0, 120),
+                ("chart", "chart_filter", {"above_ma": 60, "stoch_cross_days": 3, "stoch_cross_below": 20}, 280, 120),
+                ("ai", "ai_analysis", {"max_stocks": 10, "focus": "trend"}, 560, 120),
+                ("out", "result", {"sort_by": "stoch_cross", "descending": False}, 840, 120),
+            ],
+            [("src", "chart"), ("chart", "ai"), ("ai", "out")],
+        ),
+    },
+    {
         "key": "portfolio_risk",
         "name": "내 포트폴리오 과열 점검",
         "description": "내 포트폴리오가 담은 종목 중 RSI 70 이상을 위험 관점으로",

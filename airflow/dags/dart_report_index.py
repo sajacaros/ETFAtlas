@@ -28,8 +28,11 @@ log = logging.getLogger(__name__)
 
 KEEP_DAYS = 365
 BUILD_MINUTES = 90
-SUMMARY_MINUTES = 240
-SUMMARY_WORKERS = 4
+# 21:00부터 밤새(약 10시간). 처음 밀린 수천 건을 2~3일에 끝내고, 그 뒤로는 새 보고서만이라 금방 끝난다
+SUMMARY_MINUTES = 600
+# 등록 LLM(H100 한 장, FP8)은 동시 8개에서 처리량이 가장 높고(4개 대비 약 1.3배) 16개면 오히려 느려진다.
+# 챗봇이 같은 LLM을 쓰므로 6개로 여유를 둔다
+SUMMARY_WORKERS = 6
 SUMMARY_TIMEOUT = 180
 READY = ('tree', 'summarized')
 

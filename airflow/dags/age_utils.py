@@ -462,7 +462,7 @@ def get_etf_names_from_age() -> dict[str, str]:
         conn.close()
 
 
-ETF_PROFILE_FIELDS = ('expense_ratio', 'description', 'base_index', 'listed_date')
+ETF_PROFILE_FIELDS = ('expense_ratio', 'description', 'base_index', 'listed_date', 'dividend_yield', 'dividend_per_share')
 
 
 def set_etf_profiles(cur, profiles: dict[str, dict]):
@@ -674,7 +674,7 @@ def collect_universe_and_prices(dates: list[str]) -> tuple[set[str], list[dict],
                                  for c in new_candidates])
             log.info(f"[{latest}] Added {len(new_candidates)} new ETFs with metadata")
 
-        # ── 2-1. 프로필(보수율·설명·기초지수·상장일): 유니버스 전체 조회 후 바뀐 필드만 갱신 ──
+        # ── 2-1. 프로필(보수율·설명·기초지수·상장일·분배율): 유니버스 전체 조회 후 바뀐 필드만 갱신 ──
         changed = refresh_etf_profiles(cur, existing_codes)
         conn.commit()
         log.info(f"[{latest}] ETF profile changed: {changed} ETFs")

@@ -21,6 +21,8 @@ ITEMS = [
     ("1주 수익률", "return_1w", "percent", "high"),
     ("1주 시총 증감", "market_cap_change_1w", "percent", "high"),
     ("분배 주기", "dividend_cycle", "text", None),
+    ("분배율(12개월)", "dividend_yield", "percent", "high"),
+    ("주당 분배금(12개월)", "dividend_per_share", "price", None),
     ("상장일", "listed_date", "date", None),
 ]
 
@@ -31,7 +33,10 @@ class CompareArgs(ETFListArgs):
 
 class ETFCompareSkill(DataSkill):
     name = "etf_compare"
-    description = "ETF 2~5개의 기본 정보 비교표: 운용사, 기초지수, 총보수, 순자산, 1일·1주 수익률, 시총 증감, 분배 주기, 상장일"
+    description = (
+        "ETF 2~5개의 기본 정보 비교표: 운용사, 기초지수, 총보수, 순자산, 1일·1주 수익률, 시총 증감, 분배 주기, "
+        "최근 12개월 분배율·주당 분배금, 상장일"
+    )
     Args = CompareArgs
     displays = ("table",)
 
@@ -48,7 +53,8 @@ class ETFCompareSkill(DataSkill):
                 "RETURN {code: e.code, name: e.name, company: c.name, base_index: e.base_index, "
                 "expense_ratio: e.expense_ratio, net_assets: e.net_assets, return_1d: e.return_1d, "
                 "return_1w: e.return_1w, market_cap_change_1w: e.market_cap_change_1w, "
-                "dividend_cycle: e.dividend_cycle, listed_date: e.listed_date}",
+                "dividend_cycle: e.dividend_cycle, dividend_yield: e.dividend_yield, "
+                "dividend_per_share: e.dividend_per_share, listed_date: e.listed_date}",
                 {"code": etf["code"]},
             )
             if rows:

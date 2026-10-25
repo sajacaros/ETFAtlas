@@ -218,6 +218,7 @@ class GraphService:
                 expense_ratio: e.expense_ratio, issuer: c.name,
                 description: e.description, base_index: e.base_index,
                 listed_date: e.listed_date, dividend_cycle: e.dividend_cycle,
+                dividend_yield: e.dividend_yield, dividend_per_share: e.dividend_per_share,
                 component_count: e.component_count, active: e.active}
         """
         rows = self.execute_cypher(query, {"code": code})

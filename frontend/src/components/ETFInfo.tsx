@@ -119,6 +119,7 @@ function HelpTip({ text, alignRight = false }: { text: string; alignRight?: bool
 
 const NET_ASSETS_HELP = 'ETF가 실제로 보유한 주식·현금 등 자산의 가치 (1주당 순자산가치 × 발행 주식 수)'
 const MARKET_CAP_HELP = '시장에서 거래되는 ETF 가격으로 매긴 규모 (종가 × 상장 주식 수). 거래 가격이 순자산가치와 조금씩 달라 순자산과 차이가 납니다. 옆 숫자는 1주 전 대비 증감률입니다.'
+const DIVIDEND_YIELD_HELP = '최근 12개월 분배금 합 ÷ 현재가'
 
 export interface MarketCapInfo {
   latest: number
@@ -158,7 +159,7 @@ function SizeLabel({ label, help, alignRight }: { label: string; help: string; a
   )
 }
 
-/** ETF 기본 정보 카드 (운용사·카테고리·순자산/시가총액·보수율·기초지수·상장일). 시가총액은 가격 데이터가 있을 때만 */
+/** ETF 기본 정보 카드 (운용사·카테고리·순자산/시가총액·보수율/분배율·기초지수·상장일). 시가총액은 가격 데이터가 있을 때만 */
 export function ETFInfoCards({ etf, tags, marketCap }: { etf: ETF; tags: string[]; marketCap?: MarketCapInfo | null }) {
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -206,11 +207,28 @@ export function ETFInfoCards({ etf, tags, marketCap }: { etf: ETF; tags: string[
           )}
         </CardContent>
       </Card>
-      <InfoCard label="보수율">
-        <p className="text-sm font-semibold mt-1">
-          {etf.expense_ratio ? `${etf.expense_ratio}%` : '-'}
-        </p>
-      </InfoCard>
+      <Card className="py-3">
+        <CardContent className="pb-0 pt-0 flex flex-wrap gap-x-6 gap-y-2">
+          <div>
+            <p className="text-xs text-muted-foreground">보수율</p>
+            <p className="text-sm font-semibold mt-1">
+              {etf.expense_ratio ? `${etf.expense_ratio}%` : '-'}
+            </p>
+          </div>
+          {etf.dividend_yield != null && (
+            <div>
+              <SizeLabel
+                label="분배율"
+                help={etf.dividend_per_share != null
+                  ? `${DIVIDEND_YIELD_HELP} (주당 ${etf.dividend_per_share.toLocaleString()}원)`
+                  : DIVIDEND_YIELD_HELP}
+                alignRight
+              />
+              <p className="text-sm font-semibold mt-1">{etf.dividend_yield.toFixed(2)}%</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
       <InfoCard label="기초지수">
         <p className="text-sm font-semibold mt-1">{etf.base_index || '-'}</p>
       </InfoCard>

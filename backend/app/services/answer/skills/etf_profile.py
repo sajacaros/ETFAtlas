@@ -16,6 +16,7 @@ AXES = [
     ("1주 수익률", "return_1w", "percent", "high"),
     ("1주 시총 증감", "market_cap_change_1w", "percent", "high"),
     ("분산도", "top10_weight", "percent", "low"),
+    ("분배율", "dividend_yield", "percent", "high"),
 ]
 
 
@@ -36,7 +37,7 @@ class ETFProfileSkill(DataSkill):
     name = "etf_profile"
     description = (
         "ETF 1~3개의 성격을 전체 ETF 대비 백분위 점수(0~100)로: 저보수, 규모, 1주 수익률, 1주 시총 증감, "
-        "분산도(상위 10종목 비중이 낮을수록 높음). '어떤 ETF가 더 나은지 종합적으로' 같은 질문에"
+        "분산도(상위 10종목 비중이 낮을수록 높음), 분배율(최근 12개월). '어떤 ETF가 더 나은지 종합적으로' 같은 질문에"
     )
     Args = ProfileArgs
     displays = ("radar", "table")
@@ -51,7 +52,7 @@ class ETFProfileSkill(DataSkill):
             for e in node(
                 graph,
                 "MATCH (e:ETF) RETURN {code: e.code, expense_ratio: e.expense_ratio, net_assets: e.net_assets, "
-                "return_1w: e.return_1w, market_cap_change_1w: e.market_cap_change_1w}",
+                "return_1w: e.return_1w, market_cap_change_1w: e.market_cap_change_1w, dividend_yield: e.dividend_yield}",
                 {},
             )
         }

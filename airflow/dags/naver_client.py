@@ -1,7 +1,7 @@
 """
-네이버 증권 모바일 API — ETF 프로필(보수율, 설명, 기초지수, 상장일) 조회
+네이버 증권 모바일 API — ETF 프로필(보수율, 설명, 기초지수, 상장일, 분배율) 조회
 
-KIS/KRX Open API 모두 ETF 보수·설명 정보를 제공하지 않아 사용한다.
+KIS/KRX Open API 모두 ETF 보수·설명·분배금 정보를 제공하지 않아 사용한다.
 비공식 API(m.stock.naver.com)이므로 실패하면 해당 ETF만 비워 두고 수집은 계속한다.
 """
 
@@ -47,6 +47,8 @@ def fetch_etf_profile(code: str, session: Optional[requests.Session] = None) -> 
       description   — 운용사 상품 설명 원문 (HTML 정리)
       base_index    — 기초지수명
       listed_date   — 상장일 (YYYY-MM-DD)
+      dividend_yield     — 최근 12개월 분배율(%) = 12개월 주당 분배금 ÷ 현재가 (분배가 없으면 0)
+      dividend_per_share — 최근 12개월 주당 분배금(원)
     """
     http = session or requests
     try:
@@ -74,6 +76,13 @@ def fetch_etf_profile(code: str, session: Optional[requests.Session] = None) -> 
     listed_date = _format_listed_date(data.get("listedDate"))
     if listed_date:
         profile["listed_date"] = listed_date
+    dividend = data.get("dividend") or {}
+    for key, field, cast in (("dividendYieldTtm", "dividend_yield", float),
+                             ("dividendPerShareTtm", "dividend_per_share", int)):
+        try:
+            profile[field] = cast(dividend[key])
+        except (KeyError, TypeError, ValueError):
+            pass
     return profile
 
 

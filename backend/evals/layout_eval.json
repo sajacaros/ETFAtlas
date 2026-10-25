@@ -70,6 +70,9 @@
 
     {"q": "kodex 레버리지 뭐 담고 있어?", "must": [], "allowed": ["holdings", "etf_choice"], "expect_message": "관리하지 않는 ETF"},
     {"q": "TIGER 미국S&P500 3개월 수익률 추이", "must": [], "allowed": ["price_trend", "period_returns"], "expect_message": "관리하지 않는 ETF"},
+    {"q": "배당률 4% 이상인 ETF 중 1주 동안 많이 오른 3개", "must": ["rank"], "allowed": ["period_returns", "price_trend"]},
+    {"q": "분배율 제일 높은 ETF 5개 알려줘", "must": ["rank"], "allowed": ["etf_compare"]},
+    {"q": "KODEX 고배당주랑 TIGER 코스피고배당 배당 비교해줘", "must": ["etf_compare|etf_profile"], "allowed": ["etf_compare", "etf_profile", "period_returns"]},
     {"q": "ACE KRX금현물이랑 KODEX 200 비교해줘", "must": [], "allowed": ["etf_compare", "etf_profile", "period_returns", "price_trend"], "expect_message": "관리하지 않는 ETF"},
     {"q": "122630 구성종목", "must": [], "allowed": ["holdings"], "expect_message": "관리하지 않는 ETF"},
     {"q": "풀무원 기업 분석", "must": [], "allowed": ["company_financials", "company_disclosures", "company_report", "stock_trend", "stock_holders"], "expect_message": "담겨 있지 않아"}

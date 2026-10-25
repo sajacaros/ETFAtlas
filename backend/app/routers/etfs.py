@@ -24,6 +24,8 @@ class ETFResponse(BaseModel):
     base_index: str | None = None
     listed_date: str | None = None
     dividend_cycle: int | None = None
+    dividend_yield: float | None = None  # 최근 12개월 분배율(%) = 12개월 주당 분배금 ÷ 현재가
+    dividend_per_share: int | None = None  # 최근 12개월 주당 분배금(원)
     component_count: int | None = None  # 전체 구성종목 수 (보유종목은 상위 30개까지만 수집)
     active: bool | None = None  # 액티브 ETF 여부 (KIS 분류), 모르면 None
 

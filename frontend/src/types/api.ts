@@ -174,6 +174,8 @@ export interface ETF {
   base_index: string | null
   listed_date: string | null
   dividend_cycle: number | null  // 분배 주기 개월 수 (1=월, 3=분기), 0=분배 없음(TR)
+  dividend_yield?: number | null  // 최근 12개월 분배율(%) = 12개월 주당 분배금 ÷ 현재가
+  dividend_per_share?: number | null  // 최근 12개월 주당 분배금(원)
   component_count?: number | null  // 전체 구성종목 수 (현금·선물 등 포함). 보유종목은 상위 30개까지만 있다
   active?: boolean | null  // 액티브 ETF 여부 (KIS 분류), 모르면 null
 }

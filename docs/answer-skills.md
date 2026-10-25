@@ -99,12 +99,13 @@ class MySkill(DataSkill):
 |---|---|---|
 | `price_trend` | line, candlestick, table | 가격 추이. 여러 ETF는 시작일 대비 누적 수익률 |
 | `period_returns` | bar, table | 1일~1년 기간별 수익률 |
-| `etf_compare` | table | 기본 정보 비교표 (행마다 서식·우열 강조) |
-| `etf_profile` | radar, table | 전체 ETF 대비 백분위 점수: 저보수, 규모, 1주 수익률, 1주 시총 증감, 분산도 |
+| `etf_compare` | table | 기본 정보 비교표 (행마다 서식·우열 강조). 최근 12개월 분배율·주당 분배금 포함 |
+| `etf_profile` | radar, table | 전체 ETF 대비 백분위 점수: 저보수, 규모, 1주 수익률, 1주 시총 증감, 분산도, 분배율 |
 | `holdings` | treemap, donut, bar, table | 구성종목 비중 (도넛은 상위 7개 + 기타) |
 | `portfolio_lookthrough` | treemap, bar, donut, table | 포트폴리오(ETF·종목과 비중)의 종목별 합산 비중. ETF는 구성종목으로 풀어 비중을 곱해 더하고(`domain/composition.py`와 같은 계산), 직접 담은 종목은 그대로 더한다. 구성종목 데이터가 없는 ETF(해외 ETF 등)는 ETF 한 행으로, ETF 안의 30위 밖·현금은 기타로 둔다 |
 | `stock_trend` | line, candlestick, table | 개별 종목 가격 추이 (`price_trend`와 같은 베이스) |
 | `stock_holders` | bar, table | 종목을 많이 담은 ETF 순위. 종목을 여러 개(최대 5개) 받으면 ETF마다 그 종목들의 비중을 더해 합계 순으로 매기고, 막대는 종목별 비중을 쌓는다 (상위 30개 밖 종목은 0%) |
+| `rank` | bar, table | ETF·종목 후보를 기간 수익률·순자산·총보수·최근 12개월 분배율로 정렬하고 `min_value`·`max_value`로 걸러 상위 N개. 후보는 앞 슬롯 결과 참조, 이름, 테마, 또는 비워 두면 ETF 전체(`배당 5% 이상 ETF`). '배당 5% 이상 + 최근 주가 좋은 순'은 분배율로 전체를 거른 rank 결과를 수익률 rank가 다시 받는다 (`0034` 예시). 분배율로 고르면 계산 기준(12개월 분배금 ÷ 현재가)을 주석으로 붙인다 |
 | `company_financials` | bar, line, table | 종목의 DART 주요계정 분기·연간 실적(매출액·영업이익·순이익·영업이익률)과 최근 부채비율. 연결이 있으면 연결, 없으면 별도(섞지 않는다). 4분기는 연간 − 3분기 누적, 공시에 없는 값은 비운다. 요약의 전년 동기 비교는 같은 분기끼리, 기준이 0 이하면 증감률 대신 값을 적는다 |
 | `company_disclosures` | markdown | 종목의 최근 DART 공시 표(접수일·제목 원문 링크·제출인). 해설에는 제목만 넘긴다 (본문은 읽지 않는다) |
 | `company_report` | markdown | 종목의 정기보고서(사업·반기·분기, 정정 포함. 기본은 가장 최근, `period: 'YYYY.MM'`로 지난 보고서)를 목차 트리에서 골라 읽는다 (PageIndex 방식, [report-index.md](report-index.md)). 보고서는 `dart_report_index` DAG가 미리 색인한다 — 원문 구조로 만든 목차 트리(`report_nodes`, 본문은 병합 셀을 푼 표·문단 블록)와 등록된 LLM의 노드 요약. `need`에 찾을 것(연구개발비, 직원 수·급여, 최대주주, 배당, 소송·제재, 가동률 등)을 적으면 LLM이 목차(제목 + 노드 요약)에서 절을 1~3개 고르고(목차에 없는 id면 한 번 더 묻는다), 고른 절을 읽어 답한다. 큰 표는 머리말·합계·질문 키워드가 든 행만 읽는다. 답 머리에 읽은 절과 DART 원문 링크. `need`가 없으면 개요: II. 사업의 내용·IV. 경영진단·XI. 투자자 보호 사항의 모든 절과 부문 주석(연결)을 절마다 몫을 나눠 읽고(뒤쪽 장이 잘리지 않게) 사업 구조·영업 상황·위험 요인·소송·제재를 요약한다. 보고서 표에 매출 구성이 있으면 차트를 먼저 나눠 보여 준다 (질문이 묻는 구성부터 최대 2개). 개요·매출 구성은 보고서마다 한 번 만들어 `stock_reports.overview`·`breakdowns`에 남긴다. 수치는 원문 단위 그대로 옮긴다 (환산 오류 방지). 제목은 실행하며 `2026년 반기보고서`처럼 보고서 이름으로 바꾼다. 색인 전이면 empty |

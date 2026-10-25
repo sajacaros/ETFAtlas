@@ -511,7 +511,7 @@
         <tr><td><code>company_report</code> <span class="llm">LLM</span></td><td>가장 최근 정기보고서 본문 요약. 보고서 표에 매출 구성이 있으면 차트 영역을 스스로 나눠 붙인다</td><td>markdown (+ donut · bar)</td></tr>
         <tr><td><code>company_revenue_mix</code> <span class="llm">LLM</span></td><td>정기보고서 표의 매출 구성(주요 고객·제품·부문·지역)만 차트로. 질문이 묻는 구성부터 최대 2개로 영역을 나눈다</td><td>bar · donut</td></tr>
         <tr><td><code>portfolio_lookthrough</code> ⇢</td><td>여러 ETF를 섞었을 때 종목별 합산 비중 (최소 비중)</td><td>treemap · bar · donut · table</td></tr>
-        <tr><td><code>rank</code> ⇢</td><td>ETF·종목을 기간 수익률·순자산·보수로 정렬하고 범위로 거르기. 대상은 다른 슬롯의 결과, 이름, 테마 중 하나</td><td>bar · table</td></tr>
+        <tr><td><code>rank</code> ⇢</td><td>ETF·종목을 기간 수익률·순자산·보수·분배율로 정렬하고 범위로 거르기. 대상은 다른 슬롯의 결과, 이름, 테마 중 하나, 비우면 ETF 전체</td><td>bar · table</td></tr>
         <tr><td><code>overlap</code> ⇢</td><td>두 ETF의 공통 종목·한쪽에만 있는 종목과 겹치는 비중</td><td>table · bar</td></tr>
         <tr><td><code>etf_choice</code></td><td>대상 ETF가 여럿일 때 후보를 보여 주고 되묻기</td><td>markdown</td></tr>
         <tr><td><code>narrative</code> <span class="llm">LLM</span></td><td>다른 영역이 끝난 뒤 해설</td><td>text</td></tr>

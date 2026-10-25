@@ -41,17 +41,27 @@ def test_fetch_etf_profile_fields():
         "etfSummary": "기초지수를 추종합니다.<br>KOSPI200 &amp; 대형주<BR/>  구성 <b>200</b>종목",
         "etfBaseIndex": " 코스피 200 ",
         "listedDate": "20021014",
+        "dividend": {"dividendYieldTtm": 0.98, "dividendPerShareTtm": 849, "dividendCountThisYear": 3},
     }
     assert naver_client.fetch_etf_profile("069500", FakeSession(payload)) == {
         "expense_ratio": 0.15,
         "description": "기초지수를 추종합니다. KOSPI200 & 대형주 구성 200 종목",
         "base_index": "코스피 200",
         "listed_date": "2002-10-14",
+        "dividend_yield": 0.98,
+        "dividend_per_share": 849,
     }
 
 
+def test_fetch_etf_profile_keeps_zero_dividend():
+    payload = {"dividend": {"dividendYieldTtm": 0, "dividendPerShareTtm": 0}}
+    assert naver_client.fetch_etf_profile("069500", FakeSession(payload)) == {
+        "dividend_yield": 0.0, "dividend_per_share": 0}
+
+
 def test_fetch_etf_profile_skips_empty_fields():
-    payload = {"etfSummary": "<br>", "etfBaseIndex": "", "listedDate": "2002"}
+    payload = {"etfSummary": "<br>", "etfBaseIndex": "", "listedDate": "2002",
+               "dividend": {"dividendYieldTtm": None}}
     assert naver_client.fetch_etf_profile("069500", FakeSession(payload)) == {}
 
 

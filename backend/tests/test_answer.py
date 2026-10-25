@@ -1242,8 +1242,11 @@ class FakeRankResolver:
 
 def test_rank_args_need_one_source_and_etf_only_metrics_for_etfs():
     Args = REGISTRY["rank"].Args
-    with pytest.raises(ValueError, match="하나만"):
-        Args(kind="etf", by="net_assets")
+    assert Args(kind="etf", by="dividend_yield").targets == []  # 후보를 비우면 ETF 전체
+    with pytest.raises(ValueError, match="targets로"):
+        Args(kind="stock", by="return_1w")
+    with pytest.raises(ValueError, match="ETF에만"):
+        Args(kind="stock", targets=["가"], by="dividend_yield")
     with pytest.raises(ValueError, match="하나만"):
         Args(kind="etf", targets=["가"], theme="반도체", by="net_assets")
     with pytest.raises(ValueError, match="ETF에만"):
@@ -1274,6 +1277,26 @@ def test_rank_orders_filters_and_exports_by_the_metric(monkeypatch):
     assert filtered.exports == [{"code": "000002", "name": "나"}]
 
 
+def test_rank_without_candidates_filters_every_etf_by_dividend_yield(monkeypatch):
+    from app.services.answer.skills import rank as mod
+    queries = []
+
+    def fake_node(graph, cypher, params):
+        queries.append(cypher)
+        if "e.dividend_yield" in cypher:
+            return [{"code": "000001", "value": 6.29}, {"code": "000002", "value": 4.65}, {"code": "000003", "value": 0}]
+        return [{"code": "000001", "name": "가"}, {"code": "000002", "name": "나"}, {"code": "000003", "name": "다"}]
+
+    monkeypatch.setattr(mod, "node", fake_node)
+    monkeypatch.setattr(mod, "GraphService", lambda db: None)
+    skill = REGISTRY["rank"]
+    result = skill.fetch(skill.Args(kind="etf", by="dividend_yield", min_value=4, top=30), "table", None, FakeRankResolver())
+    assert queries[0].startswith("MATCH (e:ETF) RETURN {code: e.code, name: e.name}")
+    assert result.exports == [{"code": "000001", "name": "가"}, {"code": "000002", "name": "나"}]
+    assert "후보 ETF 3개 중 분배율(최근 12개월) 높은 순(4.00% 이상) 2개" in result.summary
+    assert any("최근 12개월 분배금" in n for n in result.content["notes"])
+
+
 def test_rank_computes_period_returns_from_prices(monkeypatch):
     from app.services.answer.skills import rank as mod
     prices = {"000001": [("2026-10-01", 100), ("2026-10-08", 110)], "000002": [("2026-10-01", 100), ("2026-10-08", 90)]}
@@ -1289,6 +1312,8 @@ def test_rank_computes_period_returns_from_prices(monkeypatch):
     assert result.exports == [{"code": "000001", "name": "가"}]
     assert result.content["dataset"]["rows"][0]["value"] == 10.0
     assert "후보 종목 3개 중 1주 수익률 높은 순" in result.summary
+    no_data = skill.fetch(skill.Args(kind="stock", targets=["다"], by="return_1y"), "bar", None, FakeRankResolver())
+    assert no_data.message == "후보 종목 1개 모두 1년 수익률 데이터가 없습니다"
 
 
 def test_overlap_splits_common_and_only_holdings():

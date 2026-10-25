@@ -280,7 +280,7 @@ ORDER BY e.name LIMIT 10
 **그래프 스키마**
 ```
 노드:
-  - ETF(code, name, expense_ratio, base_index, listed_date, description, net_assets, close_price, return_1d, return_1w, return_1m, market_cap_change_1w, updated_at)
+  - ETF(code, name, expense_ratio, base_index, listed_date, description, dividend_cycle, dividend_yield, dividend_per_share, net_assets, close_price, return_1d, return_1w, return_1m, market_cap_change_1w, updated_at)
   - Stock(code, name, is_etf)
   - Company(name)
   - Tag(name)
@@ -301,7 +301,7 @@ ORDER BY e.name LIMIT 10
 2. RETURN은 반드시 단일 맵: `RETURN {key1: val1, key2: val2}`
 3. 문자열 값은 작은따옴표: `{code: '005930'}`
 4. 집계 함수 + ORDER BY는 WITH 절로 분리
-5. weight, expense_ratio, return_*, net_assets는 숫자로 저장된다(비중·보수율·수익률은 % 단위, 순자산은 원). 결과에 붙는 `%`·`억원`은 표시용 서식이므로 조건은 숫자로 쓴다 (예: `h.weight >= 10`, `e.expense_ratio <= 0.1`)
+5. weight, expense_ratio, dividend_yield, return_*, net_assets는 숫자로 저장된다(비중·보수율·수익률은 % 단위, 순자산은 원). 결과에 붙는 `%`·`억원`은 표시용 서식이므로 조건은 숫자로 쓴다 (예: `h.weight >= 10`, `e.expense_ratio <= 0.1`)
 6. `CURRENT_HOLDS`는 ETF당 비중 상위 30개뿐이라 엣지가 없으면 미보유이거나 30위 밖(사실상 0)이다. 특정 종목 비중이 낮은 ETF는 후보 ETF(태그 등)에서 MATCH로 출발하고 종목은 `OPTIONAL MATCH` + `coalesce(sum(h.weight), 0)`로 붙인다. `MATCH`로 붙이면 미보유 ETF가 결과에서 빠진다
 
 **쿼리 예시**

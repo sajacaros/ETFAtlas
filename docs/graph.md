@@ -54,7 +54,7 @@ RDB JOIN으로도 가능하지만, 그래프는 관계 탐색이 직관적이고
 
 | 라벨 | 속성 | 생성 주체 | 설명 |
 |------|------|-----------|------|
-| ETF | code, name, expense_ratio, description, base_index, listed_date, net_assets, close_price, return_1d, return_1w, return_1m, market_cap_change_1w, component_count, active, updated_at, manual_tags, tagged_at | DAG: collect_universe_and_prices, update_etf_returns. manual_tags는 관리자 페이지, tagged_at은 age_tagging | ETF 종목. component_count는 KIS가 알려 주는 전체 구성종목 수(현금·선물 포함), active는 액티브 여부(KIS 분류). manual_tags(태그 이름 리스트)가 있으면 age_tagging이 자동 태깅 대신 그 값을 쓴다 (빈 리스트 = 태그 없음 고정). tagged_at(`YYYY-MM-DD`)은 자동 태깅된 날짜로, 없으면 다음 age_tagging의 태깅 대상 |
+| ETF | code, name, expense_ratio, description, base_index, listed_date, dividend_cycle, dividend_yield, dividend_per_share, net_assets, close_price, return_1d, return_1w, return_1m, market_cap_change_1w, component_count, active, updated_at, manual_tags, tagged_at | DAG: collect_universe_and_prices, update_etf_returns. manual_tags는 관리자 페이지, tagged_at은 age_tagging | ETF 종목. component_count는 KIS가 알려 주는 전체 구성종목 수(현금·선물 포함), active는 액티브 여부(KIS 분류). dividend_cycle은 KIS 분배 주기(개월), dividend_yield·dividend_per_share는 네이버의 최근 12개월 분배율(%)·주당 분배금(원). manual_tags(태그 이름 리스트)가 있으면 age_tagging이 자동 태깅 대신 그 값을 쓴다 (빈 리스트 = 태그 없음 고정). tagged_at(`YYYY-MM-DD`)은 자동 태깅된 날짜로, 없으면 다음 age_tagging의 태깅 대상 |
 | Stock | code, name, is_etf | DAG: collect_holdings | 보유 종목 (ETF인 경우 is_etf=true). 주식 이름은 KIS `hts_kor_isnm` |
 | Company | name | DAG: collect_universe_and_prices | 운용사 (삼성자산운용 등) |
 | Tag | name | DAG: age_tagging | 테마/분류 태그 (반도체, AI 등). ETF별 태그는 관리자 페이지에서 수동 지정 가능 |

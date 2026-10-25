@@ -528,6 +528,27 @@ def test_company_report_answers_from_the_nodes_it_picks(fake_stock_graph, monkey
     assert "DRAM 누적 매출 200백만원" in result["summary"]
 
 
+def test_prepare_report_explains_why_a_period_is_not_there(fake_stock_graph):
+    from app.models.dart import StockReport
+    from app.services.answer.resolver import EntityResolver
+    from app.services.answer.skills import company_report
+    from app.services.answer.skills.base import SkillContext
+    db = _indexed()
+    db.rows += [StockReport(rcept_no="20260515000100", stock_code="005930", report_nm="2026년 1분기보고서", period="2026.03",
+                            status="missing"),
+                StockReport(rcept_no="20260316000100", stock_code="005930", report_nm="2025년 사업보고서", period="2025.12",
+                            status="pending")]
+
+    def message(period):
+        ctx = SkillContext(question="q", conversation=ConversationContext(), session_factory=lambda: db,
+                           resolver=EntityResolver(), ai_config=None, stop=asyncio.Event())
+        return company_report.prepare_report("삼성전자", ctx, period).message
+
+    assert "DART가 원문을 주지 않아" in message("2026.03")
+    assert "아직 색인하지 못했습니다" in message("2025.12")
+    assert "최근 1년 보고서만" in message("2024.12")
+
+
 def test_picking_reads_the_sections_of_a_chapter_and_asks_again_for_unknown_ids(fake_stock_graph, monkeypatch):
     from pydantic_ai.models.test import TestModel
     from app.services.answer.resolver import EntityResolver

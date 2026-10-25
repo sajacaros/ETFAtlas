@@ -130,6 +130,12 @@ def prepare_report(stock_arg: str, ctx: SkillContext, period: Optional[str] = No
                 if r.stock_code == stock["code"]]
         row = pick_report(rows, period)
         if row is None:
+            same = [r for r in rows if r.period == period] if period else rows
+            if same and all(r.status == "missing" for r in same):
+                return empty(f"{name}의 {period + ' 기간 ' if period else ''}정기보고서는 DART가 원문을 주지 않아 "
+                             "색인하지 못했습니다 (정정 공시에서 생깁니다)")
+            if period and same:
+                return empty(f"{name}의 {period} 기간 정기보고서는 아직 색인하지 못했습니다 (매일 저녁 색인합니다)")
             if period and pick_report(rows, None):
                 return empty(f"{name}의 {period} 기간 정기보고서는 색인돼 있지 않습니다 (최근 1년 보고서만 둡니다)")
             if rows:

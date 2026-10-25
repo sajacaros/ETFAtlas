@@ -788,19 +788,35 @@ def find_missing_price_dates(codes, days: list[str], existing: set[tuple[str, st
 
 
 def refill_missing_etf_prices() -> int:
-    """최근 PRICE_REFILL_BUSINESS_DAYS 영업일 중 Price가 빠진 (ETF, 날짜)를 KIS 일봉으로 채운다. 채운 개수를 돌려준다.
+    """최근 PRICE_REFILL_BUSINESS_DAYS 영업일 중 Price가 빠진 (ETF, 날짜)를 KIS 일봉으로 채운다. 채운 개수를 돌려준다."""
+    if get_kis_client() is None:
+        log.warning("Skipping price refill (KIS credentials missing)")
+        return 0
+    end = last_settled_day(datetime.now())
+    start = (datetime.strptime(end, '%Y%m%d') - timedelta(days=PRICE_REFILL_BUSINESS_DAYS * 2)).strftime('%Y%m%d')
+    return fill_missing_etf_prices(get_business_days(start, end)[-PRICE_REFILL_BUSINESS_DAYS:])
+
+
+def backfill_price_days(calendar_days: int) -> list[str]:
+    """지난 calendar_days일의 영업일 중 최근 PRICE_REFILL_BUSINESS_DAYS 영업일을 뺀 날들 (YYYYMMDD).
+
+    최근 영업일은 정기 수집(age_sync_universe)이 쓰는 범위라, 백필과 겹쳐 같은 날 Price가 둘 생기지 않게 뺀다.
+    """
+    end = last_settled_day(datetime.now())
+    start = (datetime.strptime(end, '%Y%m%d') - timedelta(days=calendar_days)).strftime('%Y%m%d')
+    return get_business_days(start, end)[:-PRICE_REFILL_BUSINESS_DAYS]
+
+
+def fill_missing_etf_prices(days: list[str]) -> int:
+    """days(YYYYMMDD) 중 Price가 빠진 (ETF, 날짜)를 KIS 일봉으로 채운다. 채운 개수를 돌려준다.
 
     빠진 날만 새로 만들고 이미 있는 Price는 건드리지 않는다. NAV·순자산·시가총액은 현재가 API라
     날짜 지정이 안 되므로 채운 날에는 비워 둔다. 상장 전이거나 거래정지인 날은 KIS가 봉을 주지 않아 빈 채로 남는다.
     """
     kis = get_kis_client()
     if kis is None:
-        log.warning("Skipping price refill (KIS credentials missing)")
+        log.warning("Skipping price fill (KIS credentials missing)")
         return 0
-
-    end = last_settled_day(datetime.now())
-    start = (datetime.strptime(end, '%Y%m%d') - timedelta(days=PRICE_REFILL_BUSINESS_DAYS * 2)).strftime('%Y%m%d')
-    days = get_business_days(start, end)[-PRICE_REFILL_BUSINESS_DAYS:]
     if not days:
         return 0
 
@@ -1839,6 +1855,10 @@ def send_daily_report(date_str: str, new_etfs: list[dict] | None = None):
     log.info(f"Daily report sent: {len(report['rising'])} rising ETFs in {len(messages)} message(s)")
 
 
+# 수익률 계산에 읽는 기간 (1개월 수익률 + 휴장일 여유)
+RETURNS_LOOKBACK_DAYS = 70
+
+
 def update_etf_returns():
     """ETF 1D/1W/1M 수익률 계산 및 저장."""
     import json
@@ -1849,13 +1869,15 @@ def update_etf_returns():
     cur = init_age(conn)
 
     try:
-        # 전체 ETF의 최근 45일 가격을 한 번에 조회
+        # 전체 ETF의 최근 45일 가격을 한 번에 조회 (백필한 1년치를 다 읽지 않게 날짜로 먼저 자른다)
+        since = (datetime.now() - timedelta(days=RETURNS_LOOKBACK_DAYS)).strftime('%Y-%m-%d')
         rows = execute_cypher(cur, """
             MATCH (e:ETF)-[:HAS_PRICE]->(p:Price)
+            WHERE p.date >= $since
             WITH e.code AS code, p.date AS date, p.close AS close, p.market_cap AS market_cap
             ORDER BY date DESC
             RETURN {code: code, date: date, close: close, market_cap: market_cap}
-        """)
+        """, {'since': since})
 
         if not rows:
             log.warning("No price data for returns calculation")

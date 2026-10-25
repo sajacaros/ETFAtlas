@@ -6,10 +6,13 @@ PageIndex 방식: 원문 구조로 목차 트리를 만들고(LLM 없음), 등�
 
 1. queue_reports: 그래프 종목의 최근 1년 정기보고서(주요계정·공시 목록의 접수번호, 같은 기간이면 정정본)를
    stock_reports에 pending으로 올린다.
+   첨부만 바꾼 공시([첨부정정]·[첨부추가])와 옛 기간의 정정본은 올리지 않고, 이미 올라 있으면 지운다.
 2. build_trees: 원문 zip을 받아(stock_report_docs) 트리를 만든다 → tree. 파서 버전이 바뀐 보고서는 보관한 원문으로
-   다시 만들고, 내용이 같은 노드(content_hash)는 요약을 이어받는다.
+   다시 만들고, 내용이 같은 노드(content_hash)는 요약을 이어받는다. DART가 원문을 주지 않는 접수번호(상태 014)는
+   missing으로 두고 다시 받지 않는다 — 그 회사의 같은 기간 공시를 DART에서 다시 받아 두어, 다음 실행이 그 전 접수를 올린다.
 3. summarize_nodes: 등록된 LLM(관리자 페이지 ai_settings, 추론 끔)으로 노드 요약 → summarized.
    처음에는 보고서가 수천 건이라 실행당 시간 예산 안에서 종목별 최신 보고서부터 한다. 트리만 있어도 챗봇은 제목으로 고른다.
+   REPORT_SUMMARY_ENDPOINTS(환경변수, JSON 목록)에 같은 모델을 띄운 서버를 더 적으면 요약을 나눠 보낸다 (밀린 색인을 빨리 끝낼 때).
 4. prune_reports: 정정본이 색인된 원래 보고서와 1년 지난 보고서(종목마다 최신 1건은 남긴다)를 지운다.
 """
 
@@ -34,7 +37,11 @@ SUMMARY_MINUTES = 600
 # 챗봇이 같은 LLM을 쓰므로 6개로 여유를 둔다
 SUMMARY_WORKERS = 6
 SUMMARY_TIMEOUT = 180
+# 보고서마다 노드를 다 받은 뒤 다음으로 넘어가면 마지막 몇 개를 기다리는 동안 다른 자리가 논다. 동시 수의 이 배수만큼 노드를 모아 보낸다
+SUMMARY_BATCH_FACTOR = 4
 READY = ('tree', 'summarized')
+DART_NO_FILE = '014'  # document.xml: '파일이 존재하지 않습니다'
+
 
 default_args = {
     'owner': 'etf-atlas',
@@ -64,9 +71,10 @@ PRIORITY = "ROW_NUMBER() OVER (PARTITION BY stock_code ORDER BY rcept_no DESC)"
 def queue_reports(**context):
     from psycopg2.extras import execute_values
     from dart_sync_rdb import graph_stocks
-    from app.services.report_tree import latest_reports
+    from app.services.report_tree import attachment_only, latest_reports, stale_period
 
     stocks = sorted(graph_stocks())
+    since = datetime.now().date() - timedelta(days=KEEP_DAYS)
     conn = get_db_connection()
     cur = conn.cursor()
     try:
@@ -75,7 +83,15 @@ def queue_reports(**context):
         financials = cur.fetchall()
         cur.execute("SELECT stock_code, rcept_no, report_nm FROM stock_disclosures WHERE stock_code = ANY(%s)", (stocks,))
         disclosures = cur.fetchall()
-        rows = latest_reports(financials, disclosures, datetime.now().date() - timedelta(days=KEEP_DAYS))
+        cur.execute("SELECT rcept_no, report_nm, period, status FROM stock_reports")
+        existing = cur.fetchall()
+        missing = {r[0] for r in existing if r[3] == 'missing'}
+        # 이제는 올리지 않는 보고서 (첨부만 바꾼 공시, 옛 기간의 정정본). 원문·노드는 FK CASCADE
+        dropped = [r[0] for r in existing if attachment_only(r[1]) or stale_period(r[2], since)]
+        if dropped:
+            cur.execute("DELETE FROM stock_reports WHERE rcept_no = ANY(%s)", (dropped,))
+            log.info("stock_reports: 첨부 정정·옛 기간 정정본 %d건 지움 %s", len(dropped), dropped[:10])
+        rows = latest_reports(financials, disclosures, since, exclude=missing)
         if rows:
             execute_values(cur, """
                 INSERT INTO stock_reports (rcept_no, stock_code, report_nm, period, status, created_at) VALUES %s
@@ -119,6 +135,7 @@ def _save_tree(cur, rcept_no: str, nodes) -> int:
 
 def build_trees(**context):
     import psycopg2
+    from dart_client import DartError
     from dart_sync_rdb import _client
     from app.services.report_tree import PARSER_VERSION, build_tree, parse_document
 
@@ -129,15 +146,15 @@ def build_trees(**context):
     built = failed = 0
     try:
         cur.execute(f"""
-            SELECT r.rcept_no, d.rcept_no IS NOT NULL FROM (
-                SELECT rcept_no, status, parser_version, {PRIORITY} AS rank FROM stock_reports) r
+            SELECT r.rcept_no, r.stock_code, r.period, d.rcept_no IS NOT NULL FROM (
+                SELECT rcept_no, stock_code, period, status, parser_version, {PRIORITY} AS rank FROM stock_reports) r
             LEFT JOIN stock_report_docs d ON d.rcept_no = r.rcept_no
             WHERE r.status IN ('pending', 'failed')
                OR (r.status IN ('tree', 'summarized') AND coalesce(r.parser_version, 0) < %s)
             ORDER BY r.rank, r.rcept_no DESC
         """, (PARSER_VERSION,))
         queue = cur.fetchall()
-        for rcept_no, stored in queue:
+        for rcept_no, stock_code, period, stored in queue:
             if time.monotonic() > deadline:
                 log.info("시간 예산(%d분)을 다 써서 멈춥니다 — 남은 %d건은 다음 실행에서", BUILD_MINUTES, len(queue) - built - failed)
                 break
@@ -158,6 +175,21 @@ def build_trees(**context):
                 _save_tree(cur, rcept_no, nodes)
                 conn.commit()
                 built += 1
+            except DartError as e:
+                conn.rollback()
+                failed += 1
+                if f'<status>{DART_NO_FILE}</status>' not in str(e):
+                    log.warning("report %s: %s", rcept_no, e)
+                    cur.execute("UPDATE stock_reports SET status = 'failed', error = %s WHERE rcept_no = %s",
+                                (str(e)[:500], rcept_no))
+                else:
+                    # 정정 공시 중에는 DART가 원문을 주지 않는 것이 있다. 다시 받아도 같으므로 missing으로 두고,
+                    # 같은 기간의 그 전 접수를 다음 실행이 올릴 수 있게 그 회사 공시를 받아 둔다
+                    found = _fetch_period_disclosures(cur, client, stock_code, period, rcept_no)
+                    log.warning("report %s: DART에 원문이 없습니다 — missing (같은 기간 공시 %d건 받음)", rcept_no, found)
+                    cur.execute("UPDATE stock_reports SET status = 'missing', error = %s WHERE rcept_no = %s",
+                                (str(e)[:500], rcept_no))
+                conn.commit()
             except Exception as e:
                 conn.rollback()
                 failed += 1
@@ -169,6 +201,73 @@ def build_trees(**context):
         cur.close()
         conn.close()
     log.info("report trees: %d건 만듦, 실패 %d", built, failed)
+
+
+def _fetch_period_disclosures(cur, client, stock_code: str, period: str | None, rcept_no: str) -> int:
+    """stock_code 회사가 period 기간이 끝난 뒤부터 rcept_no 접수일까지 낸 공시를 stock_disclosures에 넣는다."""
+    from dart_sync_rdb import _save_disclosures
+    from app.services.report_tree import filed_date, period_end
+
+    if not period:
+        return 0
+    cur.execute("SELECT corp_code FROM dart_corps WHERE stock_code = %s", (stock_code,))
+    row = cur.fetchone()
+    if not row:
+        return 0
+    start = period_end(period).strftime('%Y%m%d')
+    items = list(client.disclosures(start, filed_date(rcept_no).strftime('%Y%m%d'), row[0]))
+    return _save_disclosures(cur, items, {stock_code: stock_code})
+
+
+def summary_endpoints(ai: dict, extra: str | None = None) -> list[dict]:
+    """요약을 보낼 LLM 서버들: 등록된 LLM(SUMMARY_WORKERS개) + 더 쓸 서버(Airflow Variable report_summary_endpoints,
+    없으면 환경변수 REPORT_SUMMARY_ENDPOINTS). Variable은 컨테이너를 다시 띄우지 않고 바꿀 수 있다.
+
+    예: [{"base_url": "http://host:7900/qwen38/v1", "api_key": "...", "model": "qwen38-27b", "workers": 8}]
+    모두 같은 모델(가중치)이어야 한다 — 요약이 섞여도 목차 색인의 결이 같게.
+    """
+    endpoints = [{'base_url': ai['llm_api_base'], 'api_key': ai['llm_api_key'], 'model': ai['llm_model'],
+                  'workers': SUMMARY_WORKERS}]
+    raw = (_extra_endpoints() if extra is None else extra).strip()
+    if raw:
+        for e in json.loads(raw):
+            endpoints.append({'base_url': e['base_url'], 'api_key': e.get('api_key') or 'EMPTY',
+                              'model': e.get('model') or ai['llm_model'], 'workers': int(e.get('workers', SUMMARY_WORKERS))})
+    return endpoints
+
+
+def _extra_endpoints() -> str:
+    import os
+    from airflow.sdk import Variable
+
+    try:
+        value = Variable.get('report_summary_endpoints', default='')
+    except Exception:  # 태스크 밖(테스트 등)에서는 Variable을 못 읽는다
+        value = ''
+    return value or os.environ.get('REPORT_SUMMARY_ENDPOINTS', '')
+
+
+class SummarySlots:
+    """LLM 서버마다 workers개의 자리. 노드 하나를 요약할 때 빈 자리를 빌려 쓰고 돌려준다 —
+    빠른 서버의 자리가 먼저 돌아오므로 서버마다 처리량에 맞게 나뉜다."""
+
+    def __init__(self, endpoints: list[dict]):
+        import queue
+        from openai import OpenAI
+
+        self.size = sum(e['workers'] for e in endpoints)
+        self.free = queue.Queue()
+        for e in endpoints:
+            client = OpenAI(base_url=e['base_url'], api_key=e['api_key'])
+            for _ in range(e['workers']):
+                self.free.put((client, e['model']))
+
+    def summarize(self, node) -> tuple[str | None, str]:
+        client, model = self.free.get()
+        try:
+            return _summarize(client, model, node), model
+        finally:
+            self.free.put((client, model))
 
 
 def _summarize(client, model: str, node) -> str | None:
@@ -188,7 +287,6 @@ def _summarize(client, model: str, node) -> str | None:
 
 
 def summarize_nodes(**context):
-    from openai import OpenAI
     from psycopg2.extras import execute_batch
     from app.services.report_tree import Block, Node, needs_summary
 
@@ -198,8 +296,10 @@ def summarize_nodes(**context):
         log.warning("LLM API key not set (admin page or LLM_API_KEY), skipping report summaries")
         conn.close()
         return
-    client = OpenAI(base_url=ai['llm_api_base'], api_key=ai['llm_api_key'])
-    model = ai['llm_model']
+    endpoints = summary_endpoints(ai)
+    slots = SummarySlots(endpoints)
+    log.info("요약 서버 %d곳, 동시 %d개: %s", len(endpoints), slots.size,
+             ", ".join(f"{e['base_url']} ×{e['workers']}" for e in endpoints))
     cur = conn.cursor()
     deadline = time.monotonic() + SUMMARY_MINUTES * 60
     reports = summarized = 0
@@ -207,30 +307,41 @@ def summarize_nodes(**context):
         cur.execute(f"""SELECT rcept_no FROM (SELECT rcept_no, status, {PRIORITY} AS rank FROM stock_reports) r
                         WHERE status = 'tree' ORDER BY rank, rcept_no DESC""")
         queue = [row[0] for row in cur.fetchall()]
-        with ThreadPoolExecutor(SUMMARY_WORKERS) as pool:
-            for rcept_no in queue:
+        with ThreadPoolExecutor(slots.size) as pool:
+            pos = 0
+            while pos < len(queue):
                 if time.monotonic() > deadline:
                     log.info("시간 예산(%d분)을 다 써서 멈춥니다 — 남은 %d건은 다음 실행에서", SUMMARY_MINUTES, len(queue) - reports)
                     break
-                cur.execute("""SELECT node_id, parent_id, seq, level, title, path, blocks FROM report_nodes
-                               WHERE rcept_no = %s AND summary IS NULL ORDER BY seq""", (rcept_no,))
-                nodes = [Node(r[0], r[1], r[2], r[3], r[4], r[5], [Block.from_json(b) for b in json.loads(r[6])])
-                         for r in cur.fetchall()]
-                targets = [n for n in nodes if needs_summary(n)]
-                results = list(pool.map(lambda n: _summarize(client, model, n), targets))
-                done = [(s, model, rcept_no, n.node_id) for n, s in zip(targets, results) if s]
+                batch = []  # (보고서, 요약할 노드) — 노드가 동시 수의 몇 배가 될 때까지 보고서를 모은다
+                while pos < len(queue) and sum(len(t) for _, t in batch) < slots.size * SUMMARY_BATCH_FACTOR:
+                    rcept_no = queue[pos]
+                    pos += 1
+                    cur.execute("""SELECT node_id, parent_id, seq, level, title, path, blocks FROM report_nodes
+                                   WHERE rcept_no = %s AND summary IS NULL ORDER BY seq""", (rcept_no,))
+                    nodes = [Node(r[0], r[1], r[2], r[3], r[4], r[5], [Block.from_json(b) for b in json.loads(r[6])])
+                             for r in cur.fetchall()]
+                    batch.append((rcept_no, [n for n in nodes if needs_summary(n)]))
+                jobs = [(rcept_no, n) for rcept_no, targets in batch for n in targets]
+                results = list(pool.map(lambda job: slots.summarize(job[1]), jobs))
+                done = [(s, model, rcept_no, n.node_id) for (rcept_no, n), (s, model) in zip(jobs, results) if s]
                 execute_batch(cur, "UPDATE report_nodes SET summary = %s, summary_model = %s WHERE rcept_no = %s AND node_id = %s",
                               done)
-                if len(done) == len(targets):  # 하나라도 실패하면 tree로 두고 다음 실행에서 남은 노드만 다시
-                    cur.execute("UPDATE stock_reports SET status = 'summarized', summarized_at = %s WHERE rcept_no = %s",
-                                (datetime.now(), rcept_no))
+                finished = {}
+                for (rcept_no, _), (s, _) in zip(jobs, results):
+                    finished[rcept_no] = finished.get(rcept_no, True) and bool(s)
+                for rcept_no, targets in batch:
+                    if finished.get(rcept_no, True):  # 하나라도 실패하면 tree로 두고 다음 실행에서 남은 노드만 다시
+                        cur.execute("UPDATE stock_reports SET status = 'summarized', summarized_at = %s WHERE rcept_no = %s",
+                                    (datetime.now(), rcept_no))
                 conn.commit()
-                reports += 1
+                reports += len(batch)
                 summarized += len(done)
     finally:
         cur.close()
         conn.close()
-    log.info("report summaries: 보고서 %d건, 노드 %d개 (모델 %s)", reports, summarized, model)
+    log.info("report summaries: 보고서 %d건, 노드 %d개 (모델 %s)", reports, summarized,
+             ", ".join(sorted({e['model'] for e in endpoints})))
 
 
 def prune_reports(**context):
@@ -248,8 +359,9 @@ def prune_reports(**context):
         cur.execute("""
             DELETE FROM stock_reports r
             WHERE to_date(left(r.rcept_no, 8), 'YYYYMMDD') < current_date - %s
-              AND r.rcept_no <> (SELECT max(x.rcept_no) FROM stock_reports x
-                                 WHERE x.stock_code = r.stock_code AND x.status IN ('tree', 'summarized'))
+              AND r.rcept_no <> (SELECT x.rcept_no FROM stock_reports x
+                                 WHERE x.stock_code = r.stock_code AND x.status IN ('tree', 'summarized')
+                                 ORDER BY x.period DESC NULLS LAST, x.rcept_no DESC LIMIT 1)
         """, (KEEP_DAYS,))
         expired = cur.rowcount
         conn.commit()

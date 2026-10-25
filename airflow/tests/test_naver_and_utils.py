@@ -241,3 +241,19 @@ def test_format_daily_report():
 
     _, blocks = age_utils.format_daily_report("2026-10-21", {**report, "rising": []}, 3.0, [])
     assert blocks == ["1일 +3.0% 이상 오른 ETF가 없습니다."]
+
+
+def test_backfill_price_days_leaves_recent_days_to_daily_collection(monkeypatch):
+    age_utils = pytest.importorskip("age_utils")
+    business = [f"202610{d:02d}" for d in range(1, 24)]  # 23일치 (주말 구분 없이 단순화)
+    calls = []
+
+    def fake_business_days(start, end):
+        calls.append((start, end))
+        return business
+
+    monkeypatch.setattr(age_utils, "last_settled_day", lambda now: "20261023")
+    monkeypatch.setattr(age_utils, "get_business_days", fake_business_days)
+    days = age_utils.backfill_price_days(30)
+    assert calls == [("20260923", "20261023")]
+    assert days == business[:-age_utils.PRICE_REFILL_BUSINESS_DAYS]

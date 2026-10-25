@@ -16,7 +16,7 @@ import json
 import re
 import zipfile
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 PARSER_VERSION = 1
@@ -49,6 +49,11 @@ REPORT_LABEL = {"11013": "1분기보고서", "11012": "반기보고서", "11014"
 REPORT_MONTH = {"11013": "03", "11012": "06", "11014": "09", "11011": "12"}
 # 공시 제목은 1·3분기를 모두 '분기보고서'라 쓴다. 보고서 코드가 없으면 기간 끝 달로 가린다 (12월 결산 기준)
 QUARTER_BY_MONTH = {"03": "1분기보고서", "09": "3분기보고서"}
+# 첨부(감사보고서 등)만 고치거나 더한 공시. 본문은 원래 보고서 그대로라 원래 보고서를 색인한다
+# (DART가 이런 접수번호에는 원문을 주지 않기도 한다 — 상태 014 '파일이 존재하지 않습니다')
+ATTACHMENT_ONLY = ("첨부정정", "첨부추가")
+# 보고서는 기간이 끝나고 길어야 3개월 안에 낸다. 기간이 그보다 오래됐으면 뒤늦게 낸 정정본이라도 색인하지 않는다
+PERIOD_GRACE_DAYS = 92
 
 
 # --- 보고서 이름 ---
@@ -80,21 +85,44 @@ def filed_date(rcept_no: str) -> date:
     return date(int(rcept_no[:4]), int(rcept_no[4:6]), int(rcept_no[6:8]))
 
 
-def latest_reports(financials: Iterable[tuple], disclosures: Iterable[tuple], since: date) -> List[tuple]:
+def period_end(period: str) -> date:
+    """'2026.06' → 2026-06-30"""
+    year, month = int(period[:4]), int(period[5:7])
+    return date(year + month // 12, month % 12 + 1, 1) - timedelta(days=1)
+
+
+def stale_period(period: Optional[str], since: date) -> bool:
+    """색인 범위(since 이후 접수)에 들 수 없는 오래된 기간인가 — 접수일은 최근이어도 옛 기간을 정정한 보고서."""
+    return bool(period) and period_end(period) < since - timedelta(days=PERIOD_GRACE_DAYS)
+
+
+def attachment_only(name: Optional[str]) -> bool:
+    """공시 제목('[첨부정정]반기보고서 …')이나 보고서 이름('… (첨부정정)')이 첨부만 바꾼 공시인가."""
+    return bool(name) and any(f"[{kind}]" in name or f"({kind})" in name for kind in ATTACHMENT_ONLY)
+
+
+def latest_reports(financials: Iterable[tuple], disclosures: Iterable[tuple], since: date,
+                   exclude: Iterable[str] = ()) -> List[tuple]:
     """색인할 보고서 (접수번호, 종목코드, 보고서 이름, 기간): since 이후 접수, 같은 종목·기간이면 가장 최근 접수(정정본)만.
-    financials: (종목, 접수번호, 사업연도, 보고서 코드) — 주요계정, disclosures: (종목, 접수번호, 공시 제목) — 공시 목록."""
+    financials: (종목, 접수번호, 사업연도, 보고서 코드) — 주요계정, disclosures: (종목, 접수번호, 공시 제목) — 공시 목록.
+    첨부만 바꾼 공시, 옛 기간의 정정본, exclude(원문이 없던 접수번호)는 빼서 같은 기간의 그 전 접수가 남게 한다."""
+    skip = set(exclude)
     found: Dict[str, Dict[str, Any]] = {}
     for stock_code, rcept_no, bsns_year, reprt_code in financials:
         found.setdefault(rcept_no, {"stock_code": stock_code}).update(bsns_year=bsns_year, reprt_code=reprt_code)
     for stock_code, rcept_no, title in disclosures:
-        if PERIODIC.match(title):
+        if attachment_only(title):
+            skip.add(rcept_no)
+        elif PERIODIC.match(title):
             found.setdefault(rcept_no, {"stock_code": stock_code})["title"] = title
     latest: Dict[tuple, tuple] = {}
     for rcept_no, r in found.items():
-        if filed_date(rcept_no) < since:
+        if rcept_no in skip or filed_date(rcept_no) < since:
             continue
         args = (r.get("title"), r.get("bsns_year"), r.get("reprt_code"))
         period = report_period(*args)
+        if stale_period(period, since):
+            continue
         key = (r["stock_code"], period or rcept_no)
         if key not in latest or latest[key][0] < rcept_no:
             latest[key] = (rcept_no, r["stock_code"], report_name(*args), period)

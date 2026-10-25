@@ -56,7 +56,8 @@ class StockDisclosure(Base):
 
 class StockReport(Base):
     """색인한 정기보고서 (사업·반기·분기, 정정 포함). dart_report_index DAG가 채우고, 종목마다 최근 1년만 남긴다.
-    status: pending(원문 받기 전) → tree(목차 트리만, 제목으로 고른다) → summarized(노드 요약까지) | failed.
+    status: pending(원문 받기 전) → tree(목차 트리만, 제목으로 고른다) → summarized(노드 요약까지) | failed
+    | missing(DART가 원문을 주지 않는 접수번호 — 다시 받지 않고, 같은 기간의 그 전 접수를 대신 올린다).
     overview·breakdowns는 company_report·company_revenue_mix가 처음 물을 때 만들어 남기는 캐시 (NULL이면 아직)."""
     __tablename__ = "stock_reports"
 

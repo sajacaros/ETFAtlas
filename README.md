@@ -114,9 +114,10 @@ Airflow UI에서 아래 DAG를 순서대로 수동 실행합니다:
 2. **`rdb_sync_metadata`** - RDB ETF 메타데이터 동기화
 3. **`age_tagging`** - ETF 테마 태그 부여
 4. **`embed_code_examples`** - 챗봇 코드 예시 임베딩
+5. **`backfill_prices`** - ETF·종목 가격 이력 백필 (기본 400일, 1개월~1년 수익률용)
 
 이후에는 `age_sync_universe`, `rdb_sync_metadata`, `rdb_realtime_prices`, `age_tagging`이 스케줄에 따라 자동 실행됩니다.
-과거 이력 백필은 하지 않습니다. 데이터는 첫 실행일부터 매일 쌓이므로 1주/1개월 수익률·비중 변화, 포트폴리오 추이 차트는 데이터가 쌓인 뒤부터 보입니다.
+가격(종가·거래량)은 `backfill_prices`로 지난 1년을 채울 수 있습니다. NAV·순자산·시가총액과 구성종목은 날짜 지정이 안 돼 백필하지 않으므로, 비중 변화·시가총액 증감은 첫 실행일부터 쌓인 만큼 보입니다.
 
 ### 백엔드 코드 수정 시
 

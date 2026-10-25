@@ -403,6 +403,33 @@ def test_reports_to_index_are_the_last_year_with_the_amendment_only():
     ]
 
 
+def test_reports_to_index_skip_attachment_only_old_period_and_missing_filings():
+    from app.services.report_tree import attachment_only, latest_reports, stale_period
+    financials = [("140670", "20260814002300", 2026, "11012"), ("105560", "20260316000100", 2025, "11011")]
+    disclosures = [
+        ("140670", "20260929000169", "[첨부정정]반기보고서 (2026.06)"),  # 첨부만 바꿈 → 원래 보고서
+        ("140670", "20260814002367", "[첨부추가]반기보고서 (2026.06)"),
+        ("105560", "20260619000667", "[기재정정]사업보고서 (2025.12)"),  # DART에 원문이 없음 → 원래 보고서
+        ("105560", "20260324000822", "[기재정정]사업보고서 (2024.12)"),  # 접수는 최근이지만 옛 기간
+    ]
+    assert latest_reports(financials, disclosures, date(2025, 10, 25), exclude={"20260619000667"}) == [
+        ("20260316000100", "105560", "2025년 사업보고서", "2025.12"),
+        ("20260814002300", "140670", "2026년 반기보고서", "2026.06"),
+    ]
+    assert attachment_only("2026년 반기보고서 (첨부정정)") and not attachment_only("2026년 반기보고서 (기재정정)")
+    assert stale_period("2025.06", date(2025, 10, 25)) and not stale_period("2025.09", date(2025, 10, 25))
+
+
+def test_pick_report_prefers_the_latest_period_over_a_late_amendment():
+    from app.services.answer.skills.company_report import pick_report
+    from app.models.dart import StockReport
+    rows = [StockReport(rcept_no="20260515002888", period="2026.03", status="tree"),
+            StockReport(rcept_no="20260619000667", period="2025.12", status="summarized"),
+            StockReport(rcept_no="20260929000169", period="2026.06", status="missing")]
+    assert pick_report(rows, None).rcept_no == "20260515002888"
+    assert pick_report(rows, "2025.12").rcept_no == "20260619000667"
+
+
 # --- company_report · company_revenue_mix ---
 
 class ReportQuery(FakeQuery):

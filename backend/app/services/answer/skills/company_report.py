@@ -109,9 +109,10 @@ class Entry:
 
 
 def pick_report(rows: Sequence[StockReport], period: Optional[str]) -> Optional[StockReport]:
-    """색인을 마친 보고서 중 가장 최근 접수 (정정 포함). period가 있으면 그 기간의 보고서."""
+    """색인을 마친 보고서 중 가장 최근 기간, 같은 기간이면 가장 최근 접수(정정본). period가 있으면 그 기간의 보고서.
+    접수번호만 보면 옛 기간을 뒤늦게 정정한 보고서(6월에 낸 사업보고서 정정)가 새 분기보고서보다 앞선다."""
     ready = [r for r in rows if r.status in READY and (not period or r.period == period)]
-    return max(ready, key=lambda r: r.rcept_no, default=None)
+    return max(ready, key=lambda r: (r.period or "", r.rcept_no), default=None)
 
 
 def prepare_report(stock_arg: str, ctx: SkillContext, period: Optional[str] = None):

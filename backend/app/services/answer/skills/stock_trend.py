@@ -1,16 +1,17 @@
-from typing import Dict, List, Literal
+from typing import Dict, List
 
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ...graph_service import GraphService
 from ..resolver import EntityResolver
+from .common import DEFAULT_PERIOD, PERIOD_DESCRIPTION, Period
 from .price_trend import PriceTrendBase
 
 
 class StockTrendArgs(BaseModel):
     stocks: List[str] = Field(min_length=1, max_length=5, description="종목 이름 또는 6자리 코드 (예: '삼성전자')")
-    period: Literal["1w", "1m", "3m", "6m", "1y"] = Field("3m", description="조회 기간")
+    period: Period = Field(DEFAULT_PERIOD, description=PERIOD_DESCRIPTION)
 
 
 class StockTrendSkill(PriceTrendBase):

@@ -1,5 +1,4 @@
-from datetime import date, timedelta
-from typing import ClassVar, Dict, List, Literal, Tuple
+from typing import ClassVar, Dict, List, Tuple
 
 from pydantic import Field
 from sqlalchemy.orm import Session
@@ -8,15 +7,12 @@ from ...graph_service import GraphService
 from ..resolver import EntityResolver
 from ..schemas import CandlestickView, DataField, Dataset, LineView, Source, TableView
 from .base import DataSkill, SkillResult, data_result, empty, not_found
-from .common import PERIOD_DAYS, ETFListArgs, missing_notes, pct_change
-
-
-# 요청 기간의 시작보다 데이터가 이만큼 늦게 시작하면 짧다고 알린다 (주말·휴장 여유)
-SHORT_HISTORY_DAYS = 5
+from .common import (DEFAULT_PERIOD, PERIOD_DESCRIPTION, ETFListArgs, Period, missing_notes, pct_change, period_base,
+                     period_days, period_label, period_span)
 
 
 class PriceTrendArgs(ETFListArgs):
-    period: Literal["1w", "1m", "3m", "6m", "1y"] = Field("3m", description="조회 기간")
+    period: Period = Field(DEFAULT_PERIOD, description=PERIOD_DESCRIPTION)
 
 
 def _summary_line(name: str, prices: List[Dict]) -> str:
@@ -45,23 +41,32 @@ class PriceTrendBase(DataSkill):
         graph = GraphService(db)
         names = {e["code"]: e["name"] for e in found}
         series: Dict[str, List[Dict]] = {}
+        short: List[str] = []  # 수집 이력이 요청 기간의 시작점까지 닿지 않는 대상
         for code in names:
-            prices = [p for p in self.prices(graph, code, PERIOD_DAYS[args.period]) if p.get("close")]
-            if prices:
-                series[code] = prices
+            prices = [p for p in self.prices(graph, code, period_days(args.period)) if p.get("close")]
+            if not prices:
+                continue
+            # 수익률 순위·기간 수익률과 같은 시작점(기간 전 마지막 거래일)부터 그려 같은 기간이면 등락률이 같게
+            base = period_base(prices, args.period)
+            if base:
+                prices = [p for p in prices if p["date"] >= base["date"]]
+            else:
+                short.append(code)
+            series[code] = prices
         if not series:
             return empty("해당 기간의 가격 데이터가 없습니다")
 
-        summary = "\n".join(_summary_line(names[c], ps) for c, ps in series.items())
-        sources = [Source(label=f"{self.target} 일별 시세", as_of=max(ps[-1]["date"] for ps in series.values()))]
-        notes = missing_notes(missing)
-        # 수집 이력이 요청 기간보다 짧으면 알린다 (해설이 '한 달간'처럼 쓰지 않게 요약에도 넣는다)
-        requested_start = (date.today() - timedelta(days=PERIOD_DAYS[args.period])).isoformat()
         first_date = min(ps[0]["date"] for ps in series.values())
-        if first_date > (date.fromisoformat(requested_start) + timedelta(days=SHORT_HISTORY_DAYS)).isoformat():
-            short = f"요청한 기간보다 데이터가 짧습니다: {first_date}부터 있습니다"
-            notes.append(short)
-            summary += f"\n({short})"
+        last_date = max(ps[-1]["date"] for ps in series.values())
+        span = period_span(first_date, last_date, period_label(args.period))
+        summary = span + "\n" + "\n".join(_summary_line(names[c], ps) for c, ps in series.items())
+        sources = [Source(label=f"{self.target} 일별 시세", as_of=last_date)]
+        notes = [span] + missing_notes(missing)
+        # 수집 이력이 요청 기간보다 짧으면 알린다 (해설이 '한 달간'처럼 쓰지 않게 요약에도 넣는다)
+        if short:
+            note = "요청한 기간보다 데이터가 짧습니다: " + ", ".join(f"{names[c]} {series[c][0]['date']}부터" for c in short)
+            notes.append(note)
+            summary += f"\n({note})"
 
         if display == "candlestick":
             code, prices = next(iter(series.items()))

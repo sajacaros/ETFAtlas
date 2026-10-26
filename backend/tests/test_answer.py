@@ -76,8 +76,23 @@ def test_percentile_is_against_whole_universe_and_respects_direction():
 
 def test_period_return_needs_data_old_enough():
     prices = [{"date": "2026-10-01", "close": 100.0}, {"date": "2026-10-08", "close": 110.0}]
-    assert period_return(prices, 7) == 10.0
-    assert period_return(prices, 30) is None
+    assert period_return(prices, "1w") == 10.0
+    assert period_return(prices, "7d") == 10.0
+    assert period_return(prices, "1m") is None
+
+
+def test_period_accepts_any_asked_period_and_labels_it():
+    from datetime import date
+    from app.services.answer.skills.common import period_label, period_start
+    Args = REGISTRY["price_trend"].Args
+    assert Args(etfs=["가"]).period == "1m"  # 질문에 기간이 없으면 기본값
+    assert [Args(etfs=["가"], period=p).period for p in ("2w", "45d", "2M", "ytd")] == ["2w", "45d", "2m", "ytd"]
+    for bad in ("2주", "0d", "1q", "3"):
+        with pytest.raises(ValueError, match="기간 표기"):
+            Args(etfs=["가"], period=bad)
+    assert [period_label(p) for p in ("2w", "45d", "2m", "1y", "ytd")] == ["2주", "45일", "2개월", "1년", "연초 이후"]
+    assert period_start("2w", date(2026, 10, 23)) == date(2026, 10, 9)
+    assert period_start("ytd", date(2026, 10, 23)) == date(2025, 12, 31)  # 작년 마지막 거래일 대비
 
 
 class FakeResolver:
@@ -1251,6 +1266,10 @@ def test_rank_args_need_one_source_and_etf_only_metrics_for_etfs():
         Args(kind="etf", targets=["가"], theme="반도체", by="net_assets")
     with pytest.raises(ValueError, match="ETF에만"):
         Args(kind="stock", targets=["가"], by="expense_ratio")
+    # 예전 계획의 return_1m은 by=return + period로 읽는다
+    legacy = Args(kind="etf", by="return_3m")
+    assert (legacy.by, legacy.period) == ("return", "3m")
+    assert Args(kind="etf", by="return").period == "1m"
 
 
 def test_rank_orders_filters_and_exports_by_the_metric(monkeypatch):
@@ -1312,8 +1331,41 @@ def test_rank_computes_period_returns_from_prices(monkeypatch):
     assert result.exports == [{"code": "000001", "name": "가"}]
     assert result.content["dataset"]["rows"][0]["value"] == 10.0
     assert "후보 종목 3개 중 1주 수익률 높은 순" in result.summary
+    assert result.content["notes"][0] == "조회 기간: 2026-10-01 ~ 2026-10-08 (종가 기준)"
+    assert result.content["sources"][0]["as_of"] == "2026-10-08"
+    asked = skill.fetch(skill.Args(kind="stock", targets=["가", "나"], by="return", period="6d"),
+                        "bar", None, FakeRankResolver())
+    assert "6일 수익률" in asked.summary and asked.content["dataset"]["fields"][2]["label"] == "6일 수익률"
     no_data = skill.fetch(skill.Args(kind="stock", targets=["다"], by="return_1y"), "bar", None, FakeRankResolver())
     assert no_data.message == "후보 종목 1개 모두 1년 수익률 데이터가 없습니다"
+
+
+def test_period_returns_adds_asked_period_and_shows_start_dates(monkeypatch):
+    from app.services.answer.skills import period_returns as mod
+    dates = ["2025-12-30", "2026-09-23", "2026-10-09", "2026-10-16", "2026-10-22", "2026-10-23"]
+
+    class FakeGraph:
+        def get_etf_prices(self, code, days):
+            return [{"date": d, "close": 100.0 + i} for i, d in enumerate(dates)]
+
+    monkeypatch.setattr(mod, "GraphService", lambda db: FakeGraph())
+    skill = REGISTRY["period_returns"]
+    result = skill.fetch(skill.Args(etfs=["가"], period="2w"), "bar", None, FakeRankResolver())
+    rows = result.content["dataset"]["rows"]
+    assert [r["period"] for r in rows] == ["1일", "1주", "2주", "1개월", "3개월", "6개월"]
+    assert next(r for r in rows if r["period"] == "2주")["start"] == "2026-10-09"
+    assert result.content["notes"][0].startswith("2026-10-23 종가 기준, 시작일: 1일 2026-10-22 · 1주 2026-10-16 · 2주 2026-10-09")
+    # 가격 추이도 같은 시작점에서 그려 2주 등락률이 기간 수익률과 같다
+    from app.services.answer.skills import price_trend as trend_mod
+    monkeypatch.setattr(trend_mod, "GraphService", lambda db: FakeGraph())
+    trend = REGISTRY["price_trend"]
+    two_weeks = trend.fetch(trend.Args(etfs=["가"], period="2w"), "table", None, FakeRankResolver())
+    assert two_weeks.content["dataset"]["rows"][0]["change"] == next(r for r in rows if r["period"] == "2주")["000001"]
+    assert two_weeks.content["notes"] == ["조회 기간: 2026-10-09 ~ 2026-10-23 (2주)"]
+    too_long = trend.fetch(trend.Args(etfs=["가"], period="2y"), "table", None, FakeRankResolver())
+    assert "요청한 기간보다 데이터가 짧습니다: 가 2025-12-30부터" in too_long.content["notes"]
+    ytd = skill.fetch(skill.Args(etfs=["가"], period="ytd"), "table", None, FakeRankResolver())
+    assert next(r for r in ytd.content["dataset"]["rows"] if r["period"] == "연초 이후")["start"] == "2025-12-30"
 
 
 def test_overlap_splits_common_and_only_holdings():

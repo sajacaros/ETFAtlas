@@ -1,4 +1,5 @@
-from typing import Dict, List, Literal, Optional
+import re
+from typing import Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
@@ -7,23 +8,20 @@ from ...graph_service import GraphService
 from ..resolver import EntityResolver
 from ..schemas import BarView, DataField, Dataset, Source, TableView
 from .base import DataSkill, SkillResult, data_result, empty, not_found
-from .common import format_value, node
+from .common import (DEFAULT_PERIOD, PERIOD_DESCRIPTION, Period, format_value, node, pct_change, period_base, period_days,
+                     period_label, period_span)
 from .etf_choice import _theme_etfs, _theme_word
-from .period_returns import period_return
 from .stock_holders import SAFE_CODE_RE
 
-# 기준: (표시 이름, 서식, ETF만 되는지). 수익률은 마지막 거래일부터 거슬러 센 기간 (period_returns와 같은 계산)
+# 기준: (표시 이름, 서식, ETF만 되는지). 수익률은 마지막 거래일부터 period만큼 거슬러 센다 (period_returns와 같은 계산)
 METRICS = {
-    "return_1w": ("1주 수익률", "percent", False),
-    "return_1m": ("1개월 수익률", "percent", False),
-    "return_3m": ("3개월 수익률", "percent", False),
-    "return_6m": ("6개월 수익률", "percent", False),
-    "return_1y": ("1년 수익률", "percent", False),
+    "return": ("수익률", "percent", False),
     "net_assets": ("순자산", "krw", True),
     "expense_ratio": ("총보수", "percent", True),
     "dividend_yield": ("분배율(최근 12개월)", "percent", True),
 }
-RETURN_DAYS = {"return_1w": 7, "return_1m": 30, "return_3m": 90, "return_6m": 180, "return_1y": 365}
+# 예전 계획(레이아웃 예시 등)의 'return_1m' 같은 기준은 by=return + period로 읽는다
+LEGACY_RETURN = re.compile(r"return_(\w+)")
 MAX_TARGETS = 30
 
 
@@ -35,9 +33,10 @@ class RankArgs(BaseModel):
     ))
     theme: Optional[str] = Field(None, description="kind=etf일 때만: 업종·테마 이름(예: '2차전지') — 그 테마의 ETF 전체를 후보로")
     by: Literal[tuple(METRICS)] = Field(description=(
-        "정렬 기준. return_1w/1m/3m/6m/1y: 기간 수익률, net_assets: 순자산(ETF만), expense_ratio: 총보수(ETF만), "
+        "정렬 기준. return: 기간 수익률(기간은 period), net_assets: 순자산(ETF만), expense_ratio: 총보수(ETF만), "
         "dividend_yield: 최근 12개월 분배율(ETF만, '배당률'·'배당 수익률'도 이것)"
     ))
+    period: Period = Field(DEFAULT_PERIOD, description="by=return일 때만: " + PERIOD_DESCRIPTION)
     order: Literal["desc", "asc"] = Field("desc", description="desc: 큰 값부터(가장 많이 오른, 가장 큰), asc: 작은 값부터(가장 낮은 보수)")
     min_value: Optional[float] = Field(None, description=(
         "이 값 이상만 남긴다 (수익률·총보수·분배율은 % 숫자, 순자산은 원). 남는 개수는 실행해 봐야 알므로, "
@@ -45,6 +44,15 @@ class RankArgs(BaseModel):
     ))
     max_value: Optional[float] = Field(None, description="이 값 이하만 남긴다")
     top: int = Field(5, ge=1, le=MAX_TARGETS, description="남길 개수 (순위 순)")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_return(cls, data):
+        if isinstance(data, dict) and isinstance(data.get("by"), str):
+            match = LEGACY_RETURN.fullmatch(data["by"])
+            if match:
+                data = {**data, "by": "return", "period": match.group(1)}
+        return data
 
     @model_validator(mode="after")
     def _one_source(self):
@@ -92,7 +100,9 @@ class RankSkill(DataSkill):
             return not_found(f"후보를 찾지 못했습니다: {', '.join(args.targets)}")
 
         label, fmt, _ = METRICS[args.by]
-        values = self._values(graph, args, candidates)
+        if args.by == "return":
+            label = f"{period_label(args.period)} 수익률"
+        values, spans = self._values(graph, args, candidates)
         scored = [{"code": c["code"], "name": c["name"], "value": values.get(c["code"])} for c in candidates]
         no_data = [s["name"] for s in scored if s["value"] is None]
         scored = [s for s in scored if s["value"] is not None]
@@ -119,6 +129,14 @@ class RankSkill(DataSkill):
         summary = (f"후보 {target} {len(candidates)}개 중 {label} {direction} 순{condition} {len(picked)}개: "
                    + "; ".join(f"{p['name']} {format_value(p['value'], fmt)}" for p in picked))
         notes = []
+        as_of = None
+        if args.by == "return":
+            # 고른 대상의 시작·끝 거래일 (거래 정지 등으로 대상마다 다를 수 있어 가장 이른 시작 ~ 가장 늦은 끝)
+            picked_spans = [spans[p["code"]] for p in picked]
+            as_of = max(end for _, end in picked_spans)
+            span = period_span(min(start for start, _ in picked_spans), as_of, "종가 기준")
+            notes.append(span)
+            summary = f"{span}\n{summary}"
         if args.by == "dividend_yield":
             notes.append("분배율은 최근 12개월 분배금 합을 현재가로 나눈 값입니다 (특별분배가 있으면 높게, "
                          "상장 1년 미만이면 낮게 나옵니다)")
@@ -128,22 +146,27 @@ class RankSkill(DataSkill):
             notes.append(f"{label} 데이터가 없어 뺀 {target}: {', '.join(no_data)}")
         if missing:
             notes.append(f"찾지 못한 {target}: {', '.join(missing)}")
-        source = "일별 종가" if args.by in RETURN_DAYS else "ETF 기본 정보"
-        return data_result(dataset, view, summary, [Source(label=f"{target} {source}")], notes,
+        source = "일별 종가" if args.by == "return" else "ETF 기본 정보"
+        return data_result(dataset, view, summary, [Source(label=f"{target} {source}", as_of=as_of)], notes,
                            exports=[{"code": p["code"], "name": p["name"]} for p in picked])
 
     @staticmethod
-    def _values(graph: GraphService, args: RankArgs, candidates: List[Dict]) -> Dict[str, Optional[float]]:
-        if args.by in RETURN_DAYS:
+    def _values(graph: GraphService, args: RankArgs,
+                candidates: List[Dict]) -> Tuple[Dict[str, Optional[float]], Dict[str, Tuple[str, str]]]:
+        """{code: 값}과, 수익률이면 값을 낸 대상의 {code: (시작일, 끝일)}."""
+        if args.by == "return":
             prices = graph.get_etf_prices if args.kind == "etf" else graph.get_stock_prices
-            out = {}
+            out, spans = {}, {}
             for c in candidates:
-                series = [p for p in prices(c["code"], days=RETURN_DAYS[args.by] + 10) if p.get("close")]
-                out[c["code"]] = period_return(series, RETURN_DAYS[args.by]) if series else None
-            return out
+                series = [p for p in prices(c["code"], days=period_days(args.period)) if p.get("close")]
+                base = period_base(series, args.period) if series else None
+                out[c["code"]] = pct_change(base["close"], series[-1]["close"]) if base else None
+                if base:
+                    spans[c["code"]] = (base["date"], series[-1]["date"])
+            return out, spans
         codes = ", ".join(repr(c["code"]) for c in candidates if SAFE_CODE_RE.fullmatch(c["code"]))
         rows = node(graph, f"MATCH (e:ETF) WHERE e.code IN [{codes}] RETURN {{code: e.code, value: e.{args.by}}}", {})
-        return {r["code"]: (float(r["value"]) if r.get("value") is not None else None) for r in rows}
+        return {r["code"]: (float(r["value"]) if r.get("value") is not None else None) for r in rows}, {}
 
     @staticmethod
     def _condition(args: RankArgs, fmt: str) -> str:

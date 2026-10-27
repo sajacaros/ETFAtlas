@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { AlertCircle, BarChart3, ChevronLeft, ChevronRight, Table2 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import { MARKDOWN_COMPONENTS, MARKDOWN_PLUGINS } from '@/lib/markdown'
@@ -125,20 +125,64 @@ function SlotView({ chatLogId, node, state }: { chatLogId: number; node: SlotNod
   )
 }
 
-function DataSlot({ content, display }: { content: DataContent; display: string }) {
+/** 고른 표시 기간부터 행을 자른다. 기간을 고르지 않는 차트는 그대로 */
+function useRangeContent(content: DataContent, range: number): DataContent {
+  return useMemo(() => {
+    const view = content.view
+    const picked = view.kind === 'candlestick' ? view.ranges?.[range] : undefined
+    if (!picked || view.kind !== 'candlestick') return content
+    const rows = content.dataset.rows.filter((r) => String(r[view.x]) >= picked.start)
+    return { ...content, dataset: { ...content.dataset, rows } }
+  }, [content, range])
+}
+
+function DataSlot({ content: full, display }: { content: DataContent; display: string }) {
   const [panel, setPanel] = useState(0)
-  const option = useChartOption(content, { panel })
+  const [bands, setBands] = useState(false)
+  const ranges = full.view.kind === 'candlestick' ? full.view.ranges ?? [] : []
+  const initialRange = full.view.kind === 'candlestick' ? full.view.range ?? 0 : 0
+  const [range, setRange] = useState(initialRange)
+  const content = useRangeContent(full, range)
+  const option = useChartOption(content, { panel, bands })
   const [asTable, setAsTable] = useState(false)
   const isChart = content.view.kind !== 'table'
   const tableOrientation = content.view.kind === 'table' ? content.view.orientation
     : content.view.kind === 'radar' ? 'compare' : 'list'
   const panels = content.view.kind === 'candlestick' ? content.view.panels ?? [] : []
+  const hasBands = content.view.kind === 'candlestick' && (content.view.overlays ?? []).some((k) => k.startsWith('bb_'))
   const showChart = isChart && option && !asTable
 
   return (
     <div>
       {isChart && option && (
-        <div className="flex items-center justify-end gap-3 -mt-1 mb-1">
+        <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 -mt-1 mb-1">
+          {/* 표시 기간 — 해설·신호는 질문한 기간 그대로 */}
+          {ranges.length > 1 && (
+            <div className="flex items-center gap-0.5 text-xs" role="group" aria-label="표시 기간">
+              {ranges.map((r, i) => (
+                <button
+                  key={r.label}
+                  type="button"
+                  aria-pressed={i === range}
+                  onClick={() => setRange(i)}
+                  className={cn('rounded px-1.5 py-0.5 hover:text-foreground',
+                    i === range ? 'bg-muted text-foreground' : 'text-muted-foreground')}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
+          )}
+          {showChart && hasBands && (
+            <button
+              type="button"
+              aria-pressed={bands}
+              onClick={() => setBands((v) => !v)}
+              className={cn('text-xs hover:text-foreground', bands ? 'text-foreground' : 'text-muted-foreground')}
+            >
+              볼린저 밴드 {bands ? '끄기' : '켜기'}
+            </button>
+          )}
           {/* 보조지표 칸은 하나씩 넘겨 본다 */}
           {showChart && panels.length > 1 && (
             <div className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -182,6 +226,12 @@ function DataSlot({ content, display }: { content: DataContent; display: string 
       {content.signals && content.signals.length > 0 && <Signals signals={content.signals} />}
       {(content.notes.length > 0 || content.sources.length > 0) && (
         <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
+          {range !== initialRange && ranges[range] && content.dataset.rows.length > 0 && (
+            <p>
+              표시 구간: {ranges[range].start} ~ {String(content.dataset.rows[content.dataset.rows.length - 1].date)}
+              {ranges[range].short ? ' (데이터가 그 기간보다 짧습니다)' : ''} — 아래 조회 기간·신호·해설은 질문한 기간 기준
+            </p>
+          )}
           {content.notes.map((note) => <p key={note}>{note}</p>)}
           {content.sources.length > 0 && (
             <p>

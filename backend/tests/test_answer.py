@@ -1456,8 +1456,15 @@ def test_stock_technical_draws_indicators_and_states_each_one(monkeypatch):
     view, rows = result.content["view"], result.content["dataset"]["rows"]
     assert [p["label"] for p in view["panels"]] == ["RSI(14)", "MACD(12,26,9)", "스토캐스틱 슬로우(5,3,3)"]
     assert view["overlays"] == ["ma5", "ma20", "ma60", "ma120", "bb_upper", "bb_lower"]
-    # 기간 앞의 일봉까지 넣어 계산해 첫날부터 120일선이 있다
-    assert rows[0]["date"] == "2026-04-30" and rows[0]["ma120"] is not None
+    # 화면에서 고르는 기간마다 시작일, 행은 가장 긴 1년까지 — 질문한 6개월이 처음 보인다
+    assert [(r["label"], r["start"]) for r in view["ranges"]] == [
+        ("1개월", "2026-09-25"), ("6개월", "2026-04-30"), ("1년", "2025-10-29")]
+    # 일봉이 260거래일뿐이라 1년은 처음부터, 짧다고 표시한다
+    assert [r["short"] for r in view["ranges"]] == [False, False, True]
+    assert view["range"] == 1 and rows[0]["date"] == "2025-10-29"
+    # 기간 앞의 일봉까지 넣어 계산해 6개월 첫날부터 120일선이 있다
+    assert next(r for r in rows if r["date"] == "2026-04-30")["ma120"] is not None
+    assert result.content["notes"][0] == "조회 기간: 2026-04-30 ~ 2026-10-27 (6개월)"
     summary = result.summary
     assert "이평 배열: 정배열도 역배열도 아님" in summary or "역배열" in summary
     for part in ("[MACD(12,26,9)]", "MACD선이 시그널선 아래", "[RSI(14)]", "과매도 기준(30 이하) 구간",

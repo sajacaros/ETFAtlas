@@ -19,9 +19,10 @@ export interface ChartTheme {
   font: string
 }
 
-/** 화면에서 고르는 값 — 봉차트의 보조지표 칸 번호 */
+/** 화면에서 고르는 값 — 봉차트의 보조지표 칸 번호, 볼린저 밴드 표시 */
 export interface BuildOptions {
   panel?: number
+  bands?: boolean  // 볼린저 밴드를 그린다 (기본은 숨김 — 이평선과 겹쳐 어지럽다)
 }
 
 type Builder<K extends DataView['kind']> = (
@@ -218,7 +219,7 @@ const candlestick: Builder<'candlestick'> = (view, content, theme, opts) => {
   const hasVolume = view.volume !== null
   const panels = view.panels ?? []
   const panel = panels.length ? panels[Math.min(opts.panel ?? 0, panels.length - 1)] : undefined
-  const overlays = view.overlays ?? []
+  const overlays = (view.overlays ?? []).filter((k) => opts.bands || !k.startsWith('bb_'))
   const tooltipBase = base(theme).tooltip as object
   const series = (key: string) => rows.map((r) => num(r[key]))
   // 칸: 가격 → 거래량 → 보조지표. 날짜 라벨은 맨 아래 칸에만

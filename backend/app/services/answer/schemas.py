@@ -74,6 +74,13 @@ class IndicatorPanel(BaseModel):
     max: Optional[float] = None
 
 
+class ChartRange(BaseModel):
+    """화면에서 고르는 표시 기간. rows는 가장 긴 기간까지 오고, 프런트가 start(포함)부터 잘라 그린다."""
+    label: str  # '1개월'
+    start: str  # 첫 거래일 (기간 전 마지막 거래일)
+    short: bool = False  # 데이터가 그 기간보다 짧아 처음부터 그린다
+
+
 class CandlestickView(BaseModel):
     kind: Literal["candlestick"] = "candlestick"
     x: str
@@ -84,6 +91,8 @@ class CandlestickView(BaseModel):
     volume: Optional[str] = None
     overlays: list[str] = []  # 가격 칸에 겹쳐 그릴 선 (이동평균, 볼린저 밴드)
     panels: list[IndicatorPanel] = []
+    ranges: list[ChartRange] = []
+    range: int = 0  # 처음 보이는 ranges 번호 (질문한 기간)
 
 
 View = Annotated[
@@ -106,7 +115,7 @@ def slot_type(display: str) -> str:
 def _view_keys(view: BaseModel) -> list[str]:
     keys: list[str] = []
     for name, value in view:
-        if name in ("kind", "orientation", "horizontal", "stacked", "max", "label", "levels"):
+        if name in ("kind", "orientation", "horizontal", "stacked", "max", "label", "levels", "start", "short"):
             continue
         if isinstance(value, list):
             for item in value:

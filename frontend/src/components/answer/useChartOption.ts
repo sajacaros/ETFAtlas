@@ -38,13 +38,13 @@ export function chartHeight(display: string, content?: DataContent): number {
 /** 그릴 수 없으면 null — 호출하는 쪽이 표로 대신 보여준다 */
 export function useChartOption(content: DataContent, opts: BuildOptions = {}) {
   const { theme } = useTheme()
-  const { panel } = opts
+  const { panel, bands } = opts
   return useMemo(() => {
     try {
-      return buildChartOption(content, chartTheme(theme), { panel })
+      return buildChartOption(content, chartTheme(theme), { panel, bands })
     } catch {
       return null
     }
-  }, [content, theme, panel])
+  }, [content, theme, panel, bands])
 }
 

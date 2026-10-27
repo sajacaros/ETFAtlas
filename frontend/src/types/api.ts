@@ -430,7 +430,15 @@ export type DataView =
       kind: 'candlestick'; x: string; open: string; high: string; low: string; close: string; volume: string | null
       overlays?: string[]  // 가격 칸에 겹쳐 그릴 선 (이동평균, 볼린저 밴드)
       panels?: IndicatorPanel[]  // 보조지표 칸 — 한 번에 하나만 보이고 넘겨 본다
+      ranges?: ChartRange[]  // 화면에서 고르는 표시 기간 — rows는 가장 긴 기간까지 온다
+      range?: number  // 처음 보이는 ranges 번호
     }
+
+export interface ChartRange {
+  label: string
+  start: string  // 이 날(포함)부터 그린다
+  short: boolean  // 데이터가 그 기간보다 짧다
+}
 
 export interface IndicatorPanel {
   label: string

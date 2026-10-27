@@ -12,12 +12,13 @@ from sqlalchemy.orm import Session
 from ...flow import indicators as ind
 from ...graph_service import GraphService
 from ..resolver import EntityResolver
-from ..schemas import CandlestickView, DataField, Dataset, IndicatorPanel, Signal, Source
+from ..schemas import CandlestickView, ChartRange, DataField, Dataset, IndicatorPanel, Signal, Source
 from .base import DataSkill, SkillResult, data_result, empty, not_found
 from .common import Period, pct_change, period_base, period_days, period_label, period_span
 
 DEFAULT_TECH_PERIOD = "6m"  # 120일선·MACD 교차를 읽으려면 한 달로는 짧다
 WARMUP_DAYS = 200  # 화면 첫날 120일선에 필요한 거래일(약 170일)과 휴장일 여유
+RANGES = ("1m", "6m", "1y")  # 화면에서 고르는 표시 기간. 질문한 기간이 다르면 하나 더 붙는다
 MA_PERIODS = (5, 20, 60, 120)
 RSI_LEVELS = (30, 70)
 STOCH_LEVELS = (20, 80)
@@ -367,7 +368,8 @@ class StockTechnicalSkill(DataSkill):
         if not stock:
             return not_found(f"찾지 못한 종목: {args.stock}")
         name = stock["name"]
-        days = max(period_days(args.period) + WARMUP_DAYS, SIGNAL_DAYS)
+        specs = sorted({*RANGES, args.period}, key=period_days)
+        days = max(period_days(specs[-1]) + WARMUP_DAYS, SIGNAL_DAYS)
         prices = GraphService(db).get_stock_prices(stock["code"], days=days)
         bars = [p for p in prices if all(p.get(k) is not None for k in ("open", "high", "low", "close"))]
         if not bars:
@@ -385,9 +387,11 @@ class StockTechnicalSkill(DataSkill):
         stoch = ind.stoch_slow(bars)
         stoch_k, stoch_d = (_pad(stoch[0], n), _pad(stoch[1], n)) if stoch else ([None] * n, [None] * n)
 
-        # 가격 추이·기간 수익률과 같은 시작점(기간 전 마지막 거래일)부터 보여 준다
-        base = period_base(bars, args.period)
-        start = bars.index(base) if base else 0
+        # 가격 추이·기간 수익률과 같은 시작점(기간 전 마지막 거래일)부터 보여 준다. 화면에서 고르는 기간마다 시작점을 정하고
+        # 가장 긴 기간의 일봉을 보낸다 — 프런트가 잘라 보여 주고, 요약·신호는 질문한 기간 그대로
+        starts = {spec: period_base(bars, spec) for spec in specs}
+        base = starts[args.period]
+        start = min(bars.index(b) if b else 0 for b in starts.values())
         rows = []
         for i in range(start, n):
             b = bars[i]
@@ -401,6 +405,7 @@ class StockTechnicalSkill(DataSkill):
                 "rsi": _r(rsi[i]), "stoch_k": _r(stoch_k[i]), "stoch_d": _r(stoch_d[i]),
             })
 
+        all_rows, rows = rows, [r for r in rows if r["date"] >= (base or bars[0])["date"]]
         span = period_span(rows[0]["date"], rows[-1]["date"], period_label(args.period))
         notes = [span, "이동평균·보조지표는 기간 앞의 일봉까지 넣어 계산했습니다"]
         if not base:
@@ -430,9 +435,12 @@ class StockTechnicalSkill(DataSkill):
         order = [args.first, *[p for p in PANELS if p != args.first]]
         view = CandlestickView(
             x="date", open="open", high="high", low="low", close="close", volume="volume",
-            overlays=[f"ma{p}" for p in MA_PERIODS if any(r[f"ma{p}"] is not None for r in rows)] + ["bb_upper", "bb_lower"],
+            overlays=[f"ma{p}" for p in MA_PERIODS if any(r[f"ma{p}"] is not None for r in all_rows)] + ["bb_upper", "bb_lower"],
             panels=[PANELS[p] for p in order if available[p]],
+            ranges=[ChartRange(label=period_label(spec), start=(starts[spec] or bars[0])["date"], short=starts[spec] is None)
+                    for spec in specs],
+            range=specs.index(args.period),
         )
         sources = [Source(label="종목 일별 시세", as_of=last["date"])]
-        return data_result(Dataset(fields=FIELDS, rows=rows), view, "\n".join(summary_lines), sources, notes,
+        return data_result(Dataset(fields=FIELDS, rows=all_rows), view, "\n".join(summary_lines), sources, notes,
                            signals=list(signals.values()))

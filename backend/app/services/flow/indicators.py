@@ -36,19 +36,27 @@ def volume_ratio(volumes: Sequence[float], n: int = 20) -> Optional[float]:
     return volumes[-1] / avg if avg else None
 
 
-def rsi(closes: Sequence[float], n: int = 14) -> Optional[float]:
-    """Wilder 평활 RSI."""
-    if len(closes) < n + 1:
-        return None
+def rsi_series(closes: Sequence[float], n: int = 14) -> List[float]:
+    """Wilder 평활 RSI 시계열 (len(closes) - n개, 끝을 closes에 맞춘다)."""
+    if n <= 0 or len(closes) < n + 1:
+        return []
     changes = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
     gain = sum(max(c, 0) for c in changes[:n]) / n
     loss = sum(max(-c, 0) for c in changes[:n]) / n
-    for c in changes[n:]:
-        gain = (gain * (n - 1) + max(c, 0)) / n
-        loss = (loss * (n - 1) + max(-c, 0)) / n
-    if loss == 0:
-        return 100.0
-    return 100 - 100 / (1 + gain / loss)
+    out = []
+    for i in range(n, len(changes) + 1):
+        if i > n:
+            c = changes[i - 1]
+            gain = (gain * (n - 1) + max(c, 0)) / n
+            loss = (loss * (n - 1) + max(-c, 0)) / n
+        out.append(100.0 if loss == 0 else 100 - 100 / (1 + gain / loss))
+    return out
+
+
+def rsi(closes: Sequence[float], n: int = 14) -> Optional[float]:
+    """Wilder 평활 RSI."""
+    series = rsi_series(closes, n)
+    return series[-1] if series else None
 
 
 def ma_aligned(closes: Sequence[float], periods: Sequence[int] = (5, 20, 60)) -> Optional[bool]:
@@ -90,7 +98,7 @@ def is_vcp(bars: Sequence[Bar], last_range_max: float = 10.0, near_high_pct: flo
     )
 
 
-def _rolling_mean(values: Sequence[float], n: int) -> List[float]:
+def rolling_mean(values: Sequence[float], n: int) -> List[float]:
     """길이 n 창의 단순 평균 시계열 (len(values) - n + 1개)."""
     return [sum(values[i - n + 1: i + 1]) / n for i in range(n - 1, len(values))]
 
@@ -129,8 +137,8 @@ def stoch_slow(bars: Sequence[Bar], n: int = 5, k: int = 3, d: int = 3) -> Optio
         high = max(b["high"] for b in window)
         low = min(b["low"] for b in window)
         fast_k.append((bars[i]["close"] - low) / (high - low) * 100 if high > low else 50.0)
-    slow_k = _rolling_mean(fast_k, k)
-    slow_d = _rolling_mean(slow_k, d)
+    slow_k = rolling_mean(fast_k, k)
+    slow_d = rolling_mean(slow_k, d)
     return slow_k[-len(slow_d):], slow_d
 
 
@@ -145,13 +153,32 @@ def days_since_golden_cross(a: Sequence[float], b: Sequence[float]) -> Optional[
     return len(a) - 1 - i if i > 0 else None
 
 
+def last_cross(a: Sequence[float], b: Sequence[float]) -> Optional[Tuple[str, int]]:
+    """a와 b가 마지막으로 교차한 방향('golden' = a가 b를 위로, 'dead' = 아래로)과 몇 거래일 전인지 (0 = 마지막 거래일).
+    받은 기간 안에 교차가 없으면 None. a·b는 끝을 맞춘 같은 길이."""
+    for i in range(len(a) - 1, 0, -1):
+        above = a[i] > b[i]
+        if above != (a[i - 1] > b[i - 1]):
+            return ("golden" if above else "dead"), len(a) - 1 - i
+    return None
+
+
+def bollinger_series(closes: Sequence[float], n: int = 20, k: float = 2.0) -> List[Tuple[float, float, float]]:
+    """볼린저 밴드 (중심선, 상단, 하단) 시계열 (len(closes) - n + 1개). 밴드 = n일 이평 ± k × 표준편차(모집단)."""
+    out = []
+    for i in range(n - 1, len(closes)):
+        window = closes[i - n + 1: i + 1]
+        mid = sum(window) / n
+        std = (sum((c - mid) ** 2 for c in window) / n) ** 0.5
+        out.append((mid, mid + k * std, mid - k * std))
+    return out
+
+
 def bollinger_pctb(closes: Sequence[float], n: int = 20, k: float = 2.0) -> Optional[float]:
     """볼린저 %B(%): 0이면 하단 밴드, 100이면 상단 밴드, 밴드 밖이면 0 미만·100 초과. 밴드 = n일 이평 ± k × 표준편차(모집단)."""
     if len(closes) < n:
         return None
-    window = closes[-n:]
-    mid = sum(window) / n
-    std = (sum((c - mid) ** 2 for c in window) / n) ** 0.5
-    if not std:
+    _, upper, lower = bollinger_series(closes[-n:], n, k)[-1]
+    if upper == lower:
         return None
-    return (closes[-1] - (mid - k * std)) / (2 * k * std) * 100
+    return (closes[-1] - lower) / (upper - lower) * 100

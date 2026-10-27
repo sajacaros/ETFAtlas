@@ -1430,3 +1430,45 @@ def test_narrative_still_explains_different_notices(monkeypatch):
     service = _service(monkeypatch, [[_slot("s1", "a"), _slot("s2", "b")], [_slot("s3", "narr", "해설")]], registry)
     _collect(service)
     assert service._store.saved["s3"] == "complete"
+
+
+def test_stock_technical_draws_indicators_and_states_each_one(monkeypatch):
+    from datetime import date, timedelta
+    from app.services.answer.skills import stock_technical as mod
+    days = [date(2026, 10, 27) - timedelta(days=i) for i in range(400)]
+    days = sorted(d for d in days if d.weekday() < 5)[-260:]
+    # 오르다가 마지막 60거래일은 내린다
+    closes = [100.0 + i for i in range(200)] + [300.0 - 2 * i for i in range(60)]
+    bars = [{"date": d.isoformat(), "open": c, "high": c + 1, "low": c - 1, "close": c, "volume": 1000}
+            for d, c in zip(days, closes)]
+
+    class FakeGraph:
+        def get_stock_prices(self, code, days):
+            return bars
+
+    class FakeResolver:
+        def stock(self, db, name):
+            return {"code": "005930", "name": "삼성전자"} if name == "삼성전자" else None
+
+    monkeypatch.setattr(mod, "GraphService", lambda db: FakeGraph())
+    skill = REGISTRY["stock_technical"]
+    result = skill.fetch(skill.Args(stock="삼성전자", first="rsi"), "candlestick", None, FakeResolver())
+    view, rows = result.content["view"], result.content["dataset"]["rows"]
+    assert [p["label"] for p in view["panels"]] == ["RSI(14)", "MACD(12,26,9)", "스토캐스틱 슬로우(5,3,3)"]
+    assert view["overlays"] == ["ma5", "ma20", "ma60", "ma120", "bb_upper", "bb_lower"]
+    # 기간 앞의 일봉까지 넣어 계산해 첫날부터 120일선이 있다
+    assert rows[0]["date"] == "2026-04-30" and rows[0]["ma120"] is not None
+    summary = result.summary
+    assert "이평 배열: 정배열도 역배열도 아님" in summary or "역배열" in summary
+    for part in ("[MACD(12,26,9)]", "MACD선이 시그널선 아래", "[RSI(14)]", "과매도 기준(30 이하) 구간",
+                 "[스토캐스틱 슬로우(5,3,3)]", "[볼린저 밴드(20,2)]"):
+        assert part in summary
+    assert skill.fetch(skill.Args(stock="없는종목"), "candlestick", None, FakeResolver()).retryable
+
+
+def test_stock_technical_histogram_trend_names_the_side():
+    from app.services.answer.skills.stock_technical import _hist_trend
+    assert _hist_trend([-5, -4, -3, -2]) == "음(−) 영역에서 폭이 최근 3거래일 연속 줄어듦 (두 선이 좁혀짐)"
+    assert _hist_trend([1, 2, 3, 4]) == "양(+) 영역에서 폭이 최근 3거래일 연속 커짐 (두 선이 벌어짐)"
+    assert _hist_trend([-1, 1, 2, 3]).startswith("최근 3거래일 사이 0을 지남")
+    assert _hist_trend([1, 2]) == "판단할 데이터 부족"

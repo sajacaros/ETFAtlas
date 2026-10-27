@@ -426,7 +426,20 @@ export type DataView =
   | { kind: 'donut'; name: string; value: string }
   | { kind: 'treemap'; name: string; value: string }
   | { kind: 'radar'; axis: string; series: string[]; max: number }
-  | { kind: 'candlestick'; x: string; open: string; high: string; low: string; close: string; volume: string | null }
+  | {
+      kind: 'candlestick'; x: string; open: string; high: string; low: string; close: string; volume: string | null
+      overlays?: string[]  // 가격 칸에 겹쳐 그릴 선 (이동평균, 볼린저 밴드)
+      panels?: IndicatorPanel[]  // 보조지표 칸 — 한 번에 하나만 보이고 넘겨 본다
+    }
+
+export interface IndicatorPanel {
+  label: string
+  lines: string[]
+  bars: string | null  // 막대로 그릴 계열 (MACD 히스토그램)
+  levels: number[]  // 기준 가로선 (RSI 30·70)
+  min: number | null
+  max: number | null
+}
 
 export interface DataContent {
   type: 'data'

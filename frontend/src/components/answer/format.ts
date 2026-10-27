@@ -27,6 +27,6 @@ export function cellFormat(row: DataRow, field: DataField): ValueFormat {
 /** 축 눈금용 짧은 서식 */
 export function axisFormatter(format: ValueFormat): (value: number) => string {
   if (format === 'percent') return (v) => `${v}%`
-  if (format === 'krw') return (v) => formatKrwAmount(v)
+  if (format === 'krw') return (v) => (v === 0 ? '0' : formatKrwAmount(v))  // 0을 '0만원'으로 쓰지 않는다
   return (v) => v.toLocaleString('ko-KR')
 }

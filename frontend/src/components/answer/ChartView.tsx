@@ -1,12 +1,12 @@
 import { useEffect, useRef } from 'react'
 import * as echarts from 'echarts/core'
 import { BarChart, CandlestickChart, LineChart, PieChart, RadarChart, TreemapChart } from 'echarts/charts'
-import { GridComponent, LegendComponent, RadarComponent, TooltipComponent } from 'echarts/components'
+import { GridComponent, LegendComponent, MarkLineComponent, RadarComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 
 echarts.use([
   LineChart, BarChart, PieChart, TreemapChart, RadarChart, CandlestickChart,
-  GridComponent, TooltipComponent, LegendComponent, RadarComponent, CanvasRenderer,
+  GridComponent, TooltipComponent, LegendComponent, MarkLineComponent, RadarComponent, CanvasRenderer,
 ])
 
 /** ECharts 런타임은 이 파일에만 둔다 — 차트를 처음 그릴 때 따로 불러온다 (AnswerView의 lazy import) */

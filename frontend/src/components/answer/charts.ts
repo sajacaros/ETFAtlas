@@ -19,8 +19,13 @@ export interface ChartTheme {
   font: string
 }
 
+/** 화면에서 고르는 값 — 봉차트의 보조지표 칸 번호 */
+export interface BuildOptions {
+  panel?: number
+}
+
 type Builder<K extends DataView['kind']> = (
-  view: Extract<DataView, { kind: K }>, content: DataContent, theme: ChartTheme,
+  view: Extract<DataView, { kind: K }>, content: DataContent, theme: ChartTheme, opts: BuildOptions,
 ) => EChartsCoreOption
 
 const fieldOf = (content: DataContent, key: string): DataField =>
@@ -204,28 +209,52 @@ const radar: Builder<'radar'> = (view, content, theme) => {
   }
 }
 
-const candlestick: Builder<'candlestick'> = (view, content, theme) => {
+const BAND = '볼린저 밴드'  // 상단·하단 두 선을 범례 하나로 켜고 끈다
+
+const candlestick: Builder<'candlestick'> = (view, content, theme, opts) => {
   const rows = content.dataset.rows
   const dates = xLabels(content, view.x)
   const priceField = fieldOf(content, view.close)
   const hasVolume = view.volume !== null
+  const panels = view.panels ?? []
+  const panel = panels.length ? panels[Math.min(opts.panel ?? 0, panels.length - 1)] : undefined
+  const overlays = view.overlays ?? []
   const tooltipBase = base(theme).tooltip as object
+  const series = (key: string) => rows.map((r) => num(r[key]))
+  // 칸: 가격 → 거래량 → 보조지표. 날짜 라벨은 맨 아래 칸에만
+  const top = overlays.length ? 28 : 12  // 겹친 선이 있으면 위에 범례
+  const grids = panel
+    ? [{ top, height: '50%' }, { top: '60%', height: '10%' }, { top: '74%', bottom: 8 }]
+    : hasVolume ? [{ top, height: '58%' }, { top: '76%', bottom: 8 }] : [{ top, bottom: 8 }]
+  const volumeGrid = hasVolume ? 1 : -1
+  const panelGrid = panel ? grids.length - 1 : -1
+  const lastGrid = grids.length - 1
+  const lineSeries = (key: string, extra: object) => ({
+    type: 'line', name: fieldOf(content, key).label, data: series(key), showSymbol: false, connectNulls: false,
+    lineStyle: { width: 1 }, tooltip: { valueFormatter: (v: unknown) => formatValue(v, fieldOf(content, key).format) },
+    ...extra,
+  })
   return {
     ...base(theme),
+    ...(overlays.length ? {
+      legend: { top: 0, type: 'scroll', textStyle: { color: theme.muted }, itemWidth: 14, itemHeight: 8,
+        data: [...new Set(overlays.map((k) => (k.startsWith('bb_') ? BAND : fieldOf(content, k).label)))] },
+    } : {}),
     tooltip: { ...tooltipBase, trigger: 'axis', axisPointer: { type: 'cross' } },
     axisPointer: { link: [{ xAxisIndex: 'all' }] },
-    grid: hasVolume
-      ? [{ left: 8, right: 16, top: 12, height: '58%', containLabel: true },
-         { left: 8, right: 16, top: '76%', bottom: 8, containLabel: true }]
-      : [{ left: 8, right: 16, top: 12, bottom: 8, containLabel: true }],
-    xAxis: [
-      categoryAxis(theme, dates, { gridIndex: 0, axisLabel: { show: !hasVolume, color: theme.muted } }),
-      ...(hasVolume ? [categoryAxis(theme, dates, { gridIndex: 1 })] : []),
-    ],
+    grid: grids.map((g) => ({ left: 8, right: 16, containLabel: true, ...g })),
+    xAxis: grids.map((_, i) => categoryAxis(theme, dates, {
+      gridIndex: i, axisLabel: { show: i === lastGrid, color: theme.muted, hideOverlap: true },
+    })),
     yAxis: [
       valueAxis(theme, priceField, { gridIndex: 0 }),
-      ...(hasVolume ? [valueAxis(theme, fieldOf(content, view.volume as string), { gridIndex: 1, splitNumber: 2,
-        axisLabel: { color: theme.muted, formatter: (v: number) => `${Math.round(v / 1e4).toLocaleString('ko-KR')}만` } })] : []),
+      ...(hasVolume ? [valueAxis(theme, fieldOf(content, view.volume as string), { gridIndex: volumeGrid, splitNumber: 2,
+        axisLabel: { color: theme.muted, formatter: (v: number) => (v ? `${Math.round(v / 1e4).toLocaleString('ko-KR')}만` : '0') } })] : []),
+      ...(panel ? [{
+        ...valueAxis(theme, fieldOf(content, panel.lines[0]), { gridIndex: panelGrid, splitNumber: 2 }),
+        // 칸 이름은 넘김 버튼에 보인다
+        scale: panel.min === null, ...(panel.min !== null ? { min: panel.min } : {}), ...(panel.max !== null ? { max: panel.max } : {}),
+      }] : []),
     ],
     series: [
       {
@@ -234,13 +263,28 @@ const candlestick: Builder<'candlestick'> = (view, content, theme) => {
         data: rows.map((r) => [r[view.open], r[view.close], r[view.low], r[view.high]].map(num)),
         itemStyle: { color: theme.up, color0: theme.down, borderColor: theme.up, borderColor0: theme.down },
       },
+      ...overlays.map((key, i) => (key.startsWith('bb_')
+        ? lineSeries(key, { name: BAND, color: theme.muted, lineStyle: { width: 1, type: 'dashed' } })
+        : lineSeries(key, { color: theme.palette[(i + 1) % theme.palette.length] }))),
       ...(hasVolume ? [{
-        type: 'bar', name: '거래량', xAxisIndex: 1, yAxisIndex: 1,
+        type: 'bar', name: '거래량', xAxisIndex: volumeGrid, yAxisIndex: volumeGrid,
         data: rows.map((r) => ({
           value: num(r[view.volume as string]),
           itemStyle: { color: (num(r[view.close]) ?? 0) >= (num(r[view.open]) ?? 0) ? theme.up : theme.down, opacity: 0.6 },
         })),
       }] : []),
+      ...(panel?.bars ? [{
+        type: 'bar', name: fieldOf(content, panel.bars).label, xAxisIndex: panelGrid, yAxisIndex: panelGrid,
+        data: series(panel.bars).map((v) => ({ value: v, itemStyle: { color: (v ?? 0) >= 0 ? theme.up : theme.down, opacity: 0.6 } })),
+      }] : []),
+      ...(panel ? panel.lines.map((key, i) => lineSeries(key, {
+        xAxisIndex: panelGrid, yAxisIndex: panelGrid, color: theme.palette[i % theme.palette.length],
+        // 기준선(RSI 30·70 등)은 첫 선에만 한 번
+        ...(i === 0 && panel.levels.length ? {
+          markLine: { silent: true, symbol: 'none', label: { show: false },
+            lineStyle: { color: theme.muted, type: 'dashed', width: 1 }, data: panel.levels.map((y) => ({ yAxis: y })) },
+        } : {}),
+      })) : []),
     ],
   }
 }
@@ -250,8 +294,9 @@ const BUILDERS: { [K in DataView['kind']]?: Builder<K> } = { line, bar, donut, t
 /** 차트 높이(px). 스켈레톤도 같은 높이를 써서 내용이 들어올 때 화면이 흔들리지 않는다 */
 export const CHART_HEIGHT: Record<string, number> = { treemap: 320, candlestick: 340, radar: 300 }
 export const DEFAULT_CHART_HEIGHT = 280
+export const PANEL_CHART_HEIGHT = 460  // 보조지표 칸이 있는 봉차트 (가격·거래량·보조지표 세 칸)
 
-export function buildChartOption(content: DataContent, theme: ChartTheme): EChartsCoreOption | null {
+export function buildChartOption(content: DataContent, theme: ChartTheme, opts: BuildOptions = {}): EChartsCoreOption | null {
   const builder = BUILDERS[content.view.kind] as Builder<DataView['kind']> | undefined
-  return builder ? builder(content.view, content, theme) : null
+  return builder ? builder(content.view, content, theme, opts) : null
 }

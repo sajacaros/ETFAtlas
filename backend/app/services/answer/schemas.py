@@ -64,6 +64,16 @@ class RadarView(BaseModel):
     max: float = 100
 
 
+class IndicatorPanel(BaseModel):
+    """봉차트 아래 보조지표 칸 하나. 칸이 여럿이면 프런트는 한 번에 하나만 보이고 넘겨 보게 한다."""
+    label: str  # 칸 이름 (예: 'MACD(12,26,9)')
+    lines: list[str]
+    bars: Optional[str] = None  # 막대로 그릴 계열 (MACD 히스토그램)
+    levels: list[float] = []  # 기준 가로선 (RSI 30·70)
+    min: Optional[float] = None
+    max: Optional[float] = None
+
+
 class CandlestickView(BaseModel):
     kind: Literal["candlestick"] = "candlestick"
     x: str
@@ -72,6 +82,8 @@ class CandlestickView(BaseModel):
     low: str
     close: str
     volume: Optional[str] = None
+    overlays: list[str] = []  # 가격 칸에 겹쳐 그릴 선 (이동평균, 볼린저 밴드)
+    panels: list[IndicatorPanel] = []
 
 
 View = Annotated[
@@ -94,10 +106,11 @@ def slot_type(display: str) -> str:
 def _view_keys(view: BaseModel) -> list[str]:
     keys: list[str] = []
     for name, value in view:
-        if name in ("kind", "orientation", "horizontal", "stacked", "max"):
+        if name in ("kind", "orientation", "horizontal", "stacked", "max", "label", "levels"):
             continue
         if isinstance(value, list):
-            keys.extend(value)
+            for item in value:
+                keys.extend(_view_keys(item) if isinstance(item, BaseModel) else [item])
         elif isinstance(value, str):
             keys.append(value)
     return keys

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { AlertCircle, BarChart3, Table2 } from 'lucide-react'
+import { AlertCircle, BarChart3, ChevronLeft, ChevronRight, Table2 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import { MARKDOWN_COMPONENTS, MARKDOWN_PLUGINS } from '@/lib/markdown'
 import type { DataContent, LayoutNode, SlotContent, SlotState } from '@/types/api'
@@ -126,16 +126,41 @@ function SlotView({ chatLogId, node, state }: { chatLogId: number; node: SlotNod
 }
 
 function DataSlot({ content, display }: { content: DataContent; display: string }) {
-  const option = useChartOption(content)
+  const [panel, setPanel] = useState(0)
+  const option = useChartOption(content, { panel })
   const [asTable, setAsTable] = useState(false)
   const isChart = content.view.kind !== 'table'
   const tableOrientation = content.view.kind === 'table' ? content.view.orientation
     : content.view.kind === 'radar' ? 'compare' : 'list'
+  const panels = content.view.kind === 'candlestick' ? content.view.panels ?? [] : []
+  const showChart = isChart && option && !asTable
 
   return (
     <div>
       {isChart && option && (
-        <div className="flex justify-end -mt-1 mb-1">
+        <div className="flex items-center justify-end gap-3 -mt-1 mb-1">
+          {/* 보조지표 칸은 하나씩 넘겨 본다 */}
+          {showChart && panels.length > 1 && (
+            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+              <button
+                type="button"
+                aria-label="이전 보조지표"
+                onClick={() => setPanel((p) => (p + panels.length - 1) % panels.length)}
+                className="hover:text-foreground"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+              <span className="min-w-[7rem] text-center">{panels[panel % panels.length].label}</span>
+              <button
+                type="button"
+                aria-label="다음 보조지표"
+                onClick={() => setPanel((p) => (p + 1) % panels.length)}
+                className="hover:text-foreground"
+              >
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
           <button
             type="button"
             onClick={() => setAsTable((v) => !v)}
@@ -147,10 +172,10 @@ function DataSlot({ content, display }: { content: DataContent; display: string 
         </div>
       )}
       {/* 모르는 차트이거나 그리지 못하면 같은 데이터를 표로 */}
-      {isChart && option && !asTable
+      {showChart
         ? (
           <Suspense fallback={<ChartSkeleton display={display} />}>
-            <ChartView option={option} height={chartHeight(display)} />
+            <ChartView option={option} height={chartHeight(display, content)} />
           </Suspense>
         )
         : <DataTable dataset={content.dataset} orientation={tableOrientation} />}

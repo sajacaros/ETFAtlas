@@ -96,6 +96,23 @@ def test_bollinger_pctb_places_close_inside_or_outside_the_band():
     assert ind.bollinger_pctb([100.0] * 5) is None
 
 
+
+def test_series_end_at_the_last_value_the_screener_uses():
+    closes = [float(c) for c in list(range(100, 130)) + list(range(130, 110, -1))]
+    series = ind.rsi_series(closes)
+    assert len(series) == len(closes) - 14 and series[-1] == pytest.approx(ind.rsi(closes))
+    assert ind.rsi_series(closes[:14]) == [] and ind.rsi(closes[:14]) is None
+    bands = ind.bollinger_series(closes)
+    mid, upper, lower = bands[-1]
+    assert len(bands) == len(closes) - 19 and mid == pytest.approx(sum(closes[-20:]) / 20)
+    assert (closes[-1] - lower) / (upper - lower) * 100 == pytest.approx(ind.bollinger_pctb(closes))
+
+
+def test_last_cross_reports_direction_and_days_ago():
+    assert ind.last_cross([1, 3, 3], [2, 2, 2]) == ("golden", 1)
+    assert ind.last_cross([1, 3, 1], [2, 2, 2]) == ("dead", 0)
+    assert ind.last_cross([3, 3], [2, 2]) is None
+
 # --- chart filter ---
 
 def test_filter_conditions_are_anded_and_missing_values_fail():

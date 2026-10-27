@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import type { DataContent } from '@/types/api'
 import { useTheme } from '@/hooks/useTheme'
-import { buildChartOption, CHART_HEIGHT, DEFAULT_CHART_HEIGHT, type ChartTheme } from './charts'
+import { buildChartOption, CHART_HEIGHT, DEFAULT_CHART_HEIGHT, PANEL_CHART_HEIGHT, type BuildOptions, type ChartTheme } from './charts'
 
 // 계열 색: 기본 테마는 구분이 잘 되는 색.
 // 게임보이 테마는 검은 바탕에서 눈이 부시지 않게 어두운 초록·청록·올리브를 번갈아 쓴다
@@ -30,19 +30,21 @@ function chartTheme(theme: string): ChartTheme {
   }
 }
 
-export function chartHeight(display: string): number {
+export function chartHeight(display: string, content?: DataContent): number {
+  if (content?.view.kind === 'candlestick' && content.view.panels?.length) return PANEL_CHART_HEIGHT
   return CHART_HEIGHT[display] ?? DEFAULT_CHART_HEIGHT
 }
 
 /** 그릴 수 없으면 null — 호출하는 쪽이 표로 대신 보여준다 */
-export function useChartOption(content: DataContent) {
+export function useChartOption(content: DataContent, opts: BuildOptions = {}) {
   const { theme } = useTheme()
+  const { panel } = opts
   return useMemo(() => {
     try {
-      return buildChartOption(content, chartTheme(theme))
+      return buildChartOption(content, chartTheme(theme), { panel })
     } catch {
       return null
     }
-  }, [content, theme])
+  }, [content, theme, panel])
 }
 

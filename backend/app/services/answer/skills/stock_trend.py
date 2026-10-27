@@ -18,7 +18,8 @@ class StockTrendSkill(PriceTrendBase):
     name = "stock_trend"
     description = (
         "개별 주식 종목(삼성전자 등, ETF 아님)의 가격 추이. 여럿이면 시작일 대비 누적 수익률(%)로 겹쳐 그린다. "
-        "candlestick은 종목 하나의 일별 시가·고가·저가·종가와 거래량, table은 종목별 기간 요약"
+        "candlestick은 종목 하나의 일별 시가·고가·저가·종가와 거래량, table은 종목별 기간 요약. "
+        "주가 분석·차트 분석·보조지표는 stock_technical"
     )
     Args = StockTrendArgs
     target = "종목"

@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useState } from 'react'
 import { AlertCircle, BarChart3, ChevronLeft, ChevronRight, Table2 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import { MARKDOWN_COMPONENTS, MARKDOWN_PLUGINS } from '@/lib/markdown'
-import type { DataContent, LayoutNode, SlotContent, SlotState } from '@/types/api'
+import type { DataContent, LayoutNode, Signal, SlotContent, SlotState } from '@/types/api'
 import { chatApi } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { DataTable } from './DataTable'
@@ -179,6 +179,7 @@ function DataSlot({ content, display }: { content: DataContent; display: string 
           </Suspense>
         )
         : <DataTable dataset={content.dataset} orientation={tableOrientation} />}
+      {content.signals && content.signals.length > 0 && <Signals signals={content.signals} />}
       {(content.notes.length > 0 || content.sources.length > 0) && (
         <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
           {content.notes.map((note) => <p key={note}>{note}</p>)}
@@ -189,6 +190,40 @@ function DataSlot({ content, display }: { content: DataContent; display: string 
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+const ARROWS: Record<number, string> = { 2: '▲▲', 1: '▲', 0: '—', [-1]: '▼', [-2]: '▼▼' }
+
+/** 국내 관례대로 강세는 빨강, 약세는 파랑 — 봉차트 색과 같다 */
+function arrowColor(level: number): string | undefined {
+  if (level > 0) return 'hsl(var(--chart-up))'
+  if (level < 0) return 'hsl(var(--chart-down))'
+  return undefined
+}
+
+/** 지표별 신호 한 줄과 판정 기준(펼쳐 보기) */
+function Signals({ signals }: { signals: Signal[] }) {
+  return (
+    <div className="mt-2 text-xs">
+      <ul className="grid gap-1 sm:grid-cols-2">
+        {signals.map((s) => (
+          <li key={s.key} className="flex items-baseline gap-1.5 rounded bg-muted/50 px-2 py-1">
+            <span className="shrink-0 font-semibold">{s.label}</span>
+            {s.level !== null && (
+              <span className="shrink-0 font-bold" style={{ color: arrowColor(s.level) }}>{ARROWS[s.level]}</span>
+            )}
+            <span className="text-muted-foreground">{s.state}</span>
+          </li>
+        ))}
+      </ul>
+      <details className="mt-1 text-muted-foreground">
+        <summary className="cursor-pointer hover:text-foreground">판정 기준</summary>
+        <ul className="mt-1 space-y-1 pl-3">
+          {signals.map((s) => <li key={s.key}><b>{s.label}</b>: {s.rule}</li>)}
+        </ul>
+      </details>
     </div>
   )
 }

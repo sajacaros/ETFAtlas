@@ -232,6 +232,7 @@
     <a href="#layout">레이아웃</a>
     <a href="#events">이벤트</a>
     <a href="#company">기업 분석</a>
+    <a href="#technical">차트 분석</a>
     <a href="#screener">종목 스크리너</a>
   </nav>
 </header>
@@ -266,7 +267,7 @@
     <div class="layer skills">
       <div class="layer-title"><span class="dot"></span>Skills</div>
       <div class="row">
-        <div class="box"><div class="name">데이터 스킬 ×13</div><div class="desc">그래프와 DART 테이블을 조회해 표·차트 데이터를 만든다. LLM 없음</div></div>
+        <div class="box"><div class="name">데이터 스킬 ×14</div><div class="desc">그래프와 DART 테이블을 조회해 표·차트 데이터를 만든다. LLM 없음</div></div>
         <div class="box"><div class="name">company_report <span class="llm">LLM</span></div><div class="desc">정기보고서 원문을 요약하고, 매출 구성이 있으면 영역을 차트와 요약으로 나눈다</div></div>
         <div class="box"><div class="name">narrative <span class="llm">LLM</span></div><div class="desc">다른 영역의 요약만 보고 해설</div></div>
         <div class="box agent"><div class="name">agent <span class="llm">LLM</span></div><div class="desc">스킬로 안 되는 질문을 도구 호출 에이전트로</div></div>
@@ -389,7 +390,7 @@
       <svg viewBox="0 0 960 620" role="img" aria-labelledby="skills-map-title skills-map-desc"
            font-family="'Noto Sans KR', sans-serif">
         <title id="skills-map-title">ETF Atlas 챗봇의 스킬과 툴 관계</title>
-        <desc id="skills-map-desc">레이아웃 에이전트가 스킬 17개로 답변 화면을 설계하고, 그중 agent 스킬만 ChatService의 툴 10개를 쓰며 나머지 데이터 스킬은 DB를 직접 읽는다.</desc>
+        <desc id="skills-map-desc">레이아웃 에이전트가 스킬 18개로 답변 화면을 설계하고, 그중 agent 스킬만 ChatService의 툴 10개를 쓰며 나머지 데이터 스킬은 DB를 직접 읽는다.</desc>
         <defs>
           <marker id="sarrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
             <polygon points="0 0, 8 3, 0 6" fill="#b8322a"/>
@@ -404,7 +405,7 @@
 
         <!-- 스킬 묶음 컨테이너 -->
         <rect x="40" y="180" width="880" height="148" rx="12" fill="none" stroke="#d3cbc5" stroke-width="1" stroke-dasharray="4,4"/>
-        <text x="920" y="348" text-anchor="end" fill="#2b2523" font-size="13" font-weight="700">스킬 17개 <tspan fill="#7a706b" font-weight="400" font-family="'Fira Code', monospace" font-size="11">skills/REGISTRY</tspan></text>
+        <text x="920" y="348" text-anchor="end" fill="#2b2523" font-size="13" font-weight="700">스킬 18개 <tspan fill="#7a706b" font-weight="400" font-family="'Fira Code', monospace" font-size="11">skills/REGISTRY</tspan></text>
 
         <!-- 레이아웃 에이전트 → 스킬 -->
         <path d="M456 120 V136 Q456 144 448 144 H158 Q150 144 150 152 V196" fill="none" stroke="#b8322a" stroke-width="1.6"/>
@@ -430,7 +431,7 @@
 
         <circle cx="590" cy="228" r="32" fill="#f4f0ed" stroke="#cfc6c0" stroke-width="1.2"/>
         <circle cx="590" cy="228" r="8" fill="#4a4442"/>
-        <text x="590" y="284" text-anchor="middle" fill="#2b2523" font-size="13" font-weight="700">종목·기업 데이터 스킬 6</text>
+        <text x="590" y="284" text-anchor="middle" fill="#2b2523" font-size="13" font-weight="700">종목·기업 데이터 스킬 7</text>
         <text x="590" y="304" text-anchor="middle" fill="#7a706b" font-size="11">DB 직접 조회 · 표·차트</text>
 
         <circle cx="810" cy="228" r="32" fill="#f4f0ed" stroke="#cfc6c0" stroke-width="1.2"/>
@@ -501,6 +502,7 @@
         <tr><th>스킬</th><th>하는 일</th><th>표시 방식</th></tr>
         <tr><td><code>price_trend</code></td><td>ETF 가격 추이 (여럿이면 누적 수익률)</td><td>line · candlestick · table</td></tr>
         <tr><td><code>stock_trend</code></td><td>개별 종목 가격 추이</td><td>line · candlestick · table</td></tr>
+        <tr><td><code>stock_technical</code></td><td>종목 하나의 차트 분석: 봉 + 이동평균·볼린저 밴드, 거래량, 넘겨 보는 보조지표 칸(MACD·RSI·스토캐스틱)과 지표별 강세·약세 신호</td><td>candlestick (+ 신호)</td></tr>
         <tr><td><code>period_returns</code></td><td>1일 ~ 1년 기간별 수익률</td><td>bar · table</td></tr>
         <tr><td><code>etf_compare</code></td><td>기본 정보 비교표</td><td>table</td></tr>
         <tr><td><code>etf_profile</code></td><td>전체 ETF 대비 백분위 점수 5개 축</td><td>radar · table</td></tr>
@@ -672,6 +674,66 @@ column
         <li>수집 ETF가 담지 않은 상장사는 모든 영역이 같은 안내("분석하지 않는 종목")로 비고, 화면은 그 안내를 한 번만 보여 준다.</li>
       </ul>
     </div>
+  </section>
+
+  <section id="technical">
+    <h2>차트 분석</h2>
+    <p class="lead">"주가 분석해줘"·"RSI 어때?"처럼 가격을 물으면 <code>stock_technical</code> 하나와 해설만 놓습니다(정기보고서·실적·공시는 기업 분석의 몫). 지표는 스크리너와 같은 함수(<code>flow/indicators.py</code>)로 <b>DB 일봉</b>에서 계산하고, 지표별 신호는 <b>대가들의 규칙</b>을 코드로 옮겨 정합니다. LLM은 정해진 값과 신호로 문장만 씁니다.</p>
+
+    <div class="layer skills">
+      <div class="layer-title"><span class="dot"></span>stock_technical · 한 번의 조회</div>
+      <div class="row">
+        <div class="box"><div class="name">일봉 읽기</div><div class="desc">AGE <code>Price</code> 노드에서 보여 줄 기간(기본 6개월) + 앞쪽 200일, 신호용으로 최소 400일. 120일선이 화면 첫날부터 이어진다</div></div>
+        <div class="box"><div class="name">지표 계산</div><div class="desc">이평(5·20·50·60·120·150·200일), 볼린저(20,2), MACD(12,26,9), RSI(14), 슬로 스토캐스틱(5,3,3). 시계열을 일봉 끝에 맞춘다</div></div>
+        <div class="box"><div class="name">신호 판정</div><div class="desc">추세·MACD·RSI·스토캐스틱마다 규칙으로 ▲▲ ~ ▼▼ 또는 상태 문구</div></div>
+        <div class="box"><div class="name">요약</div><div class="desc">지표마다 현재 값·교차·구간·정의와 신호를 줄로 — narrative가 지표별 문단으로 쓴다</div></div>
+      </div>
+    </div>
+
+    <h3 style="margin-top:24px">지표</h3>
+    <div class="table-wrap">
+      <table>
+        <tr><th>지표</th><th>정의</th><th>화면</th><th>요약에 넘기는 것</th></tr>
+        <tr><td>이동평균</td><td>n거래일 종가 단순 평균 (5·20·60·120일)</td><td>가격 칸에 겹친 선</td><td>종가가 각 이평의 위·아래, 정배열(5 &gt; 20 &gt; 60 &gt; 120)·역배열, 5일선과 20일선의 마지막 교차</td></tr>
+        <tr><td>볼린저 밴드</td><td>20일 이평 ± 2 × 표준편차(모집단)</td><td>가격 칸의 점선</td><td>상단·하단, %B (0 = 하단, 100 = 상단, 밴드 밖이면 0 미만·100 초과)</td></tr>
+        <tr><td>거래량</td><td>일별 거래량</td><td>가운데 칸 막대 (상승일 빨강)</td><td>마지막 날 ÷ 직전 20일 평균</td></tr>
+        <tr><td>MACD</td><td>12일 EMA − 26일 EMA, 시그널 = MACD의 9일 EMA, 히스토그램 = MACD − 시그널</td><td>보조지표 칸 (선 2개 + 막대)</td><td>두 선의 위치, 0선 위·아래, 마지막 교차, 히스토그램이 어느 쪽(양·음)에서 벌어지는지·좁혀지는지</td></tr>
+        <tr><td>RSI</td><td>Wilder 평활 14일 상승폭 대 하락폭 (0~100)</td><td>보조지표 칸, 30·70 기준선</td><td>현재 값과 구간, 5거래일 전, 기간 최고·최저, 70 이상·30 이하였던 날 수</td></tr>
+        <tr><td>스토캐스틱</td><td>%K = 5일 가격 범위에서 종가 위치의 3일 평균, %D = %K의 3일 평균</td><td>보조지표 칸, 20·80 기준선</td><td>%K·%D, 구간, 마지막 교차와 교차한 날의 %K</td></tr>
+      </table>
+    </div>
+    <p style="font-size:12.5px;color:var(--muted);margin-top:8px">보조지표 칸은 한 번에 하나만 보이고 ‹ ›로 넘긴다. 첫 칸은 기본 MACD, 질문이 RSI·스토캐스틱을 집으면 그것 (<code>first</code> 인자).</p>
+
+    <h3 style="margin-top:24px">신호 규칙</h3>
+    <div class="table-wrap">
+      <table>
+        <tr><th>신호</th><th>근거</th><th>규칙</th></tr>
+        <tr><td>추세</td><td>스탠 와인스타인 단계 분석 · 마크 미너비니 트렌드 템플릿</td><td>150일선(30주)의 4주 기울기가 +1% 넘으면 상승, −1% 밑이면 하락. 오르는 이평 위 <b>2단계 ▲▲</b>, 내리는 이평 아래 <b>4단계 ▼▼</b>, 평평하면 앞선 흐름으로 1단계(바닥)·3단계(천장) —, 이평과 종가가 엇갈리면 "2단계 중 조정"·"4단계 중 반등" —. 미너비니 8개 조건 중 상대강도 순위를 뺀 7개의 충족 수를 덧붙인다</td></tr>
+        <tr><td>MACD</td><td>알렉산더 엘더 삼중 스크린</td><td>교차가 아니라 <b>히스토그램의 기울기</b>. 0 아래에서 위로 꺾이면 ▲▲, 0 위에서 아래로 꺾이면 ▼▼, 그 밖에 올라가는 중 ▲, 내려가는 중 ▼. 엘더는 주봉, 여기는 일봉</td></tr>
+        <tr><td>RSI</td><td>앤드루 카드웰 레인지 시프트 (콘스턴스 브라운이 소개)</td><td>30·70 고정이 아니라 최근 60거래일이 머무는 범위. 40 아래로 안 내려가면 강세 범위 ▲, 60 아래로도 안 내려가면 ▲▲, 60 위로 안 올라가면 약세 범위 ▼, 40 위로도 안 올라가면 ▼▼. 강세 범위였다가 최근 10거래일에 40을 깨면 ▼, 약세 범위였다가 60을 넘으면 ▲ (범위 전환)</td></tr>
+        <tr><td>스토캐스틱</td><td>엘더 삼중 스크린의 두 번째 스크린</td><td>혼자 강세·약세를 매기지 않는다(화살표 없음). 추세 단계 안에서 %K 20 이하면 "상승 추세 속 눌림"·"하락 추세 속 과매도", 80 이상이면 "상승 추세 속 과열"·"하락 추세 속 반등"</td></tr>
+      </table>
+    </div>
+
+    <h3 style="margin-top:24px">화면</h3>
+    <div class="kv">
+      <div class="mock">
+        <div class="mock-row c1">
+          <div class="mock-slot"><b>차트 분석</b><span class="tag">stock_technical · candlestick</span><div class="sk chart"></div><div class="sk"></div><div class="sk" style="width:60%"></div></div>
+        </div>
+        <div class="mock-row c1">
+          <div class="mock-slot text"><b>해설</b><div class="sk"></div><div class="sk" style="width:70%"></div></div>
+        </div>
+      </div>
+      <ul class="plain">
+        <li>차트는 가격(봉 + 이평·볼린저) · 거래량 · 보조지표 세 칸. 오른쪽 위 ‹ ›로 보조지표를, "표로 보기"로 같은 데이터를 표로.</li>
+        <li>차트 아래에 신호 한 줄(추세 · MACD · RSI · 스토캐스틱). 강세는 빨강 ▲, 약세는 파랑 ▼ — 봉차트와 같은 국내 관례. "판정 기준"을 펼치면 위 규칙이 보인다.</li>
+        <li>해설은 이동평균·MACD·RSI·스토캐스틱을 굵은 머리말 문단으로 하나씩. 값·정의·기준대로 지금 상태만 쓰고, 지지선·저항선·앞으로의 방향·매수·매도 판단은 쓰지 않는다.</li>
+        <li>레이아웃 예시 두 개("주가 분석해줘", "RSI 어때?")가 기업 분석 예시와 갈라 준다.</li>
+      </ul>
+    </div>
+
+    <div class="callout">신호는 정해진 규칙으로 본 <b>강세·약세 상태</b>이지 매수·매도 권유가 아닙니다. 대가들의 규칙도 검증된 법칙이 아니라 경험칙이라, 맞는지는 스크리너 백테스트로 따로 확인해야 합니다. 200일선 기울기와 52주 고저가 필요해 일봉이 약 260거래일보다 짧은 종목은 일부 신호가 "데이터 부족"으로 나옵니다.</div>
   </section>
 
   <section id="screener">

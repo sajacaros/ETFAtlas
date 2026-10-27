@@ -121,12 +121,22 @@ class Source(BaseModel):
     as_of: Optional[str] = None
 
 
+class Signal(BaseModel):
+    """지표 하나를 정해진 규칙으로 본 강세·약세 상태. 프런트는 화살표와 상태를 한 줄로, 규칙은 펼쳐 보게 한다."""
+    key: str
+    label: str
+    level: Optional[int] = Field(None, ge=-2, le=2)  # 2 ▲▲ … −2 ▼▼, None이면 화살표 없이 상태만
+    state: str
+    rule: str
+
+
 class DataContent(BaseModel):
     type: Literal["data"] = "data"
     dataset: Dataset
     view: View
     sources: list[Source] = []
     notes: list[str] = []
+    signals: list[Signal] = []
 
     @model_validator(mode="after")
     def check_view_keys(self):

@@ -1463,6 +1463,8 @@ def test_stock_technical_draws_indicators_and_states_each_one(monkeypatch):
     for part in ("[MACD(12,26,9)]", "MACD선이 시그널선 아래", "[RSI(14)]", "과매도 기준(30 이하) 구간",
                  "[스토캐스틱 슬로우(5,3,3)]", "[볼린저 밴드(20,2)]"):
         assert part in summary
+    assert [sg["key"] for sg in result.content["signals"]] == ["trend", "macd", "rsi", "stochastic"]
+    assert "신호(엘더 MACD 히스토그램 기준, 화면에 표시)" in summary
     assert skill.fetch(skill.Args(stock="없는종목"), "candlestick", None, FakeResolver()).retryable
 
 
@@ -1472,3 +1474,31 @@ def test_stock_technical_histogram_trend_names_the_side():
     assert _hist_trend([1, 2, 3, 4]) == "양(+) 영역에서 폭이 최근 3거래일 연속 커짐 (두 선이 벌어짐)"
     assert _hist_trend([-1, 1, 2, 3]).startswith("최근 3거래일 사이 0을 지남")
     assert _hist_trend([1, 2]) == "판단할 데이터 부족"
+
+
+def test_stock_technical_signals_follow_the_masters_rules():
+    from app.services.answer.skills import stock_technical as mod
+    # 엘더: 히스토그램 기울기 — 0 아래에서 위로 꺾이면 ▲▲, 0 위에서 아래로 꺾이면 ▼▼
+    assert mod._macd_signal([-3, -4, -2]).level == 2
+    assert mod._macd_signal([3, 4, 2]).level == -2
+    assert mod._macd_signal([-4, -3, -2]).state == "히스토그램이 0 아래에서 올라가는 중"
+    assert mod._macd_signal([1, 2]).level is None
+    # 카드웰: 범위와 범위 전환
+    assert mod._rsi_signal([45.0] * 60).level == 1
+    assert mod._rsi_signal([65.0] * 60).level == 2
+    assert mod._rsi_signal([55.0] * 60).level == 1
+    assert mod._rsi_signal([35.0] * 60).level == -2
+    assert mod._rsi_signal([50.0] * 50 + [38.0] * 10).state.startswith("범위 전환: 강세 범위에서 40 붕괴")
+    assert mod._rsi_signal([30.0, 70.0] * 30).level == 0
+    # 와인스타인: 오르는 150일선 위 2단계, 내리는 150일선 아래 4단계
+    up = [100.0 + i for i in range(300)]
+    ma = {p: mod._pad(mod.ind.rolling_mean(up, p), len(up)) for p in (50, 150, 200)}
+    bars = [{"high": c + 1, "low": c - 1, "close": c} for c in up]
+    trend = mod._trend_signal(up, bars, ma)
+    assert trend.level == 2 and "미너비니 조건 7/7" in trend.state
+    down = up[::-1]
+    ma = {p: mod._pad(mod.ind.rolling_mean(down, p), len(down)) for p in (50, 150, 200)}
+    assert mod._trend_signal(down, bars[::-1], ma).level == -2
+    # 스토캐스틱은 화살표 없이 추세 안의 위치만
+    stoch = mod._stoch_signal([10.0], [15.0], (2, "2단계"))
+    assert stoch.level is None and stoch.state.startswith("상승 추세 속 눌림")

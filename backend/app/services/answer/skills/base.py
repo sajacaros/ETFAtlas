@@ -73,10 +73,10 @@ def not_found(message: str) -> SkillResult:
 def data_result(
     dataset: Dataset, view: BaseModel, summary: str,
     sources: Optional[List[Source]] = None, notes: Optional[List[str]] = None,
-    exports: Optional[List[Dict[str, str]]] = None,
+    exports: Optional[List[Dict[str, str]]] = None, signals: Optional[List[BaseModel]] = None,
 ) -> SkillResult:
     try:
-        content = DataContent(dataset=dataset, view=view, sources=sources or [], notes=notes or [])
+        content = DataContent(dataset=dataset, view=view, sources=sources or [], notes=notes or [], signals=signals or [])
     except ValidationError as e:  # 스킬 버그 — 깨진 데이터를 보내지 않는다
         return SkillResult(status="failed", summary="", message=f"결과 형식 오류: {e.errors()[0]['msg']}")
     return SkillResult(status="complete", content=content.model_dump(), summary=summary, exports=exports or [])

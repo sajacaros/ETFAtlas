@@ -4,7 +4,7 @@
 보여 줄 기간보다 앞의 일봉까지 읽는다. 보조지표 칸(MACD·RSI·스토캐스틱)은 화면에 하나씩 넘겨 보지만,
 해설에 넘기는 요약에는 모든 지표의 지금 상태를 숫자로 정해 담는다 — LLM은 문장만 쓴다.
 """
-from typing import Dict, List, Literal, Optional, Sequence
+from typing import Dict, List, Literal, Optional, Sequence, Tuple
 
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from ...flow import indicators as ind
 from ...graph_service import GraphService
 from ..resolver import EntityResolver
-from ..schemas import CandlestickView, DataField, Dataset, IndicatorPanel, Source
+from ..schemas import CandlestickView, DataField, Dataset, IndicatorPanel, Signal, Source
 from .base import DataSkill, SkillResult, data_result, empty, not_found
 from .common import Period, pct_change, period_base, period_days, period_label, period_span
 
@@ -22,6 +22,14 @@ MA_PERIODS = (5, 20, 60, 120)
 RSI_LEVELS = (30, 70)
 STOCH_LEVELS = (20, 80)
 TREND_DAYS = 3  # 히스토그램 증감을 보는 최근 거래일 수
+# 신호에 필요한 일봉: 200일선이 한 달(20거래일) 올랐는지, 52주(250거래일) 고가·저가까지
+SIGNAL_DAYS = 400
+STAGE_MA = 150  # 와인스타인 30주 이평 ≈ 150거래일
+SLOPE_DAYS = 20  # 이평 기울기를 보는 거래일 (약 4주)
+FLAT_PCT = 1.0  # 이 폭(%) 안이면 이평이 평평하다
+YEAR_DAYS = 250
+RSI_RANGE_DAYS = 60  # 카드웰 범위를 보는 거래일
+RSI_RECENT_DAYS = 10  # 범위 이탈을 보는 최근 거래일
 
 PanelName = Literal["macd", "rsi", "stochastic"]
 
@@ -118,9 +126,9 @@ def _ma_lines(rows: List[Dict]) -> List[str]:
     mas = [last.get(f"ma{n}") for n in MA_PERIODS]
     if all(m is not None for m in mas):
         if all(a > b for a, b in zip(mas, mas[1:])):
-            lines.append("이평 배열: 정배열 (5일 > 20일 > 60일 > 120일)")
+            lines.append("이평 배열: 정배열 (5일 > 20일 > 60일 > 120일, 짧은 이평일수록 위)")
         elif all(a < b for a, b in zip(mas, mas[1:])):
-            lines.append("이평 배열: 역배열 (5일 < 20일 < 60일 < 120일)")
+            lines.append("이평 배열: 역배열 (5일 < 20일 < 60일 < 120일, 짧은 이평일수록 아래)")
         else:
             lines.append("이평 배열: 정배열도 역배열도 아님")
     pairs = [(r["ma5"], r["ma20"]) for r in rows if r.get("ma5") is not None and r.get("ma20") is not None]
@@ -196,11 +204,158 @@ def _stoch_lines(rows: List[Dict]) -> List[str]:
     ]
 
 
+def _slope(ma: List[Optional[float]], days: int = SLOPE_DAYS) -> Optional[float]:
+    """이평이 days거래일 동안 몇 % 움직였는지."""
+    if len(ma) <= days or ma[-1] is None or ma[-1 - days] is None:
+        return None
+    return (ma[-1] / ma[-1 - days] - 1) * 100
+
+
+def _stage(closes: List[float], ma150: List[Optional[float]]) -> Optional[Tuple[int, str]]:
+    """와인스타인 단계 (단계, 설명). 150일선(30주)의 기울기와 그 위아래 종가로 나눈다."""
+    slope = _slope(ma150)
+    if slope is None:
+        return None
+    above = closes[-1] > ma150[-1]
+    if slope > FLAT_PCT:
+        return (2, "2단계(상승): 150일선이 오르고 종가가 그 위") if above \
+            else (2, "2단계 중 조정: 150일선은 오르지만 종가가 그 아래")
+    if slope < -FLAT_PCT:
+        return (4, "4단계(하락): 150일선이 내리고 종가가 그 아래") if not above \
+            else (4, "4단계 중 반등: 150일선은 내리지만 종가가 그 위")
+    # 평평하면 그 전의 흐름으로 바닥(1단계)과 천장(3단계)을 가른다
+    before = _slope(ma150[:len(ma150) - SLOPE_DAYS], SLOPE_DAYS * 3)
+    if before is not None and before < 0:
+        return 1, "1단계(바닥 다지기): 내리던 150일선이 평평해짐"
+    return 3, "3단계(천장권): 오르던 150일선이 평평해짐"
+
+
+def _trend_template(closes: List[float], bars: List[Dict], mas: Dict[int, List]) -> Optional[Tuple[int, int]]:
+    """미너비니 트렌드 템플릿 8개 중 상대강도 순위를 뺀 7개 조건의 (충족 개수, 전체 개수). 200일선 기울기를 못 보면 None."""
+    ma50, ma150, ma200 = mas[50][-1], mas[150][-1], mas[200][-1]
+    slope200 = _slope(mas[200])
+    if None in (ma50, ma150, ma200, slope200):
+        return None
+    price = closes[-1]
+    year = bars[-YEAR_DAYS:]
+    low, high = min(b["low"] for b in year), max(b["high"] for b in year)
+    checks = [
+        price > ma150 and price > ma200,
+        ma150 > ma200,
+        slope200 > 0,
+        ma50 > ma150 and ma50 > ma200,
+        price > ma50,
+        price >= low * 1.25,
+        price >= high * 0.75,
+    ]
+    return sum(checks), len(checks)
+
+
+def _trend_signal(closes: List[float], bars: List[Dict], mas: Dict[int, List]) -> Signal:
+    rule = ("와인스타인 단계: 150일선(30주)의 4주 기울기가 +1% 넘으면 상승, −1% 밑이면 하락, 그 사이면 평평. "
+            "2단계(오르는 이평 위) ▲▲, 1·3단계(평평) —, 4단계(내리는 이평 아래) ▼▼. "
+            "미너비니 조건: 종가 > 150·200일선, 150일선 > 200일선, 200일선 한 달 상승, 50일선 > 150·200일선, "
+            "종가 > 50일선, 52주 저가보다 25% 이상, 52주 고가에서 25% 이내 (상대강도 순위는 데이터가 없어 뺌)")
+    stage = _stage(closes, mas[STAGE_MA])
+    if not stage:
+        return Signal(key="trend", label="추세", level=None, state="데이터 부족 (150일선 기울기를 볼 수 없음)", rule=rule)
+    number, text = stage
+    clean = "중" not in text.split(":")[0]  # '2단계 중 조정'처럼 이평과 종가가 엇갈리면 화살표 없이
+    level = {2: 2, 4: -2}.get(number, 0) if clean else 0
+    template = _trend_template(closes, bars, mas)
+    if template:
+        text += f" · 미너비니 조건 {template[0]}/{template[1]}"
+    return Signal(key="trend", label="추세", level=level, state=text, rule=rule)
+
+
+def _macd_signal(hist: List[float]) -> Signal:
+    rule = ("엘더 방식: MACD 히스토그램의 기울기(전날보다 커졌는지)로 본다. 0 아래에서 위로 꺾이면 ▲▲, 0 위에서 아래로 꺾이면 ▼▼, "
+            "그 밖에 히스토그램 값이 올라가는 중이면 ▲, 내려가는 중이면 ▼. 엘더는 주봉에 쓰지만 여기서는 일봉 기준")
+    if len(hist) < 3:
+        return Signal(key="macd", label="MACD", level=None, state="데이터 부족", rule=rule)
+    before, prev, now = hist[-3:]
+    rising, was_rising = now > prev, prev > before
+    if rising and not was_rising and now < 0:
+        return Signal(key="macd", label="MACD", level=2, state="히스토그램이 0 아래에서 위로 꺾임", rule=rule)
+    if not rising and was_rising and now > 0:
+        return Signal(key="macd", label="MACD", level=-2, state="히스토그램이 0 위에서 아래로 꺾임", rule=rule)
+    if now == prev:
+        return Signal(key="macd", label="MACD", level=0, state="히스토그램 변화 없음", rule=rule)
+    side = "0 위" if now > 0 else "0 아래"
+    return Signal(key="macd", label="MACD", level=1 if rising else -1,
+                  state=f"히스토그램이 {side}에서 {'올라가는' if rising else '내려가는'} 중", rule=rule)
+
+
+def _rsi_signal(rsi: List[float]) -> Signal:
+    rule = (f"카드웰 범위: 최근 {RSI_RANGE_DAYS}거래일 RSI가 40 아래로 안 내려가면 강세 범위(40~80) ▲, "
+            "60 위로 안 올라가면 약세 범위(20~60) ▼, 60 아래로 안 내려가면 ▲▲, 40 위로 안 올라가면 ▼▼. "
+            f"강세 범위였다가 최근 {RSI_RECENT_DAYS}거래일에 40을 깨면 ▼, 약세 범위였다가 60을 넘으면 ▲ (범위 전환)")
+    if len(rsi) < RSI_RANGE_DAYS:
+        return Signal(key="rsi", label="RSI", level=None, state="데이터 부족", rule=rule)
+    window = rsi[-RSI_RANGE_DAYS:]
+    prior, recent = window[:-RSI_RECENT_DAYS], window[-RSI_RECENT_DAYS:]
+    now = f"현재 {rsi[-1]:.1f}"
+    if min(prior) >= 40 and min(recent) < 40:
+        return Signal(key="rsi", label="RSI", level=-1, state=f"범위 전환: 강세 범위에서 40 붕괴 ({now})", rule=rule)
+    if max(prior) <= 60 and max(recent) > 60:
+        return Signal(key="rsi", label="RSI", level=1, state=f"범위 전환: 약세 범위에서 60 돌파 ({now})", rule=rule)
+    low, high = min(window), max(window)
+    if low >= 60:
+        return Signal(key="rsi", label="RSI", level=2, state=f"강한 강세 범위(60~80) ({now})", rule=rule)
+    if high <= 40:
+        return Signal(key="rsi", label="RSI", level=-2, state=f"강한 약세 범위(20~40) ({now})", rule=rule)
+    if low >= 40:
+        return Signal(key="rsi", label="RSI", level=1, state=f"강세 범위(40~80) ({now})", rule=rule)
+    if high <= 60:
+        return Signal(key="rsi", label="RSI", level=-1, state=f"약세 범위(20~60) ({now})", rule=rule)
+    return Signal(key="rsi", label="RSI", level=0, state=f"범위 없음 ({low:.0f}~{high:.0f} 사이 등락, {now})", rule=rule)
+
+
+def _stoch_signal(k: List[float], d: List[float], stage: Optional[Tuple[int, str]]) -> Signal:
+    rule = ("엘더의 두 번째 스크린: 스토캐스틱은 혼자 강세·약세를 매기지 않고 큰 추세(와인스타인 단계) 안에서 "
+            f"단기 위치만 본다. %K {STOCH_LEVELS[0]} 이하면 눌림·과매도, {STOCH_LEVELS[1]} 이상이면 과열·반등")
+    if not k:
+        return Signal(key="stochastic", label="스토캐스틱", level=None, state="데이터 부족", rule=rule)
+    low, high = STOCH_LEVELS
+    now = k[-1]
+    trend = {1: None, 2: "상승", 3: None, 4: "하락"}.get(stage[0]) if stage else None
+    cross = "%K가 %D 위" if now > d[-1] else "%K가 %D 아래"
+    if now <= low:
+        state = f"{trend} 추세 속 눌림" if trend == "상승" else f"{trend} 추세 속 과매도" if trend else "과매도 구간"
+    elif now >= high:
+        state = f"{trend} 추세 속 과열" if trend == "상승" else f"{trend} 추세 속 반등" if trend else "과매수 구간"
+    else:
+        state = "중간 구간"
+    return Signal(key="stochastic", label="스토캐스틱", level=None, state=f"{state} (%K {now:.1f}, {cross})", rule=rule)
+
+
+def _signals(bars: List[Dict], closes: List[float], mas: Dict[int, List], hist: List[float],
+             rsi: List[float], k: List[float], d: List[float]) -> List[Signal]:
+    return [
+        _trend_signal(closes, bars, mas),
+        _macd_signal(hist),
+        _rsi_signal(rsi),
+        _stoch_signal(k, d, _stage(closes, mas[STAGE_MA])),
+    ]
+
+
+LEVEL_WORDS = {2: "강한 강세", 1: "강세", 0: "중립", -1: "약세", -2: "강한 약세"}
+BASIS = {"trend": "와인스타인 단계·미너비니 조건", "macd": "엘더 MACD 히스토그램", "rsi": "카드웰 RSI 범위",
+         "stochastic": "엘더 두 번째 스크린"}
+
+
+def _signal_line(sg: Signal) -> str:
+    """요약에서 지표 단락 바로 밑에 두는 신호 — 화면의 화살표와 같은 판정을 말로 (해설이 지표마다 함께 쓰게)."""
+    level = f"{LEVEL_WORDS[sg.level]} — " if sg.level is not None else ""
+    return f"신호({BASIS[sg.key]} 기준, 화면에 표시): {level}{sg.state}"
+
+
 class StockTechnicalSkill(DataSkill):
     name = "stock_technical"
     description = (
         "개별 주식 종목(ETF 아님) 하나의 차트 분석: 봉차트에 이동평균(5·20·60·120일)과 볼린저 밴드, 거래량, "
-        "보조지표 칸(MACD·RSI·스토캐스틱을 넘겨 보며). 요약에 이평 위치·배열, 볼린저 %B, MACD 교차, RSI·스토캐스틱 구간을 담는다. "
+        "보조지표 칸(MACD·RSI·스토캐스틱을 넘겨 보며). 요약에 이평 위치·배열, 볼린저 %B, MACD 교차, RSI·스토캐스틱 구간과 "
+        "대가들의 규칙(와인스타인 단계·미너비니 조건·엘더 MACD·카드웰 RSI 범위)으로 본 지표별 강세·약세 신호를 담는다. "
         "주가 분석, 차트·기술적 분석, 보조지표(MACD·RSI·스토캐스틱·이평·볼린저)를 물을 때. "
         "주가 흐름(추이)만 보거나 여러 종목을 겹쳐 보면 stock_trend. 종목 하나만 받는다"
     )
@@ -212,7 +367,8 @@ class StockTechnicalSkill(DataSkill):
         if not stock:
             return not_found(f"찾지 못한 종목: {args.stock}")
         name = stock["name"]
-        prices = GraphService(db).get_stock_prices(stock["code"], days=period_days(args.period) + WARMUP_DAYS)
+        days = max(period_days(args.period) + WARMUP_DAYS, SIGNAL_DAYS)
+        prices = GraphService(db).get_stock_prices(stock["code"], days=days)
         bars = [p for p in prices if all(p.get(k) is not None for k in ("open", "high", "low", "close"))]
         if not bars:
             return empty(f"{name}의 가격 데이터가 없습니다")
@@ -221,7 +377,7 @@ class StockTechnicalSkill(DataSkill):
 
         n = len(bars)
         closes = [b["close"] for b in bars]
-        mas = {p: _pad(ind.rolling_mean(closes, p), n) for p in MA_PERIODS}
+        mas = {p: _pad(ind.rolling_mean(closes, p), n) for p in {*MA_PERIODS, 50, STAGE_MA, 200}}
         bands = _pad(ind.bollinger_series(closes), n)
         macd = ind.macd(closes)
         macd_line, macd_sig = (_pad(macd[0], n), _pad(macd[1], n)) if macd else ([None] * n, [None] * n)
@@ -253,16 +409,21 @@ class StockTechnicalSkill(DataSkill):
         if missing_ma:
             notes.append("데이터가 모자라 기간 첫날부터 그리지 못한 이평: " + ", ".join(f"{p}일선" for p in missing_ma))
 
+        signals = {sg.key: sg for sg in _signals(
+            bars, closes, mas, [a - b for a, b in zip(*macd)] if macd else [],
+            ind.rsi_series(closes), stoch[0] if stoch else [], stoch[1] if stoch else [])}
+        notes.append("신호는 정해진 규칙으로 본 강세·약세 상태이며 매수·매도 권유가 아닙니다")
+
         first, last = rows[0], rows[-1]
         summary_lines = [
             span + (f" — {notes[2]}" if not base else ""),
             f"{name}: 종가 {_price(first['close'])} → {_price(last['close'])} ({pct_change(first['close'], last['close']):+.2f}%), "
             f"기간 최고 {_price(max(r['high'] for r in rows))}, 최저 {_price(min(r['low'] for r in rows))}, 마지막 거래일 {last['date']}",
-            *_ma_lines(rows),
+            *_ma_lines(rows), _signal_line(signals["trend"]),
             *_band_lines(rows, [b["volume"] for b in bars]),
-            *_macd_lines(rows),
-            *_rsi_lines(rows),
-            *_stoch_lines(rows),
+            *_macd_lines(rows), _signal_line(signals["macd"]),
+            *_rsi_lines(rows), _signal_line(signals["rsi"]),
+            *_stoch_lines(rows), _signal_line(signals["stochastic"]),
         ]
 
         available = {"macd": macd, "rsi": any(v is not None for v in rsi), "stochastic": stoch}
@@ -273,4 +434,5 @@ class StockTechnicalSkill(DataSkill):
             panels=[PANELS[p] for p in order if available[p]],
         )
         sources = [Source(label="종목 일별 시세", as_of=last["date"])]
-        return data_result(Dataset(fields=FIELDS, rows=rows), view, "\n".join(summary_lines), sources, notes)
+        return data_result(Dataset(fields=FIELDS, rows=rows), view, "\n".join(summary_lines), sources, notes,
+                           signals=list(signals.values()))

@@ -447,6 +447,16 @@ export interface DataContent {
   view: DataView
   sources: { label: string; as_of: string | null }[]
   notes: string[]
+  signals?: Signal[]
+}
+
+/** 지표 하나를 정해진 규칙으로 본 강세·약세 상태. level 2 ▲▲ … −2 ▼▼, null이면 화살표 없이 상태만 */
+export interface Signal {
+  key: string
+  label: string
+  level: number | null
+  state: string
+  rule: string
 }
 
 export type SlotContent = DataContent | { type: 'text' | 'markdown'; text: string }

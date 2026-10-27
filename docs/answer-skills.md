@@ -104,6 +104,7 @@ class MySkill(DataSkill):
 | `holdings` | treemap, donut, bar, table | 구성종목 비중 (도넛은 상위 7개 + 기타) |
 | `portfolio_lookthrough` | treemap, bar, donut, table | 포트폴리오(ETF·종목과 비중)의 종목별 합산 비중. ETF는 구성종목으로 풀어 비중을 곱해 더하고(`domain/composition.py`와 같은 계산), 직접 담은 종목은 그대로 더한다. 구성종목 데이터가 없는 ETF(해외 ETF 등)는 ETF 한 행으로, ETF 안의 30위 밖·현금은 기타로 둔다 |
 | `stock_trend` | line, candlestick, table | 개별 종목 가격 추이 (`price_trend`와 같은 베이스) |
+| `stock_technical` | candlestick | 종목 하나의 차트 분석: 이동평균·볼린저를 겹친 봉, 거래량, 넘겨 보는 보조지표 칸(MACD·RSI·스토캐스틱), 대가들의 규칙(와인스타인·미너비니·엘더·카드웰)으로 본 지표별 강세·약세 신호. 규칙은 `frontend/public/architecture.html#technical` |
 | `stock_holders` | bar, table | 종목을 많이 담은 ETF 순위. 종목을 여러 개(최대 5개) 받으면 ETF마다 그 종목들의 비중을 더해 합계 순으로 매기고, 막대는 종목별 비중을 쌓는다 (상위 30개 밖 종목은 0%) |
 | `rank` | bar, table | ETF·종목 후보를 기간 수익률·순자산·총보수·최근 12개월 분배율로 정렬하고 `min_value`·`max_value`로 걸러 상위 N개. 후보는 앞 슬롯 결과 참조, 이름, 테마, 또는 비워 두면 ETF 전체(`배당 5% 이상 ETF`). '배당 5% 이상 + 최근 주가 좋은 순'은 분배율로 전체를 거른 rank 결과를 수익률 rank가 다시 받는다 (`0034` 예시). 분배율로 고르면 계산 기준(12개월 분배금 ÷ 현재가)을 주석으로 붙인다 |
 | `company_financials` | bar, line, table | 종목의 DART 주요계정 분기·연간 실적(매출액·영업이익·순이익·영업이익률)과 최근 부채비율. 연결이 있으면 연결, 없으면 별도(섞지 않는다). 4분기는 연간 − 3분기 누적, 공시에 없는 값은 비운다. 요약의 전년 동기 비교는 같은 분기끼리, 기준이 0 이하면 증감률 대신 값을 적는다 |

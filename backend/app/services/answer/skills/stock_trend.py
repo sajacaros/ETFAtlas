@@ -3,9 +3,10 @@ from typing import Dict, List
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from ...domain.entities import EntityResolver
+from ...domain.periods import Period
 from ...graph_service import GraphService
-from ..resolver import EntityResolver
-from .common import DEFAULT_PERIOD, PERIOD_DESCRIPTION, Period
+from .common import DEFAULT_PERIOD, PERIOD_DESCRIPTION
 from .price_trend import PriceTrendBase
 
 

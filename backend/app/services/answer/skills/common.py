@@ -1,15 +1,8 @@
 """데이터 스킬들이 함께 쓰는 도우미."""
-import re
-from datetime import date, timedelta
-from typing import Annotated, Any, Dict, List, Optional
+from typing import List
 
-from pydantic import AfterValidator, BaseModel, Field
+from pydantic import BaseModel, Field
 
-from ...graph_service import GraphService
-
-# 기간 표기: 숫자+단위(d 일, w 주, m 개월, y 년) 또는 ytd(올해, 작년 마지막 거래일 대비). 개월·년은 30·365일로 센다
-_PERIOD_RE = re.compile(r"(\d{1,3})([dwmy])|ytd")
-_UNITS = {"d": ("일", 1), "w": ("주", 7), "m": ("개월", 30), "y": ("년", 365)}
 # 질문에 기간이 없을 때의 기간. 가격 추이와 수익률 순위가 같은 기간을 써야 '수익률 상위 → 추이'가 맞물린다
 DEFAULT_PERIOD = "1m"
 PERIOD_DESCRIPTION = (
@@ -18,46 +11,6 @@ PERIOD_DESCRIPTION = (
     "— 가까운 다른 기간으로 바꾸지 않는다. "
     f"질문에 기간이 없으면 앞선 대화에서 정한 기간, 그것도 없으면 기본값 {DEFAULT_PERIOD}(1개월). 예시의 기간을 옮기지 않는다"
 )
-
-
-def _check_period(spec: str) -> str:
-    spec = spec.strip().lower()
-    match = _PERIOD_RE.fullmatch(spec)
-    if not match or (match.group(1) and int(match.group(1)) == 0):
-        raise ValueError(f"기간 표기가 맞지 않습니다: '{spec}' (예: 1w, 45d, 3m, 1y, ytd)")
-    return spec
-
-
-Period = Annotated[str, AfterValidator(_check_period)]
-
-
-def period_label(spec: str) -> str:
-    if spec == "ytd":
-        return "연초 이후"
-    n, unit = int(spec[:-1]), spec[-1]
-    return f"{n}{_UNITS[unit][0]}"
-
-
-def period_start(spec: str, end: date) -> date:
-    """end에서 거슬러 간 시작 기준일. 수익률은 이 날 이전의 가장 가까운 거래일 종가에서 센다."""
-    if spec == "ytd":
-        return date(end.year - 1, 12, 31)
-    n, unit = int(spec[:-1]), spec[-1]
-    return end - timedelta(days=n * _UNITS[unit][1])
-
-
-def period_days(spec: str) -> int:
-    """기간의 시작점까지 가져오려면 오늘부터 거슬러 가져올 가격 일수 (시작점 앞 휴장일 여유 포함)."""
-    today = date.today()
-    return (today - period_start(spec, today)).days + 10
-
-
-def period_base(prices: List[Dict], spec: str) -> Optional[Dict]:
-    """기간의 시작점: 마지막 거래일에서 기간만큼 거슬러 간 날 이전의 가장 가까운 거래일 가격. 데이터가 그만큼 없으면 None.
-    가격 추이·기간 수익률·수익률 순위가 모두 이 시작점을 써서 같은 기간이면 같은 수익률이 나온다."""
-    target = period_start(spec, date.fromisoformat(prices[-1]["date"])).isoformat()
-    past = [p for p in prices if p["date"] <= target]
-    return past[-1] if past else None
 
 
 ETF_NAMES_DESCRIPTION = "ETF 이름 또는 6자리 코드. 사용자가 말한 이름을 그대로 적는다 (예: 'KODEX 200')"
@@ -91,33 +44,6 @@ def missing_notes(missing: List[str]) -> List[str]:
     return [f"찾지 못한 ETF: {', '.join(missing)}"] if missing else []
 
 
-def node(graph: GraphService, cypher: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
-    # DB 오류를 "데이터 없음"으로 삼키지 않고 슬롯 실패로 드러낸다
-    return [GraphService.parse_agtype(r["result"]) for r in graph.execute_cypher(cypher, params, raise_errors=True)]
-
-
 def period_span(start: str, end: str, label: str = "") -> str:
     """결과에 보이는 조회 구간 문구 (예: '조회 기간: 2026-09-24 ~ 2026-10-24 (1개월)')."""
     return f"조회 기간: {start} ~ {end}" + (f" ({label})" if label else "")
-
-
-def pct_change(start: Optional[float], end: Optional[float]) -> Optional[float]:
-    if not start or end is None:
-        return None
-    return round((end - start) / start * 100, 2)
-
-
-def format_value(value: Any, fmt: str) -> str:
-    """요약 텍스트용 서식 (LLM이 단위를 헷갈리지 않게). 화면 표시 서식은 프런트가 따로 한다."""
-    if value is None:
-        return "-"
-    if fmt == "percent":
-        return f"{value:.2f}%"
-    if fmt == "krw":
-        eok = int(value) // 1_0000_0000
-        return f"{eok // 1_0000:,}조 {eok % 1_0000:,}억원" if eok >= 1_0000 else f"{eok:,}억원"
-    if fmt == "price":
-        return f"{value:,.0f}원"
-    if fmt == "number" and isinstance(value, (int, float)):
-        return f"{value:,}"
-    return str(value)

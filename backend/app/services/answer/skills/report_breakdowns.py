@@ -15,8 +15,8 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
-from ..llm import NO_THINKING, build_model
-from ..schemas import BarView, DataField, Dataset, DonutView, Source
+from ...content import BarView, DataField, Dataset, DonutView, Source
+from ...llm import NO_THINKING, build_model
 from .base import SkillResult, data_result
 
 MAX_CHARTS = 2

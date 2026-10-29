@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
-from ..llm import NO_THINKING, build_model
+from ...llm import NO_THINKING, build_model
 from .base import Skill, SkillContext, text_result
 
 NARRATIVE_PROMPT = """당신은 ETF Atlas의 AI 어시스턴트입니다. 화면에는 이미 표와 차트가 표시되어 있고, 당신은 그 해설을 씁니다.

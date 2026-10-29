@@ -8,8 +8,8 @@ import pytest
 from app.services.chat_memory import ConversationContext
 from app.models.dart import DartSetting, StockDisclosure, StockFinancial
 from app.services.answer.skills import REGISTRY
-from app.services.answer.skills.company_financials import build_periods, quarter_values
-from app.services.answer.universe import STOCK_SCOPE
+from app.services.domain.financials import build_periods, quarter_values
+from app.services.domain.universe import STOCK_SCOPE
 
 
 # --- 리졸버: 그래프 밖 종목 ---
@@ -18,7 +18,7 @@ from app.services.answer.universe import STOCK_SCOPE
 def fake_stock_graph(monkeypatch):
     """그래프에는 삼성전자와 KIS 약칭으로 들어간 현대차만, DART 고유번호에는 그 밖의 회사도 있다."""
     from app.services import graph_service
-    from app.services.answer import resolver as resolver_mod
+    from app.services.domain import entities as resolver_mod
     stocks = [{"code": "005930", "name": "삼성전자"}, {"code": "005380", "name": "현대차"}]
     corps = [
         {"code": "005930", "name": "삼성전자"},
@@ -46,7 +46,7 @@ def fake_stock_graph(monkeypatch):
 
 
 def test_resolver_tells_stocks_outside_the_graph_apart(fake_stock_graph):
-    from app.services.answer.resolver import EntityResolver, UnmanagedStock
+    from app.services.domain.entities import EntityResolver, UnmanagedStock
     r = EntityResolver()
     assert r.stock(None, "삼성전자") == {"code": "005930", "name": "삼성전자"}
     # DART 회사명으로 불러도 종목코드로 그래프의 종목을 찾는다
@@ -72,7 +72,7 @@ class _Closable:
 
 
 def _run(skill_name, args, display, db_factory=_Closable):
-    from app.services.answer.resolver import EntityResolver
+    from app.services.domain.entities import EntityResolver
     from app.services.answer.skills.base import SkillContext
 
     async def run():
@@ -108,8 +108,8 @@ def test_unlisted_company_is_told_apart(fake_stock_graph):
 
 def test_etf_slot_with_an_outside_stock_name_is_retryable(fake_stock_graph, monkeypatch):
     """ETF 이름 후보가 여럿인데 정확히 같은 이름의 종목(그래프 밖이어도)이면 종목 스킬로 다시 설계한다."""
-    from app.services.answer import resolver as resolver_mod
-    from app.services.answer.resolver import AmbiguousETF
+    from app.services.domain import entities as resolver_mod
+    from app.services.domain.entities import AmbiguousETF
     original = resolver_mod.EntityResolver._lookup
 
     def lookup(db, label, name):
@@ -506,7 +506,7 @@ def test_company_report_answers_from_the_nodes_it_picks(fake_stock_graph, monkey
     db = _indexed(summaries={"189": "품목별 매출액(3개월·누적)"})
 
     async def run():
-        from app.services.answer.resolver import EntityResolver
+        from app.services.domain.entities import EntityResolver
         from app.services.answer.skills.base import SkillContext
         ctx = SkillContext(question="삼성전자 DRAM 매출 얼마야?", conversation=ConversationContext(), session_factory=lambda: db,
                            resolver=EntityResolver(), ai_config=_Config(), stop=asyncio.Event())
@@ -530,7 +530,7 @@ def test_company_report_answers_from_the_nodes_it_picks(fake_stock_graph, monkey
 
 def test_prepare_report_explains_why_a_period_is_not_there(fake_stock_graph):
     from app.models.dart import StockReport
-    from app.services.answer.resolver import EntityResolver
+    from app.services.domain.entities import EntityResolver
     from app.services.answer.skills import company_report
     from app.services.answer.skills.base import SkillContext
     db = _indexed()
@@ -551,7 +551,7 @@ def test_prepare_report_explains_why_a_period_is_not_there(fake_stock_graph):
 
 def test_picking_reads_the_sections_of_a_chapter_and_asks_again_for_unknown_ids(fake_stock_graph, monkeypatch):
     from pydantic_ai.models.test import TestModel
-    from app.services.answer.resolver import EntityResolver
+    from app.services.domain.entities import EntityResolver
     from app.services.answer.skills import company_report
     from app.services.answer.skills.base import SkillContext
     stock, report, entries = company_report.prepare_report(
@@ -646,7 +646,7 @@ def test_revenue_mix_without_tables_says_so(fake_stock_graph):
 
 def _skill_events(skill_name, db, question, config=None):
     async def run():
-        from app.services.answer.resolver import EntityResolver
+        from app.services.domain.entities import EntityResolver
         from app.services.answer.skills.base import SkillContext
         ctx = SkillContext(question=question, conversation=ConversationContext(), session_factory=lambda: db,
                            resolver=EntityResolver(), ai_config=config, stop=asyncio.Event())

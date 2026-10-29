@@ -3,11 +3,12 @@ from typing import Optional
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from ...content import BarView, DataField, Dataset, DonutView, Source, TableView, TreemapView
+from ...domain.entities import EntityResolver
+from ...domain.graph import node
 from ...graph_service import GraphService
-from ..resolver import EntityResolver
-from ..schemas import BarView, DataField, Dataset, DonutView, Source, TableView, TreemapView
 from .base import DataSkill, SkillResult, data_result, empty, not_found
-from .common import cut_note, min_weight_field, node
+from .common import cut_note, min_weight_field
 
 DONUT_MAX_SLICES = 8  # 넘으면 나머지를 '기타'로 묶는다
 

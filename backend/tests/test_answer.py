@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from app.services.answer import orchestrator as orch
 from app.services.answer import refs
 from app.services.answer.planner import PlannedSlot, build_plan_model, examples_prompt, layout_tree, to_rows
-from app.services.answer.schemas import DataField, Dataset, LineView
+from app.services.content import DataField, Dataset, LineView
 from app.services.answer.skills import REGISTRY
 from app.services.answer.skills import holdings as holdings_mod
 from app.services.answer.skills.base import Skill, data_result, empty, text_result
@@ -83,7 +83,7 @@ def test_period_return_needs_data_old_enough():
 
 def test_period_accepts_any_asked_period_and_labels_it():
     from datetime import date
-    from app.services.answer.skills.common import period_label, period_start
+    from app.services.domain.periods import period_label, period_start
     Args = REGISTRY["price_trend"].Args
     assert Args(etfs=["가"]).period == "1m"  # 질문에 기간이 없으면 기본값
     assert [Args(etfs=["가"], period=p).period for p in ("2w", "45d", "2M", "ytd")] == ["2w", "45d", "2m", "ytd"]
@@ -365,7 +365,7 @@ def test_answer_that_asks_back_is_clarifying(monkeypatch):
 # --- 종목 스킬 / 해석기 ---
 
 def test_resolver_strips_characters_that_could_break_the_query():
-    from app.services.answer.resolver import _normalize
+    from app.services.domain.entities import _normalize
     assert _normalize("KODEX 미국S&P500(H)") == "kodex미국s&p500(h)"
     assert _normalize("x' OR 1=1 $$ ;\\") == "xor11"
 
@@ -421,7 +421,7 @@ class FakePortfolioResolver:
     STOCKS = {"삼성전자": {"code": "005930", "name": "삼성전자"}}
 
     def etf(self, db, name):
-        from app.services.answer.resolver import UnmanagedETF
+        from app.services.domain.entities import UnmanagedETF
         if name in self.UNMANAGED:
             raise UnmanagedETF(self.UNMANAGED[name])
         return self.ETFS.get(name)
@@ -517,7 +517,7 @@ def fake_etf_graph(monkeypatch):
     """resolver가 ETF 이름 후보를 찾을 때 쓰는 그래프. 순자산 큰 순으로 돌려준다."""
     import json
     from app.services import graph_service
-    from app.services.answer import resolver as resolver_mod
+    from app.services.domain import entities as resolver_mod
     etfs = [
         {"code": "396500", "name": "TIGER 반도체TOP10", "net_assets": 9_5642_0000_0000},
         {"code": "091160", "name": "KODEX 반도체", "net_assets": 2_0000_0000_0000},
@@ -549,7 +549,7 @@ def fake_etf_graph(monkeypatch):
 
 
 def test_resolver_asks_instead_of_guessing_between_etfs(fake_etf_graph):
-    from app.services.answer.resolver import AmbiguousETF, EntityResolver
+    from app.services.domain.entities import AmbiguousETF, EntityResolver
     r = EntityResolver()
     with pytest.raises(AmbiguousETF) as exc:
         r.etf(None, "K반도체TOP2+")
@@ -566,7 +566,7 @@ def test_resolver_asks_instead_of_guessing_between_etfs(fake_etf_graph):
 
 
 def test_resolver_tells_unmanaged_etfs_apart_from_unknown_names(fake_etf_graph):
-    from app.services.answer.resolver import EntityResolver, UnmanagedETF
+    from app.services.domain.entities import EntityResolver, UnmanagedETF
     r = EntityResolver()
     for name in ("kodex 레버리지", "122630"):
         with pytest.raises(UnmanagedETF) as exc:
@@ -581,7 +581,7 @@ def test_resolver_tells_unmanaged_etfs_apart_from_unknown_names(fake_etf_graph):
 
 
 def test_data_skill_says_an_etf_is_not_managed(fake_etf_graph):
-    from app.services.answer.resolver import EntityResolver
+    from app.services.domain.entities import EntityResolver
     from app.services.answer.skills.base import SkillContext
 
     async def run():
@@ -596,7 +596,7 @@ def test_data_skill_says_an_etf_is_not_managed(fake_etf_graph):
 
 
 def test_data_skill_turns_an_ambiguous_etf_into_a_question(fake_etf_graph):
-    from app.services.answer.resolver import EntityResolver
+    from app.services.domain.entities import EntityResolver
     from app.services.answer.skills.base import SkillContext
 
     async def run():
@@ -687,7 +687,7 @@ def test_etf_choice_requires_the_kind_of_condition():
 
 
 def test_lookthrough_asks_about_an_ambiguous_etf_but_takes_an_exact_stock(lookthrough, monkeypatch):
-    from app.services.answer.resolver import AmbiguousETF
+    from app.services.domain.entities import AmbiguousETF
     from app.services.answer.skills import portfolio_lookthrough as mod
 
     def ambiguous_etf(self, db, name):
@@ -1128,7 +1128,7 @@ def test_replan_must_keep_the_layout_and_the_slots_that_worked():
 
 
 def test_a_stock_name_in_an_etf_slot_is_a_fixable_failure_not_a_question(fake_etf_graph, monkeypatch):
-    from app.services.answer.resolver import EntityResolver
+    from app.services.domain.entities import EntityResolver
     from app.services.answer.skills.base import SkillContext
 
     resolver = EntityResolver()
@@ -1484,28 +1484,29 @@ def test_stock_technical_histogram_trend_names_the_side():
 
 
 def test_stock_technical_signals_follow_the_masters_rules():
-    from app.services.answer.skills import stock_technical as mod
+    from app.services.domain import indicators as ind, signals as sig
+    from app.services.answer.skills.stock_technical import _pad
     # 엘더: 히스토그램 기울기 — 0 아래에서 위로 꺾이면 ▲▲, 0 위에서 아래로 꺾이면 ▼▼
-    assert mod._macd_signal([-3, -4, -2]).level == 2
-    assert mod._macd_signal([3, 4, 2]).level == -2
-    assert mod._macd_signal([-4, -3, -2]).state == "히스토그램이 0 아래에서 올라가는 중"
-    assert mod._macd_signal([1, 2]).level is None
+    assert sig.macd_signal([-3, -4, -2]).level == 2
+    assert sig.macd_signal([3, 4, 2]).level == -2
+    assert sig.macd_signal([-4, -3, -2]).state == "히스토그램이 0 아래에서 올라가는 중"
+    assert sig.macd_signal([1, 2]).level is None
     # 카드웰: 범위와 범위 전환
-    assert mod._rsi_signal([45.0] * 60).level == 1
-    assert mod._rsi_signal([65.0] * 60).level == 2
-    assert mod._rsi_signal([55.0] * 60).level == 1
-    assert mod._rsi_signal([35.0] * 60).level == -2
-    assert mod._rsi_signal([50.0] * 50 + [38.0] * 10).state.startswith("범위 전환: 강세 범위에서 40 붕괴")
-    assert mod._rsi_signal([30.0, 70.0] * 30).level == 0
+    assert sig.rsi_signal([45.0] * 60).level == 1
+    assert sig.rsi_signal([65.0] * 60).level == 2
+    assert sig.rsi_signal([55.0] * 60).level == 1
+    assert sig.rsi_signal([35.0] * 60).level == -2
+    assert sig.rsi_signal([50.0] * 50 + [38.0] * 10).state.startswith("범위 전환: 강세 범위에서 40 붕괴")
+    assert sig.rsi_signal([30.0, 70.0] * 30).level == 0
     # 와인스타인: 오르는 150일선 위 2단계, 내리는 150일선 아래 4단계
     up = [100.0 + i for i in range(300)]
-    ma = {p: mod._pad(mod.ind.rolling_mean(up, p), len(up)) for p in (50, 150, 200)}
+    ma = {p: _pad(ind.rolling_mean(up, p), len(up)) for p in (50, 150, 200)}
     bars = [{"high": c + 1, "low": c - 1, "close": c} for c in up]
-    trend = mod._trend_signal(up, bars, ma)
+    trend = sig.trend_signal(up, bars, ma)
     assert trend.level == 2 and "미너비니 조건 7/7" in trend.state
     down = up[::-1]
-    ma = {p: mod._pad(mod.ind.rolling_mean(down, p), len(down)) for p in (50, 150, 200)}
-    assert mod._trend_signal(down, bars[::-1], ma).level == -2
+    ma = {p: _pad(ind.rolling_mean(down, p), len(down)) for p in (50, 150, 200)}
+    assert sig.trend_signal(down, bars[::-1], ma).level == -2
     # 스토캐스틱은 화살표 없이 추세 안의 위치만
-    stoch = mod._stoch_signal([10.0], [15.0], (2, "2단계"))
+    stoch = sig.stoch_signal([10.0], [15.0], (2, "2단계"))
     assert stoch.level is None and stoch.state.startswith("상승 추세 속 눌림")

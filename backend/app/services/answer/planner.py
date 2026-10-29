@@ -17,11 +17,11 @@ from sqlalchemy.orm import Session
 
 from ..ai_config import AIConfig
 from ..chat_memory import ConversationContext
+from ..content import slot_type
+from ..domain.entities import is_etf_name
 from ..embedding_service import EmbeddingService
-from .llm import NO_THINKING, build_model
-from .resolver import is_etf_name
+from ..llm import NO_THINKING, build_model
 from .refs import RefError, expanded, rank_gaps, refs_in, split_hint
-from .schemas import slot_type
 from .skills import FALLBACK_SKILL, REGISTRY
 from .skills.base import Skill
 

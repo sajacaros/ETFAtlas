@@ -678,7 +678,7 @@ column
 
   <section id="technical">
     <h2>차트 분석</h2>
-    <p class="lead">"주가 분석해줘"·"RSI 어때?"처럼 가격을 물으면 <code>stock_technical</code> 하나와 해설만 놓습니다(정기보고서·실적·공시는 기업 분석의 몫). 지표는 스크리너와 같은 함수(<code>flow/indicators.py</code>)로 <b>DB 일봉</b>에서 계산하고, 지표별 신호는 <b>대가들의 규칙</b>을 코드로 옮겨 정합니다. LLM은 정해진 값과 신호로 문장만 씁니다.</p>
+    <p class="lead">"주가 분석해줘"·"RSI 어때?"처럼 가격을 물으면 <code>stock_technical</code> 하나와 해설만 놓습니다(정기보고서·실적·공시는 기업 분석의 몫). 지표는 스크리너와 같은 함수(<code>domain/indicators.py</code>, 신호는 <code>domain/signals.py</code>)로 <b>DB 일봉</b>에서 계산하고, 지표별 신호는 <b>대가들의 규칙</b>을 코드로 옮겨 정합니다. LLM은 정해진 값과 신호로 문장만 씁니다.</p>
 
     <div class="layer skills">
       <div class="layer-title"><span class="dot"></span>stock_technical · 한 번의 조회</div>

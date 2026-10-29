@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..ai_config import AIConfig
-from ..answer.schemas import DataField, Dataset
+from ..content import DataField, Dataset
 from .market_data import MarketData
 
 PREVIEW_ROWS = 300  # 노드 결과 탭에 보내는 최대 행 수

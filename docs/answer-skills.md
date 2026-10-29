@@ -57,7 +57,7 @@
 지난 대화(`GET /api/chat/sessions/{id}`)의 메시지에는 `layout`과 `slots`(id → 상태)가 들어 있고,
 프런트는 완료된 영역을 같은 API로 가져온다. 실시간 화면과 기록 화면이 같은 경로를 쓴다.
 
-## 슬롯 내용 형식 (`services/answer/schemas.py`)
+## 슬롯 내용 형식 (`services/content.py`)
 
 - 텍스트: `{"type": "text" | "markdown", "text": "..."}`
 - 데이터: `{"type": "data", "dataset": {...}, "view": {...}, "sources": [...], "notes": [...]}`
@@ -87,7 +87,8 @@ class MySkill(DataSkill):
 
 규칙:
 - 숫자는 스킬이 DB에서 만든다. LLM에는 `summary`(단위를 붙인 짧은 텍스트)만 넘어간다.
-- 도메인 규칙(여러 ETF는 누적 수익률로, 도넛은 8조각까지 등)은 스킬 안에서 처리한다.
+- 계산(기간 수익률, 분기 실적, 차트 지표·신호처럼 화면과 상관없이 같은 답이 나와야 하는 것)은 `services/domain/`에 순수 함수로 두고 스킬은 불러 쓴다. 스크리너(`services/flow/`)도 같은 함수를 쓰므로 같은 질문에 같은 숫자가 나온다. `domain/`은 LLM과 화면 형식(`content.py`)을 모른다.
+- 표시 규칙(여러 ETF는 누적 수익률로, 도넛은 8조각까지 등)과 요약 문구는 스킬 안에서 처리한다.
 - 스트리밍이 필요하거나 DB가 아닌 곳을 쓰는 스킬은 `Skill.run()`을 직접 구현해 `delta` / `result` 이벤트를 낸다 (`narrative.py`, `agent.py` 참고).
 - 실행해 봐야 아는 것은 스킬이 화면에 반영한다: `title` 이벤트로 영역 제목을 바꾸고, `split` 이벤트(`parts: [{id, title, display}]`)로 영역을 차트와 설명 등으로 나눈다. 나눈 뒤의 `delta`·`result`에는 `part`를 붙이고 영역마다 `result`를 한 번 낸다. 오케스트레이터는 계획(플래너가 보는 슬롯)은 그대로 두고 화면 레이아웃·저장(`chat_slots`의 `s5-1` …)·해설에 넘기는 요약만 나눈 영역으로 펼친다. 원래 슬롯 행에는 합친 결과가 남아 다시 설계·해설 대기 판단에 쓰인다 (`company_report.py` 참고).
 - 다른 슬롯의 결과가 필요하면 `after_others = True` — `ctx.related`로 앞 슬롯들의 (제목, 요약)을 받는다.
@@ -198,7 +199,7 @@ DART 회사명이 그래프 이름(KIS 약칭)과 달라도 종목코드가 그�
 - 종목코드가 없는 회사는 "상장 종목이 아니어서", 여러 종목을 받는 스킬은 주석에 "(수집하는 ETF에 담기지 않은 종목)"을 붙인다.
 - 직접 담은 종목을 그대로 더하는 `portfolio_lookthrough`와 분석 흐름의 종목 입력은 그래프 밖 상장사도 종목코드로 쓴다.
 - 데이터 영역이 모두 같은 안내로 비면 해설 슬롯은 LLM을 부르지 않고 그 안내를 그대로 받고(`orchestrator.shared_notice`), 프런트는 영역마다 되풀이하지 않고 안내 한 줄만 보여 준다(`AnswerView`의 `sharedNotice`). 관리하지 않는 ETF에도 같다.
-- 유니버스 조건 문구는 `services/answer/universe.py` 한 곳에 있다. 수집 조건(`airflow/dags/age_utils.py`)을 바꾸면 같이 바꾼다.
+- 유니버스 조건 문구는 `services/domain/universe.py` 한 곳에 있다. 수집 조건(`airflow/dags/age_utils.py`)을 바꾸면 같이 바꾼다.
 
 ## 대상을 정하지 못할 때: 되묻기
 
@@ -211,7 +212,7 @@ ETF를 하나로 정할 수 없으면 고르지 않고 사용자에게 묻는다
 
 ## 차트 추가하기
 
-1. 백엔드 `schemas.py`에 view 모델을 추가하고 `View` 유니온과 `CHART_DISPLAYS`에 올린다.
+1. 백엔드 `services/content.py`에 view 모델을 추가하고 `View` 유니온과 `CHART_DISPLAYS`에 올린다.
 2. 프런트 `types/api.ts`의 `DataView`에 같은 모양을 추가한다.
 3. `charts.ts`에 빌더를 만들어 `BUILDERS`에 올린다. 필요하면 `ChartView.tsx`의 `echarts.use([...])`에 차트 모듈을 등록한다.
 

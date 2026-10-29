@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ....models.dart import StockDisclosure
-from ..resolver import EntityResolver
+from ...domain.entities import EntityResolver
 from .base import DataSkill, SkillResult, empty, not_found, text_result
 
 DART_VIEWER = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo="

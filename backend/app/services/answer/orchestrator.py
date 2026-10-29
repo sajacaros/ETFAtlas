@@ -25,9 +25,9 @@ from ...models.chat import ChatLogResult, ChatSlot
 from ...utils.time import utcnow
 from ..ai_config import load_ai_config
 from ..chat_memory import ChatMemory, ConversationContext
+from ..domain.entities import EntityResolver
 from . import refs
 from .planner import PlannedSlot, Planner, data_lookups, layout_tree
-from .resolver import EntityResolver
 from .skills import REGISTRY
 from .skills.base import Skill, SkillContext
 

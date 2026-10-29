@@ -18,10 +18,10 @@ from pydantic_ai import Agent
 from sqlalchemy.orm import defer
 
 from ....models.dart import ReportNode, StockReport
+from ...content import Source
+from ...domain.entities import UnmanagedStock
+from ...llm import NO_THINKING, build_model
 from ...report_tree import SUMMARY_MIN_CHARS, Block, clip, filed_date, render
-from ..llm import NO_THINKING, build_model
-from ..resolver import UnmanagedStock
-from ..schemas import Source
 from . import report_breakdowns
 from .base import Skill, SkillContext, SkillResult, empty, not_found, text_result, unmanaged_stock_result
 from .company_disclosures import DART_VIEWER

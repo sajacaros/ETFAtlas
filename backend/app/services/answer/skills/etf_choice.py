@@ -3,10 +3,12 @@ from typing import Dict, List, Literal
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from ...domain.entities import EntityResolver, _normalize
+from ...domain.format import format_value
+from ...domain.graph import node
 from ...graph_service import GraphService
-from ..resolver import EntityResolver, _normalize
 from .base import CHOICES_SHOWN, DataSkill, SkillResult, choice_result, empty, not_found
-from .common import format_value, node, object_particle
+from .common import object_particle
 
 
 class ETFChoiceArgs(BaseModel):

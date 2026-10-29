@@ -6,8 +6,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ....models.portfolio import Holding, Portfolio
-from ...answer.resolver import AmbiguousETF, EntityResolver, UnmanagedETF, UnmanagedStock
-from ...answer.skills.common import node as cypher
+from ...domain.entities import AmbiguousETF, EntityResolver, UnmanagedETF, UnmanagedStock
+from ...domain.graph import node as cypher
 from ...graph_service import GraphService
 from ..base import FlowContext, Node, StockSet, result
 

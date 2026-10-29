@@ -3,8 +3,8 @@ from typing import Dict, List
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from ..resolver import EntityResolver
-from ..schemas import BarView, DataField, Dataset, Source, TableView
+from ...content import BarView, DataField, Dataset, Source, TableView
+from ...domain.entities import EntityResolver
 from .base import DataSkill, SkillResult, data_result, empty, not_found
 from .common import ETF_NAMES_DESCRIPTION
 from .portfolio_lookthrough import _holdings

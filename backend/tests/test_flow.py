@@ -3,7 +3,7 @@ import asyncio
 import pytest
 
 from app.services.flow import executor as ex
-from app.services.flow import indicators as ind
+from app.services.domain import indicators as ind
 from app.services.flow.base import FlowContext, Node, StockSet, node_spec, result
 from app.services.flow.market_data import YFinanceMarketData
 from app.services.flow.nodes import REGISTRY

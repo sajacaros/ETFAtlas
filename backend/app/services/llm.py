@@ -2,7 +2,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.settings import ModelSettings
 
-from ..ai_config import AIConfig
+from .ai_config import AIConfig
 
 # 레이아웃 설계·요약은 추론 없이 빠르게 (ChatMemory의 보조 호출과 같은 설정)
 NO_THINKING = ModelSettings(extra_body={"chat_template_kwargs": {"enable_thinking": False}})

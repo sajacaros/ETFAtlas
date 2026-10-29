@@ -4,11 +4,12 @@ from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from ...content import BarView, DataField, Dataset, Source, TableView
+from ...domain.entities import EntityResolver
+from ...domain.graph import node
 from ...graph_service import GraphService
-from ..resolver import EntityResolver
-from ..schemas import BarView, DataField, Dataset, Source, TableView
 from .base import DataSkill, SkillResult, data_result, empty, not_found
-from .common import cut_note, min_weight_field, node, object_particle
+from .common import cut_note, min_weight_field, object_particle
 
 SAFE_CODE_RE = re.compile(r"[0-9A-Z]{6}")  # 쿼리 문자열에 직접 넣으므로 코드 모양만 허용
 

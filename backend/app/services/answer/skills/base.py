@@ -20,10 +20,10 @@ from sqlalchemy.orm import Session
 
 from ...ai_config import AIConfig
 from ...chat_memory import ConversationContext
-from ..resolver import CANDIDATE_LIMIT, AmbiguousETF, EntityResolver, UnmanagedETF, UnmanagedStock, _normalize
-from ..schemas import DataContent, Dataset, Source, TextContent
-from ..universe import STOCK_SCOPE
-from .common import format_value
+from ...content import DataContent, Dataset, Source, TextContent
+from ...domain.entities import CANDIDATE_LIMIT, AmbiguousETF, EntityResolver, UnmanagedETF, UnmanagedStock, _normalize
+from ...domain.format import format_value
+from ...domain.universe import STOCK_SCOPE
 
 CHOICES_SHOWN = 10  # 되물을 때 보여주는 후보 수
 

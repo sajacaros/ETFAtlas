@@ -12,7 +12,7 @@ DAG age_sync_universe (매일 08:50·16:30, 구성종목은 개장일에만 그�
   └─ HOLDS 수집 완료 (KIS API, 최근 거래일)
   └─ sync_weight_changes — 액티브 ETF 비중 변화 계산 → weight_changes 저장
   └─ record_collection — collection_runs INSERT + NOTIFY new_collection (계산 실패해도 실행)
-  └─ notify_discord — weight_changes 중 기준값 초과를 디스코드로 발송
+  └─ notify_discord — weight_changes 중 기준값 초과를 디스코드로 발송 (없으면 "변화 없음")
 
 Backend
   └─ GET /api/notifications/stream — LISTEN new_collection (SSE)
@@ -91,7 +91,7 @@ SSE도 같은 출처라 `EventSource`가 세션 쿠키를 자동으로 보낸다
 ### 중복 방지
 
 - `collection_runs.collected_at`에 UNIQUE 제약 → `ON CONFLICT DO NOTHING`, 새로 기록됐을 때만 NOTIFY
-- 디스코드는 `discord_notification_logs`에 그 날짜의 성공(`sent`) 기록이 있으면 건너뛴다
+- 디스코드는 `discord_notification_logs`에 그 날짜의 성공(`sent`) 기록이 있으면 건너뛴다. 기준값을 넘는 변화가 없으면 "변화 없음" 메시지를 한 번 보내고(`items` 빈 배열로 기록), 그 뒤 실행(16:30 재수집)에서 변화가 생기면 변화 알림을 다시 보낸다
 - 발송 실패는 이력에 `failed`로 남기고 예외를 올려 Airflow 재시도(3회, 5분 간격)로 다시 보낸다
 
 ## Frontend

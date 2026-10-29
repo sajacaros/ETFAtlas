@@ -1586,7 +1586,7 @@ def _post_discord_messages(webhook_url: str, messages: list[str]) -> str | None:
 
 
 def send_discord_notification(date_str: str):
-    """weight_changes에 저장된 액티브 ETF 비중변화 중 기준값을 넘는 것을 디스코드로 발송.
+    """weight_changes에 저장된 액티브 ETF 비중변화 중 기준값을 넘는 것을 디스코드로 발송. 없으면 없다고 한 번 보낸다.
 
     이미 보낸 날짜(발송 이력에 성공 기록)면 건너뛴다. 발송에 실패하면 이력에 남기고 예외를 올려
     Airflow 재시도가 다시 보내게 한다.
@@ -1605,10 +1605,12 @@ def send_discord_notification(date_str: str):
             return
         threshold, added_threshold = settings['threshold'], settings['added_threshold']
 
-        cur.execute("SELECT 1 FROM discord_notification_logs "
-                    "WHERE kind = 'weight_change' AND base_date = %s AND status = 'sent' LIMIT 1",
+        # 변화 없음 알림만 보낸 날은 뒤 실행(16:30 재수집)에서 변화가 생기면 다시 보낸다
+        cur.execute("SELECT items FROM discord_notification_logs "
+                    "WHERE kind = 'weight_change' AND base_date = %s AND status = 'sent'",
                     (date_str,))
-        if cur.fetchone():
+        sent = [r[0] for r in cur.fetchall()]
+        if any(sent):
             log.info(f"Discord notification for {date_str} already sent — skipping")
             return
 
@@ -1635,22 +1637,28 @@ def send_discord_notification(date_str: str):
                 'weight_change': diff,
             })
 
-        if not items:
-            log.info("No significant changes — skipping Discord notification")
-            return
-
-        changes_summary = [
-            f"**{item['etf_name']}** ({item['etf_code']})\n" + "\n".join(
-                f"  {CHANGE_TYPE_LABELS[c['change_type']]} {c['stock_name']}: "
-                f"{c['previous_weight']:.1f}% → {c['current_weight']:.1f}% ({c['weight_change']:+.1f}%p)"
-                for c in item['changes']
-            )
-            for item in items
-        ]
-
-        # 디스코드 메시지 발송 — 2000자 제한에 맞춰 나눠 보낸다
-        # 날짜는 구성종목 공시일 — 실제 매매는 직전 영업일 장중에 일어난 것
-        messages = _split_discord_messages(f"📊 **ETF 비중 변화 알림** ({date_str} 공시)", changes_summary)
+        header = f"📊 **ETF 비중 변화 알림** ({date_str} 공시)"
+        if items:
+            changes_summary = [
+                f"**{item['etf_name']}** ({item['etf_code']})\n" + "\n".join(
+                    f"  {CHANGE_TYPE_LABELS[c['change_type']]} {c['stock_name']}: "
+                    f"{c['previous_weight']:.1f}% → {c['current_weight']:.1f}% ({c['weight_change']:+.1f}%p)"
+                    for c in item['changes']
+                )
+                for item in items
+            ]
+            # 디스코드 메시지 발송 — 2000자 제한에 맞춰 나눠 보낸다
+            # 날짜는 구성종목 공시일 — 실제 매매는 직전 영업일 장중에 일어난 것
+            messages = _split_discord_messages(header, changes_summary)
+        else:
+            if sent:
+                log.info(f"No-change notification for {date_str} already sent — skipping")
+                return
+            # 비중이 조금이라도 바뀐 ETF 수를 함께 적는다 — 0이면 계산이 비었는지 의심할 수 있다
+            cur.execute("SELECT count(DISTINCT etf_code) FROM weight_changes WHERE base_date = %s", (date_str,))
+            changed_etfs = cur.fetchone()[0]
+            messages = [f"{header}\n\n기준값(비중 ±{threshold:g}%p, 신규편입 {added_threshold:g}%p)을 넘는 변화가 없습니다. "
+                        f"(비중이 조금이라도 바뀐 액티브 ETF {changed_etfs}개)"]
 
         error = _post_discord_messages(webhook_url, messages)
         if error:

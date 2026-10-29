@@ -891,11 +891,28 @@ def test_company_type_holds_cash_flow_criteria_when_consolidated_and_separate_di
     assert ct.classify(losing, separate).checks[ct.CYCLICAL][1].passed is False
 
 
-def test_turnaround_window_reaches_back_further_when_widened():
+def test_turnaround_looks_back_three_years_for_losses_but_two_for_margin_damage():
     from app.domain import company_type as ct
     e = 10 ** 9
-    # 적자는 3년 전(2023)뿐, 그 뒤 흑자 — 2년 창에는 안 걸리고 3년 창에는 걸린다
-    data = _annuals({2022: (100 * e, 5 * e, 4 * e, 6 * e), 2023: (90 * e, -8 * e, -9 * e, -2 * e),
+    # 3년 전(2023) 영업적자 뒤 흑자 — 턴어라운드 (경기민감보다 먼저 본다)
+    loss = _annuals({2022: (100 * e, 5 * e, 4 * e, 6 * e), 2023: (90 * e, -8 * e, -9 * e, -2 * e),
                      2024: (95 * e, 3 * e, 2 * e, -1 * e), 2025: (105 * e, 6 * e, 4 * e, 8 * e)})
-    assert ct.classify(data).checks[ct.TURNAROUND][0].passed is False
-    assert ct.classify(data, turnaround_years=3).category == ct.TURNAROUND
+    assert ct.classify(loss).category == ct.TURNAROUND
+    assert ct.classify(loss, loss_years=2).checks[ct.TURNAROUND][0].passed is False
+    # 3년 전에 적자 없이 이익률만 꺾였다 회복 — 경기민감·성숙기로 남는다
+    damage = _annuals({2022: (100 * e, 20 * e, 15 * e, 20 * e), 2023: (100 * e, 3 * e, 2 * e, 5 * e),
+                       2024: (100 * e, 10 * e, 8 * e, 10 * e), 2025: (100 * e, 12 * e, 9 * e, 12 * e)})
+    assert ct.classify(damage).category == ct.CYCLICAL
+
+
+def test_turnaround_rebound_compares_with_the_latest_trough():
+    """이익률이 30% → 13% → 11%로 계속 떨어지면, 더 오래된 7% 저점보다 높아도 반등이 아니다."""
+    from app.domain import company_type as ct
+    e = 10 ** 9
+    data = _annuals({2022: (100 * e, 54 * e, 40 * e, 50 * e), 2023: (100 * e, 7 * e, 5 * e, 8 * e),
+                     2024: (100 * e, 30 * e, 25 * e, 30 * e), 2025: (100 * e, 13 * e, 10 * e, 15 * e)})
+    rows = _amounts([_fin(y, r, acc, v * e) for y, r, v in ((2025, "11013", 3), (2025, "11012", 3), (2025, "11014", 3),
+                                                             (2026, "11013", 2)) for acc in ("영업이익",)]
+                    + [_fin(y, r, "매출액", 25 * e) for y, r in ((2025, "11013"), (2025, "11012"), (2025, "11014"), (2026, "11013"))])
+    data.update(rows)  # 최근 4분기 영업이익 2025.2Q~2026.1Q = 3+3+4+2 = 12, 매출 100 → 이익률 12% < 최근 저점 13%
+    assert ct.classify(data, damage_years=3).checks[ct.TURNAROUND][1].passed is False

@@ -20,7 +20,11 @@ HIGH_MARGIN = 10.0         # '높은 영업이익률' (%)
 ACCRUAL_RATIO = 0.85       # ΣOCF ≥ 0.85 ΣNI
 DAMAGED_MARGIN = 0.5       # 영업이익률이 전년의 절반 아래로 떨어지면 마진 훼손
 PRE_REVENUE = 10_000_000_000  # 매출 100억 원 미만은 상업화 전으로 본다
-TURNAROUND_YEARS = 2       # 적자·마진 훼손을 찾는 직전 사업연도 수
+# 턴어라운드의 저점을 찾는 직전 사업연도 수. 영업적자는 3년까지(2023년 적자 뒤 흑자로 돌아선 회사), 이익률 반토막은 2년까지
+# — 3년으로 넓히면 2023년 반도체 불황처럼 적자 없이 이익률만 꺾였다 회복한 경기민감 종목까지 턴어라운드로 옮겨 간다
+# (2026-10 전체 570종목 비교: 적자·훼손 모두 3년이면 경기민감 29개가 옮겨 가고, 그중 18개가 이익률만 꺾인 종목)
+LOSS_YEARS = 3
+DAMAGE_YEARS = 2
 
 MATCHED, NONE, UNDETERMINED = "matched", "none", "undetermined"
 
@@ -148,8 +152,10 @@ def _against_separate(check, consolidated: List[YearRow], separate: List[YearRow
                                      "(금융 자회사의 대출 증감 등이 연결 영업현금흐름에 섞였을 수 있다)")
 
 
-def classify(amounts: Amounts, separate: Optional[Amounts] = None, turnaround_years: int = TURNAROUND_YEARS) -> CompanyType:
-    """separate: 연결 회사의 별도 실적·현금흐름 (현금흐름 기준 대조용). turnaround_years: 적자·마진 훼손을 찾는 직전 연도 수."""
+def classify(amounts: Amounts, separate: Optional[Amounts] = None,
+             loss_years: int = LOSS_YEARS, damage_years: int = DAMAGE_YEARS) -> CompanyType:
+    """separate: 연결 회사의 별도 실적·현금흐름 (현금흐름 기준 대조용).
+    loss_years·damage_years: 턴어라운드의 영업적자·마진 훼손을 찾는 직전 사업연도 수."""
     rows = year_rows(amounts)
     separate_rows = year_rows(separate) if separate else []
     recent = rows[-HISTORY_YEARS:]
@@ -184,22 +190,26 @@ def classify(amounts: Amounts, separate: Optional[Amounts] = None, turnaround_ye
     ttm = _ttm_operating(amounts, last)
     ocf_ttm = ttm_flow(amounts, OCF)
     troughs = []
-    for prev, cur in zip(rows[-turnaround_years - 1:-1], rows[-turnaround_years:]):  # 직전 1~N개 사업연도
-        if cur.operating_income is not None and cur.operating_income <= 0:
+    window = max(loss_years, damage_years)
+    for prev, cur in zip(rows[-window - 1:-1], rows[-window:]):  # 오래된 순
+        back = last.year - cur.year + 1  # 직전 몇 번째 사업연도인지
+        if back <= loss_years and cur.operating_income is not None and cur.operating_income <= 0:
             troughs.append((cur, f"{cur.year} 영업적자 {_eok(cur.operating_income)}"))
-        elif cur.margin is not None and prev.margin is not None and prev.margin > 0 and cur.margin < prev.margin * DAMAGED_MARGIN:
+        elif (back <= damage_years and cur.margin is not None and prev.margin is not None and prev.margin > 0
+              and cur.margin < prev.margin * DAMAGED_MARGIN):
             troughs.append((cur, f"{cur.year} 영업이익률 {prev.margin:.1f}% → {cur.margin:.1f}%"))
-    trough_margin = min((t.margin for t, _ in troughs if t.margin is not None), default=None)
+    # 반등은 가장 최근 저점과 견준다 — 더 오래된 저점과 견주면 이익률이 계속 떨어지는 회사도 반등으로 본다
+    trough_margin = troughs[-1][0].margin if troughs else None
     ttm_margin = ttm["operating_income"] / ttm["revenue"] * 100 if ttm and ttm["revenue"] and ttm["revenue"] > 0 else None
     if not ttm:
-        rebound = Check("흑자 반등: 최근 4분기 영업이익 흑자, 저점보다 높은 이익률", None, "이어진 4개 분기 실적 없음")
+        rebound = Check("흑자 반등: 최근 4분기 영업이익 흑자, 가장 최근 저점보다 높은 이익률", None, "이어진 4개 분기 실적 없음")
     else:
         recovered = ttm["operating_income"] > 0 and (trough_margin is None or ttm_margin is None or ttm_margin > trough_margin)
-        rebound = Check("흑자 반등: 최근 4분기 영업이익 흑자, 저점보다 높은 이익률", recovered,
+        rebound = Check("흑자 반등: 최근 4분기 영업이익 흑자, 가장 최근 저점보다 높은 이익률", recovered,
                         f"{ttm['label']} 영업이익 {_eok(ttm['operating_income'])}"
                         + (f", 이익률 {ttm_margin:.1f}%" if ttm_margin is not None else ""))
     checks[TURNAROUND] = [
-        Check(f"직전 1~{turnaround_years}개년 영업적자 또는 마진 훼손 (전년 이익률의 절반 아래)", bool(troughs),
+        Check(f"직전 {loss_years}개년 내 영업적자 또는 직전 {damage_years}개년 내 마진 훼손 (전년 이익률의 절반 아래)", bool(troughs),
               ", ".join(t for _, t in troughs) or "해당 연도 없음"),
         rebound,
         Check("영업현금흐름 흑자 (최근 4분기)", None if not ocf_ttm else ocf_ttm.amount > 0,

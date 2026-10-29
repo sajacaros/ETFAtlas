@@ -944,7 +944,8 @@ def test_stock_holders_exports_etfs_in_rank_order(monkeypatch):
 
 LAYOUT_SEED_MIGRATIONS = ("0013_layout_examples.py", "0021_layout_examples_rank_overlap.py", "0025_layout_examples_company.py",
                           "0026_report_summaries.py", "0029_layout_example_customers.py",
-                          "0030_revenue_mix_skill.py", "0037_layout_example_opinion.py")
+                          "0030_revenue_mix_skill.py", "0037_layout_example_opinion.py",
+                          "0038_layout_examples_company_type.py")
 
 
 def _layout_seeds():
@@ -962,6 +963,15 @@ def _layout_seeds():
 def test_layout_seed_plans_pass_planner_validation(seed):
     rows = to_rows(build_plan_model(REGISTRY).model_validate(seed["plan"]))
     assert rows
+
+
+def test_opinion_example_with_company_type_passes_planner_validation():
+    path = Path(__file__).parent.parent / "migrations/versions/0038_layout_examples_company_type.py"
+    spec = importlib.util.spec_from_file_location("layout_examples_0038", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    for with_type in (True, False):
+        assert to_rows(build_plan_model(REGISTRY).model_validate(module._opinion_plan(with_type)))
 
 
 def test_examples_prompt_uses_generalized_question_and_one_line_plan():
@@ -1607,5 +1617,5 @@ def test_skills_marked_as_tools_reach_the_agent_with_the_slot_summary():
         run(code="005930")
     assert "참조를 쓸 수 없다" in built[0].description
     assert {s.name for s in REGISTRY.values() if s.tool} == {
-        "company_financials", "company_valuation", "company_disclosures", "stock_technical", "period_returns", "rank",
+        "company_financials", "company_valuation", "company_type", "company_disclosures", "stock_technical", "period_returns", "rank",
         "overlap", "portfolio_lookthrough"}

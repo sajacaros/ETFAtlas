@@ -6,6 +6,7 @@ from .base import Skill
 from .company_disclosures import CompanyDisclosuresSkill
 from .company_financials import CompanyFinancialsSkill
 from .company_report import CompanyReportSkill
+from .company_type import CompanyTypeSkill
 from .company_revenue_mix import CompanyRevenueMixSkill
 from .company_valuation import CompanyValuationSkill
 from .etf_choice import ETFChoiceSkill
@@ -37,6 +38,7 @@ REGISTRY: Dict[str, Skill] = {
         StockHoldersSkill(),
         CompanyFinancialsSkill(),
         CompanyValuationSkill(),
+        CompanyTypeSkill(),
         CompanyDisclosuresSkill(),
         CompanyReportSkill(),
         CompanyRevenueMixSkill(),

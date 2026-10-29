@@ -88,3 +88,9 @@ def latest_amount(amounts: Amounts, account: str) -> Optional[Tuple[int, str, in
         return None
     year, reprt = reports[0]
     return year, reprt, amounts[(year, reprt, account)][0]
+
+
+def without_revenue(amounts: Amounts) -> bool:
+    """매출액 계정이 없고 영업이익은 있는 회사 (은행·증권·보험 등 '영업수익'을 쓰는 금융사)."""
+    accounts = {acc for (_, _, acc), v in amounts.items() if v[0] is not None or v[1] is not None}
+    return "매출액" not in accounts and "영업이익" in accounts

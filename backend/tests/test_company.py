@@ -782,6 +782,7 @@ def test_stock_opinion_renders_each_perspective_with_the_rule_verdict(monkeypatc
               "financials_rating": "다소 긍정", "financials_reasons": ["근거"],
               "report_rating": "판단 불가", "report_reasons": ["보고서 요약이 없음"], "check": ["부채비율"]}
     monkeypatch.setattr(stock_opinion, "build_model", lambda config: TestModel(custom_output_args=output))
+    monkeypatch.setattr(stock_opinion.StockOpinionSkill, "company_type", staticmethod(lambda ctx, stock: None))
     ctx = SkillContext(question="삼성전자 살까?", conversation=ConversationContext(), session_factory=None, resolver=None,
                        ai_config=None, stop=asyncio.Event(), related=[("차트", "신호"), ("실적", "매출")])
 
@@ -804,3 +805,97 @@ def test_stock_opinion_is_empty_without_data():
         return [e async for e in skill.run(skill.Args(stock="삼성전자"), "markdown", ctx)]
 
     assert asyncio.run(run())[0]["status"] == "empty"
+
+
+# --- 현금흐름·유형 판정·역산 DCF ---
+
+def test_cash_flow_ttm_unwinds_year_to_date_amounts():
+    """현금흐름표는 누적만 준다: 최근 4분기 = 올해 반기 누적 + 직전 연간 − 직전 반기 누적. 취득은 부호와 상관없이 뺀다."""
+    from app.domain.cashflow import ttm_fcf, ttm_flow
+    a = _amounts([_fin(2025, "11012", "영업활동현금흐름", None, 40), _fin(2025, "11011", "영업활동현금흐름", 100),
+                  _fin(2026, "11012", "영업활동현금흐름", None, 60),
+                  _fin(2025, "11012", "유형자산의취득", None, -10), _fin(2025, "11011", "유형자산의취득", -30),
+                  _fin(2026, "11012", "유형자산의취득", None, -25)])
+    ocf = ttm_flow(a, "영업활동현금흐름")
+    assert (ocf.label, ocf.amount) == ("2025.3Q~2026.2Q", 60 + 100 - 40)
+    fcf = ttm_fcf(a)  # 무형자산 취득 줄이 없으면 0
+    assert (fcf.label, fcf.amount) == ("2025.3Q~2026.2Q", 120 - 45)
+    del a[(2025, "11012", "영업활동현금흐름")]
+    assert ttm_flow(a, "영업활동현금흐름") is None  # 직전 같은 시점이 없으면 만들지 않는다
+
+
+def _annuals(series):
+    """{연도: (매출, 영업이익, 순이익, 영업현금흐름)} → 사업보고서 주요계정 + 현금흐름."""
+    rows = []
+    for year, (rev, op, ni, ocf) in series.items():
+        rows += [_fin(year, "11011", "매출액", rev), _fin(year, "11011", "영업이익", op),
+                 _fin(year, "11011", "당기순이익", ni), _fin(year, "11011", "영업활동현금흐름", ocf),
+                 _fin(year, "11011", "유형자산의취득", -1)]
+    return _amounts(rows)
+
+
+def test_company_type_follows_the_quantitative_criteria():
+    from app.domain import company_type as ct
+    e = 10 ** 9  # 10억
+    grower = ct.classify(_annuals({2022: (100 * e, 12 * e, 10 * e, 12 * e), 2023: (110 * e, 14 * e, 11 * e, 12 * e),
+                                   2024: (120 * e, 16 * e, 12 * e, 13 * e), 2025: (130 * e, 18 * e, 13 * e, 14 * e)}))
+    assert grower.category == ct.COMPOUNDER and grower.qualitative == {ct.COMPOUNDER: ct.QUALITATIVE[ct.COMPOUNDER]}
+    # 성장은 이어지지만 현금이 이익을 못 따라오면(ΣOCF < 0.85 ΣNI) 지속 성장주가 아니다 — 흑자가 이어지니 경기민감·성숙기
+    weak_cash = ct.classify(_annuals({2022: (100 * e, 12 * e, 10 * e, 5 * e), 2023: (110 * e, 14 * e, 11 * e, 5 * e),
+                                      2024: (120 * e, 16 * e, 12 * e, 5 * e), 2025: (130 * e, 18 * e, 13 * e, 5 * e)}))
+    assert weak_cash.category == ct.CYCLICAL
+    # 적자 뒤 사업보고서에서 흑자로 돌아서고 영업현금흐름도 흑자
+    turn = _annuals({2022: (100 * e, 5 * e, 4 * e, 6 * e), 2023: (90 * e, -8 * e, -9 * e, -2 * e),
+                     2024: (95 * e, -3 * e, -4 * e, 1 * e), 2025: (105 * e, 6 * e, 4 * e, 8 * e)})
+    assert ct.classify(turn).category == ct.TURNAROUND
+    # 적자가 이어지고 현금도 빠져나가면 어느 유형도 아니다
+    bad = ct.classify(_annuals({2022: (100 * e, -5 * e, -6 * e, -1 * e), 2023: (90 * e, -8 * e, -9 * e, -2 * e),
+                                2024: (80 * e, -3 * e, -4 * e, -1 * e), 2025: (70 * e, -6 * e, -7 * e, -3 * e)}))
+    assert bad.status == ct.NONE and bad.category is None
+    # 이력이 짧으면 신흥·초기, 매출 계정이 없으면(금융사) 판정하지 않는다
+    assert ct.classify(_annuals({2024: (50 * e, 1 * e, 1 * e, 1 * e), 2025: (60 * e, 2 * e, 1 * e, 1 * e)})).category == ct.EMERGING
+    bank = _annuals({y: (None, 10 * e, 8 * e, 5 * e) for y in (2022, 2023, 2024, 2025)})
+    assert ct.classify(bank).status == ct.UNDETERMINED
+
+
+def test_implied_growth_solves_the_reverse_dcf():
+    from app.domain.valuation import dcf_value, implied_growth
+    cap = dcf_value(100, 0.05)
+    assert implied_growth(100, cap).growth == pytest.approx(0.05, abs=1e-4)
+    assert implied_growth(100, cap * 100).bound == "above" and implied_growth(100, 1).bound == "below"
+    assert implied_growth(-5, cap) is None
+
+
+def test_opinion_avoids_a_stock_that_fits_no_type():
+    from app.domain.opinion import AVOID, combine
+    verdict = combine({"차트": "긍정", "재무": "긍정", "보고서": "긍정"}, type_fits=False)
+    assert verdict.label == AVOID and "유형" in verdict.reason
+    assert combine({"차트": "긍정", "재무": "긍정", "보고서": "긍정"}, type_fits=None).label != AVOID
+
+
+def test_company_type_holds_cash_flow_criteria_when_consolidated_and_separate_disagree():
+    """금융 자회사의 대출 증감으로 연결 영업현금흐름만 음수면 '미충족'이 아니라 판정하지 않는다 — 별도로 통과시키지도 않는다."""
+    from app.domain import company_type as ct
+    e = 10 ** 9
+    years = (2022, 2023, 2024, 2025)
+    consolidated = _annuals({y: (100 * e + y, 10 * e, 8 * e, -20 * e) for y in years})
+    separate = _annuals({y: (60 * e, 6 * e, 5 * e, 7 * e) for y in years})
+    alone = ct.classify(consolidated)
+    assert alone.status == ct.NONE
+    held = ct.classify(consolidated, separate)
+    check = held.checks[ct.CYCLICAL][1]
+    assert check.passed is None and "엇갈려" in check.detail
+    assert held.status == ct.UNDETERMINED and held.category is None
+    # 연결 순이익이 적자로 어긋난 것은 보류하지 않는다
+    losing = _annuals({y: (100 * e + y, -10 * e, -8 * e, -20 * e) for y in years})
+    assert ct.classify(losing, separate).checks[ct.CYCLICAL][1].passed is False
+
+
+def test_turnaround_window_reaches_back_further_when_widened():
+    from app.domain import company_type as ct
+    e = 10 ** 9
+    # 적자는 3년 전(2023)뿐, 그 뒤 흑자 — 2년 창에는 안 걸리고 3년 창에는 걸린다
+    data = _annuals({2022: (100 * e, 5 * e, 4 * e, 6 * e), 2023: (90 * e, -8 * e, -9 * e, -2 * e),
+                     2024: (95 * e, 3 * e, 2 * e, -1 * e), 2025: (105 * e, 6 * e, 4 * e, 8 * e)})
+    assert ct.classify(data).checks[ct.TURNAROUND][0].passed is False
+    assert ct.classify(data, turnaround_years=3).category == ct.TURNAROUND

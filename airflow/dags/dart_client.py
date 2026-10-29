@@ -136,17 +136,15 @@ def parse_cash_flow_rows(items: list[dict], stock_code: str, bsns_year: int, rep
 def cash_flow_targets(reports, done, year: int, quarter_years: int, limit: int) -> list[tuple]:
     """현금흐름을 받을 보고서 (stock_code, bsns_year, reprt_code, fs_div, rcept_no), 최근 보고서부터 limit개.
     reports: 주요계정이 있는 보고서들, done: 현금흐름을 이미 받은 보고서들 (같은 모양).
-    분·반기 보고서는 최근 quarter_years개 사업연도만. 한 보고서에 연결·별도가 다 있으면 연결만 (챗봇이 연결을 쓴다).
-    접수번호가 바뀌면(정정) 다시 받는다."""
-    picked = {}
-    for r in reports:
-        key = r[:3]
-        if key not in picked or r[3] == "CFS":
-            picked[key] = r
+    분·반기 보고서는 최근 quarter_years개 사업연도만. 한 보고서에 연결·별도가 다 있으면 연결만 (챗봇이 연결을 쓴다) —
+    사업보고서는 별도도 받는다: 금융 자회사의 대출 증감이 연결 영업현금흐름을 음수로 만드는 회사를 가려내는 대조용.
+    접수번호가 바뀌면(정정) 다시 받는다. 같은 보고서면 연결을 먼저."""
+    consolidated = {r[:3] for r in reports if r[3] == "CFS"}
+    picked = [r for r in reports if r[3] == "CFS" or r[:3] not in consolidated or r[2] == ANNUAL]
     order = {code: i for i, code in enumerate(REPORT_CODES)}
-    targets = [r for r in picked.values() if r not in done
+    targets = [r for r in dict.fromkeys(picked) if r not in done
                and (r[2] == ANNUAL or r[1] > year - quarter_years)]
-    targets.sort(key=lambda r: (r[1], order[r[2]]), reverse=True)
+    targets.sort(key=lambda r: (r[1], order[r[2]], r[3] == "CFS"), reverse=True)
     return targets[:limit]
 
 

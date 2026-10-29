@@ -80,9 +80,11 @@ def test_cash_flow_targets_pick_consolidated_skip_done_and_go_newest_first():
         ("000660", 2026, "11013", "OFS", "f"),
     ]
     done = {("005930", 2025, "11014", "CFS", "c"), ("000660", 2026, "11013", "OFS", "old")}  # 정정되면 다시 받는다
+    reports.append(("005930", 2025, "11011", "OFS", "b"))  # 사업보고서는 연결이 있어도 별도를 대조용으로 받는다
     targets = cash_flow_targets(reports, done, 2026, 2, 10)
     assert targets == [("005930", 2026, "11012", "CFS", "a"), ("000660", 2026, "11013", "OFS", "f"),
-                       ("005930", 2025, "11011", "CFS", "b"), ("005930", 2023, "11011", "CFS", "d")]
+                       ("005930", 2025, "11011", "CFS", "b"), ("005930", 2025, "11011", "OFS", "b"),
+                       ("005930", 2023, "11011", "CFS", "d")]
     assert len(cash_flow_targets(reports, done, 2026, 2, 1)) == 1
 
 

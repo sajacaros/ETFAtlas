@@ -17,7 +17,7 @@ FS_LABEL = {"CFS": "연결", "OFS": "별도"}
 class CompanyFinancialsArgs(BaseModel):
     stock: str = Field(description="종목 이름 또는 6자리 코드 (하나)")
     basis: Literal["quarter", "year"] = Field("quarter", description="quarter: 분기 실적, year: 연간 실적")
-    periods: int = Field(8, ge=2, le=12, description="보여줄 기간 수 (분기면 분기 수, 연간이면 연도 수). 최근 3개 사업연도까지 있다")
+    periods: int = Field(8, ge=2, le=12, description="보여줄 기간 수 (분기면 분기 수, 연간이면 연도 수). 2022년 사업연도부터 있다")
 
 
 def _krw(value: Optional[int]) -> str:

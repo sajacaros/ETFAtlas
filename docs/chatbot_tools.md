@@ -347,7 +347,8 @@ RETURN {etf_code: e.code, etf_name: e.name, weight_samsung: h1.weight, weight_te
 | 도구(스킬) | 하는 일 |
 |---|---|
 | `company_financials` | DART 분기·연간 실적, 영업이익률, 부채비율 |
-| `company_valuation` | 시가총액, PER(최근 4분기·직전 연도), PBR, ROE, 대조용 KIS PER·PBR |
+| `company_valuation` | 시가총액, PER(최근 4분기·직전 연도), PBR, ROE, FCF·FCF 수익률·역산 DCF 성장률, 대조용 KIS PER·PBR |
+| `company_type` | 유형 판정(지속 성장주·턴어라운드주·경기민감·성숙기·신흥·초기 단계)의 숫자 기준과 연도별 영업현금흐름·FCF |
 | `company_disclosures` | 최근 DART 공시 목록 |
 | `stock_technical` | 차트 분석: 이동평균·볼린저·MACD·RSI·스토캐스틱과 대가들의 규칙으로 본 신호 |
 | `period_returns` | ETF 기간별 수익률 (1일~1년) |

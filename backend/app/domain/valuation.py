@@ -83,3 +83,42 @@ def latest_equity(amounts: Amounts) -> Optional[Earnings]:
 
 def valuation(price: float, price_date: str, shares: int, amounts: Amounts) -> Valuation:
     return Valuation(price, price_date, shares, ttm_earnings(amounts), annual_earnings(amounts), latest_equity(amounts))
+
+
+# 역산 DCF: 지금 시가총액이 정당화되려면 FCF가 몇 % 성장해야 하는지.
+# 가정은 할인율과 영구성장률 둘뿐이고, 결과는 '시장이 깔고 있는 성장률'이라 목표가가 아니다
+DISCOUNT_RATE = 0.09     # 주주 요구수익률 (한국 대형주 자기자본비용 수준)
+TERMINAL_GROWTH = 0.02   # 예측 기간 뒤 영구성장률
+DCF_YEARS = 10
+GROWTH_RANGE = (-0.3, 0.6)
+
+
+def dcf_value(fcf: float, growth: float, discount: float = DISCOUNT_RATE, terminal: float = TERMINAL_GROWTH,
+              years: int = DCF_YEARS) -> float:
+    """FCF가 years년 동안 growth로 자라고 그 뒤 terminal로 자랄 때의 현재가치."""
+    value, flow = 0.0, fcf
+    for t in range(1, years + 1):
+        flow *= 1 + growth
+        value += flow / (1 + discount) ** t
+    return value + flow * (1 + terminal) / (discount - terminal) / (1 + discount) ** years
+
+
+@dataclass
+class ImpliedGrowth:
+    growth: Optional[float]  # 연 성장률 (소수). 범위 밖이면 None
+    bound: Optional[str] = None  # 'above' | 'below': GROWTH_RANGE 위·아래
+
+
+def implied_growth(fcf: float, market_cap: float) -> Optional[ImpliedGrowth]:
+    """dcf_value(fcf, g) = market_cap인 g (이분법). FCF가 0 이하면 None — 음수 현금흐름의 성장률은 뜻이 없다."""
+    if fcf <= 0 or market_cap <= 0:
+        return None
+    lo, hi = GROWTH_RANGE
+    if dcf_value(fcf, hi) < market_cap:
+        return ImpliedGrowth(None, "above")
+    if dcf_value(fcf, lo) > market_cap:
+        return ImpliedGrowth(None, "below")
+    for _ in range(100):
+        mid = (lo + hi) / 2
+        lo, hi = (mid, hi) if dcf_value(fcf, mid) < market_cap else (lo, mid)
+    return ImpliedGrowth(round((lo + hi) / 2, 4))

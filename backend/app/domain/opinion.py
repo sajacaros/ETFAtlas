@@ -1,6 +1,7 @@
 """매수 의견: 관점별(차트·재무·보고서) 판정을 종합 의견으로 묶는 규칙.
 
 관점별 판정은 LLM이 화면 데이터 요약을 읽고 내리지만, 종합은 같은 판정이면 늘 같은 답이 나오게 여기서 정한다.
+유형 판정(app/domain/company_type.py)에서 네 유형 어디에도 맞지 않은 종목은 관점 판정과 상관없이 사지 않는다.
 """
 from dataclasses import dataclass
 from typing import Dict, List, Optional
@@ -26,9 +27,14 @@ class Verdict:
     reason: str  # 왜 그 종합인지 (규칙으로 설명)
 
 
-def combine(ratings: Dict[str, str]) -> Verdict:
-    """관점 → 판정. 판정한 관점이 MIN_JUDGED개 미만이면 보류, 평균 점수로 정하되 '부정'이 하나라도 있으면 사지 않는다."""
+def combine(ratings: Dict[str, str], type_fits: Optional[bool] = None) -> Verdict:
+    """관점 → 판정. 유형에 맞지 않으면(type_fits=False) 사지 않는다. 판정한 관점이 MIN_JUDGED개 미만이면 보류,
+    평균 점수로 정하되 '부정'이 하나라도 있으면 사지 않는다. type_fits=None은 유형을 판정하지 못한 것 — 막지 않는다."""
     scores = {k: SCORE[r] for k, r in ratings.items() if r in SCORE}
+    if type_fits is False:
+        avg = sum(scores.values()) / len(scores) if scores else None
+        return Verdict(AVOID, avg, len(scores), "네 유형(지속 성장주, 턴어라운드주, 경기민감·성숙기, 신흥·초기 단계) "
+                                                "어디에도 맞지 않아 관점 판정과 상관없이 사지 않습니다")
     if len(scores) < MIN_JUDGED:
         return Verdict(UNDECIDED, None, len(scores), f"판단할 수 있는 관점이 {len(scores)}개뿐이라 종합하지 않았습니다")
     avg = sum(scores.values()) / len(scores)

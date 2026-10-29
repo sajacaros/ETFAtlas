@@ -1,6 +1,7 @@
-"""company_valuation: 종목의 시가총액과 PER·PBR·ROE.
+"""company_valuation: 종목의 시가총액과 PER·PBR·ROE, FCF 수익률과 역산 DCF 성장률.
 
 시가총액은 DB의 최근 종가 × 상장주식수(KIS 일봉 수집 때 함께 받는다), 이익·자본은 DART 주요계정이다 (app/domain/valuation.py).
+FCF는 DART 현금흐름(영업활동현금흐름 − 유·무형자산 취득)의 최근 4분기 합이다 (app/domain/cashflow.py).
 KIS가 주는 PER·PBR은 산정 기준(지배주주 순이익·발행주식수 등)이 달라 대조용으로만 함께 보여 준다.
 """
 from typing import Dict, List, Optional
@@ -10,7 +11,9 @@ from sqlalchemy.orm import Session
 
 from ....domain import financials as fin
 from ....domain.format import format_value
-from ....domain.valuation import Valuation, valuation
+from ....domain.cashflow import Flow, ttm_fcf
+from ....domain.valuation import (DCF_YEARS, DISCOUNT_RATE, GROWTH_RANGE, TERMINAL_GROWTH, Valuation,
+                                  implied_growth, valuation)
 from ....models.dart import StockFinancial
 from ...content import DataField, Dataset, Source, TableView
 from ...entities import EntityResolver
@@ -28,6 +31,9 @@ FIELDS = [
     DataField(key="per_annual", label="PER(직전 연도)", format="number"),
     DataField(key="pbr", label="PBR", format="number"),
     DataField(key="roe", label="ROE(최근 4분기)", format="percent"),
+    DataField(key="fcf", label="FCF(최근 4분기)", format="krw"),
+    DataField(key="fcf_yield", label="FCF 수익률", format="percent"),
+    DataField(key="implied_growth", label="역산 성장률", format="percent"),
     DataField(key="kis_per", label="PER(KIS)", format="number"),
     DataField(key="kis_pbr", label="PBR(KIS)", format="number"),
 ]
@@ -52,7 +58,34 @@ def _multiple_text(label: str, value: Optional[float], base, what: str, absent: 
     return f"{label} {value:.2f}배 ({base.label} {what} {_krw(base.amount)})"
 
 
-def _line(name: str, v: Valuation, kis: Dict) -> str:
+def _dcf_text(v: Valuation, fcf: Optional[Flow], financial: bool) -> List[str]:
+    if financial:
+        return ["FCF: 계산하지 않음 (매출액 계정이 없는 금융사 — 영업현금흐름에 대출·예금·투자 흐름이 섞인다)"]
+    if fcf is None:
+        return ["FCF: 계산하지 않음 (최근 4분기 현금흐름 데이터 없음)"]
+    parts = [f"FCF({fcf.label}, 영업활동현금흐름 − 유·무형자산 취득) {_krw(fcf.amount)}"]
+    if fcf.amount <= 0:
+        return parts + ["FCF가 0 이하라 FCF 수익률·역산 DCF는 계산하지 않음"]
+    parts.append(f"FCF 수익률(FCF ÷ 시가총액) {fcf.amount / v.market_cap * 100:.2f}%")
+    implied = implied_growth(fcf.amount, v.market_cap)
+    basis = f"할인율 {DISCOUNT_RATE:.0%}, {DCF_YEARS}년 뒤 영구성장 {TERMINAL_GROWTH:.0%}"
+    if implied.growth is not None:
+        parts.append(f"역산 DCF: 지금 시가총액을 정당화하려면 FCF가 {DCF_YEARS}년간 연 {implied.growth * 100:.1f}% 성장해야 함 ({basis})")
+    elif implied.bound == "above":
+        parts.append(f"역산 DCF: FCF가 {DCF_YEARS}년간 연 {GROWTH_RANGE[1]:.0%} 넘게 성장해야 지금 시가총액이 정당화됨 ({basis})")
+    else:
+        parts.append(f"역산 DCF: FCF가 {DCF_YEARS}년간 연 {abs(GROWTH_RANGE[0]):.0%}씩 줄어도 지금 시가총액보다 가치가 큼 ({basis})")
+    return parts
+
+
+def _implied(v: Valuation, fcf: Optional[Flow]) -> Optional[float]:
+    if fcf is None or fcf.amount <= 0:
+        return None
+    implied = implied_growth(fcf.amount, v.market_cap)
+    return round(implied.growth * 100, 2) if implied and implied.growth is not None else None
+
+
+def _line(name: str, v: Valuation, kis: Dict, fcf: Optional[Flow], financial: bool) -> str:
     parts = [
         f"{name}: 종가 {v.price:,.0f}원({v.price_date}) × 상장주식수 {v.shares:,}주 = 시가총액 {_krw(v.market_cap)}",
         _multiple_text("PER(최근 4분기)", v.per_ttm, v.ttm, "순이익", "이어진 4개 분기의 순이익이 공시에 없음"),
@@ -61,6 +94,7 @@ def _line(name: str, v: Valuation, kis: Dict) -> str:
     ]
     if v.roe is not None:
         parts.append(f"ROE(최근 4분기 순이익 ÷ 자본총계) {v.roe:.2f}%")
+    parts += _dcf_text(v, fcf, financial)
     if kis.get("kis_per") or kis.get("kis_pbr"):
         values = ", ".join(f"{k} {kis[f'kis_{k.lower()}']}" for k in ("PER", "PBR") if kis.get(f"kis_{k.lower()}"))
         parts.append(f"KIS 제공 {values} ({kis.get('quote_date')} 종가 기준)")
@@ -70,9 +104,10 @@ def _line(name: str, v: Valuation, kis: Dict) -> str:
 class CompanyValuationSkill(DataSkill):
     name = "company_valuation"
     description = (
-        "PER·PBR·ROE·시가총액(밸류에이션)을 물을 때만 쓰는 스킬. '주가 비교'·'주가 추이'·'차트'에는 쓰지 않는다 "
+        "PER·PBR·ROE·시가총액·FCF·DCF(밸류에이션)를 물을 때만 쓰는 스킬. '주가 비교'·'주가 추이'·'차트'에는 쓰지 않는다 "
         "(주가는 stock_trend, 차트 분석은 stock_technical, 실적 추이는 company_financials). "
-        "개별 종목의 시가총액(종가 × 상장주식수), PER(최근 4분기·직전 연도 순이익 기준), PBR, ROE와 대조용 KIS 제공 PER·PBR. "
+        "개별 종목의 시가총액(종가 × 상장주식수), PER(최근 4분기·직전 연도 순이익 기준), PBR, ROE, "
+        "FCF(최근 4분기)와 FCF 수익률, 역산 DCF(지금 시가총액이 깔고 있는 FCF 성장률), 대조용 KIS 제공 PER·PBR. "
         "종목 1~5개를 한 표에 놓는다"
     )
     Args = CompanyValuationArgs
@@ -103,11 +138,15 @@ class CompanyValuationSkill(DataSkill):
                 continue
             fs_div, amounts = fin.pick_fs(db.query(StockFinancial).filter(StockFinancial.stock_code == code).all())
             v = valuation(prices[-1]["close"], prices[-1]["date"], int(shares), amounts)
+            fcf = ttm_fcf(amounts)
             kis = props.get(code) or {}
             rows.append({"name": name, "close": v.price, "market_cap": v.market_cap, "per_ttm": v.per_ttm,
                          "per_annual": v.per_annual, "pbr": v.pbr, "roe": v.roe,
+                         "fcf": fcf.amount if fcf else None,
+                         "fcf_yield": round(fcf.amount / v.market_cap * 100, 2) if fcf and fcf.amount > 0 else None,
+                         "implied_growth": _implied(v, fcf),
                          "kis_per": kis.get("kis_per"), "kis_pbr": kis.get("kis_pbr")})
-            lines.append(_line(name, v, kis))
+            lines.append(_line(name, v, kis, fcf, fin.without_revenue(amounts)))
             as_of.append(v.price_date)
             if amounts and fs_div == "OFS":
                 notes.append(f"{name}: 연결재무제표가 없어 별도 기준입니다")
@@ -119,6 +158,11 @@ class CompanyValuationSkill(DataSkill):
             "순이익·자본총계는 DART 주요계정(연결이 있으면 연결)으로 비지배지분을 포함합니다 — 지배주주 기준 PER과 다를 수 있습니다",
             "PER·PBR은 순이익·자본이 0 이하(적자·자본잠식)면 계산하지 않습니다",
             "KIS PER·PBR은 KIS 산정값(직전 사업연도 지배주주 EPS 등)이라 대조용입니다",
+            "FCF = 영업활동현금흐름 − 유형·무형자산 취득 (DART 현금흐름표, 최근 4분기 = 올해 누적 + 직전 연간 − 직전 연도 같은 시점 누적)",
+            f"역산 성장률: 시가총액 = FCF가 {DCF_YEARS}년간 그 성장률로 자라고 이후 연 {TERMINAL_GROWTH:.0%}로 자랄 때의 "
+            f"현재가치(할인율 {DISCOUNT_RATE:.0%})가 되는 성장률. 시장이 깔고 있는 기대치이지 목표가가 아닙니다",
+            "할부금융 등 금융 자회사가 큰 회사는 연결 영업현금흐름에 대출 증감이 들어가 FCF가 크게 음수로 나올 수 있고, "
+            "금융사(매출액 계정 없음)는 FCF를 계산하지 않습니다",
             *notes, *([f"찾지 못한 종목: {', '.join(missing)}"] if missing else []),
         ]
         sources = [Source(label="종목 일별 시세·상장주식수(KIS)", as_of=max(as_of)), Source(label="DART 주요계정")]

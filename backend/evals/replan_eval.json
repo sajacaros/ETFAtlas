@@ -22,7 +22,7 @@
               [{"skill": "holdings", "title": "1위 ETF 구성종목", "display": "treemap", "args": {"etf": "@rank.5"}}]],
      "replan": true, "complete": ["stock_holders", "holdings"]},
     {"q": "LG에너지솔루션 많이 담은 ETF 1위의 기간별 수익률",
-     "plan": [[{"skill": "holdings", "name": "rank", "title": "구성", "display": "table", "args": {"etf": "LG에너지솔루션"}}],
+     "plan": [[{"skill": "rank", "name": "rank", "title": "순자산 순위", "display": "table", "args": {"kind": "etf", "targets": ["LG에너지솔루션"], "by": "net_assets", "top": 3}}],
               [{"skill": "period_returns", "title": "1위 수익률", "display": "bar", "args": {"etfs": ["@rank.1"]}}]],
      "replan": true, "complete": ["stock_holders", "period_returns|price_trend"]},
 

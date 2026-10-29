@@ -75,7 +75,7 @@ async def run_one(item: Dict, config, sem: asyncio.Semaphore) -> Dict:
             if not any(item["message"] in t for t in texts):
                 problems.append(f"'{item['message']}' 문구 없음")
         return {
-            "q": item["q"], "ok": not problems or item.get("observe"), "observe": item.get("observe", False),
+            "q": item["q"], "ok": not problems or bool(item.get("observe")), "observe": item.get("observe", False),
             "problems": problems, "replanned": replanned,
             "slots": [(s.id, s.skill, s.args.model_dump(), status.get(s.id, {}).get("status"), status.get(s.id, {}).get("message"))
                       for s in final],

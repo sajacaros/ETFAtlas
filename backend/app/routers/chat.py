@@ -9,12 +9,11 @@ from typing import AsyncIterator, List, Optional
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 from ..database import get_db
-from ..services.answer import AnswerService
-from ..services.chat_service import ChatService
-from ..utils.session import get_current_user_id
-from ..utils.time import utcnow
 from ..models.chat import ChatLog, ChatLogResult, ChatLogStatus, ChatSession, ChatSlot
 from ..schemas.chat import FeedbackRequest, ChatSessionUpdate
+from ..services.answer import AnswerService
+from ..utils.session import get_current_user_id
+from ..utils.time import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -34,27 +33,6 @@ class ChatRequest(BaseModel):
     message: str
     session_id: Optional[int] = None  # 없으면 새 세션을 만든다
     refine: bool = True  # False면 맥락으로 질문을 재작성하지 않고 원문 그대로 답한다 ("원문으로 다시 묻기")
-
-
-class ToolCallItem(BaseModel):
-    name: str
-    arguments: str
-
-
-class StepItem(BaseModel):
-    step_number: int
-    code: str
-    observations: str
-    tool_calls: List[ToolCallItem]
-    error: Optional[str] = None
-
-
-class ChatResponse(BaseModel):
-    answer: str
-    refined_question: Optional[str] = None
-    steps: List[StepItem] = []
-    chat_log_id: Optional[int] = None
-    session_id: Optional[int] = None
 
 
 def _extract_generated_code(steps: List[dict]) -> Optional[str]:
@@ -174,39 +152,6 @@ def _finish_chat_log(
     chat_log.result = result
     session.updated_at = utcnow()
     db.commit()
-
-
-@router.post("/message", response_model=ChatResponse)
-async def send_message(
-    request: ChatRequest,
-    db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
-):
-    session = _resolve_session(db, user_id, request.session_id, request.message)
-    try:
-        chat_service = ChatService(db)
-        memory = chat_service.memory
-        await asyncio.to_thread(memory.update_summary, session)  # 지난 요약이 실패했으면 여기서 따라잡는다
-        context = memory.load_context(session)
-        result = await chat_service.chat(request.message, context, refine=request.refine)
-        chat_log_id = _save_chat_log(
-            db, user_id, session, request.message, result["refined_question"],
-            result["answer"], result.get("steps", []), result["result"],
-        )
-        await asyncio.to_thread(memory.update_summary, session)
-        return ChatResponse(
-            answer=result["answer"],
-            refined_question=result["refined_question"],
-            steps=result["steps"],
-            chat_log_id=chat_log_id,
-            session_id=session.id,
-        )
-    except Exception as e:
-        logger.exception("Chat message error")
-        return ChatResponse(
-            answer=f"죄송합니다. 요청을 처리하는 중 오류가 발생했습니다: {str(e)}",
-            session_id=session.id,
-        )
 
 
 @router.post("/message/stream")

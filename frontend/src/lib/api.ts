@@ -21,7 +21,6 @@ import type {
   TagHolding,
   SimilarETF,
   CompositionResponse,
-  ChatResponse,
   ChatSessionPage,
   ChatSessionDetail,
   ChatStep,
@@ -357,10 +356,6 @@ export interface ChatStreamHandlers {
 }
 
 export const chatApi = {
-  sendMessage: async (message: string, sessionId: number | null) => {
-    const { data } = await api.post<ChatResponse>('/chat/message', { message, session_id: sessionId })
-    return data
-  },
   // 최근 활동 순, 커서 페이징 — cursor는 이전 응답의 next_cursor
   listSessions: async (cursor?: string | null) => {
     const { data } = await api.get<ChatSessionPage>('/chat/sessions', { params: cursor ? { cursor } : {} })

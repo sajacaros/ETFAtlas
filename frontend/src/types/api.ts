@@ -355,14 +355,6 @@ export interface MatchedCodeExample {
   distance: number
 }
 
-export interface ChatResponse {
-  answer: string
-  refined_question: string | null
-  steps: ChatStep[]
-  chat_log_id: number | null
-  session_id: number | null
-}
-
 export interface ChatSessionSummary {
   id: number
   title: string

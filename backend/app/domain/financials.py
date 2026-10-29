@@ -78,3 +78,13 @@ def latest_debt_ratio(amounts: Amounts) -> Optional[DebtRatio]:
         if debt is not None and equity and equity > 0:
             return DebtRatio(year, reprt, debt, equity)
     return None
+
+
+def latest_amount(amounts: Amounts, account: str) -> Optional[Tuple[int, str, int]]:
+    """그 계정이 있는 가장 최근 보고서의 (연도, 보고서 코드, 금액). 재무상태표 계정(자본총계 등)에 쓴다."""
+    reports = sorted({(y, r) for y, r, acc in amounts if acc == account and amounts[(y, r, acc)][0] is not None},
+                     key=lambda k: (k[0], REPORT_ORDER[k[1]]), reverse=True)
+    if not reports:
+        return None
+    year, reprt = reports[0]
+    return year, reprt, amounts[(year, reprt, account)][0]

@@ -1150,10 +1150,36 @@ def refresh_current_holds(date_str: str):
         conn.close()
 
 
+def stock_quote_item(code: str, bars: list, quote) -> Optional[dict]:
+    """Stock 노드에 남길 시세. 상장주수는 늘 남기고, KIS PER·EPS·PBR은 현재가가 받은 마지막 일봉 종가와 같을 때만
+    (장중에 돌면 아직 확정되지 않은 가격 기준이라 비운다). quote_date는 그 지표의 기준일 = 마지막 일봉 날짜."""
+    if quote is None or not bars:
+        return None
+    last = bars[-1]
+    settled = quote.price == last.close
+    return {
+        'code': code, 'listed_shares': quote.listed_shares, 'quote_date': _dash_date(last.date),
+        'per': quote.per if settled else None, 'eps': quote.eps if settled else None,
+        'pbr': quote.pbr if settled else None,
+    }
+
+
+def save_stock_quotes(cur, quotes: list[dict]) -> None:
+    """stock_quote_item 목록을 Stock 노드에 쓴다 (커밋은 부르는 쪽이 한다). 값이 None이면 그 속성이 지워진다."""
+    if quotes:
+        execute_cypher_batch(cur, """
+            MATCH (s:Stock {code: item.code})
+            SET s.listed_shares = item.listed_shares, s.kis_per = item.per, s.kis_eps = item.eps,
+                s.kis_pbr = item.pbr, s.quote_date = item.quote_date
+            RETURN s
+        """, quotes)
+
+
 def collect_stock_prices_for_dates(dates: list[str]):
     """Stock(is_etf=false) 일봉을 KIS 기간별시세로 조회해 날짜별 Price 노드로 저장.
 
     종목당 기간 전체를 한 번(100일 단위)에 조회하고, 이미 저장된 (종목, 날짜)는 건너뛴다.
+    같은 응답의 시세(output1)로 Stock 노드의 상장주수와 KIS PER·EPS·PBR도 갱신한다 (stock_quote_item).
     """
     if not dates:
         return
@@ -1207,13 +1233,18 @@ def collect_stock_prices_for_dates(dates: list[str]):
     error_count = 0
     COMMIT_EVERY = 50
     pending_items = []
+    pending_quotes = []
 
-    def flush(items):
-        if not items:
+    def flush(items, quotes):
+        if not items and not quotes:
             return
         conn = get_db_connection()
         cur = init_age(conn)
         try:
+            save_stock_quotes(cur, quotes)
+            if not items:
+                conn.commit()
+                return
             # Step 1: 없으면 생성
             execute_cypher_batch(cur, """
                 MATCH (s:Stock {code: item.code})
@@ -1237,7 +1268,11 @@ def collect_stock_prices_for_dates(dates: list[str]):
 
     for i, code in enumerate(targets, 1):
         try:
-            for bar in kis.get_daily_bars(code, min(dates), max(dates)):
+            bars, quote = kis.get_daily_bars_with_quote(code, min(dates), max(dates))
+            quote_item = stock_quote_item(code, bars, quote)
+            if quote_item:
+                pending_quotes.append(quote_item)
+            for bar in bars:
                 date_str = f"{bar.date[:4]}-{bar.date[4:6]}-{bar.date[6:8]}"
                 if date_str not in date_strs or (code, date_str) in existing:
                     continue
@@ -1256,11 +1291,12 @@ def collect_stock_prices_for_dates(dates: list[str]):
 
         if i % COMMIT_EVERY == 0 or i == len(targets):
             try:
-                flush(pending_items)
+                flush(pending_items, pending_quotes)
                 total_success += len(pending_items)
             except Exception as e:
                 log.warning(f"Failed stock price batch at {i}: {e}")
             pending_items = []
+            pending_quotes = []
 
     if error_count:
         log.warning(f"{error_count} stocks failed")

@@ -257,3 +257,18 @@ def test_backfill_price_days_leaves_recent_days_to_daily_collection(monkeypatch)
     days = age_utils.backfill_price_days(30)
     assert calls == [("20260923", "20261023")]
     assert days == business[:-age_utils.PRICE_REFILL_BUSINESS_DAYS]
+
+
+def test_stock_quote_keeps_kis_ratios_only_when_the_price_is_settled():
+    """장중에 돌면 현재가가 마지막 일봉 종가와 달라 PER·PBR이 확정 가격 기준이 아니다 — 상장주수만 남긴다."""
+    from age_utils import stock_quote_item
+    from kis_api_client import DailyBar, StockQuote
+
+    bars = [DailyBar("20261028", 1, 1, 1, 242000, 0, 0.0)]
+    settled = stock_quote_item("005930", bars, StockQuote(242000, 5846278608, 34.96, 6564.0, 3.59))
+    assert settled == {"code": "005930", "listed_shares": 5846278608, "quote_date": "2026-10-28",
+                       "per": 34.96, "eps": 6564.0, "pbr": 3.59}
+    intraday = stock_quote_item("005930", bars, StockQuote(229500, 5846278608, 33.1, 6564.0, 3.4))
+    assert intraday["listed_shares"] == 5846278608 and intraday["per"] is None and intraday["pbr"] is None
+    assert stock_quote_item("005930", [], StockQuote(1, 1, None, None, None)) is None
+    assert stock_quote_item("005930", bars, None) is None

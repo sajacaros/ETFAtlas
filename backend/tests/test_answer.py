@@ -1607,5 +1607,5 @@ def test_skills_marked_as_tools_reach_the_agent_with_the_slot_summary():
         run(code="005930")
     assert "참조를 쓸 수 없다" in built[0].description
     assert {s.name for s in REGISTRY.values() if s.tool} == {
-        "company_financials", "company_disclosures", "stock_technical", "period_returns", "rank", "overlap",
-        "portfolio_lookthrough"}
+        "company_financials", "company_valuation", "company_disclosures", "stock_technical", "period_returns", "rank",
+        "overlap", "portfolio_lookthrough"}

@@ -212,3 +212,19 @@ def test_get_etf_snapshot_nav_fallback():
     client = make_client([{"rt_cd": "0", "output": {
         "stck_prpr": "100", "nav": "0", "prdy_last_nav": "99.5", "etf_ntas_ttam": "600", "lstn_stcn": "1"}}])
     assert client.get_etf_snapshot("069500").nav == 99.5
+
+
+def test_daily_bars_bring_the_quote_from_output1():
+    """일봉을 받을 때 output1의 상장주수·PER·EPS·PBR도 함께 받는다 (호출 수는 그대로). 빈 값·0은 None."""
+    payload = {"rt_cd": "0", "output1": {"stck_prpr": "229500", "lstn_stcn": "5846278608", "per": "34.96",
+                                         "eps": "6564.00", "pbr": "3.59"},
+               "output2": [_bar("20261028", 242000, 0)]}
+    client = make_client([payload])
+    bars, quote = client.get_daily_bars_with_quote("005930", "20261028", "20261028")
+    assert [b.date for b in bars] == ["20261028"] and len(client.session.get_calls) == 1
+    assert (quote.price, quote.listed_shares, quote.per, quote.eps, quote.pbr) == (229500, 5846278608, 34.96, 6564.0, 3.59)
+    client = make_client([{**payload, "output1": {**payload["output1"], "per": "0.00", "eps": "-120"}}])
+    quote = client.get_daily_bars_with_quote("005930", "20261028", "20261028")[1]
+    assert (quote.per, quote.eps) == (None, -120.0)
+    client = make_client([{**payload, "output1": {}}])
+    assert client.get_daily_bars_with_quote("005930", "20261028", "20261028")[1] is None

@@ -55,10 +55,13 @@
     {"q": "조선 태그 붙은 ETF 목록 다 보여줘", "must": ["agent"]},
     {"q": "KODEX 200이랑 비슷한 ETF 추천", "must": ["agent"]},
     {"q": "KODEX 200 구성종목 비중이 지난달이랑 어떻게 바뀌었어?", "must": ["agent"]},
-    {"q": "POSCO홀딩스 분석해줘", "must": ["company_financials", "company_disclosures", "company_report"], "allowed": ["stock_trend", "stock_technical", "stock_holders"], "names": ["POSCO홀딩스"]},
+    {"q": "POSCO홀딩스 분석해줘", "must": ["company_financials", "company_disclosures", "company_report"], "allowed": ["stock_trend", "stock_technical", "stock_holders", "company_valuation"], "names": ["POSCO홀딩스"]},
     {"q": "LG에너지솔루션 주가 분석해줘", "must": ["stock_technical"], "allowed": ["stock_holders"], "names": ["LG에너지솔루션"]},
     {"q": "한화에어로스페이스 차트 분석", "must": ["stock_technical"], "allowed": ["stock_holders"]},
     {"q": "카카오 스토캐스틱 보여줘", "must": ["stock_technical"]},
+    {"q": "LG화학 PER 얼마야?", "must": ["company_valuation"], "names": ["LG화학"]},
+    {"q": "현대차랑 기아 밸류에이션 비교해줘", "must": ["company_valuation"], "allowed": ["company_financials"], "names": ["현대차", "기아"]},
+    {"q": "PLUS K방산 비중 상위 3개 종목 PBR 비교", "must": ["holdings", "company_valuation"], "cover": {"company_valuation": 3}},
     {"q": "SK하이닉스랑 삼성전자 분기 실적 나란히 보여줘", "must": ["company_financials"], "names": ["SK하이닉스", "삼성전자"]},
     {"q": "HD현대중공업이랑 한화오션 차트 분석 각각", "must": ["stock_technical"], "names": ["HD현대중공업", "한화오션"]},
     {"q": "HANARO Fn조선해운 비중 상위 2개 종목 실적 각각 보여줘", "must": ["holdings", "company_financials"], "cover": {"company_financials": 2}},
@@ -84,6 +87,6 @@
     {"q": "KODEX 고배당주랑 TIGER 코스피고배당 배당 비교해줘", "must": ["etf_compare|etf_profile"], "allowed": ["etf_compare", "etf_profile", "period_returns"]},
     {"q": "ACE KRX금현물이랑 KODEX 200 비교해줘", "must": [], "allowed": ["etf_compare", "etf_profile", "period_returns", "price_trend"], "expect_message": "관리하지 않는 ETF"},
     {"q": "122630 구성종목", "must": [], "allowed": ["holdings"], "expect_message": "관리하지 않는 ETF"},
-    {"q": "풀무원 기업 분석", "must": [], "allowed": ["company_financials", "company_disclosures", "company_report", "stock_trend", "stock_holders"], "expect_message": "담겨 있지 않아"}
+    {"q": "풀무원 기업 분석", "must": [], "allowed": ["company_financials", "company_disclosures", "company_report", "stock_trend", "stock_holders", "company_valuation"], "expect_message": "담겨 있지 않아"}
   ]
 }

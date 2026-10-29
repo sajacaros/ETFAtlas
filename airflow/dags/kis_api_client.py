@@ -4,6 +4,7 @@
 - ETF 구성종목시세[국내주식-073] (FHKST121600C0): ETF 현재 구성종목(PDF)
   날짜 지정 파라미터가 없어 "호출 시점"의 구성종목만 조회 가능 (과거 백필 불가)
 - 국내주식기간별시세[v1_국내주식-016] (FHKST03010100): 종목/ETF 일봉 (호출당 최대 100건)
+  output1에 호출 시점의 현재가·상장주수·PER·EPS·PBR이 함께 온다 (StockQuote)
 - 국내휴장일조회 (CTCA0903R): 개장일 여부 (KIS 요청: 가급적 1일 1회 호출)
 - ETF/ETN 현재가[v1_국내주식-068] (FHPST02400000): NAV, 순자산총액, 상장주수 (현재 시점)
 - 종목 마스터 파일(kospi_code.mst, 인증 불필요): 전체 ETF 코드/이름 목록
@@ -77,6 +78,16 @@ class DailyBar:
     volume: int         # 누적 거래량 (acml_vol)
     change_rate: float  # 전일 대비율 % (prdy_vrss로 계산)
     trade_value: int = 0  # 누적 거래대금 (acml_tr_pbmn)
+
+
+@dataclass
+class StockQuote:
+    """기간별시세 output1 — 호출 시점의 현재가 기준 값 (일봉을 받을 때 함께 온다)"""
+    price: int          # 현재가 (stck_prpr)
+    listed_shares: int  # 상장주수 (lstn_stcn)
+    per: Optional[float]  # KIS PER (per). 0이나 빈 값은 None
+    eps: Optional[float]  # KIS EPS (eps)
+    pbr: Optional[float]  # KIS PBR (pbr)
 
 
 @dataclass
@@ -309,7 +320,12 @@ class KISApiClient:
         Returns:
             날짜 오름차순 DailyBar 리스트
         """
+        return self.get_daily_bars_with_quote(code, start, end)[0]
+
+    def get_daily_bars_with_quote(self, code: str, start: str, end: str) -> tuple[list[DailyBar], Optional[StockQuote]]:
+        """get_daily_bars + 첫 응답의 output1(호출 시점 시세). 호출 수는 같다."""
         bars: dict[str, DailyBar] = {}
+        quote: Optional[StockQuote] = None
         cursor_end = end
         while cursor_end >= start:
             data = self._get(
@@ -324,6 +340,8 @@ class KISApiClient:
                     "FID_ORG_ADJ_PRC": "0",
                 },
             )
+            if quote is None:
+                quote = self._parse_quote(data.get("output1"))
             rows = [r for r in (data.get("output2") or []) if r.get("stck_bsop_date")]
             if not rows:
                 break
@@ -335,7 +353,18 @@ class KISApiClient:
             if len(rows) < 100 or oldest <= start:
                 break
             cursor_end = (datetime.strptime(oldest, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
-        return [bars[d] for d in sorted(bars)]
+        return [bars[d] for d in sorted(bars)], quote
+
+    def _parse_quote(self, out: Optional[dict]) -> Optional[StockQuote]:
+        if not out or not self._parse_int(out.get("lstn_stcn")):
+            return None
+
+        def ratio(key):  # 적자·자본잠식이면 0이나 음수로 온다 — 0은 값이 없는 것으로 본다
+            value = self._parse_float(out.get(key))
+            return value or None
+
+        return StockQuote(price=self._parse_int(out.get("stck_prpr")), listed_shares=self._parse_int(out.get("lstn_stcn")),
+                          per=ratio("per"), eps=ratio("eps"), pbr=ratio("pbr"))
 
     def _parse_bar(self, r: dict) -> DailyBar:
         close = self._parse_int(r.get("stck_clpr"))

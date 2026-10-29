@@ -157,8 +157,9 @@ KIS Open API "ETF 구성종목시세"(`GET /uapi/etfetn/v1/quotations/inquire-co
 - 이미 저장된 (종목, 날짜)와 대상 날짜 밖의 일봉은 건너뛴다.
 - `change_rate`는 `prdy_vrss`(전일 대비)와 `prdy_vrss_sign`(부호)으로 계산한다.
 - MERGE+SET 분리 방식으로 `open, high, low, close, volume, change_rate`를 저장하고 50종목마다 커밋한다.
+- 같은 응답의 `output1`(호출 시점 시세)에서 상장주수(`lstn_stcn`)와 KIS PER·EPS·PBR을 받아 Stock 노드에 남긴다 (`get_daily_bars_with_quote`, `stock_quote_item`). 호출은 늘지 않는다. PER·EPS·PBR은 현재가가 마지막 일봉 종가와 같을 때만(장중 실행이면 비움) 남긴다.
 
-**저장:** AGE — `Price` 노드, `(Stock)-[:HAS_PRICE]->(Price)`
+**저장:** AGE — `Price` 노드, `(Stock)-[:HAS_PRICE]->(Price)`, Stock 노드의 `listed_shares, kis_per, kis_eps, kis_pbr, quote_date`
 
 ### update_etf_returns()
 

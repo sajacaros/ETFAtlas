@@ -705,3 +705,56 @@ def test_revenue_mix_shows_what_the_question_asks_first():
     assert [b["kind"] for b in choose(mixes[:1], "HPSP 분석해줘")] == ["customer"]
 
 
+
+
+def test_valuation_divides_market_cap_by_trailing_and_annual_earnings():
+    """시가총액 = 종가 × 주식수. PER은 이어진 최근 4개 분기 합과 직전 연도, PBR은 최근 자본총계. 적자면 배수를 내지 않는다."""
+    from app.domain.valuation import valuation
+    a = {}
+    for year, reprt, net in [(2025, "11013", 10), (2025, "11012", 20), (2025, "11014", 30), (2026, "11013", 40)]:
+        a[(year, reprt, "당기순이익")] = (net, None)
+    a[(2025, "11011", "당기순이익")] = (100, None)  # 4분기 = 100 − (10+20+30) = 40
+    a[(2026, "11013", "자본총계")] = (500, None)
+    a[(2025, "11011", "자본총계")] = (400, None)
+    v = valuation(10.0, "2026-10-28", 150, a)  # 시가총액 1,500
+    assert v.market_cap == 1500
+    assert (v.ttm.label, v.ttm.amount, v.per_ttm) == ("2025.2Q~2026.1Q", 20 + 30 + 40 + 40, 11.54)
+    assert (v.annual.label, v.per_annual) == ("2025년", 15.0)
+    assert (v.equity.label, v.pbr, v.roe) == ("2026년 1분기", 3.0, 26.0)
+    # 적자·빈 분기
+    a[(2025, "11011", "당기순이익")] = (-50, None)
+    v = valuation(10.0, "2026-10-28", 150, a)
+    assert v.per_annual is None and v.annual.amount == -50
+    del a[(2025, "11014", "당기순이익")]
+    assert valuation(10.0, "2026-10-28", 150, a).ttm is None  # 3분기가 비면 4분기도 못 구해 이어진 4개 분기가 없다
+
+
+def test_company_valuation_reads_shares_from_the_stock_node(monkeypatch):
+    from types import SimpleNamespace
+    from app.services.answer.skills import company_valuation as mod
+
+    class FakeGraph:
+        def __init__(self, db):
+            pass
+
+        def execute_cypher(self, cypher, params, raise_errors=False):
+            return [{"result": json.dumps({"code": "005930", "shares": 100, "kis_per": 30.5, "kis_pbr": None,
+                                           "quote_date": "2026-10-28"})}]
+
+        @staticmethod
+        def parse_agtype(value):
+            return json.loads(value)
+
+        def get_stock_prices(self, code, days):
+            return [{"date": "2026-10-27", "close": 9.0}, {"date": "2026-10-28", "close": 10.0}]
+
+    rows = [SimpleNamespace(fs_div="CFS", bsns_year=2025, reprt_code="11011", account="당기순이익", amount=-20, amount_cum=None),
+            SimpleNamespace(fs_div="CFS", bsns_year=2025, reprt_code="11011", account="자본총계", amount=500, amount_cum=None)]
+    db = SimpleNamespace(query=lambda model: SimpleNamespace(filter=lambda *a: SimpleNamespace(all=lambda: rows)))
+    resolver = SimpleNamespace(stocks=lambda db, names: ([{"code": "005930", "name": "삼성전자"}], []))
+    monkeypatch.setattr(mod, "GraphService", FakeGraph)
+    monkeypatch.setattr(mod, "node", lambda graph, cypher, params: [json.loads(r["result"]) for r in graph.execute_cypher(cypher, params)])
+    result = mod.CompanyValuationSkill().fetch(mod.CompanyValuationArgs(stocks=["삼성전자"]), "table", db, resolver)
+    row = result.content["dataset"]["rows"][0]
+    assert (row["market_cap"], row["per_annual"], row["pbr"], row["kis_per"]) == (1000.0, None, 2.0, 30.5)
+    assert "적자" in result.summary and "KIS 제공 PER 30.5 (2026-10-28 종가 기준)" in result.summary

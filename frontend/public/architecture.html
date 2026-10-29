@@ -390,7 +390,7 @@
       <svg viewBox="0 0 960 620" role="img" aria-labelledby="skills-map-title skills-map-desc"
            font-family="'Noto Sans KR', sans-serif">
         <title id="skills-map-title">ETF Atlas 챗봇의 스킬과 툴 관계</title>
-        <desc id="skills-map-desc">레이아웃 에이전트가 스킬 18개로 답변 화면을 설계하고, agent 스킬은 ChatService의 툴 10개와 tool을 켠 데이터 스킬 7개를 도구로 쓴다. 계산은 스킬과 스크리너가 app/domain을 함께 쓴다.</desc>
+        <desc id="skills-map-desc">레이아웃 에이전트가 스킬 19개로 답변 화면을 설계하고, agent 스킬은 ChatService의 툴 10개와 tool을 켠 데이터 스킬 8개를 도구로 쓴다. 계산은 스킬과 스크리너가 app/domain을 함께 쓴다.</desc>
         <defs>
           <marker id="sarrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
             <polygon points="0 0, 8 3, 0 6" fill="#b8322a"/>
@@ -405,7 +405,7 @@
 
         <!-- 스킬 묶음 컨테이너 -->
         <rect x="40" y="180" width="880" height="148" rx="12" fill="none" stroke="#d3cbc5" stroke-width="1" stroke-dasharray="4,4"/>
-        <text x="920" y="348" text-anchor="end" fill="#2b2523" font-size="13" font-weight="700">스킬 18개 <tspan fill="#7a706b" font-weight="400" font-family="'Fira Code', monospace" font-size="11">skills/REGISTRY</tspan></text>
+        <text x="920" y="348" text-anchor="end" fill="#2b2523" font-size="13" font-weight="700">스킬 19개 <tspan fill="#7a706b" font-weight="400" font-family="'Fira Code', monospace" font-size="11">skills/REGISTRY</tspan></text>
 
         <!-- 레이아웃 에이전트 → 스킬 -->
         <path d="M456 120 V136 Q456 144 448 144 H158 Q150 144 150 152 V196" fill="none" stroke="#b8322a" stroke-width="1.6"/>
@@ -431,7 +431,7 @@
 
         <circle cx="590" cy="228" r="32" fill="#f4f0ed" stroke="#cfc6c0" stroke-width="1.2"/>
         <circle cx="590" cy="228" r="8" fill="#4a4442"/>
-        <text x="590" y="284" text-anchor="middle" fill="#2b2523" font-size="13" font-weight="700">종목·기업 데이터 스킬 7</text>
+        <text x="590" y="284" text-anchor="middle" fill="#2b2523" font-size="13" font-weight="700">종목·기업 데이터 스킬 8</text>
         <text x="590" y="304" text-anchor="middle" fill="#7a706b" font-size="11">DB 직접 조회 · 표·차트</text>
 
         <circle cx="810" cy="228" r="32" fill="#f4f0ed" stroke="#cfc6c0" stroke-width="1.2"/>
@@ -487,7 +487,7 @@
         </g>
 
         <!-- 툴 설명 -->
-        <text x="780" y="392" fill="#b8322a" font-size="14" font-weight="700">툴 10개 + 스킬 7개</text>
+        <text x="780" y="392" fill="#b8322a" font-size="14" font-weight="700">툴 10개 + 스킬 8개</text>
         <text x="780" y="414" fill="#2b2523" font-size="12">ChatService</text>
         <text x="780" y="432" fill="#7a706b" font-size="12">pydantic-ai 에이전트</text>
         <text x="780" y="450" fill="#7a706b" font-size="11" font-family="'Fira Code', monospace">chat_service.py</text>
@@ -509,6 +509,7 @@
         <tr><td><code>holdings</code> ⇢</td><td>구성종목 비중 (상위 30개, 최소 비중으로 거를 수 있음)</td><td>treemap · donut · bar · table</td></tr>
         <tr><td><code>stock_holders</code> ⇢</td><td>종목을 많이 담은 ETF 순위 (여러 종목이면 비중 합, 최소 비중)</td><td>bar · table</td></tr>
         <tr><td><code>company_financials</code></td><td>DART 분기·연간 매출·영업이익·순이익과 영업이익률, 최근 부채비율</td><td>bar · line · table</td></tr>
+        <tr><td><code>company_valuation</code></td><td>시가총액(종가 × 상장주식수)과 PER(최근 4분기·직전 연도), PBR, ROE. 대조용 KIS PER·PBR</td><td>table</td></tr>
         <tr><td><code>company_disclosures</code></td><td>최근 DART 공시 목록 (원문 링크). 임원·주요주주 지분 보고서는 물을 때만</td><td>markdown</td></tr>
         <tr><td><code>company_report</code> <span class="llm">LLM</span></td><td>가장 최근 정기보고서 본문 요약. 보고서 표에 매출 구성이 있으면 차트 영역을 스스로 나눠 붙인다</td><td>markdown (+ donut · bar)</td></tr>
         <tr><td><code>company_revenue_mix</code> <span class="llm">LLM</span></td><td>정기보고서 표의 매출 구성(주요 고객·제품·부문·지역)만 차트로. 질문이 묻는 구성부터 최대 2개로 영역을 나눈다</td><td>bar · donut</td></tr>
@@ -517,7 +518,7 @@
         <tr><td><code>overlap</code> ⇢</td><td>두 ETF의 공통 종목·한쪽에만 있는 종목과 겹치는 비중</td><td>table · bar</td></tr>
         <tr><td><code>etf_choice</code></td><td>대상 ETF가 여럿일 때 후보를 보여 주고 되묻기</td><td>markdown</td></tr>
         <tr><td><code>narrative</code> <span class="llm">LLM</span></td><td>다른 영역이 끝난 뒤 해설</td><td>text</td></tr>
-        <tr><td><code>agent</code> <span class="llm">LLM</span></td><td>스킬로 표현할 수 없는 질문. 도구 10개(검색·정보·유사 ETF·비교·읽기 전용 Cypher)와 tool을 켠 데이터 스킬 7개(실적·공시·차트 분석·기간 수익률·순위·겹침·포트폴리오)를 가진 tool-calling 에이전트가 마크다운으로 답한다</td><td>markdown</td></tr>
+        <tr><td><code>agent</code> <span class="llm">LLM</span></td><td>스킬로 표현할 수 없는 질문. 도구 10개(검색·정보·유사 ETF·비교·읽기 전용 Cypher)와 tool을 켠 데이터 스킬 8개(실적·밸류에이션·공시·차트 분석·기간 수익률·순위·겹침·포트폴리오)를 가진 tool-calling 에이전트가 마크다운으로 답한다</td><td>markdown</td></tr>
       </table>
     </div>
     <p style="font-size:12.5px;color:var(--muted);margin-top:8px">⇢ 순위가 있는 결과를 내보내 다른 슬롯이 <code>@name.순위</code>로 받아 쓸 수 있는 스킬</p>

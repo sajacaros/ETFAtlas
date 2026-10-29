@@ -544,7 +544,7 @@ class GraphQueryTool(ChatTool):
 예: '삼성전자를 가장 많이 보유한 ETF', '반도체 태그 ETF 중 보수율 낮은 순', '삼성자산운용의 ETF 목록' 등
 
 ## 그래프 스키마
-노드: ETF(code, name, expense_ratio, base_index, listed_date, description, dividend_cycle, dividend_yield, dividend_per_share, net_assets, close_price, return_1d, return_1w, return_1m, market_cap_change_1w, updated_at), Stock(code, name, is_etf), Company(name), Tag(name), Price(date, open, high, low, close, volume, nav, market_cap, net_assets, trade_value, change_rate), User(user_id)
+노드: ETF(code, name, expense_ratio, base_index, listed_date, description, dividend_cycle, dividend_yield, dividend_per_share, net_assets, close_price, return_1d, return_1w, return_1m, market_cap_change_1w, updated_at), Stock(code, name, is_etf, listed_shares(상장주식수), kis_per, kis_eps, kis_pbr(KIS 제공, quote_date 종가 기준), quote_date), Company(name), Tag(name), Price(date, open, high, low, close, volume, nav, market_cap, net_assets, trade_value, change_rate), User(user_id)
 관계: (ETF)-[:CURRENT_HOLDS {date, weight, shares}]->(Stock) = 현재 구성종목(ETF당 비중 상위 30개), (ETF)-[:HOLDS {date, weight, shares}]->(Stock) = 날짜별 구성종목 이력(비중 변화 비교에만 사용), (ETF)-[:MANAGED_BY]->(Company), (ETF)-[:TAGGED]->(Tag), (ETF)-[:HAS_PRICE]->(Price), (Stock)-[:HAS_PRICE]->(Price), (User)-[:WATCHES {added_at}]->(ETF)
 
 ## Cypher 작성 규칙

@@ -5,7 +5,7 @@
 > 범위: 답변 화면의 `agent` 스킬 안에서 도는 tool-calling 에이전트(`ChatService`)와 그 도구.
 > 챗봇 전체 흐름은 웹 화면의 Architecture 페이지(`frontend/public/architecture.html`), 레이아웃·스킬 구현은 [answer-skills.md](answer-skills.md)를 본다.
 
-`ChatService`는 **pydantic-ai** tool-calling 에이전트이며, **10개의 커스텀 도구**와 **답변 화면의 데이터 스킬 중 `tool = True`인 7개**(아래 '스킬 도구')를 가진다.
+`ChatService`는 **pydantic-ai** tool-calling 에이전트이며, **10개의 커스텀 도구**와 **답변 화면의 데이터 스킬 중 `tool = True`인 8개**(아래 '스킬 도구')를 가진다.
 레이아웃 설계가 스킬로 표현할 수 없는 질문(태그·운용사별 목록, 유사 ETF, 비중 변화, 복잡한 그래프 조건 등)이나 설계에 실패한 질문을 `agent` 슬롯으로 넘기면 이 에이전트가 마크다운으로 답한다.
 모든 도구는 `backend/app/services/chat_service.py`에 정의되어 있습니다.
 
@@ -347,6 +347,7 @@ RETURN {etf_code: e.code, etf_name: e.name, weight_samsung: h1.weight, weight_te
 | 도구(스킬) | 하는 일 |
 |---|---|
 | `company_financials` | DART 분기·연간 실적, 영업이익률, 부채비율 |
+| `company_valuation` | 시가총액, PER(최근 4분기·직전 연도), PBR, ROE, 대조용 KIS PER·PBR |
 | `company_disclosures` | 최근 DART 공시 목록 |
 | `stock_technical` | 차트 분석: 이동평균·볼린저·MACD·RSI·스토캐스틱과 대가들의 규칙으로 본 신호 |
 | `period_returns` | ETF 기간별 수익률 (1일~1년) |

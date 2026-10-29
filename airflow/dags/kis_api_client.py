@@ -161,7 +161,7 @@ class KISApiClient:
     """KIS Open API 클라이언트 (시세 조회 전용)"""
 
     TOKEN_MARGIN = timedelta(minutes=10)   # 만료 10분 전이면 재발급
-    MIN_INTERVAL = 0.06                    # 초당 호출 제한(실전 20건/s) 대비 최소 간격
+    MIN_INTERVAL = 0.2                     # 최소 호출 간격. 실전 한도는 20건/s지만 그 근처로 몰면 HTTP 500이 잦아 5건/s로 둔다
     RATE_LIMIT_CODE = "EGW00201"           # 초당 거래건수 초과
     TOKEN_EXPIRED_CODE = "EGW00123"        # 기간이 만료된 token
     RETRY_BACKOFF = 1.0                    # 네트워크 오류·5xx 재시도 대기(초), 시도마다 두 배

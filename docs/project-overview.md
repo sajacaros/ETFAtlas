@@ -93,7 +93,7 @@ API 전체 목록은 Swagger(`http://localhost:9601/docs`)를 본다.
 - KIS는 개장일 08:30에 그날 공시분(직전 거래일 장 마감 기준 보유)으로 갱신한다. 개장일에만 받아 그날(공시일) 날짜로 저장하고, 비중 변화는 ETF별 직전 수집일과 비교한다. 주말·휴장일에는 받지 않는다
 - 저장 후 그날 HOLDS가 있는 ETF의 `CURRENT_HOLDS`를 그날 HOLDS로 교체(`refresh_current_holds`). 현재 구성종목 조회는 `CURRENT_HOLDS`, 비중 변화·이력은 `HOLDS`를 읽는다. 조회 실패 ETF는 이전 구성종목 유지
 - `shares`는 API에 수량 필드가 없어 `평가금액(etf_vltn_amt) / 현재가(stck_prpr)`로 역산한 추정치
-- 토큰(24h 유효, 발급 1분 1회 제한)은 `kis_tokens`에 캐시, 호출 간 최소 간격 0.06s, `EGW00201`(초당 초과) 재시도, `EGW00123`(토큰 만료) 1회 재발급
+- 토큰(24h 유효, 발급 1분 1회 제한)은 `kis_tokens`에 캐시, 호출 간 최소 간격 0.2s, `EGW00201`(초당 초과) 재시도, `EGW00123`(토큰 만료) 1회 재발급
 - 실전투자 앱키 필요(`KIS_APP_KEY`, `KIS_APP_SECRET`)
 
 ### ETF 목록·유니버스·가격 — KIS

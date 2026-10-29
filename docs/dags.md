@@ -145,7 +145,7 @@ KIS Open API "ETF 구성종목시세"(`GET /uapi/etfetn/v1/quotations/inquire-co
 - Stock 노드를 MERGE하고 `name`, `is_etf`를 설정한다. 주식 이름은 KIS `hts_kor_isnm`, ETF는 AGE ETF 노드 이름을 우선 사용한다.
 - HOLDS는 50개 ETF 단위로 MERGE → SET 후 커밋한다.
 - 저장 후 `refresh_current_holds(date)`로 현재 보유종목을 갱신한다. 그날 HOLDS가 있는 ETF만 CURRENT_HOLDS를 지우고 그날 HOLDS로 다시 만든다. CURRENT_HOLDS 날짜가 이미 더 최근인 ETF는 건너뛰고, KIS 조회에 실패한 ETF는 이전 구성종목을 유지한다. 같은 날짜로 재실행해도 결과가 같다.
-- 접근 토큰은 24시간 유효하고 발급이 1분 1회로 제한되어 `kis_tokens` 테이블에 캐시한다 (앱키 SHA-256 해시 키, 만료 10분 전 재발급). 호출 간 최소 0.06초 간격을 둔다.
+- 접근 토큰은 24시간 유효하고 발급이 1분 1회로 제한되어 `kis_tokens` 테이블에 캐시한다 (앱키 SHA-256 해시 키, 만료 10분 전 재발급). 호출 간 최소 0.2초 간격을 둔다 (한도 근처로 몰면 HTTP 500이 잦다).
 - `KIS_APP_KEY`/`KIS_APP_SECRET`이 없으면 경고 후 수집을 건너뛴다.
 
 **저장:** AGE — `Stock` 노드, `(ETF)-[:HOLDS {date, weight, shares}]->(Stock)` (날짜별 이력), `(ETF)-[:CURRENT_HOLDS {date, weight, shares}]->(Stock)` (현재 보유, ETF당 최대 30개)

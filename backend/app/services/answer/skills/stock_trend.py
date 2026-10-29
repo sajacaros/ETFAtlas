@@ -3,8 +3,8 @@ from typing import Dict, List
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from ...domain.entities import EntityResolver
-from ...domain.periods import Period
+from ....domain.periods import Period
+from ...entities import EntityResolver
 from ...graph_service import GraphService
 from .common import DEFAULT_PERIOD, PERIOD_DESCRIPTION
 from .price_trend import PriceTrendBase
@@ -24,6 +24,8 @@ class StockTrendSkill(PriceTrendBase):
     )
     Args = StockTrendArgs
     target = "종목"
+    subject = "stock"
+    entity_args = {"stocks": "stock"}
 
     def targets(self, args: StockTrendArgs, db: Session, resolver: EntityResolver):
         return resolver.stocks(db, args.stocks)

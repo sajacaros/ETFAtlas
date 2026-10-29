@@ -6,9 +6,9 @@ from typing import Dict, List, Optional, Tuple, Union
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from ...models.dart import DartCorp
-from ...models.etf import ETF
-from ..graph_service import GraphService
+from ..models.dart import DartCorp
+from ..models.etf import ETF
+from .graph_service import GraphService
 
 # 6자리 코드 (숫자로 시작, 신규 상장 ETF는 영문이 섞인다: 0080G0)
 CODE_RE = re.compile(r"(?<![0-9A-Z])(\d[0-9A-Z]{5})(?![0-9A-Z])")

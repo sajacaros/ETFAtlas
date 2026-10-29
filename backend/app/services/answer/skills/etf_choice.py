@@ -3,10 +3,9 @@ from typing import Dict, List, Literal
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from ...domain.entities import EntityResolver, _normalize
-from ...domain.format import format_value
-from ...domain.graph import node
-from ...graph_service import GraphService
+from ....domain.format import format_value
+from ...entities import EntityResolver, _normalize
+from ...graph_service import GraphService, node
 from .base import CHOICES_SHOWN, DataSkill, SkillResult, choice_result, empty, not_found
 from .common import object_particle
 
@@ -57,6 +56,7 @@ class ETFChoiceSkill(DataSkill):
     )
     Args = ETFChoiceArgs
     displays = ("markdown",)
+    subject = "etf"
 
     def fetch(self, args: ETFChoiceArgs, display: str, db: Session, resolver: EntityResolver) -> SkillResult:
         if args.by == "theme":

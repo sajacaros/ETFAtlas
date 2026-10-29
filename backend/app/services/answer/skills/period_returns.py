@@ -3,9 +3,9 @@ from typing import Dict, List, Optional
 from pydantic import Field
 from sqlalchemy.orm import Session
 
+from ....domain.periods import Period, pct_change, period_base, period_days, period_label
 from ...content import BarView, DataField, Dataset, Source, TableView
-from ...domain.entities import EntityResolver
-from ...domain.periods import Period, pct_change, period_base, period_days, period_label
+from ...entities import EntityResolver
 from ...graph_service import GraphService
 from .base import DataSkill, SkillResult, data_result, empty, not_found
 from .common import ETFListArgs, missing_notes
@@ -31,6 +31,9 @@ class PeriodReturnsSkill(DataSkill):
     description = "ETF 1~5개의 기간별 수익률(1일, 1주, 1개월, 3개월, 6개월, 1년, 그리고 질문이 말한 기간) 비교"
     Args = PeriodReturnsArgs
     displays = ("bar", "table")
+    tool = True
+    subject = "etf"
+    entity_args = {"etfs": "etf"}
 
     def fetch(self, args: PeriodReturnsArgs, display: str, db: Session, resolver: EntityResolver) -> SkillResult:
         found, missing = resolver.etfs(db, args.etfs)

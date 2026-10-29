@@ -20,6 +20,9 @@ class CompanyRevenueMixSkill(Skill):
     )
     Args = CompanyRevenueMixArgs
     displays = ("bar", "donut")
+    uses_llm = True
+    subject = "stock"
+    entity_args = {"stock": "stock"}
 
     async def run(self, args: CompanyRevenueMixArgs, display: str, ctx: SkillContext):
         prepared = await asyncio.to_thread(prepare_report, args.stock, ctx)

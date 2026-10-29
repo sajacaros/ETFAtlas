@@ -215,7 +215,7 @@ def is_listed_security_code(code: str) -> bool:
 
 
 # 유니버스 조건: 국내 주식형 ETF, 순자산 500억 이상
-# 바꾸면 챗봇 안내 문구(backend/app/services/domain/universe.py의 UNIVERSE_DESCRIPTION)도 같이 바꾼다
+# 바꾸면 챗봇 안내 문구(backend/app/domain/universe.py의 UNIVERSE_DESCRIPTION)도 같이 바꾼다
 FOREIGN_NAME_KEYWORDS = [
     '미국', '중국', '차이나', '일본', '인도', '베트남', '대만', '유럽', '독일',
     '글로벌', 'Global', 'China', 'Japan', 'India', ' US', 'USA',

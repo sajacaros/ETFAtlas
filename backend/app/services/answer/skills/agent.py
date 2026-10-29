@@ -18,6 +18,7 @@ class AgentSkill(Skill):
     )
     Args = AgentArgs
     displays = ("markdown",)
+    uses_llm = True
 
     async def run(self, args: AgentArgs, display: str, ctx: SkillContext):
         from ...chat_service import FALLBACK_ANSWER, ChatService  # chat_service가 이 패키지를 가져오지 않도록 늦게 가져온다

@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ...content import BarView, DataField, Dataset, Source, TableView
-from ...domain.entities import EntityResolver
+from ...entities import EntityResolver
 from .base import DataSkill, SkillResult, data_result, empty, not_found
 from .common import ETF_NAMES_DESCRIPTION
 from .portfolio_lookthrough import _holdings
@@ -40,6 +40,10 @@ class OverlapSkill(DataSkill):
     Args = OverlapArgs
     displays = ("table", "bar")
     exports = "두 ETF에 모두 있는 종목 목록, 두 비중 합이 큰 순"
+    tool = True
+    subject = "etf"
+    exports_kind = "stock"
+    entity_args = {"etfs": "etf"}
 
     def fetch(self, args: OverlapArgs, display: str, db: Session, resolver: EntityResolver) -> SkillResult:
         found, missing = resolver.etfs(db, args.etfs)

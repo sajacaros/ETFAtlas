@@ -5,9 +5,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ...content import BarView, DataField, Dataset, Source, TableView
-from ...domain.entities import EntityResolver
-from ...domain.graph import node
-from ...graph_service import GraphService
+from ...entities import EntityResolver
+from ...graph_service import GraphService, node
 from .base import DataSkill, SkillResult, data_result, empty, not_found
 from .common import cut_note, min_weight_field, object_particle
 
@@ -32,6 +31,9 @@ class StockHoldersSkill(DataSkill):
     Args = StockHoldersArgs
     displays = ("bar", "table")
     exports = "ETF 목록, 그 종목(여러 개면 비중 합계) 비중 높은 순"
+    subject = "stock"
+    exports_kind = "etf"
+    entity_args = {"stocks": "stock"}
 
     def fetch(self, args: StockHoldersArgs, display: str, db: Session, resolver: EntityResolver) -> SkillResult:
         stocks, missing = resolver.stocks(db, args.stocks)

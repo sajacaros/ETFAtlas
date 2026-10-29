@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ....models.dart import StockDisclosure
-from ...domain.entities import EntityResolver
+from ...entities import EntityResolver
 from .base import DataSkill, SkillResult, empty, not_found, text_result
 
 DART_VIEWER = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo="
@@ -31,6 +31,9 @@ class CompanyDisclosuresSkill(DataSkill):
     )
     Args = CompanyDisclosuresArgs
     displays = ("markdown",)
+    tool = True
+    subject = "stock"
+    entity_args = {"stock": "stock"}
 
     def fetch(self, args: CompanyDisclosuresArgs, display: str, db: Session, resolver: EntityResolver) -> SkillResult:
         stock = resolver.stock(db, args.stock)

@@ -13,12 +13,15 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.usage import UsageLimits
 from sqlalchemy.orm import Session
 
+from ..database import SessionLocal
 from ..models.chat import ChatLogResult
 from .ai_config import load_ai_config
-from .graph_service import GraphService
-from .embedding_service import EmbeddingService
-from .chat_prompt import SYSTEM_PROMPT
+from .answer.skills import REGISTRY
+from .answer.tools import skill_tools
 from .chat_memory import ChatMemory, ConversationContext
+from .chat_prompt import SYSTEM_PROMPT
+from .embedding_service import EmbeddingService
+from .graph_service import GraphService
 
 logger = logging.getLogger(__name__)
 
@@ -633,6 +636,15 @@ def _step_call(step_number: int, name: str, args: Dict[str, Any]) -> Dict[str, A
     }
 
 
+def _analysis_tools_prompt() -> str:
+    """답변 화면의 스킬 중 도구로 켠 것 — 화면과 같은 계산을 텍스트로 돌려준다 (answer/tools.py)."""
+    names = [s.name for s in REGISTRY.values() if s.tool]
+    return ("## 분석 도구\n"
+            f"{', '.join(names)}: 답변 화면과 같은 계산으로 요약 텍스트를 돌려줍니다. "
+            "종목·ETF는 이름이나 6자리 코드를 그대로 넣으세요 (stock_search·etf_search를 먼저 부르지 않아도 됩니다). "
+            "결과의 숫자와 날짜를 그대로 옮기고, 결과에 없는 수치는 만들지 마세요.")
+
+
 class ChatService:
     def __init__(self, db: Session):
         self.db = db
@@ -680,11 +692,11 @@ class ChatService:
         self.agent = Agent(
             model,
             instructions=self._instructions(),
-            tools=[t.as_agent_tool() for t in self._tools.values()],
+            tools=[t.as_agent_tool() for t in self._tools.values()] + skill_tools(REGISTRY, SessionLocal),
         )
 
     def _instructions(self) -> str:
-        parts = [SYSTEM_PROMPT]
+        parts = [SYSTEM_PROMPT, _analysis_tools_prompt()]
         if self._tag_names:
             parts.append(f"## 사용 가능한 태그 목록\n{', '.join(self._tag_names)}")
         return "\n\n".join(parts)

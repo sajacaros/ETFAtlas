@@ -10,11 +10,10 @@ from typing import Dict, List, Literal, Optional, Sequence
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from ....domain import indicators as ind, signals as sig
+from ....domain.periods import Period, pct_change, period_base, period_days, period_label
 from ...content import CandlestickView, ChartRange, DataField, Dataset, IndicatorPanel, Signal, Source
-from ...domain import indicators as ind
-from ...domain import signals as sig
-from ...domain.entities import EntityResolver
-from ...domain.periods import Period, pct_change, period_base, period_days, period_label
+from ...entities import EntityResolver
 from ...graph_service import GraphService
 from .base import DataSkill, SkillResult, data_result, empty, not_found
 from .common import period_span
@@ -221,6 +220,9 @@ class StockTechnicalSkill(DataSkill):
     )
     Args = StockTechnicalArgs
     displays = ("candlestick",)
+    tool = True
+    subject = "stock"
+    entity_args = {"stock": "stock"}
 
     def fetch(self, args: StockTechnicalArgs, display: str, db: Session, resolver: EntityResolver) -> SkillResult:
         stock = resolver.stock(db, args.stock)

@@ -4,9 +4,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ...content import BarView, DataField, Dataset, DonutView, Source, TableView, TreemapView
-from ...domain.entities import EntityResolver
-from ...domain.graph import node
-from ...graph_service import GraphService
+from ...entities import EntityResolver
+from ...graph_service import GraphService, node
 from .base import DataSkill, SkillResult, data_result, empty, not_found
 from .common import cut_note, min_weight_field
 
@@ -28,6 +27,9 @@ class HoldingsSkill(DataSkill):
     Args = HoldingsArgs
     displays = ("treemap", "donut", "bar", "table")
     exports = "종목 목록, ETF 내 비중 높은 순 (상위 30개)"
+    subject = "etf"
+    exports_kind = "stock"
+    entity_args = {"etf": "etf"}
 
     def fetch(self, args: HoldingsArgs, display: str, db: Session, resolver: EntityResolver) -> SkillResult:
         etf = resolver.etf(db, args.etf)

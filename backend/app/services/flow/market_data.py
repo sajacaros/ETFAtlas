@@ -8,7 +8,7 @@ import threading
 import time
 from typing import Dict, Iterable, List, Optional, Protocol
 
-from ..domain.indicators import Bar
+from ...domain.indicators import Bar
 
 logger = logging.getLogger(__name__)
 

@@ -3,11 +3,10 @@ from typing import Dict, List, Optional
 from pydantic import Field
 from sqlalchemy.orm import Session
 
+from ....domain.format import format_value
 from ...content import DataField, Dataset, RadarView, Source, TableView
-from ...domain.entities import EntityResolver
-from ...domain.format import format_value
-from ...domain.graph import node
-from ...graph_service import GraphService
+from ...entities import EntityResolver
+from ...graph_service import GraphService, node
 from .base import DataSkill, SkillResult, data_result, empty, not_found
 from .common import ETF_NAMES_DESCRIPTION, ETFListArgs, missing_notes
 
@@ -43,6 +42,8 @@ class ETFProfileSkill(DataSkill):
     )
     Args = ProfileArgs
     displays = ("radar", "table")
+    subject = "etf"
+    entity_args = {"etfs": "etf"}
 
     def fetch(self, args: ProfileArgs, display: str, db: Session, resolver: EntityResolver) -> SkillResult:
         found, missing = resolver.etfs(db, args.etfs)

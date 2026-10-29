@@ -5,10 +5,9 @@ from typing import Any, Dict, List, Literal
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
-from ...domain import indicators as ind
-from ...domain.format import format_value
-from ...domain.graph import node as cypher
-from ...graph_service import GraphService
+from ....domain import indicators as ind
+from ....domain.format import format_value
+from ...graph_service import GraphService, node as cypher
 from ...llm import NO_THINKING, build_model
 from ..base import FlowContext, Node, StockSet, result
 from .source import SAFE_CODE_RE

@@ -3,9 +3,9 @@ from typing import ClassVar, Dict, List, Tuple
 from pydantic import Field
 from sqlalchemy.orm import Session
 
+from ....domain.periods import Period, pct_change, period_base, period_days, period_label
 from ...content import CandlestickView, DataField, Dataset, LineView, Source, TableView
-from ...domain.entities import EntityResolver
-from ...domain.periods import Period, pct_change, period_base, period_days, period_label
+from ...entities import EntityResolver
 from ...graph_service import GraphService
 from .base import DataSkill, SkillResult, data_result, empty, not_found
 from .common import DEFAULT_PERIOD, PERIOD_DESCRIPTION, ETFListArgs, missing_notes, period_span
@@ -133,6 +133,8 @@ class PriceTrendSkill(PriceTrendBase):
     )
     Args = PriceTrendArgs
     target = "ETF"
+    subject = "etf"
+    entity_args = {"etfs": "etf"}
 
     def targets(self, args: PriceTrendArgs, db: Session, resolver: EntityResolver):
         return resolver.etfs(db, args.etfs)

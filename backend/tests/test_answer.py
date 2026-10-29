@@ -7,12 +7,10 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel
 
-from app.services.answer import orchestrator as orch
-from app.services.answer import refs
+from app.services.answer import orchestrator as orch, refs
 from app.services.answer.planner import PlannedSlot, build_plan_model, examples_prompt, layout_tree, to_rows
 from app.services.content import DataField, Dataset, LineView
-from app.services.answer.skills import REGISTRY
-from app.services.answer.skills import holdings as holdings_mod
+from app.services.answer.skills import REGISTRY, holdings as holdings_mod
 from app.services.answer.skills.base import Skill, data_result, empty, text_result
 from app.services.answer.skills.etf_profile import percentile
 from app.services.answer.skills.period_returns import period_return
@@ -83,7 +81,7 @@ def test_period_return_needs_data_old_enough():
 
 def test_period_accepts_any_asked_period_and_labels_it():
     from datetime import date
-    from app.services.domain.periods import period_label, period_start
+    from app.domain.periods import period_label, period_start
     Args = REGISTRY["price_trend"].Args
     assert Args(etfs=["가"]).period == "1m"  # 질문에 기간이 없으면 기본값
     assert [Args(etfs=["가"], period=p).period for p in ("2w", "45d", "2M", "ytd")] == ["2w", "45d", "2m", "ytd"]
@@ -237,6 +235,30 @@ def test_stream_sends_layout_first_then_fills_slots(monkeypatch):
     assert events[-1]["data"]["result"] == "completed"  # 일부 영역만 실패하면 완료로 본다
 
 
+class SlowLLMSkill(DataSkillStub):
+    """동시에 몇 개가 돌았는지 센다."""
+    uses_llm = True
+    running = peak = 0
+
+    async def run(self, args, display, ctx):
+        SlowLLMSkill.running += 1
+        SlowLLMSkill.peak = max(SlowLLMSkill.peak, SlowLLMSkill.running)
+        await asyncio.sleep(0.01)
+        SlowLLMSkill.running -= 1
+        async for e in super().run(args, display, ctx):
+            yield e
+
+
+def test_llm_slots_wait_for_a_free_seat(monkeypatch):
+    monkeypatch.setattr(orch, "MAX_LLM_SLOTS", 2)
+    SlowLLMSkill.running = SlowLLMSkill.peak = 0
+    rows = [[_slot(f"s{i}", "llm") for i in range(1, 4)], [_slot("s4", "llm"), _slot("s5", "data")]]
+    events = _collect(_service(monkeypatch, rows, {**REG, "llm": SlowLLMSkill()}))
+    final = {e["data"]["id"]: e["data"]["status"] for e in events if e["type"] == "slot" and e["data"]["status"] != "running"}
+    assert final == {f"s{i}": "complete" for i in range(1, 6)}
+    assert SlowLLMSkill.peak == 2
+
+
 class TitledSkill(DataSkillStub):
     async def run(self, args, display, ctx):
         yield {"type": "title", "title": "삼성전자 2026년 반기보고서 요약"}
@@ -365,7 +387,7 @@ def test_answer_that_asks_back_is_clarifying(monkeypatch):
 # --- 종목 스킬 / 해석기 ---
 
 def test_resolver_strips_characters_that_could_break_the_query():
-    from app.services.domain.entities import _normalize
+    from app.services.entities import _normalize
     assert _normalize("KODEX 미국S&P500(H)") == "kodex미국s&p500(h)"
     assert _normalize("x' OR 1=1 $$ ;\\") == "xor11"
 
@@ -421,7 +443,7 @@ class FakePortfolioResolver:
     STOCKS = {"삼성전자": {"code": "005930", "name": "삼성전자"}}
 
     def etf(self, db, name):
-        from app.services.domain.entities import UnmanagedETF
+        from app.services.entities import UnmanagedETF
         if name in self.UNMANAGED:
             raise UnmanagedETF(self.UNMANAGED[name])
         return self.ETFS.get(name)
@@ -517,7 +539,7 @@ def fake_etf_graph(monkeypatch):
     """resolver가 ETF 이름 후보를 찾을 때 쓰는 그래프. 순자산 큰 순으로 돌려준다."""
     import json
     from app.services import graph_service
-    from app.services.domain import entities as resolver_mod
+    from app.services import entities as resolver_mod
     etfs = [
         {"code": "396500", "name": "TIGER 반도체TOP10", "net_assets": 9_5642_0000_0000},
         {"code": "091160", "name": "KODEX 반도체", "net_assets": 2_0000_0000_0000},
@@ -549,7 +571,7 @@ def fake_etf_graph(monkeypatch):
 
 
 def test_resolver_asks_instead_of_guessing_between_etfs(fake_etf_graph):
-    from app.services.domain.entities import AmbiguousETF, EntityResolver
+    from app.services.entities import AmbiguousETF, EntityResolver
     r = EntityResolver()
     with pytest.raises(AmbiguousETF) as exc:
         r.etf(None, "K반도체TOP2+")
@@ -566,7 +588,7 @@ def test_resolver_asks_instead_of_guessing_between_etfs(fake_etf_graph):
 
 
 def test_resolver_tells_unmanaged_etfs_apart_from_unknown_names(fake_etf_graph):
-    from app.services.domain.entities import EntityResolver, UnmanagedETF
+    from app.services.entities import EntityResolver, UnmanagedETF
     r = EntityResolver()
     for name in ("kodex 레버리지", "122630"):
         with pytest.raises(UnmanagedETF) as exc:
@@ -581,7 +603,7 @@ def test_resolver_tells_unmanaged_etfs_apart_from_unknown_names(fake_etf_graph):
 
 
 def test_data_skill_says_an_etf_is_not_managed(fake_etf_graph):
-    from app.services.domain.entities import EntityResolver
+    from app.services.entities import EntityResolver
     from app.services.answer.skills.base import SkillContext
 
     async def run():
@@ -596,7 +618,7 @@ def test_data_skill_says_an_etf_is_not_managed(fake_etf_graph):
 
 
 def test_data_skill_turns_an_ambiguous_etf_into_a_question(fake_etf_graph):
-    from app.services.domain.entities import EntityResolver
+    from app.services.entities import EntityResolver
     from app.services.answer.skills.base import SkillContext
 
     async def run():
@@ -687,7 +709,7 @@ def test_etf_choice_requires_the_kind_of_condition():
 
 
 def test_lookthrough_asks_about_an_ambiguous_etf_but_takes_an_exact_stock(lookthrough, monkeypatch):
-    from app.services.domain.entities import AmbiguousETF
+    from app.services.entities import AmbiguousETF
     from app.services.answer.skills import portfolio_lookthrough as mod
 
     def ambiguous_etf(self, db, name):
@@ -762,6 +784,45 @@ def test_plan_turns_references_into_dependencies():
 def test_plan_rejects_bad_references(slots, error):
     with pytest.raises(Exception, match=error):
         _plan_steps(*slots)
+
+
+def test_plan_rejects_references_of_the_wrong_kind_and_names_the_bridge():
+    """종목을 받는 인자에 ETF 목록을 넣으면 거절하고, ETF → 종목으로 잇는 스킬을 알려 준다 (eval에서 실제로 나온 계획)."""
+    with pytest.raises(Exception) as e:
+        _plan_steps(RANK, {"skill": "stock_trend", "title": "주가", "display": "line", "args": {"stocks": ["@rank.1"]}})
+    message = str(e.value)
+    assert "'stocks' 인자는 종목을 받는데 '@rank'(stock_holders)은 ETF 목록을 내보냅니다" in message
+    assert "holdings 또는 overlap" in message
+    with pytest.raises(Exception, match="종목에서 ETF로 이으려면 그 사이에 stock_holders"):
+        _plan_steps({"skill": "holdings", "name": "top", "title": "구성", "display": "table", "args": {"etf": "KODEX 200"}},
+                    {"skill": "period_returns", "title": "수익률", "display": "bar", "args": {"etfs": ["@top.1"]}})
+    # 사이에 holdings를 두면 통과한다
+    _plan_steps(RANK, {"skill": "holdings", "name": "top", "title": "구성", "display": "table", "args": {"etf": "@rank.1"}},
+                {"skill": "stock_technical", "title": "차트", "display": "candlestick", "args": {"stock": "@top.1"}})
+
+
+def test_rank_kind_decides_what_it_takes_and_exports():
+    stock_rank = {"skill": "rank", "name": "best", "title": "순위", "display": "bar",
+                  "args": {"kind": "stock", "targets": ["@top.1-30"], "by": "return"}}
+    holdings = {"skill": "holdings", "name": "top", "title": "구성", "display": "table", "args": {"etf": "KODEX 200"}}
+    _plan_steps(holdings, stock_rank, {"skill": "stock_trend", "title": "주가", "display": "line", "args": {"stocks": ["@best.1"]}})
+    with pytest.raises(Exception, match="'targets' 인자는 ETF를 받는데"):
+        _plan_steps(holdings, {**stock_rank, "args": {**stock_rank["args"], "kind": "etf"}},
+                    {"skill": "period_returns", "title": "수익률", "display": "bar", "args": {"etfs": ["@best.1"]}})
+
+
+def test_skill_metadata_is_consistent():
+    """참조를 내보내면 종류가 있고, 참조를 받는 인자는 Args에 있다. 카탈로그는 무엇에 관한 스킬인지로 묶는다."""
+    from app.services.answer.planner import skill_catalog
+    for skill in REGISTRY.values():
+        assert set(skill.entity_args) <= set(skill.Args.model_fields), skill.name
+        if skill.exports and skill.name != "rank":
+            assert skill.exports_kind, skill.name
+    catalog = skill_catalog(REGISTRY)
+    assert catalog.index("### ETF") < catalog.index("- holdings:") < catalog.index("### 개별 종목")
+    assert catalog.index("### 개별 종목") < catalog.index("- company_financials:") < catalog.index("### 공통")
+    assert "내보내는 결과(참조 가능, 종목): 종목 목록, ETF 내 비중 높은 순" in catalog
+    assert len(re.findall(r"^- \w+:", catalog, re.M)) == len(REGISTRY)
 
 
 
@@ -1128,7 +1189,7 @@ def test_replan_must_keep_the_layout_and_the_slots_that_worked():
 
 
 def test_a_stock_name_in_an_etf_slot_is_a_fixable_failure_not_a_question(fake_etf_graph, monkeypatch):
-    from app.services.domain.entities import EntityResolver
+    from app.services.entities import EntityResolver
     from app.services.answer.skills.base import SkillContext
 
     resolver = EntityResolver()
@@ -1484,7 +1545,7 @@ def test_stock_technical_histogram_trend_names_the_side():
 
 
 def test_stock_technical_signals_follow_the_masters_rules():
-    from app.services.domain import indicators as ind, signals as sig
+    from app.domain import indicators as ind, signals as sig
     from app.services.answer.skills.stock_technical import _pad
     # 엘더: 히스토그램 기울기 — 0 아래에서 위로 꺾이면 ▲▲, 0 위에서 아래로 꺾이면 ▼▼
     assert sig.macd_signal([-3, -4, -2]).level == 2
@@ -1510,3 +1571,41 @@ def test_stock_technical_signals_follow_the_masters_rules():
     # 스토캐스틱은 화살표 없이 추세 안의 위치만
     stoch = sig.stoch_signal([10.0], [15.0], (2, "2단계"))
     assert stoch.level is None and stoch.state.startswith("상승 추세 속 눌림")
+
+
+def test_skills_marked_as_tools_reach_the_agent_with_the_slot_summary():
+    """tool을 켠 데이터 스킬만 agent 도구가 되고, 결과는 슬롯과 같은 요약과 주석이다. 인자가 틀리면 모델에게 돌려준다."""
+    from pydantic import BaseModel
+    from pydantic_ai import ModelRetry
+    from app.services.answer import tools
+    from app.services.answer.skills.base import DataSkill, data_result, empty
+
+    class FakeArgs(BaseModel):
+        stock: str
+
+    class Fake(DataSkill):
+        name, description, Args, displays, tool = "fake", "가짜 스킬", FakeArgs, ("table",), True
+
+        def fetch(self, args, display, db, resolver):
+            if args.stock == "없음":
+                return empty("데이터가 없습니다")
+            dataset = Dataset(fields=[DataField(key="v", label="값")], rows=[{"v": 1}])
+            return data_result(dataset, LineView(x="v", y=["v"]), f"{args.stock} 요약", notes=["주석 하나"])
+
+    class Off(Fake):
+        name, tool = "off", False
+
+    sessions = []
+    built = tools.skill_tools({"fake": Fake(), "off": Off(), "narrative": REGISTRY["narrative"]},
+                              lambda: sessions.append(object()) or type("S", (), {"close": lambda self: None})())
+    assert [t.name for t in built] == ["fake"]
+    run = built[0].function
+    assert run(stock="삼성전자") == "삼성전자 요약\n주석: 주석 하나"
+    assert run(stock="없음") == "데이터가 없습니다"
+    assert len(sessions) == 2  # 부를 때마다 세션을 따로 연다 (도구끼리 병렬로 돈다)
+    with pytest.raises(ModelRetry):
+        run(code="005930")
+    assert "참조를 쓸 수 없다" in built[0].description
+    assert {s.name for s in REGISTRY.values() if s.tool} == {
+        "company_financials", "company_disclosures", "stock_technical", "period_returns", "rank", "overlap",
+        "portfolio_lookthrough"}

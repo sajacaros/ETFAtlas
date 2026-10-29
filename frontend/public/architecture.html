@@ -390,7 +390,7 @@
       <svg viewBox="0 0 960 620" role="img" aria-labelledby="skills-map-title skills-map-desc"
            font-family="'Noto Sans KR', sans-serif">
         <title id="skills-map-title">ETF Atlas 챗봇의 스킬과 툴 관계</title>
-        <desc id="skills-map-desc">레이아웃 에이전트가 스킬 18개로 답변 화면을 설계하고, 그중 agent 스킬만 ChatService의 툴 10개를 쓰며 나머지 데이터 스킬은 DB를 직접 읽는다.</desc>
+        <desc id="skills-map-desc">레이아웃 에이전트가 스킬 18개로 답변 화면을 설계하고, agent 스킬은 ChatService의 툴 10개와 tool을 켠 데이터 스킬 7개를 도구로 쓴다. 계산은 스킬과 스크리너가 app/domain을 함께 쓴다.</desc>
         <defs>
           <marker id="sarrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
             <polygon points="0 0, 8 3, 0 6" fill="#b8322a"/>
@@ -487,16 +487,16 @@
         </g>
 
         <!-- 툴 설명 -->
-        <text x="780" y="392" fill="#b8322a" font-size="14" font-weight="700">툴 10개</text>
+        <text x="780" y="392" fill="#b8322a" font-size="14" font-weight="700">툴 10개 + 스킬 7개</text>
         <text x="780" y="414" fill="#2b2523" font-size="12">ChatService</text>
         <text x="780" y="432" fill="#7a706b" font-size="12">pydantic-ai 에이전트</text>
         <text x="780" y="450" fill="#7a706b" font-size="11" font-family="'Fira Code', monospace">chat_service.py</text>
-        <text x="780" y="492" fill="#2b2523" font-size="12" font-weight="700">스킬과 코드 공유 없음</text>
-        <text x="780" y="512" fill="#7a706b" font-size="12">데이터 스킬은 DB를</text>
-        <text x="780" y="530" fill="#7a706b" font-size="12">따로 읽는다</text>
+        <text x="780" y="492" fill="#2b2523" font-size="12" font-weight="700">tool을 켠 데이터 스킬</text>
+        <text x="780" y="512" fill="#7a706b" font-size="12">agent도 도구로 부른다</text>
+        <text x="780" y="530" fill="#7a706b" font-size="11" font-family="'Fira Code', monospace">answer/tools.py</text>
 </svg>
     </figure>
-    <p style="font-size:12.5px;color:var(--muted);margin:-8px 0 18px">스트리밍이 아닌 <code>POST /api/chat/message</code>는 레이아웃을 거치지 않고 ChatService(툴 10개)를 바로 부릅니다.</p>
+    <p style="font-size:12.5px;color:var(--muted);margin:-8px 0 18px">스킬에 <code>tool = True</code>를 켜면 agent도 같은 인자로 부릅니다(슬롯과 같은 요약을 돌려받음). 기간 수익률·실적·차트 신호 같은 계산은 <code>app/domain/</code>에 두고 스킬과 스크리너가 함께 씁니다.</p>
     <div class="table-wrap">
       <table>
         <tr><th>스킬</th><th>하는 일</th><th>표시 방식</th></tr>
@@ -517,7 +517,7 @@
         <tr><td><code>overlap</code> ⇢</td><td>두 ETF의 공통 종목·한쪽에만 있는 종목과 겹치는 비중</td><td>table · bar</td></tr>
         <tr><td><code>etf_choice</code></td><td>대상 ETF가 여럿일 때 후보를 보여 주고 되묻기</td><td>markdown</td></tr>
         <tr><td><code>narrative</code> <span class="llm">LLM</span></td><td>다른 영역이 끝난 뒤 해설</td><td>text</td></tr>
-        <tr><td><code>agent</code> <span class="llm">LLM</span></td><td>스킬로 표현할 수 없는 질문. 도구 10개(검색·정보·유사 ETF·비교·읽기 전용 Cypher)를 가진 tool-calling 에이전트가 마크다운으로 답한다</td><td>markdown</td></tr>
+        <tr><td><code>agent</code> <span class="llm">LLM</span></td><td>스킬로 표현할 수 없는 질문. 도구 10개(검색·정보·유사 ETF·비교·읽기 전용 Cypher)와 tool을 켠 데이터 스킬 7개(실적·공시·차트 분석·기간 수익률·순위·겹침·포트폴리오)를 가진 tool-calling 에이전트가 마크다운으로 답한다</td><td>markdown</td></tr>
       </table>
     </div>
     <p style="font-size:12.5px;color:var(--muted);margin-top:8px">⇢ 순위가 있는 결과를 내보내 다른 슬롯이 <code>@name.순위</code>로 받아 쓸 수 있는 스킬</p>

@@ -6,9 +6,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ....models.portfolio import Holding, Portfolio
-from ...domain.entities import AmbiguousETF, EntityResolver, UnmanagedETF, UnmanagedStock
-from ...domain.graph import node as cypher
-from ...graph_service import GraphService
+from ...entities import AmbiguousETF, EntityResolver, UnmanagedETF, UnmanagedStock
+from ...graph_service import GraphService, node as cypher
 from ..base import FlowContext, Node, StockSet, result
 
 SAFE_CODE_RE = re.compile(r"[0-9A-Z]{6}")  # 쿼리 문자열에 직접 넣으므로 코드 모양만 허용

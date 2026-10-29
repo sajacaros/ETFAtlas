@@ -3,12 +3,12 @@ from typing import Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from ....domain import financials as fin
+from ....domain.format import format_value
+from ....domain.periods import pct_change
 from ....models.dart import StockFinancial
 from ...content import BarView, DataField, Dataset, LineView, Source, TableView
-from ...domain import financials as fin
-from ...domain.entities import EntityResolver
-from ...domain.format import format_value
-from ...domain.periods import pct_change
+from ...entities import EntityResolver
 from .base import DataSkill, SkillResult, data_result, empty, not_found
 
 FS_LABEL = {"CFS": "연결", "OFS": "별도"}
@@ -85,6 +85,9 @@ class CompanyFinancialsSkill(DataSkill):
     )
     Args = CompanyFinancialsArgs
     displays = ("bar", "line", "table")
+    tool = True
+    subject = "stock"
+    entity_args = {"stock": "stock"}
 
     def fetch(self, args: CompanyFinancialsArgs, display: str, db: Session, resolver: EntityResolver) -> SkillResult:
         stock = resolver.stock(db, args.stock)

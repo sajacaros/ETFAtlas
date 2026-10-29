@@ -19,7 +19,7 @@ from sqlalchemy.orm import defer
 
 from ....models.dart import ReportNode, StockReport
 from ...content import Source
-from ...domain.entities import UnmanagedStock
+from ...entities import UnmanagedStock
 from ...llm import NO_THINKING, build_model
 from ...report_tree import SUMMARY_MIN_CHARS, Block, clip, filed_date, render
 from . import report_breakdowns
@@ -345,6 +345,9 @@ class CompanyReportSkill(Skill):
     )
     Args = CompanyReportArgs
     displays = ("markdown",)
+    uses_llm = True
+    subject = "stock"
+    entity_args = {"stock": "stock"}
 
     async def run(self, args: CompanyReportArgs, display: str, ctx: SkillContext):
         prepared = await asyncio.to_thread(prepare_report, args.stock, ctx, args.period)

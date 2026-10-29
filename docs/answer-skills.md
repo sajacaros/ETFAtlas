@@ -76,6 +76,10 @@ class MySkill(DataSkill):
     description = "레이아웃 에이전트가 읽는 설명: 언제 쓰는지, 무엇을 보여주는지"
     Args = MyArgs                     # pydantic 모델 — 필드 description도 에이전트가 읽는다
     displays = ("bar", "table")       # 지원하는 표시 방식, 첫 번째가 기본값
+    subject = "stock"                 # 플래너의 스킬 목록을 묶는 단위: etf | stock | portfolio | any
+    entity_args = {"stock": "stock"}  # 참조를 받는 인자와 그 인자가 받는 종류 (etf | stock)
+    exports_kind = "etf"              # 결과로 내보내는 대상의 종류 (exports가 있을 때)
+    tool = True                       # agent도 도구로 부른다 (기존 도구와 겹치면 끈다)
 
     def fetch(self, args, display, db, resolver) -> SkillResult:
         etf = resolver.etf(db, args.etf)          # 이름 → 코드 (한 답변 안에서 공유, 종목은 resolver.stock)
@@ -87,11 +91,13 @@ class MySkill(DataSkill):
 
 규칙:
 - 숫자는 스킬이 DB에서 만든다. LLM에는 `summary`(단위를 붙인 짧은 텍스트)만 넘어간다.
-- 계산(기간 수익률, 분기 실적, 차트 지표·신호처럼 화면과 상관없이 같은 답이 나와야 하는 것)은 `services/domain/`에 순수 함수로 두고 스킬은 불러 쓴다. 스크리너(`services/flow/`)도 같은 함수를 쓰므로 같은 질문에 같은 숫자가 나온다. `domain/`은 LLM과 화면 형식(`content.py`)을 모른다.
+- 계산(기간 수익률, 분기 실적, 차트 지표·신호처럼 화면과 상관없이 같은 답이 나와야 하는 것)은 `app/domain/`에 순수 함수로 두고 스킬은 불러 쓴다 (포트폴리오 합산 `composition.py`와 같은 자리). 스크리너(`services/flow/`)도 같은 함수를 쓰므로 같은 질문에 같은 숫자가 나온다. `app/domain/`은 DB·LLM·화면 형식(`services/content.py`)을 모른다 — DB가 필요한 이름 해석은 `services/entities.py`에 있다.
 - 표시 규칙(여러 ETF는 누적 수익률로, 도넛은 8조각까지 등)과 요약 문구는 스킬 안에서 처리한다.
 - 스트리밍이 필요하거나 DB가 아닌 곳을 쓰는 스킬은 `Skill.run()`을 직접 구현해 `delta` / `result` 이벤트를 낸다 (`narrative.py`, `agent.py` 참고).
 - 실행해 봐야 아는 것은 스킬이 화면에 반영한다: `title` 이벤트로 영역 제목을 바꾸고, `split` 이벤트(`parts: [{id, title, display}]`)로 영역을 차트와 설명 등으로 나눈다. 나눈 뒤의 `delta`·`result`에는 `part`를 붙이고 영역마다 `result`를 한 번 낸다. 오케스트레이터는 계획(플래너가 보는 슬롯)은 그대로 두고 화면 레이아웃·저장(`chat_slots`의 `s5-1` …)·해설에 넘기는 요약만 나눈 영역으로 펼친다. 원래 슬롯 행에는 합친 결과가 남아 다시 설계·해설 대기 판단에 쓰인다 (`company_report.py` 참고).
 - 다른 슬롯의 결과가 필요하면 `after_others = True` — `ctx.related`로 앞 슬롯들의 (제목, 요약)을 받는다.
+- 실행 중 LLM을 부르면 `uses_llm = True` — 한 답변 안에서 이런 슬롯은 `MAX_LLM_SLOTS`(3)개까지만 동시에 돌고 나머지는 자리가 나면 돈다.
+- `tool = True`인 `DataSkill`은 agent의 도구도 된다 (`answer/tools.py`, [chatbot_tools.md](chatbot_tools.md#스킬-도구-answertoolspy)). 도구 결과는 슬롯의 `summary`와 주석이라 둘이 같은 숫자를 읽는다.
 - 결과에 순위가 있는 ETF·종목 목록이 있으면 `exports`(무엇을 내보내는지 설명)를 적고 `data_result(..., exports=[{code, name}, ...])`로 순위 순으로 담는다. 그러면 다른 슬롯이 참조할 수 있다.
 
 ## 등록된 스킬
@@ -129,6 +135,7 @@ class MySkill(DataSkill):
 - 오케스트레이터는 참조한 슬롯이 끝난 뒤, 참조를 그 슬롯이 내보낸 대상의 코드로 바꿔 실행한다 (`refs.py`). 무엇을 받았는지는 영역의 notes에 남긴다 ("'삼성전자 비중 상위 ETF' 1위: WON 200(448100)").
 - 참조한 슬롯이 결과를 못 냈거나 되묻는 중이면, 참조하는 슬롯은 돌지 않고 그 이유를 표시한다.
 - 없는 이름, 결과를 내보내지 않는 스킬, 순환 참조, 받는 슬롯이 없는 name은 플래너 출력 검증에서 거부되어 플래너가 다시 쓴다.
+- 종류가 다른 참조도 거부한다: 스킬마다 `entity_args`(받는 인자 → `etf`|`stock`)와 `exports_kind`(내보내는 종류, `rank`는 `kind` 인자에 따라)를 선언하고, ETF 목록을 종목 인자에 넣으면(예: `stock_holders` → `stock_trend`) 오류 문구에 그 사이를 잇는 스킬을 레지스트리에서 찾아 넣는다 (`planner.bridges`: ETF→종목은 `holdings`·`overlap`, 종목→ETF는 `stock_holders`). 카탈로그에도 내보내는 종류와 받는 인자가 표시된다.
 - 데이터를 봐야 아는 오류는 출력 검증기(`planner.data_errors`)가 막는다: 되묻기(`etf_choice`)의 테마가 사실 상장 ETF의 정확한 이름이면 거부한다. 플래너가 DB를 보는 함수(예시 검색, ETF 이름 확인)는 `data_lookups(session_factory)`로 넘긴다.
 - 범위 참조는 펼친 뒤의 모양으로도 검증한다 (`refs.expanded`): 최대 5개인 목록에 `@rank.1-10`을 넣거나 값 하나만 받는 인자에 범위를 넣으면 거부되고, 오류 문구에 그 질문에 맞는 분할을 계산해 넣는다 (`refs.split_hint`: 이름으로 적은 ETF가 자리를 차지하면 `KODEX 200` + `@rank.1-4`, `@rank.5-8`, `@rank.9-10`). 참조 오류는 모두 모아 한 번에 돌려준다 (재시도 2회 안에 다 고치게) 같은 스킬 슬롯들이 범위 참조로 나눠 담은 순위에 빈 곳이 있어도(`@rank.1-4` + `@rank.6-10`) 거부한다 (`refs.rank_gaps`, '1위와 3위'처럼 한 순위씩 고른 건 허용). 앞 슬롯의 결과가 범위보다 적으면 실행 때 있는 만큼만 쓴다.
 - 내보내는 스킬: `stock_holders`(ETF, 그 종목 비중 순 — 여러 종목이면 비중 합계 순), `holdings`(종목, ETF 내 비중 순), `portfolio_lookthrough`(종목, 합산 비중 순).
@@ -199,7 +206,7 @@ DART 회사명이 그래프 이름(KIS 약칭)과 달라도 종목코드가 그�
 - 종목코드가 없는 회사는 "상장 종목이 아니어서", 여러 종목을 받는 스킬은 주석에 "(수집하는 ETF에 담기지 않은 종목)"을 붙인다.
 - 직접 담은 종목을 그대로 더하는 `portfolio_lookthrough`와 분석 흐름의 종목 입력은 그래프 밖 상장사도 종목코드로 쓴다.
 - 데이터 영역이 모두 같은 안내로 비면 해설 슬롯은 LLM을 부르지 않고 그 안내를 그대로 받고(`orchestrator.shared_notice`), 프런트는 영역마다 되풀이하지 않고 안내 한 줄만 보여 준다(`AnswerView`의 `sharedNotice`). 관리하지 않는 ETF에도 같다.
-- 유니버스 조건 문구는 `services/domain/universe.py` 한 곳에 있다. 수집 조건(`airflow/dags/age_utils.py`)을 바꾸면 같이 바꾼다.
+- 유니버스 조건 문구는 `app/domain/universe.py` 한 곳에 있다. 수집 조건(`airflow/dags/age_utils.py`)을 바꾸면 같이 바꾼다.
 
 ## 대상을 정하지 못할 때: 되묻기
 

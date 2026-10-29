@@ -6,9 +6,8 @@ from sqlalchemy.orm import Session
 
 from ....domain.composition import ETFAllocation, aggregate_composition
 from ...content import BarView, DataField, Dataset, DonutView, Source, TableView, TreemapView
-from ...domain.entities import AmbiguousETF, EntityResolver, UnmanagedETF, UnmanagedStock, _normalize
-from ...domain.graph import node
-from ...graph_service import GraphService
+from ...entities import AmbiguousETF, EntityResolver, UnmanagedETF, UnmanagedStock, _normalize
+from ...graph_service import GraphService, node
 from .base import DataSkill, SkillResult, data_result, empty, not_found
 from .common import cut_note, min_weight_field
 
@@ -92,6 +91,9 @@ class PortfolioLookthroughSkill(DataSkill):
     Args = PortfolioLookthroughArgs
     displays = ("treemap", "bar", "donut", "table")
     exports = "종목 목록, 포트폴리오 합산 비중 높은 순 (구성 미확인 ETF·기타 제외)"
+    tool = True
+    subject = "portfolio"
+    exports_kind = "stock"
 
     def fetch(self, args: PortfolioLookthroughArgs, display: str, db: Session, resolver: EntityResolver) -> SkillResult:
         # 같은 자산이 두 번 나오면 비중을 더한다

@@ -5,7 +5,7 @@
 > 범위: 답변 화면의 `agent` 스킬 안에서 도는 tool-calling 에이전트(`ChatService`)와 그 도구.
 > 챗봇 전체 흐름은 웹 화면의 Architecture 페이지(`frontend/public/architecture.html`), 레이아웃·스킬 구현은 [answer-skills.md](answer-skills.md)를 본다.
 
-`ChatService`는 **pydantic-ai** tool-calling 에이전트이며, 총 **10개의 커스텀 도구**를 가진다.
+`ChatService`는 **pydantic-ai** tool-calling 에이전트이며, **10개의 커스텀 도구**와 **답변 화면의 데이터 스킬 중 `tool = True`인 7개**(아래 '스킬 도구')를 가진다.
 레이아웃 설계가 스킬로 표현할 수 없는 질문(태그·운용사별 목록, 유사 ETF, 비중 변화, 복잡한 그래프 조건 등)이나 설계에 실패한 질문을 `agent` 슬롯으로 넘기면 이 에이전트가 마크다운으로 답한다.
 모든 도구는 `backend/app/services/chat_service.py`에 정의되어 있습니다.
 
@@ -340,6 +340,27 @@ RETURN {etf_code: e.code, etf_name: e.name, weight_samsung: h1.weight, weight_te
 
 ---
 
+## 스킬 도구 (`answer/tools.py`)
+
+답변 화면의 데이터 스킬 중 `tool = True`인 것은 agent도 같은 인자 스키마(스킬의 `Args`)로 부른다. 스킬을 하나 만들고 `tool`을 켜면 플래너와 agent 양쪽에서 쓰인다 — 같은 기능을 도구로 따로 만들지 않는다.
+
+| 도구(스킬) | 하는 일 |
+|---|---|
+| `company_financials` | DART 분기·연간 실적, 영업이익률, 부채비율 |
+| `company_disclosures` | 최근 DART 공시 목록 |
+| `stock_technical` | 차트 분석: 이동평균·볼린저·MACD·RSI·스토캐스틱과 대가들의 규칙으로 본 신호 |
+| `period_returns` | ETF 기간별 수익률 (1일~1년) |
+| `rank` | ETF·종목 후보를 수익률·순자산·총보수·분배율로 정렬·필터 |
+| `overlap` | 두 ETF의 공통 종목과 겹치는 비중 |
+| `portfolio_lookthrough` | ETF·종목 포트폴리오의 종목별 합산 비중 |
+
+- 결과는 슬롯과 같은 요약(`summary`)과 주석이다. 화면 슬롯과 agent 답이 같은 숫자를 읽는다.
+- 인자가 스키마에 맞지 않으면 오류를 모델에게 돌려줘 다시 부르게 한다(`ModelRetry`). 슬롯의 `'@이름.순위'` 참조는 도구에서 쓸 수 없다 — 이름이나 코드를 적는다.
+- 부를 때마다 DB 세션을 따로 열어 스킬 도구끼리는 병렬로 돈다. 공유 세션을 쓰는 기존 도구 10개는 `sequential=True`라 순차로 돈다(pydantic-ai에서 장벽).
+- 기존 도구와 하는 일이 겹치는 스킬(`price_trend`·`get_etf_prices`, `stock_trend`·`get_stock_prices`, `etf_compare`·`compare_etfs` 등)은 켜지 않았다. 해결 절차 예시(`code_examples`)가 기존 도구 이름을 쓰고 있어, 기존 도구를 지우려면 예시를 먼저 옮겨야 한다.
+
+---
+
 ## 도구 요약표
 
 | # | 도구명 | 용도 | 입력 | 데이터 소스 |
@@ -364,14 +385,11 @@ RETURN {etf_code: e.code, etf_name: e.name, weight_samsung: h1.weight, weight_te
 ### 실행 흐름
 
 질문 재작성과 대화 기억은 답변 화면 오케스트레이터(`AnswerService`)가 먼저 처리하고, `agent` 스킬은 재작성된 질문을 넘긴다 (`refine=False`).
-`POST /api/chat/message`(스트리밍 없는 API)는 `ChatService`를 직접 부르며, 이때는 아래의 재작성도 여기서 한다.
 
 ```
-agent 스킬 (또는 POST /api/chat/message)
+agent 스킬
     ↓
 ChatMemory.load_context()   ← 세션 요약(오래된 턴) + 최근 5턴 원문
-    ↓
-ChatMemory.refine()         ← /message 경로에서만. 대명사·생략을 맥락으로 풀어 독립 질문으로
     ↓
 ChatService._build_prompt() ← 유사 해결 절차 예시(재작성 질문으로 검색) + 대화 맥락 + 재작성 질문
     ↓

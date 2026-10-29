@@ -24,6 +24,7 @@ class NarrativeSkill(Skill):
     description = "다른 슬롯들의 데이터를 바탕으로 쓰는 해설·요약 텍스트. 데이터 슬롯이 있을 때 마지막에 하나"
     Args = NarrativeArgs
     displays = ("text",)
+    uses_llm = True
     after_others = True
 
     async def run(self, args: NarrativeArgs, display: str, ctx: SkillContext):

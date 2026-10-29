@@ -18,12 +18,12 @@ from sqlalchemy.orm import Session
 from ..ai_config import AIConfig
 from ..chat_memory import ConversationContext
 from ..content import slot_type
-from ..domain.entities import is_etf_name
 from ..embedding_service import EmbeddingService
+from ..entities import is_etf_name
 from ..llm import NO_THINKING, build_model
-from .refs import RefError, expanded, rank_gaps, refs_in, split_hint
+from .refs import REF_RE, RefError, expanded, rank_gaps, refs_in, split_hint
 from .skills import FALLBACK_SKILL, REGISTRY
-from .skills.base import Skill
+from .skills.base import KIND_LABEL, Skill
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ MAX_SLOTS = 8
 
 # 규칙은 스킬·종목 이름에 기대지 않고 원리만 적는다. 질문 유형별 구체적인 설계는 레이아웃 예시(layout_examples)가 맡는다 —
 # 여기에 특정 사례를 넣으면 모든 질문이 그 사례 쪽으로 끌려간다. 스킬별 용도는 스킬 설명(skill_catalog)에 있다.
-PLANNER_PROMPT = f"""당신은 ETF Atlas 챗봇의 화면 설계 담당입니다. 한국 ETF에 관한 사용자의 질문에 답할 화면을 영역(슬롯)으로 나눕니다.
+PLANNER_PROMPT = f"""당신은 ETF Atlas 챗봇의 화면 설계 담당입니다. 한국 ETF와 그 ETF들이 담은 개별 종목(기업)에 관한 사용자의 질문에 답할 화면을 영역(슬롯)으로 나눕니다.
 각 슬롯은 아래 '스킬' 중 하나가 채웁니다. 데이터는 스킬이 DB에서 직접 가져오므로 숫자를 직접 쓰지 마세요.
 
 규칙:
@@ -54,6 +54,7 @@ PLANNER_PROMPT = f"""당신은 ETF Atlas 챗봇의 화면 설계 담당입니다
 8. 한 슬롯의 결과(순위가 있는 ETF·종목 목록)를 다른 슬롯의 대상으로 써야 하면, 결과를 내보내는 슬롯에 name(짧은 영문)을 붙이고
    다른 슬롯의 인자에 '@name.1'(1위), '@name.1-3'(1~3위, 목록 인자에서만)을 적으세요.
    아직 모르는 대상을 설명 문구('…1위 ETF')로 적지 마세요. 스킬 목록에 '내보내는 결과'가 있는 스킬만 참조할 수 있습니다.
+   참조한 결과의 종류(ETF·종목)는 받는 인자의 종류('참조로 받는 인자')와 같아야 합니다.
 9. '참고 화면 설계 예시'가 주어지면, 질문 유형이 같을 때 그 슬롯 구성(스킬·인자 모양·name·참조)과 설명을 따르세요.
    꺾쇠로 감싼 자리표시자(<…>)만 현재 질문의 값으로 바꾸고, 개수·기간 같은 값은 현재 질문에 맞추세요
    (질문에 기간이 없으면 예시의 기간을 옮기지 말고 인자 설명의 기본값을 쓰세요).
@@ -69,7 +70,7 @@ EXAMPLE_SELECTOR = True
 EXAMPLE_CANDIDATES = 8
 EXAMPLE_CANDIDATE_MAX_DISTANCE = 0.45
 
-SELECTOR_PROMPT = """한국 ETF 챗봇의 화면 설계 예시 중에서, 사용자 질문과 같은 유형의 예시를 고릅니다.
+SELECTOR_PROMPT = """한국 ETF·종목 분석 챗봇의 화면 설계 예시 중에서, 사용자 질문과 같은 유형의 예시를 고릅니다.
 유형이 같다는 것은 같은 스킬 조합과 같은 방식(순위 결과를 넘기는 참조, 슬롯 나누기, 되묻기 등)으로 화면을 짜야 한다는 뜻입니다.
 종목·ETF 이름이나 숫자(상위 몇 개, 기간)가 달라도 유형은 같을 수 있고, 단어가 비슷해도 화면 구성이 다르면 다른 유형입니다.
 같은 유형이 없으면 빈 목록을 내세요. 최대 {top_k}개, 가장 잘 맞는 것부터."""
@@ -158,6 +159,7 @@ def build_plan_model(registry: Dict[str, Skill]) -> type[BaseModel]:
             error = _expanded_error(step, steps, registry[step.skill].Args)
             if error:
                 errors.append(error)
+            errors += _kind_errors(step, named, registry)
             graph[id(step)] = [id(named[r]) for r in ok]
         # name은 결과를 넘기려고 붙인다 — 받는 슬롯이 없으면 그 슬롯을 빠뜨린 것이다
         referenced = {r for step in steps for r in refs_in(step.args.model_dump())}
@@ -205,6 +207,36 @@ def _expanded_error(step: BaseModel, steps: List[BaseModel], args_model: type[Ba
             hint = split_hint(siblings, err["ctx"]["max_length"])
         return f"{_label(step)}의 참조를 펼치면 '{field}' 인자가 맞지 않습니다: {err['msg']}. {hint}"
     return None
+
+
+KIND_OBJECT = {"etf": "ETF를", "stock": "종목을"}
+KIND_TO = {"etf": "ETF로", "stock": "종목으로"}
+
+
+def bridges(registry: Dict[str, Skill], source: str, target: str) -> List[str]:
+    """source 종류를 받아 target 종류를 내보내는 스킬 (예: ETF → 종목은 holdings)."""
+    return [s.name for s in registry.values() if s.exports_kind == target and source in s.entity_args.values()]
+
+
+def _kind_errors(step: BaseModel, named: Dict[str, BaseModel], registry: Dict[str, Skill]) -> List[str]:
+    """참조한 결과의 종류(ETF·종목)가 그 인자가 받는 종류와 다르면 (예: ETF 목록을 종목 차트 분석에 넣는다)."""
+    errors = []
+    dumped = step.args.model_dump()
+    for field, need in registry[step.skill].arg_kinds(dumped).items():
+        for value in _strings(dumped.get(field)):
+            m = REF_RE.match(value.strip())
+            target = named.get(m.group(1)) if m else None
+            if target is None or not registry[target.skill].exports:  # 없는 이름·내보내지 않는 스킬은 따로 알린다
+                continue
+            got = registry[target.skill].export_kind(target.args.model_dump())
+            if got is None or got == need:
+                continue
+            via = bridges(registry, got, need)
+            hint = (f" {KIND_LABEL[got]}에서 {KIND_TO[need]} 이으려면 그 사이에 {' 또는 '.join(via)} 슬롯을 두고 "
+                    "그 결과를 참조하세요") if via else ""
+            errors.append(f"{_label(step)}의 '{field}' 인자는 {KIND_OBJECT[need]} 받는데 '@{m.group(1)}'({target.skill})은 "
+                          f"{KIND_LABEL[got]} 목록을 내보냅니다.{hint}")
+    return errors
 
 
 def _gap_errors(steps: List[BaseModel]) -> List[str]:
@@ -256,15 +288,26 @@ def _has_cycle(graph: Dict[int, List[int]]) -> bool:
     return any(visit(node) for node in graph)
 
 
+SUBJECT_TITLE = {"etf": "ETF", "stock": "개별 종목(기업)", "portfolio": "포트폴리오", "any": "공통"}
+
+
 def skill_catalog(registry: Dict[str, Skill]) -> str:
     lines = ["## 스킬"]
-    for s in registry.values():
-        args = {k: v.get("description", v.get("type", "")) for k, v in s.Args.model_json_schema()["properties"].items()}
-        lines.append(
-            f"- {s.name}: {s.description}\n"
-            f"  display: {', '.join(s.displays)} / args: {json.dumps(args, ensure_ascii=False)}"
-            + (f"\n  내보내는 결과(참조 가능): {s.exports}" if s.exports else "")
-        )
+    for subject, title in SUBJECT_TITLE.items():
+        skills = [s for s in registry.values() if s.subject == subject]
+        if not skills:
+            continue
+        lines.append(f"### {title}")
+        for s in skills:
+            args = {k: v.get("description", v.get("type", "")) for k, v in s.Args.model_json_schema()["properties"].items()}
+            kind = f", {KIND_LABEL[s.exports_kind]}" if s.exports_kind else ""
+            takes = ", ".join(f"{k}={KIND_LABEL[v]}" for k, v in s.entity_args.items())
+            lines.append(
+                f"- {s.name}: {s.description}\n"
+                f"  display: {', '.join(s.displays)} / args: {json.dumps(args, ensure_ascii=False)}"
+                + (f"\n  내보내는 결과(참조 가능{kind}): {s.exports}" if s.exports else "")
+                + (f"\n  참조로 받는 인자: {takes}" if takes else "")
+            )
     return "\n".join(lines)
 
 

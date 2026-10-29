@@ -1,8 +1,6 @@
 """DART 주요계정으로 계산하는 실적: 연결·별도 선택, 분기 금액, 부채비율."""
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
-
-from ...models.dart import StockFinancial
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 Q1, H1, Q3, ANNUAL = "11013", "11012", "11014", "11011"
 REPORT_ORDER = {Q1: 1, H1: 2, Q3: 3, ANNUAL: 4}
@@ -12,8 +10,9 @@ INCOME = (("revenue", "매출액"), ("operating_income", "영업이익"), ("net_
 Amounts = Dict[Tuple[int, str, str], Tuple[Optional[int], Optional[int]]]  # (연도, 보고서, 계정) → (금액, 누적)
 
 
-def pick_fs(rows: List[StockFinancial]) -> Tuple[str, Amounts]:
-    """연결(CFS)이 하나라도 있으면 연결, 없으면 별도(OFS). 섞어 쓰지 않는다."""
+def pick_fs(rows: Iterable[Any]) -> Tuple[str, Amounts]:
+    """연결(CFS)이 하나라도 있으면 연결, 없으면 별도(OFS). 섞어 쓰지 않는다. rows: stock_financials 행."""
+    rows = list(rows)
     fs_div = "CFS" if any(r.fs_div == "CFS" for r in rows) else "OFS"
     return fs_div, {(r.bsns_year, r.reprt_code, r.account): (r.amount, r.amount_cum) for r in rows if r.fs_div == fs_div}
 

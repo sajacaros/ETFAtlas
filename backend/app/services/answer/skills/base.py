@@ -13,19 +13,23 @@ run()이 내는 이벤트 (dict):
 """
 import asyncio
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Callable, ClassVar, Dict, List, Optional, Tuple, Type
+from typing import Any, AsyncIterator, Callable, ClassVar, Dict, List, Literal, Optional, Tuple, Type
 
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
+from ....domain.format import format_value
+from ....domain.universe import STOCK_SCOPE
 from ...ai_config import AIConfig
 from ...chat_memory import ConversationContext
 from ...content import DataContent, Dataset, Source, TextContent
-from ...domain.entities import CANDIDATE_LIMIT, AmbiguousETF, EntityResolver, UnmanagedETF, UnmanagedStock, _normalize
-from ...domain.format import format_value
-from ...domain.universe import STOCK_SCOPE
+from ...entities import CANDIDATE_LIMIT, AmbiguousETF, EntityResolver, UnmanagedETF, UnmanagedStock, _normalize
 
 CHOICES_SHOWN = 10  # 되물을 때 보여주는 후보 수
+
+EntityKind = Literal["etf", "stock"]
+Subject = Literal["etf", "stock", "portfolio", "any"]
+KIND_LABEL = {"etf": "ETF", "stock": "종목"}
 
 
 @dataclass
@@ -143,6 +147,23 @@ class Skill:
     # 결과로 내보내는 대상 목록의 설명 (예: "ETF 목록, 그 종목 비중 높은 순"). 비어 있으면 참조할 수 없는 스킬이다.
     # 내보내는 쪽은 결과의 exports에 {code, name}을 순위 순으로 담는다
     exports: ClassVar[str] = ""
+    # 무엇에 관한 스킬인지 — 플래너의 스킬 목록을 이 단위로 묶는다
+    subject: ClassVar[Subject] = "any"
+    # 내보내는 대상의 종류. 인자에 따라 달라지면 export_kind()를 고친다
+    exports_kind: ClassVar[Optional[EntityKind]] = None
+    # 참조('@이름.순위')를 받는 인자 → 그 인자가 받는 대상의 종류. 종류가 다른 참조는 플래너가 설계 단계에서 거절한다
+    entity_args: ClassVar[Dict[str, EntityKind]] = {}
+    # True면 agent(ChatService)도 이 스킬을 도구로 부른다 (answer/tools.py). DataSkill만 켤 수 있다.
+    # 기존 도구와 겹치는 스킬은 끈다 — 같은 일을 하는 도구가 둘이면 agent가 헷갈린다
+    tool: ClassVar[bool] = False
+    # 실행 중 LLM을 부르는지. 오케스트레이터가 한 답변 안에서 이런 슬롯이 동시에 도는 수를 제한한다 (MAX_LLM_SLOTS)
+    uses_llm: ClassVar[bool] = False
+
+    def export_kind(self, args: Dict[str, Any]) -> Optional[EntityKind]:
+        return self.exports_kind
+
+    def arg_kinds(self, args: Dict[str, Any]) -> Dict[str, EntityKind]:
+        return self.entity_args
 
     async def run(self, args: BaseModel, display: str, ctx: SkillContext) -> AsyncIterator[Dict[str, Any]]:
         raise NotImplementedError
@@ -155,21 +176,23 @@ class DataSkill(Skill):
     def fetch(self, args: BaseModel, display: str, db: Session, resolver: EntityResolver) -> SkillResult:
         raise NotImplementedError
 
-    async def run(self, args: BaseModel, display: str, ctx: SkillContext) -> AsyncIterator[Dict[str, Any]]:
-        def work() -> SkillResult:
-            db = ctx.session_factory()
-            try:
-                return self.fetch(args, display, db, ctx.resolver)
-            except AmbiguousETF as e:  # 어느 스킬이든 ETF 이름이 애매하면 고르지 않고 되묻는다
-                if _is_stock_name(db, ctx.resolver, e.name):  # 종목 이름을 ETF 자리에 넣은 것 — 설계를 고칠 일이다
-                    return not_found(f"'{e.name}'은(는) ETF가 아니라 개별 종목입니다")
-                return ambiguous_etf_result(e)
-            except UnmanagedETF as e:  # 상장 ETF지만 관리 대상이 아니면 '찾지 못했다'가 아니라 그렇다고 알린다
-                return unmanaged_etf_result(e)
-            except UnmanagedStock as e:  # 그래프 밖의 회사면 무엇을 분석하는지와 함께 왜 안 되는지 알린다
-                return unmanaged_stock_result(e)
-            finally:
-                db.close()
+    def execute(self, args: BaseModel, display: str, session_factory: Callable[[], Session],
+                resolver: EntityResolver) -> SkillResult:
+        """전용 세션을 열어 fetch()를 부르고, 대상 이름 문제는 안내 결과로 바꾼다. 슬롯과 agent 도구가 함께 쓴다."""
+        db = session_factory()
+        try:
+            return self.fetch(args, display, db, resolver)
+        except AmbiguousETF as e:  # 어느 스킬이든 ETF 이름이 애매하면 고르지 않고 되묻는다
+            if _is_stock_name(db, resolver, e.name):  # 종목 이름을 ETF 자리에 넣은 것 — 설계를 고칠 일이다
+                return not_found(f"'{e.name}'은(는) ETF가 아니라 개별 종목입니다")
+            return ambiguous_etf_result(e)
+        except UnmanagedETF as e:  # 상장 ETF지만 관리 대상이 아니면 '찾지 못했다'가 아니라 그렇다고 알린다
+            return unmanaged_etf_result(e)
+        except UnmanagedStock as e:  # 그래프 밖의 회사면 무엇을 분석하는지와 함께 왜 안 되는지 알린다
+            return unmanaged_stock_result(e)
+        finally:
+            db.close()
 
-        result = await asyncio.to_thread(work)
+    async def run(self, args: BaseModel, display: str, ctx: SkillContext) -> AsyncIterator[Dict[str, Any]]:
+        result = await asyncio.to_thread(self.execute, args, display, ctx.session_factory, ctx.resolver)
         yield result.event()

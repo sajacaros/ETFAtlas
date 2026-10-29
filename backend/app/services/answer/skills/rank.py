@@ -1,16 +1,15 @@
 import re
-from typing import Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
+from ....domain.format import format_value
+from ....domain.periods import Period, pct_change, period_base, period_days, period_label
 from ...content import BarView, DataField, Dataset, Source, TableView
-from ...domain.entities import EntityResolver
-from ...domain.format import format_value
-from ...domain.graph import node
-from ...domain.periods import Period, pct_change, period_base, period_days, period_label
-from ...graph_service import GraphService
-from .base import DataSkill, SkillResult, data_result, empty, not_found
+from ...entities import EntityResolver
+from ...graph_service import GraphService, node
+from .base import DataSkill, EntityKind, SkillResult, data_result, empty, not_found
 from .common import DEFAULT_PERIOD, PERIOD_DESCRIPTION, period_span
 from .etf_choice import _theme_etfs, _theme_word
 from .stock_holders import SAFE_CODE_RE
@@ -83,7 +82,14 @@ class RankSkill(DataSkill):
     )
     Args = RankArgs
     displays = ("bar", "table")
-    exports = "ETF 또는 종목 목록, 정렬 기준 순 (필터를 통과한 것만)"
+    exports = "ETF 또는 종목 목록(kind에 따라), 정렬 기준 순 (필터를 통과한 것만)"
+    tool = True
+
+    def export_kind(self, args: Dict[str, Any]) -> Optional[EntityKind]:
+        return args.get("kind")
+
+    def arg_kinds(self, args: Dict[str, Any]) -> Dict[str, EntityKind]:
+        return {"targets": args["kind"]} if args.get("kind") else {}
 
     def fetch(self, args: RankArgs, display: str, db: Session, resolver: EntityResolver) -> SkillResult:
         graph = GraphService(db)

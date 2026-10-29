@@ -25,7 +25,7 @@ from ...models.chat import ChatLogResult, ChatSlot
 from ...utils.time import utcnow
 from ..ai_config import load_ai_config
 from ..chat_memory import ChatMemory, ConversationContext
-from ..domain.entities import EntityResolver
+from ..entities import EntityResolver
 from . import refs
 from .planner import PlannedSlot, Planner, data_lookups, layout_tree
 from .skills import REGISTRY
@@ -34,7 +34,20 @@ from .skills.base import Skill, SkillContext
 logger = logging.getLogger(__name__)
 
 FALLBACK_ANSWER = "죄송합니다. 답변 생성에 실패했습니다. 다시 질문해 주세요."
+# 한 답변 안에서 LLM을 부르는 슬롯(보고서 읽기·해설·agent 등)이 동시에 도는 최대 수. 나머지는 자리가 나면 돈다
+MAX_LLM_SLOTS = 3
 STOPPED_ANSWER = "요청하신 대로 중지했습니다."
+
+
+async def _gated(events: AsyncIterator[Dict[str, Any]], gate: Optional[asyncio.Semaphore]) -> AsyncIterator[Dict[str, Any]]:
+    """LLM을 쓰는 스킬은 자리가 날 때까지 기다렸다가 돈다 (자리를 잡은 채 이벤트를 흘려보낸다)."""
+    if gate is None:
+        async for event in events:
+            yield event
+        return
+    async with gate:
+        async for event in events:
+            yield event
 
 
 def _event(kind: str, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -278,6 +291,7 @@ class AnswerService:
         done = object()
         resolver = EntityResolver()
         finished = {s.id: asyncio.Event() for s in slots}
+        llm_slots = asyncio.Semaphore(MAX_LLM_SLOTS)
         by_id = {s.id: s for s in all_slots}
         names = {s.name: s.id for s in all_slots if s.name}
 
@@ -347,10 +361,11 @@ class AnswerService:
                     resolver=resolver, ai_config=self._config, stop=stop, related=related,
                 )
                 await queue.put(_slot_event(slot.id, "running"))
+                skill = self._registry[slot.skill]
                 result: Dict[str, Any] = {"status": "failed", "message": "결과가 없습니다"}
                 parts: Dict[str, PlannedSlot] = {}  # 스킬이 나눈 영역: part id → 하위 슬롯
                 try:
-                    async for event in self._registry[slot.skill].run(args, slot.display, ctx):
+                    async for event in _gated(skill.run(args, slot.display, ctx), llm_slots if skill.uses_llm else None):
                         kind = event["type"]
                         part = parts.get(event.get("part", ""))
                         if kind == "split":

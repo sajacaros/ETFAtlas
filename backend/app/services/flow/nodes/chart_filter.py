@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from ...domain import indicators as ind
+from ....domain import indicators as ind
 from ..base import FlowContext, Node, StockSet, result
 
 MIN_BARS = 60  # 이보다 짧으면 지표를 믿기 어렵다 (60일 이평·VCP)

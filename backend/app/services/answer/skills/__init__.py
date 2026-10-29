@@ -19,6 +19,7 @@ from .portfolio_lookthrough import PortfolioLookthroughSkill
 from .price_trend import PriceTrendSkill
 from .rank import RankSkill
 from .stock_holders import StockHoldersSkill
+from .stock_opinion import StockOpinionSkill
 from .stock_technical import StockTechnicalSkill
 from .stock_trend import StockTrendSkill
 
@@ -39,6 +40,7 @@ REGISTRY: Dict[str, Skill] = {
         CompanyDisclosuresSkill(),
         CompanyReportSkill(),
         CompanyRevenueMixSkill(),
+        StockOpinionSkill(),
         RankSkill(),
         OverlapSkill(),
         ETFChoiceSkill(),

@@ -758,3 +758,49 @@ def test_company_valuation_reads_shares_from_the_stock_node(monkeypatch):
     row = result.content["dataset"]["rows"][0]
     assert (row["market_cap"], row["per_annual"], row["pbr"], row["kis_per"]) == (1000.0, None, 2.0, 30.5)
     assert "적자" in result.summary and "KIS 제공 PER 30.5 (2026-10-28 종가 기준)" in result.summary
+
+
+# --- 매수 의견 (stock_opinion) ---
+
+def test_opinion_verdict_follows_the_rule_not_the_llm():
+    from app.domain.opinion import AVOID, BUY, UNDECIDED, WAIT, combine
+    assert combine({"차트": "긍정", "재무": "다소 긍정", "보고서": "중립"}).label == BUY
+    assert combine({"차트": "다소 긍정", "재무": "중립", "보고서": "다소 부정"}).label == WAIT
+    assert combine({"차트": "부정", "재무": "다소 부정", "보고서": "중립"}).label == AVOID
+    # 평균이 높아도 '부정'인 관점이 있으면 사지 않는다
+    verdict = combine({"차트": "긍정", "재무": "긍정", "보고서": "부정"})
+    assert verdict.label == WAIT and "보고서" in verdict.reason
+    # 판정할 수 있는 관점이 하나뿐이면 종합하지 않는다
+    assert combine({"차트": "긍정", "재무": "판단 불가", "보고서": "판단 불가"}).label == UNDECIDED
+
+
+def test_stock_opinion_renders_each_perspective_with_the_rule_verdict(monkeypatch):
+    from pydantic_ai.models.test import TestModel
+    from app.services.answer.skills import stock_opinion
+    from app.services.answer.skills.base import SkillContext
+    output = {"chart_rating": "긍정", "chart_reasons": ["미너비니 기준 추세 템플릿 충족"],
+              "financials_rating": "다소 긍정", "financials_reasons": ["근거"],
+              "report_rating": "판단 불가", "report_reasons": ["보고서 요약이 없음"], "check": ["부채비율"]}
+    monkeypatch.setattr(stock_opinion, "build_model", lambda config: TestModel(custom_output_args=output))
+    ctx = SkillContext(question="삼성전자 살까?", conversation=ConversationContext(), session_factory=None, resolver=None,
+                       ai_config=None, stop=asyncio.Event(), related=[("차트", "신호"), ("실적", "매출")])
+
+    async def run():
+        return [e async for e in REGISTRY["stock_opinion"].run(stock_opinion.StockOpinionArgs(stock="삼성전자"), "markdown", ctx)]
+
+    (event,) = asyncio.run(run())
+    text = event["content"]["text"]
+    assert event["status"] == "complete" and text.startswith("### 종합: 사 볼 만하다")
+    assert "보고서 분석 **판단 불가**" in text and "- 부채비율" in text and "투자 권유가 아닙니다" in text
+
+
+def test_stock_opinion_is_empty_without_data():
+    from app.services.answer.skills.base import SkillContext
+    ctx = SkillContext(question="q", conversation=ConversationContext(), session_factory=None, resolver=None,
+                       ai_config=None, stop=asyncio.Event(), related=[("차트", "")])
+    skill = REGISTRY["stock_opinion"]
+
+    async def run():
+        return [e async for e in skill.run(skill.Args(stock="삼성전자"), "markdown", ctx)]
+
+    assert asyncio.run(run())[0]["status"] == "empty"

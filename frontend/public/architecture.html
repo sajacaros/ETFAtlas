@@ -270,6 +270,7 @@
         <div class="box"><div class="name">데이터 스킬 ×14</div><div class="desc">그래프와 DART 테이블을 조회해 표·차트 데이터를 만든다. LLM 없음</div></div>
         <div class="box"><div class="name">company_report <span class="llm">LLM</span></div><div class="desc">정기보고서 원문을 요약하고, 매출 구성이 있으면 영역을 차트와 요약으로 나눈다</div></div>
         <div class="box"><div class="name">narrative <span class="llm">LLM</span></div><div class="desc">다른 영역의 요약만 보고 해설</div></div>
+        <div class="box"><div class="name">stock_opinion <span class="llm">LLM</span></div><div class="desc">차트·재무·보고서 영역의 요약을 관점별로 판정하고, 종합 의견은 규칙으로</div></div>
         <div class="box agent"><div class="name">agent <span class="llm">LLM</span></div><div class="desc">스킬로 안 되는 질문을 도구 호출 에이전트로</div></div>
       </div>
     </div>
@@ -390,7 +391,7 @@
       <svg viewBox="0 0 960 620" role="img" aria-labelledby="skills-map-title skills-map-desc"
            font-family="'Noto Sans KR', sans-serif">
         <title id="skills-map-title">ETF Atlas 챗봇의 스킬과 툴 관계</title>
-        <desc id="skills-map-desc">레이아웃 에이전트가 스킬 19개로 답변 화면을 설계하고, agent 스킬은 ChatService의 툴 10개와 tool을 켠 데이터 스킬 8개를 도구로 쓴다. 계산은 스킬과 스크리너가 app/domain을 함께 쓴다.</desc>
+        <desc id="skills-map-desc">레이아웃 에이전트가 스킬 20개로 답변 화면을 설계하고, agent 스킬은 ChatService의 툴 10개와 tool을 켠 데이터 스킬 8개를 도구로 쓴다. 계산은 스킬과 스크리너가 app/domain을 함께 쓴다.</desc>
         <defs>
           <marker id="sarrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
             <polygon points="0 0, 8 3, 0 6" fill="#b8322a"/>
@@ -405,7 +406,7 @@
 
         <!-- 스킬 묶음 컨테이너 -->
         <rect x="40" y="180" width="880" height="148" rx="12" fill="none" stroke="#d3cbc5" stroke-width="1" stroke-dasharray="4,4"/>
-        <text x="920" y="348" text-anchor="end" fill="#2b2523" font-size="13" font-weight="700">스킬 19개 <tspan fill="#7a706b" font-weight="400" font-family="'Fira Code', monospace" font-size="11">skills/REGISTRY</tspan></text>
+        <text x="920" y="348" text-anchor="end" fill="#2b2523" font-size="13" font-weight="700">스킬 20개 <tspan fill="#7a706b" font-weight="400" font-family="'Fira Code', monospace" font-size="11">skills/REGISTRY</tspan></text>
 
         <!-- 레이아웃 에이전트 → 스킬 -->
         <path d="M456 120 V136 Q456 144 448 144 H158 Q150 144 150 152 V196" fill="none" stroke="#b8322a" stroke-width="1.6"/>
@@ -436,8 +437,8 @@
 
         <circle cx="810" cy="228" r="32" fill="#f4f0ed" stroke="#cfc6c0" stroke-width="1.2"/>
         <circle cx="810" cy="228" r="8" fill="#4a4442"/>
-        <text x="810" y="284" text-anchor="middle" fill="#2b2523" font-size="13" font-weight="700">narrative</text>
-        <text x="810" y="304" text-anchor="middle" fill="#7a706b" font-size="11">다른 슬롯이 끝난 뒤 해설</text>
+        <text x="810" y="284" text-anchor="middle" fill="#2b2523" font-size="13" font-weight="700">narrative · stock_opinion</text>
+        <text x="810" y="304" text-anchor="middle" fill="#7a706b" font-size="11">다른 슬롯이 끝난 뒤 해설·매수 의견</text>
 
         <!-- agent → 툴 -->
         <line x1="150" y1="328" x2="150" y2="372" stroke="#b8322a" stroke-width="1.4" stroke-dasharray="5,4"/>
@@ -518,6 +519,7 @@
         <tr><td><code>overlap</code> ⇢</td><td>두 ETF의 공통 종목·한쪽에만 있는 종목과 겹치는 비중</td><td>table · bar</td></tr>
         <tr><td><code>etf_choice</code></td><td>대상 ETF가 여럿일 때 후보를 보여 주고 되묻기</td><td>markdown</td></tr>
         <tr><td><code>narrative</code> <span class="llm">LLM</span></td><td>다른 영역이 끝난 뒤 해설</td><td>text</td></tr>
+        <tr><td><code>stock_opinion</code> <span class="llm">LLM</span></td><td>"살까 말까"에 답한다. 다른 영역이 끝난 뒤 차트·재무(실적·밸류에이션)·보고서 관점마다 긍정~부정 판정과 근거를 내고, 종합 의견(사 볼 만하다·지켜본다·사지 않는 편이 낫다)은 판정 점수로 규칙이 정한다. narrative 대신 마지막 영역</td><td>markdown</td></tr>
         <tr><td><code>agent</code> <span class="llm">LLM</span></td><td>스킬로 표현할 수 없는 질문. 도구 10개(검색·정보·유사 ETF·비교·읽기 전용 Cypher)와 tool을 켠 데이터 스킬 8개(실적·밸류에이션·공시·차트 분석·기간 수익률·순위·겹침·포트폴리오)를 가진 tool-calling 에이전트가 마크다운으로 답한다</td><td>markdown</td></tr>
       </table>
     </div>

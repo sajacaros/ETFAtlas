@@ -121,6 +121,7 @@ class MySkill(DataSkill):
 | `company_revenue_mix` | bar, donut | 주요 고객·매출처·매출 구성만 물을 때. 목차 트리에서 매출 표가 있는 절(II.의 '매출'·'주요 제품')과 부문 주석(제목에 '부문'이 든 주석, 연결이 있으면 연결 — '영업부문', '부문별 보고' 모두)을 병합 셀을 푼 표로 `report_breakdowns.py`에 넘긴다. LLM이 옮긴 값(temperature 0)은 값·항목 이름이 그 표에 그대로 있는지 검사해, 통과한 것만 차트로 (질문이 묻는 구성부터 최대 2개, `split`으로 영역을 나눈다). 합계와 맞는 구성은 도넛, 아니면(내부거래 포함·일부 고객만) 막대. `company_report`의 개요와 같은 캐시(`stock_reports.breakdowns`)를 쓴다. 표에 구성이 없으면 empty |
 | `etf_choice` | markdown | ETF 하나가 필요한데 조건만 있어 여러 ETF가 해당할 때 후보를 보여 주고 되묻는다. `by=stock`(원익IPS가 들어간 ETF, 그 종목 비중 순) 또는 `by=theme`(반도체 ETF, 같은 이름의 태그가 있으면 그 태그, 없으면 이름에 그 단어가 든 ETF를 순자산 순으로) |
 | `narrative` | text | 앞 슬롯 요약을 바탕으로 한 해설 (토큰 스트리밍) |
+| `stock_opinion` | markdown | 종목을 살지 말지 물을 때 narrative 대신 마지막에 도는 매수 의견. 앞 슬롯(`stock_technical`, `company_financials`·`company_valuation`, `company_report`)의 요약을 LLM이 차트·재무·보고서 관점으로 나눠 긍정 / 다소 긍정 / 중립 / 다소 부정 / 부정 / 판단 불가와 요약에 있는 근거로 판정한다(temperature 0, 구조화 출력). 종합 의견은 LLM이 아니라 `app/domain/opinion.py`의 규칙이 정한다: 판정한 관점이 2개 미만이면 판단 보류, 점수(+2~−2) 평균이 +1 이상이면 '사 볼 만하다', −1 이하면 '사지 않는 편이 낫다', 그 사이거나 '부정'인 관점이 하나라도 있으면 '지켜본다'. 사기 전에 확인할 것과 투자 권유가 아니라는 안내를 붙인다. 화면 구성은 레이아웃 예시(`0037`)가 정한다 |
 | `agent` | markdown | 기존 tool-calling 에이전트. 다른 스킬로 안 되는 질문과 레이아웃 설계 실패 시 폴백 |
 
 ## 슬롯 간 참조

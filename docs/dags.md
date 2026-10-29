@@ -12,7 +12,7 @@ AGE 수집 공용 로직은 `airflow/dags/age_utils.py`에 모여 있다.
 | `rdb_realtime_prices` | `realtime_prices_rdb.py` | `*/10 9-15 * * 1-5` | RDB | 장중 현재가 + 포트폴리오 스냅샷 |
 | `embed_code_examples` | `embed_code_examples.py` | 수동 | RDB (pgvector) | 챗봇 코드·레이아웃 예제 임베딩 |
 | `backfill_prices` | `backfill_prices.py` | 수동 | AGE | ETF·종목 가격 이력 백필 (기본 400일) |
-| `dart_sync_rdb` | `dart_sync_rdb.py` | `20 19 * * 1-5` (평일 19:20 KST) | RDB | 챗봇 기업 분석의 DART 고유번호·공시·주요계정 |
+| `dart_sync_rdb` | `dart_sync_rdb.py` | `20 19 * * 1-5` (평일 19:20 KST) | RDB | 챗봇 기업 분석의 DART 고유번호·공시·주요계정·현금흐름 |
 | `dart_report_index` | `dart_report_index.py` | `0 21 * * *` (매일 21:00 KST) | RDB, LLM | 정기보고서 목차 트리 색인 (원문 → 트리 → 등록 LLM 노드 요약) |
 
 ### 데이터 소스
@@ -23,7 +23,7 @@ AGE 수집 공용 로직은 `airflow/dags/age_utils.py`에 모여 있다.
 | 한국투자증권 KIS Open API | ETF 현재가(NAV·순자산·상장주수), ETF/주식 일봉, ETF 현재 구성종목(HOLDS/CURRENT_HOLDS)·종목명, 영업일(기준 ETF 일봉), 휴장일 | `KIS_APP_KEY`, `KIS_APP_SECRET` (`KIS_BASE_URL` 선택) |
 | 네이버 증권 모바일 API (비공식) | 신규 ETF 보수율(`totalFee`) | 불필요 |
 | yfinance | 포트폴리오 보유 티커 현재가 (RDB) | 불필요 |
-| DART OpenAPI (opendart.fss.or.kr) | 회사 고유번호, 공시 목록, 다중회사 주요계정 | 관리자 페이지 > DART 탭의 키(`dart_settings`, 암호화). 환경변수는 쓰지 않는다 |
+| DART OpenAPI (opendart.fss.or.kr) | 회사 고유번호, 공시 목록, 다중회사 주요계정, 단일회사 전체 재무제표(현금흐름) | 관리자 페이지 > DART 탭의 키(`dart_settings`, 암호화). 환경변수는 쓰지 않는다 |
 | LiteLLM 프록시 (OpenAI 호환) | ETF 태그 분류·질문 일반화(`LLM_MODEL`), 코드 예제 임베딩(`EMBEDDING_MODEL`) | `LLM_API_BASE`/`LLM_API_KEY`, `EMBEDDING_API_BASE`/`EMBEDDING_API_KEY` |
 
 ---
@@ -266,7 +266,11 @@ sync_corps → [sync_disclosures, sync_financials]
 
 - `sync_corps`: `corpCode.xml`(zip) 전체를 `dart_corps`에 upsert한다 (호출 1건). 리졸버는 이 표로 "상장사지만 수집 ETF가 담지 않은 종목"과 "없는 이름"을 구분한다.
 - `sync_disclosures`: 전체 회사의 최근 3일 공시(`list.json`, 100건씩 페이지)를 받아 그래프 종목만 `stock_disclosures`에 남긴다. 공시가 하나도 없는 종목은 회사별로 최근 90일을 백필한다 (첫 실행).
-- `sync_financials`: 최근 3개 사업연도 × 4개 보고서(1분기·반기·3분기·사업보고서)를 `fnlttMultiAcnt.json`으로 100개 회사씩 받아 `stock_financials`에 upsert한다. 매출액·영업이익·당기순이익·자산총계·부채총계·자본총계만, 연결(CFS)·별도(OFS) 모두 원본 그대로 저장한다 (분·반기 손익은 3개월 금액과 누적 금액). 하루 호출은 수십 건이다 (키당 일일 한도 2만 건).
+- `sync_financials`: 최근 5개 사업연도(3개년 연속 성장을 보려면 연간 실적 4개가 필요하다) × 4개 보고서(1분기·반기·3분기·사업보고서)를 `fnlttMultiAcnt.json`으로 100개 회사씩 받아 `stock_financials`에 upsert한다. 매출액·영업이익·당기순이익·자산총계·부채총계·자본총계만, 연결(CFS)·별도(OFS) 모두 원본 그대로 저장한다 (분·반기 손익은 3개월 금액과 누적 금액). 하루 호출은 수십 건이다 (키당 일일 한도 2만 건).
+- `sync_cash_flows` (`sync_financials` 뒤): 현금흐름표의 영업활동현금흐름·유형자산의 취득·무형자산의 취득을 `fnlttSinglAcntAll.json`(회사·보고서마다 한 번)으로 받아 같은 `stock_financials`에 계정으로 넣는다. 주요계정이 있는 보고서 중 아직 받지 않았거나 접수번호가 바뀐(정정) 것만, 최근 보고서부터 하루 `CASH_FLOW_MAX_CALLS`(3,000)건까지 — 처음엔 약 5천 건이라 이틀에 걸쳐 채운다. 사업보고서는 모든 연도, 분·반기는 올해와 작년만(최근 4분기 합계와 전년 동기 비교용). 한 보고서에 연결·별도가 다 있으면 연결만.
+  - 현금흐름표는 분·반기 보고서도 연초부터의 누적만 주므로 1분기는 `amount`·`amount_cum` 둘 다, 반기·3분기는 `amount_cum`에만, 사업보고서는 `amount`에 넣는다 (주요계정과 같은 뜻).
+  - 계정은 IFRS 표준 id로 찾고, 없으면 공백을 뺀 이름으로 찾는다. 설비투자를 토지·건물·기계장치·건설중인자산 등으로 나눠 적은 회사는 그 항목들을 더한다. 취득 금액의 부호는 회사마다 양수·음수가 섞여 있다.
+  - 찾지 못한 계정도 금액 없이 행을 남겨 다음 실행에서 다시 부르지 않는다. 로컬 220개 보고서로 확인한 결과 영업활동현금흐름·유형자산의 취득은 모두 채워졌고, 무형자산의 취득은 20개가 그 줄이 없어 비었다.
 
 ## 7. dart_report_index (RDB, LLM)
 
@@ -305,7 +309,7 @@ queue_reports → build_trees → summarize_nodes → prune_reports
 | `layout_examples` | embed_code_examples | embed_layout_examples | 레이아웃 플래너 few-shot 화면 설계 예제 (vector(768)) |
 | `dart_corps` | dart_sync_rdb | sync_corps | DART 고유번호 ↔ 종목코드, 그래프 밖 상장사 안내 |
 | `stock_disclosures` | dart_sync_rdb | sync_disclosures | 그래프 종목의 공시 목록 |
-| `stock_financials` | dart_sync_rdb | sync_financials | 그래프 종목의 주요계정 (분기·연간 실적) |
+| `stock_financials` | dart_sync_rdb | sync_financials, sync_cash_flows | 그래프 종목의 주요계정 (분기·연간 실적)과 현금흐름(영업활동현금흐름·유·무형자산의 취득) |
 | `stock_reports`, `stock_report_docs`, `report_nodes` | dart_report_index | queue_reports, build_trees, summarize_nodes | 정기보고서 목차 트리 색인 (`company_report`·`company_revenue_mix`) |
 
 ### Apache AGE

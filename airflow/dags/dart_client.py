@@ -1,4 +1,4 @@
-"""DART OpenAPI 클라이언트 (opendart.fss.or.kr) — 고유번호, 공시 목록, 다중회사 주요계정.
+"""DART OpenAPI 클라이언트 (opendart.fss.or.kr) — 고유번호, 공시 목록, 다중회사 주요계정, 단일회사 현금흐름.
 
 DART는 오류도 HTTP 200에 status 코드로 알린다: 000 정상, 013 데이터 없음, 020 요청 제한 초과.
 일일 한도(키당 2만 건)가 넉넉해서 호출 간격만 둔다.
@@ -24,6 +24,18 @@ REPORT_CODES = ("11013", "11012", "11014", "11011")
 # 주요계정 중 저장하는 것. DART 계정명이 회사마다 '당기순이익(손실)'처럼 달라 앞부분으로 맞춘다
 ACCOUNTS = ("매출액", "영업이익", "당기순이익", "자산총계", "부채총계", "자본총계")
 MULTI_ACCOUNT_BATCH = 100  # fnlttMultiAcnt가 한 번에 받는 회사 수
+# 현금흐름표(fnlttSinglAcntAll의 sj_div=CF)에서 저장하는 계정: 저장 이름 → (IFRS 계정 id, 그 id가 없을 때 맞출 계정명,
+# 그것도 없을 때 더할 세부 항목). 회사마다 표준 id를 안 쓰거나(이름만), 설비투자를 토지·건물·기계장치처럼 나눠 적는다
+# (세부 항목 id나 이름의 합). 취득은 회사에 따라 부호가 양수·음수로 온다
+PPE_PARTS = ("토지", "건물", "구축물", "기계장치", "차량운반구", "건설중인자산", "기타유형자산", "공기구비품", "비품", "공구와기구")
+CASH_FLOW_ACCOUNTS = {
+    "영업활동현금흐름": ("ifrs-full_CashFlowsFromUsedInOperatingActivities",
+                       ("영업활동현금흐름", "영업활동으로인한현금흐름", "영업활동으로인한순현금흐름"), ()),
+    "유형자산의취득": ("ifrs-full_PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities",
+                     ("유형자산의취득", "유형자산및투자부동산의취득", "투자부동산및유형자산의취득"), PPE_PARTS),
+    "무형자산의취득": ("ifrs-full_PurchaseOfIntangibleAssetsClassifiedAsInvestingActivities", ("무형자산의취득",), ()),
+}
+ANNUAL, Q1 = "11011", "11013"
 
 
 class DartError(Exception):
@@ -93,6 +105,51 @@ def parse_financial_rows(items: list[dict]) -> list[dict]:
     return rows
 
 
+def parse_cash_flow_rows(items: list[dict], stock_code: str, bsns_year: int, reprt_code: str, fs_div: str,
+                         rcept_no: str) -> list[dict]:
+    """fnlttSinglAcntAll 응답 → 현금흐름 계정의 stock_financials 행. 찾지 못한 계정도 금액 없이 한 행씩 남긴다
+    (받아 본 보고서라는 표시 — 다음 실행에서 다시 부르지 않는다).
+    현금흐름표는 분·반기 보고서도 연초부터의 누적만 준다: 1분기는 3개월 = 누적이라 둘 다, 반기·3분기는 누적에만,
+    사업보고서는 연간 금액에 넣는다 (주요계정과 같은 뜻 — amount는 3개월·연간, amount_cum은 누적)."""
+    cf = [{**i, "name": (i.get("account_nm") or "").replace(" ", "")} for i in items if i.get("sj_div") == "CF"]
+    rows = []
+    for account, (account_id, names, parts) in CASH_FLOW_ACCOUNTS.items():
+        item = next((i for i in cf if i.get("account_id") == account_id), None) or next(
+            (i for i in cf if i["name"].startswith(names)), None)
+        if item:
+            value = parse_amount(item.get("thstrm_amount"))
+        else:
+            found = [parse_amount(i.get("thstrm_amount")) for i in cf
+                     if i["name"] in tuple(f"{p}의취득" for p in parts)]
+            found = [v for v in found if v is not None]
+            value = sum(found) if found else None
+        rows.append({
+            "stock_code": stock_code, "bsns_year": bsns_year, "reprt_code": reprt_code, "fs_div": fs_div,
+            "account": account,
+            "amount": value if reprt_code in (ANNUAL, Q1) else None,
+            "amount_cum": value if reprt_code != ANNUAL else None,
+            "rcept_no": rcept_no,
+        })
+    return rows
+
+
+def cash_flow_targets(reports, done, year: int, quarter_years: int, limit: int) -> list[tuple]:
+    """현금흐름을 받을 보고서 (stock_code, bsns_year, reprt_code, fs_div, rcept_no), 최근 보고서부터 limit개.
+    reports: 주요계정이 있는 보고서들, done: 현금흐름을 이미 받은 보고서들 (같은 모양).
+    분·반기 보고서는 최근 quarter_years개 사업연도만. 한 보고서에 연결·별도가 다 있으면 연결만 (챗봇이 연결을 쓴다).
+    접수번호가 바뀌면(정정) 다시 받는다."""
+    picked = {}
+    for r in reports:
+        key = r[:3]
+        if key not in picked or r[3] == "CFS":
+            picked[key] = r
+    order = {code: i for i, code in enumerate(REPORT_CODES)}
+    targets = [r for r in picked.values() if r not in done
+               and (r[2] == ANNUAL or r[1] > year - quarter_years)]
+    targets.sort(key=lambda r: (r[1], order[r[2]]), reverse=True)
+    return targets[:limit]
+
+
 class DartClient:
     def __init__(self, api_key: str, base_url: str = BASE_URL):
         self.api_key = api_key
@@ -160,5 +217,12 @@ class DartClient:
         """다중회사 주요계정 원본 행 (회사 100개까지)."""
         body = self._get("fnlttMultiAcnt.json", {
             "corp_code": ",".join(corp_codes), "bsns_year": str(bsns_year), "reprt_code": reprt_code,
+        })
+        return body.get("list", []) if body else []
+
+    def statements(self, corp_code: str, bsns_year: int, reprt_code: str, fs_div: str) -> list[dict]:
+        """단일회사 전체 재무제표 원본 행 (재무상태표·손익·현금흐름 등, 회사 하나·보고서 하나에 한 번)."""
+        body = self._get("fnlttSinglAcntAll.json", {
+            "corp_code": corp_code, "bsns_year": str(bsns_year), "reprt_code": reprt_code, "fs_div": fs_div,
         })
         return body.get("list", []) if body else []

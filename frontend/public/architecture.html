@@ -281,7 +281,7 @@
       <div class="layer-title"><span class="dot"></span>Data · PostgreSQL</div>
       <div class="row">
         <div class="box"><div class="name">Apache AGE 그래프</div><div class="desc">ETF · Stock · Tag · Price · 보유 관계</div></div>
-        <div class="box"><div class="name">DART 테이블</div><div class="desc">공시 · 주요계정(매일 수집), 보고서 요약·매출 구성 캐시</div></div>
+        <div class="box"><div class="name">DART 테이블</div><div class="desc">공시 · 주요계정 · 현금흐름(매일 수집), 보고서 요약·매출 구성 캐시</div></div>
         <div class="box"><div class="name">chat_logs · chat_slots</div><div class="desc">질문, 레이아웃, 영역별 내용과 요약</div></div>
         <div class="box"><div class="name">pgvector</div><div class="desc">화면 설계 예시, 에이전트 few-shot 예시</div></div>
       </div>
@@ -623,7 +623,8 @@ column
       <div class="row">
         <div class="box"><div class="name">sync_corps</div><div class="desc">상장사 고유번호 전체 → <code>dart_corps</code>. 수집 ETF가 담지 않은 상장사를 구분하는 데 쓴다</div></div>
         <div class="box"><div class="name">sync_disclosures</div><div class="desc">최근 3일 공시 중 담은 종목(560)만 → <code>stock_disclosures</code></div></div>
-        <div class="box"><div class="name">sync_financials</div><div class="desc">최근 3개 사업연도 × 분기·반기·사업보고서 주요계정 → <code>stock_financials</code></div></div>
+        <div class="box"><div class="name">sync_financials</div><div class="desc">최근 5개 사업연도 × 분기·반기·사업보고서 주요계정 → <code>stock_financials</code></div></div>
+        <div class="box"><div class="name">sync_cash_flows</div><div class="desc">영업활동현금흐름·유·무형자산의 취득을 회사·보고서마다 받아 같은 테이블에. 새 보고서·정정만, 하루 3,000건까지</div></div>
       </div>
     </div>
 

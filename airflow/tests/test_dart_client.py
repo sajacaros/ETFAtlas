@@ -9,7 +9,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "dags"))
 
 import dart_client  # noqa: E402
-from dart_client import DartClient, DartError, parse_amount, parse_corp_codes, parse_financial_rows  # noqa: E402
+from dart_client import (DartClient, DartError, cash_flow_targets, parse_amount, parse_cash_flow_rows,  # noqa: E402
+                         parse_corp_codes, parse_financial_rows)
 
 
 def test_parse_amount_keeps_missing_values_missing():
@@ -42,6 +43,47 @@ def test_parse_financial_rows_normalizes_accounts_and_drops_the_rest():
     assert [(r["account"], r["amount"], r["amount_cum"]) for r in rows] == [
         ("매출액", 74000, 153000), ("당기순이익", -1000, None)]
     assert rows[0]["bsns_year"] == 2026
+
+
+def test_parse_cash_flow_rows_matches_ids_then_names_and_keeps_cumulative_amounts():
+    items = [
+        {"sj_div": "CF", "account_id": "ifrs-full_CashFlowsFromUsedInOperatingActivities", "account_nm": "영업활동현금흐름",
+         "thstrm_amount": "56,515"},
+        {"sj_div": "CF", "account_id": "-표준계정코드 미사용-", "account_nm": "유형자산의 취득", "thstrm_amount": "-35,972"},
+        {"sj_div": "BS", "account_id": "x", "account_nm": "무형자산의 취득", "thstrm_amount": "9"},  # 현금흐름표가 아니다
+    ]
+    rows = parse_cash_flow_rows(items, "005930", 2025, "11014", "CFS", "r1")
+    # 3분기 현금흐름은 9개월 누적 — 3개월 금액이 아니다. 찾지 못한 계정도 받아 본 표시로 남긴다
+    assert [(r["account"], r["amount"], r["amount_cum"]) for r in rows] == [
+        ("영업활동현금흐름", None, 56515), ("유형자산의취득", None, -35972), ("무형자산의취득", None, None)]
+    assert {r["rcept_no"] for r in rows} == {"r1"}
+    annual = parse_cash_flow_rows(items, "005930", 2025, "11011", "CFS", "r2")
+    q1 = parse_cash_flow_rows(items, "005930", 2026, "11013", "CFS", "r3")
+    assert (annual[0]["amount"], annual[0]["amount_cum"]) == (56515, None)
+    assert (q1[0]["amount"], q1[0]["amount_cum"]) == (56515, 56515)
+
+
+def test_parse_cash_flow_rows_adds_up_capex_split_into_parts():
+    def cf(name, amount, account_id="dart_x"):
+        return {"sj_div": "CF", "account_id": account_id, "account_nm": name, "thstrm_amount": amount}
+    items = [cf("영업활동현금흐름", "10"), cf("건물의 취득", "7"), cf("건설중인자산의 취득", "25"), cf("기계장치의 취득", "-"),
+             cf("단기금융상품의 취득", "81"), cf("무형자산의 취득", "1")]
+    rows = {r["account"]: r["amount"] for r in parse_cash_flow_rows(items, "017960", 2025, "11011", "CFS", "r")}
+    assert rows == {"영업활동현금흐름": 10, "유형자산의취득": 32, "무형자산의취득": 1}  # 금융상품 취득은 설비투자가 아니다
+
+
+def test_cash_flow_targets_pick_consolidated_skip_done_and_go_newest_first():
+    reports = [
+        ("005930", 2026, "11012", "CFS", "a"), ("005930", 2026, "11012", "OFS", "a"),
+        ("005930", 2025, "11011", "CFS", "b"), ("005930", 2025, "11014", "CFS", "c"),
+        ("005930", 2023, "11011", "CFS", "d"), ("005930", 2023, "11014", "CFS", "e"),  # 오래된 분기는 받지 않는다
+        ("000660", 2026, "11013", "OFS", "f"),
+    ]
+    done = {("005930", 2025, "11014", "CFS", "c"), ("000660", 2026, "11013", "OFS", "old")}  # 정정되면 다시 받는다
+    targets = cash_flow_targets(reports, done, 2026, 2, 10)
+    assert targets == [("005930", 2026, "11012", "CFS", "a"), ("000660", 2026, "11013", "OFS", "f"),
+                       ("005930", 2025, "11011", "CFS", "b"), ("005930", 2023, "11011", "CFS", "d")]
+    assert len(cash_flow_targets(reports, done, 2026, 2, 1)) == 1
 
 
 class FakeResponse:

@@ -5,7 +5,10 @@ DART Sync DAG — 챗봇 기업 분석의 실적·공시
 - stock_disclosures: 그래프 종목의 공시 목록. 매일 전체 회사의 최근 3일을 받아 그래프 종목만 남기고,
   공시가 하나도 없는 종목은 회사별로 최근 90일을 백필한다.
 - stock_financials: 그래프 종목의 주요계정(매출액·영업이익·순이익·자산·부채·자본).
-  최근 3개 사업연도 × 4개 보고서를 매일 다시 받는다 (100개 회사씩 묶어 하루 수십 건).
+  최근 5개 사업연도 × 4개 보고서를 매일 다시 받는다 (100개 회사씩 묶어 하루 수십 건).
+  같은 테이블에 현금흐름(영업활동현금흐름·유형/무형자산의 취득)도 둔다. 현금흐름은 회사·보고서마다 한 번 불러야 해서
+  주요계정이 있는 보고서 중 아직 받지 않았거나 정정으로 접수번호가 바뀐 것만, 최근 보고서부터 하루 상한까지 받는다.
+  사업보고서는 모든 연도, 분·반기 보고서는 최근 4분기 합계와 전년 동기 비교에 필요한 직전 연도부터.
 
 API 키는 관리자 페이지에서 저장한 dart_settings(암호문)만 쓴다. 없으면 건너뛴다.
 """
@@ -22,7 +25,9 @@ log = logging.getLogger(__name__)
 
 RECENT_DAYS = 3
 BACKFILL_DAYS = 90
-FINANCIAL_YEARS = 3
+FINANCIAL_YEARS = 5  # 3개년 연속 성장을 보려면 연간 실적 4개가 필요하다 (진행 중인 연도 포함 5개 사업연도)
+CASH_FLOW_MAX_CALLS = 3000  # 하루 현금흐름 호출 상한 — 처음 채울 때(약 5천 건) 키의 일일 한도(2만 건)를 다른 작업과 나눠 쓴다
+CASH_FLOW_QUARTER_YEARS = 2  # 분·반기 현금흐름을 받는 최근 사업연도 수 (올해와 작년)
 
 default_args = {
     'owner': 'etf-atlas',
@@ -211,8 +216,57 @@ def sync_financials(**context):
         raise RuntimeError("모든 주요계정 호출이 실패했습니다")
 
 
+def sync_cash_flows(**context):
+    from psycopg2.extras import execute_values
+    from dart_client import ACCOUNTS, CASH_FLOW_ACCOUNTS, DartError, cash_flow_targets, parse_cash_flow_rows
+
+    client = _client()
+    if client is None:
+        return
+    stocks = graph_stocks()
+    conn = get_db_connection()
+    cur = conn.cursor()
+    saved = failed = 0
+    try:
+        cur.execute("SELECT DISTINCT stock_code, bsns_year, reprt_code, fs_div, rcept_no FROM stock_financials "
+                    "WHERE account = ANY(%s) AND rcept_no IS NOT NULL", (list(ACCOUNTS),))
+        reports = [r for r in cur.fetchall() if r[0] in stocks]
+        cur.execute("SELECT stock_code, bsns_year, reprt_code, fs_div, rcept_no FROM stock_financials WHERE account = %s",
+                    (next(iter(CASH_FLOW_ACCOUNTS)),))
+        done = set(cur.fetchall())
+        targets = cash_flow_targets(reports, done, datetime.now().year, CASH_FLOW_QUARTER_YEARS, CASH_FLOW_MAX_CALLS)
+        for stock_code, bsns_year, reprt_code, fs_div, rcept_no in targets:
+            try:
+                items = client.statements(stocks[stock_code], bsns_year, reprt_code, fs_div)
+            except DartError as e:
+                failed += 1
+                log.warning("fnlttSinglAcntAll %s %s %s failed: %s", stock_code, bsns_year, reprt_code, e)
+                continue
+            rows = parse_cash_flow_rows(items, stock_code, bsns_year, reprt_code, fs_div, rcept_no)
+            execute_values(cur, """
+                INSERT INTO stock_financials
+                    (stock_code, bsns_year, reprt_code, fs_div, account, amount, amount_cum, rcept_no, fetched_at)
+                VALUES %s
+                ON CONFLICT (stock_code, bsns_year, reprt_code, fs_div, account) DO UPDATE SET
+                    amount = EXCLUDED.amount, amount_cum = EXCLUDED.amount_cum,
+                    rcept_no = EXCLUDED.rcept_no, fetched_at = EXCLUDED.fetched_at
+            """, [(r['stock_code'], r['bsns_year'], r['reprt_code'], r['fs_div'], r['account'],
+                   r['amount'], r['amount_cum'], r['rcept_no'], datetime.now()) for r in rows])
+            conn.commit()
+            saved += 1
+    finally:
+        cur.close()
+        conn.close()
+    pending = len(cash_flow_targets(reports, done, datetime.now().year, CASH_FLOW_QUARTER_YEARS, len(reports))) - saved
+    log.info("현금흐름: 보고서 %d개 저장 (실패 호출 %d, 남은 보고서 %d)", saved, failed, max(pending, 0))
+    if failed and not saved:
+        raise RuntimeError("모든 현금흐름 호출이 실패했습니다")
+
+
 t_corps = PythonOperator(task_id='sync_corps', python_callable=sync_corps, dag=dag)
 t_disclosures = PythonOperator(task_id='sync_disclosures', python_callable=sync_disclosures, dag=dag)
 t_financials = PythonOperator(task_id='sync_financials', python_callable=sync_financials, dag=dag)
+t_cash_flows = PythonOperator(task_id='sync_cash_flows', python_callable=sync_cash_flows, dag=dag)
 
 t_corps >> [t_disclosures, t_financials]
+t_financials >> t_cash_flows

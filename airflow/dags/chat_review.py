@@ -369,7 +369,7 @@ def run_review(**context):
             header, blocks = format_report(date_str, turns, issues, signals, failed_sessions)
             messages = _split_discord_messages(header, blocks)
         else:
-            messages = [f"🩺 **챗봇 점검** ({date_str})\n\n질문이 없었습니다."]
+            messages = [f"🩺 **챗봇 점검** ({date_str})\n\n챗봇 개선 제안이 없습니다."]
 
         if dry_run:
             for m in messages:

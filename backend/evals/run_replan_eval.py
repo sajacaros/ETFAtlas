@@ -3,13 +3,18 @@
 첫 계획만 정해 두고 다시 설계는 실제 플래너(LLM)가 한다. 백엔드 컨테이너 안에서 돌린다:
   docker cp backend/evals etf-atlas-backend:/tmp/evals
   docker exec -w /app -e PYTHONPATH=/app etf-atlas-backend python /tmp/evals/run_replan_eval.py --reps 3
+  ... --output tool    다시 설계의 구조화 출력 방식을 바꿔 본다 (run_layout_eval과 같은 옵션)
 """
 import argparse
 import asyncio
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Dict, List
+
+sys.path.insert(0, str(Path(__file__).parent))
+from run_layout_eval import PLAN_RETRIES, use_output_mode  # noqa: E402
 
 from app.database import SessionLocal
 from app.services.ai_config import load_ai_config
@@ -35,14 +40,16 @@ class GivenPlan:
     """첫 계획은 주어진 것으로, 다시 설계는 실제 플래너로."""
 
     def __init__(self, rows, real: Planner):
-        self.rows, self.real, self.replanned = rows, real, None
+        self.rows, self.real, self.replanned, self.seconds = rows, real, None, 0.0
 
     async def plan(self, question, context):
         self.real.last_examples = await self.real._examples(question)  # 다시 설계 프롬프트에 서비스처럼 예시가 들어가게
         return self.rows
 
     async def replan(self, question, context, rows, results):
+        started = time.monotonic()
         self.replanned = await self.real.replan(question, context, rows, results)
+        self.seconds += time.monotonic() - started
         return self.replanned
 
 
@@ -50,6 +57,8 @@ async def run_one(item: Dict, config, sem: asyncio.Semaphore) -> Dict:
     async with sem:
         plan = build_plan_model(REGISTRY).model_validate({"rows": [{"slots": row} for row in item["plan"]]})
         given = GivenPlan(to_rows(plan), Planner(config, **planner_mod.data_lookups(SessionLocal)))
+        plan_retries: List[int] = []
+        PLAN_RETRIES.set(plan_retries)
         db = SessionLocal()
         try:
             service = AnswerService(db, planner=given)
@@ -76,7 +85,7 @@ async def run_one(item: Dict, config, sem: asyncio.Semaphore) -> Dict:
                 problems.append(f"'{item['message']}' 문구 없음")
         return {
             "q": item["q"], "ok": not problems or bool(item.get("observe")), "observe": item.get("observe", False),
-            "problems": problems, "replanned": replanned,
+            "problems": problems, "replanned": replanned, "retries": sum(plan_retries), "seconds": given.seconds,
             "slots": [(s.id, s.skill, s.args.model_dump(), status.get(s.id, {}).get("status"), status.get(s.id, {}).get("message"))
                       for s in final],
         }
@@ -103,7 +112,11 @@ def report(results: List[Dict]) -> None:
                 slots = [(s[1], s[2], s[3], (s[4] or "")[:40]) for s in r["slots"]]
                 print(f"      다시 설계 {'O' if r['replanned'] else 'X'} | {'; '.join(r['problems'])} | {slots}"[:400])
     graded = [r for r in results if not r["observe"]]
+    replans = [r for r in results if r["replanned"]]
     print(f"\n== 요약\n  통과 {sum(r['ok'] for r in graded)}/{len(graded)}, 다시 설계한 실행 {sum(r['replanned'] for r in graded)}")
+    if replans:
+        print(f"  다시 설계 재시도 평균 {sum(r['retries'] for r in replans) / len(replans):.2f}, "
+              f"시간 평균 {sum(r['seconds'] for r in replans) / len(replans):.1f}초 (동시 실행 중이라 실제보다 길다)")
 
 
 def main() -> None:
@@ -112,11 +125,17 @@ def main() -> None:
     parser.add_argument("--reps", type=int, default=1)
     parser.add_argument("--concurrency", type=int, default=4)
     parser.add_argument("--only")
+    parser.add_argument("--output", choices=("tool", "native", "prompted"))
+    parser.add_argument("--json", help="실행 결과를 이 파일에 저장")
     args = parser.parse_args()
+    use_output_mode(args.output, None)
     items = json.loads(Path(args.set).read_text())["items"]
     if args.only:
         items = [i for i in items if args.only in i["q"]]
-    report(asyncio.run(evaluate(items, args.reps, args.concurrency)))
+    results = asyncio.run(evaluate(items, args.reps, args.concurrency))
+    if args.json:
+        Path(args.json).write_text(json.dumps(results, ensure_ascii=False, default=str))
+    report(results)
 
 
 if __name__ == "__main__":

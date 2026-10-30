@@ -4,6 +4,8 @@
   docker cp backend/evals etf-atlas-backend:/tmp/evals
   docker exec -w /app -e PYTHONPATH=/app etf-atlas-backend python /tmp/evals/run_layout_eval.py --reps 2
   ... --distances      예시 검색 기준값을 맞출 때 쓰는 질문 × 예시 거리표만 출력
+  ... --output tool    플래너의 구조화 출력 방식을 바꿔 본다 (주지 않으면 코드 그대로: 플래너 native, 선택기 tool).
+                       예시 선택기는 --selector-output
 
 채점은 계획만 본다 (슬롯을 실행하지 않는다). 기준은 layout_eval.json의 _comment 참고.
 """
@@ -13,11 +15,12 @@ import json
 import re
 import sys
 import time
+from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Optional, Set
 
-from pydantic_ai import capture_run_messages
-from pydantic_ai.messages import RetryPromptPart
+from pydantic_ai import NativeOutput, PromptedOutput, capture_run_messages
+from pydantic_ai.messages import ModelResponse
 from sqlalchemy import text
 
 from app.database import SessionLocal
@@ -29,6 +32,9 @@ from app.services.answer.orchestrator import AnswerService
 from app.services.answer.planner import Planner
 
 REF_RE = re.compile(r"^@\w+\.(\d+)(?:-(\d+))?$")
+# 실행 중인 문항의 플래너 재시도 수 (Agent.run마다 하나). capture_run_messages는 한 문맥에서 첫 실행(예시 선택기)만 잡는다.
+# 플래너에는 도구가 없어 모델 응답이 두 번째부터는 다시 쓴 것이다 (tool 출력의 재시도는 RetryPromptPart가 아니라 ToolReturnPart로 온다)
+PLAN_RETRIES: ContextVar[List[int]] = ContextVar("PLAN_RETRIES")
 
 
 def strings(value: Any) -> List[str]:
@@ -119,14 +125,15 @@ async def execute(question: str, rows) -> List[str]:
 async def run_one(item: Dict, config, seeds: Dict[int, Set[str]], sem: asyncio.Semaphore) -> Dict:
     async with sem:
         planner = Planner(config, **planner_mod.data_lookups(SessionLocal))  # 서비스와 같은 연결
+        plan_retries: List[int] = []
+        PLAN_RETRIES.set(plan_retries)
         started = time.monotonic()
-        with capture_run_messages() as messages:
-            rows = await planner.plan(item["q"], ConversationContext())
+        rows = await planner.plan(item["q"], ConversationContext())
         seconds = time.monotonic() - started
         found = planner.last_examples  # 선택기를 거쳐 실제로 넣은 예시
         slots = [{"skill": s.skill, "name": s.name, "title": s.title, "display": s.display, "args": s.args.model_dump()}
                  for r in rows for s in r]
-        retries = sum(isinstance(p, RetryPromptPart) for m in messages for p in getattr(m, "parts", []))
+        retries = sum(plan_retries)
         # 설계 실패 시 fallback_rows는 제목 없는 agent 슬롯 하나에 질문을 그대로 넘긴다
         fallback = len(slots) == 1 and slots[0]["skill"] == "agent" and not slots[0]["title"]
         problems = judge(item, slots)
@@ -179,6 +186,35 @@ def report(results: List[Dict]) -> None:
           f"맞는 시드가 있는데 못 넣은 실행 {sum(1 for r in results if r['relevant_seeds'] and not any(e[2] for e in r['examples']))}")
 
 
+def use_output_mode(plan_mode: Optional[str], selector_mode: Optional[str]) -> None:
+    """planner 모듈의 Agent를 바꿔, 구조화 출력을 tool 대신 native(스키마 강제 생성)·prompted(지시문)로 받게 하고
+    플래너 실행마다 재시도 수를 PLAN_RETRIES에 남긴다 (설계에 실패해도 센다)."""
+    wraps = {"tool": lambda t: t, "native": NativeOutput, "prompted": PromptedOutput}
+    base = planner_mod.Agent
+
+    def agent(*args, output_type=str, **kwargs):
+        raw = output_type.outputs if isinstance(output_type, (NativeOutput, PromptedOutput)) else output_type
+        selector = raw is planner_mod.ExampleChoice
+        mode = selector_mode if selector else plan_mode
+        if raw is not str and mode is not None:  # None이면 코드에 적힌 방식 그대로
+            output_type = wraps[mode](raw)
+        made = base(*args, output_type=output_type, **kwargs)
+        if not selector:
+            run = made.run
+
+            async def counted(*run_args, **run_kwargs):
+                with capture_run_messages() as messages:
+                    try:
+                        return await run(*run_args, **run_kwargs)
+                    finally:
+                        PLAN_RETRIES.get([]).append(max(0, sum(isinstance(m, ModelResponse) for m in messages) - 1))
+
+            made.run = counted
+        return made
+
+    planner_mod.Agent = agent
+
+
 def distances(items: List[Dict]) -> None:
     """질문(일반화) × 모든 예시 거리와, 그 예시가 질문 유형에 맞는지 — 검색 기준값을 맞출 때 쓴다."""
     db = SessionLocal()
@@ -206,7 +242,10 @@ def main() -> None:
     parser.add_argument("--max-distance", type=float)
     parser.add_argument("--gap", type=float)
     parser.add_argument("--no-selector", action="store_true", help="예시 선택기 없이 거리 기준으로만 넣는다")
+    parser.add_argument("--output", choices=("tool", "native", "prompted"))
+    parser.add_argument("--selector-output", choices=("tool", "native", "prompted"))
     args = parser.parse_args()
+    use_output_mode(args.output, args.selector_output)
     if args.no_selector:
         planner_mod.EXAMPLE_SELECTOR = False
     for attr, value in (("EXAMPLES_TOP_K", args.top_k), ("EXAMPLES_MAX_DISTANCE", args.max_distance),

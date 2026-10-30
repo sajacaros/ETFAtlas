@@ -12,7 +12,7 @@ from typing import Annotated, Any, Callable, Dict, List, Literal, Optional, Set,
 
 from annotated_types import MinLen
 from pydantic import BaseModel, Field, ValidationError, create_model, model_validator
-from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai import Agent, ModelRetry, NativeOutput, RunContext
 from sqlalchemy.orm import Session
 
 from ..ai_config import AIConfig
@@ -498,9 +498,11 @@ class Planner:
         self.last_examples: List[Dict[str, Any]] = []  # 마지막 설계에 넣은 예시 (다시 설계와 평가에서 쓴다)
         plan_model = build_plan_model(registry)
         instructions = f"{PLANNER_PROMPT}\n{skill_catalog(registry)}"
-        self._agent = Agent(build_model(config), output_type=plan_model, instructions=instructions,
+        # 설계는 스키마를 생성 단계에서 강제한다(NativeOutput). 도구 호출 방식보다 빠르고, 재시도는 내용 검사에만 쓰여
+        # 다시 설계가 한도를 넘겨 실패하지 않는다 (evals --output으로 비교). 선택기는 native면 예시를 덜 골라 그대로 둔다
+        self._agent = Agent(build_model(config), output_type=NativeOutput(plan_model), instructions=instructions,
                             model_settings=NO_THINKING, retries=2)
-        self._replanner = Agent(build_model(config), output_type=plan_model, deps_type=ReplanDeps,
+        self._replanner = Agent(build_model(config), output_type=NativeOutput(plan_model), deps_type=ReplanDeps,
                                 instructions=instructions + REPLAN_RULES, model_settings=NO_THINKING, retries=2)
         self._selector = Agent(build_model(config), output_type=ExampleChoice,
                                instructions=SELECTOR_PROMPT.format(top_k=EXAMPLES_TOP_K), model_settings=NO_THINKING, retries=1)

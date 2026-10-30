@@ -9,7 +9,7 @@ class DiscordNotificationLog(Base):
     __tablename__ = "discord_notification_logs"
 
     id = Column(Integer, primary_key=True)
-    kind = Column(String(20), nullable=False, default="weight_change")  # weight_change | daily_report
+    kind = Column(String(20), nullable=False, default="weight_change")  # weight_change | daily_report | chat_review
     base_date = Column(String(10), nullable=False, index=True)
     status = Column(String(10), nullable=False)  # sent | failed
     threshold = Column(Float, nullable=False)

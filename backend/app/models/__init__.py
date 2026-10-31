@@ -16,6 +16,7 @@ from .invitation import Invitation
 from .auth_session import AuthSession
 from .password_reset import PasswordReset
 from .analysis_flow import AnalysisFlow, FlowRun
+from .stock_opinion import OpinionRun, StockOpinion
 
 __all__ = [
     "User",
@@ -51,4 +52,6 @@ __all__ = [
     "PasswordReset",
     "AnalysisFlow",
     "FlowRun",
+    "OpinionRun",
+    "StockOpinion",
 ]

@@ -73,6 +73,7 @@ class StockReport(Base):
     overview = Column(Text, nullable=True)
     breakdowns = Column(Text, nullable=True)  # 원문 표에서 뽑아 검사를 통과한 매출 구성 (JSON 목록)
     model = Column(Text, nullable=True)  # overview를 만든 모델
+    tagline = Column(Text, nullable=True)  # 무엇을 하는 회사인지 50자 한 줄 (overview의 사업 구조로, 주간 매수 의견에 뽑힌 종목만)
     created_at = Column(DateTime, default=utcnow)
 
 

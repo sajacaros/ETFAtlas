@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
 from ....domain import company_type as ct
-from ....domain.opinion import RATINGS, combine
+from ....domain.opinion import RATINGS, Verdict, combine
 from ...entities import UnmanagedStock
 from ...llm import NO_THINKING, build_model
 from .base import Skill, SkillContext, empty, text_result
@@ -62,10 +62,15 @@ class StockOpinionArgs(BaseModel):
 TYPE_LABEL = {ct.NONE: "해당 없음", ct.UNDETERMINED: "판정하지 않음"}
 
 
-def render(stock: str, opinion: Opinion, company_type: Optional[ct.CompanyType] = None) -> str:
+def overall(opinion: Opinion, company_type: Optional[ct.CompanyType] = None) -> Verdict:
     ratings = {label: getattr(opinion, f"{key}_rating") for key, label in PERSPECTIVES}
     type_fits = None if company_type is None or company_type.status == ct.UNDETERMINED else company_type.status == ct.MATCHED
-    verdict = combine(ratings, type_fits)
+    return combine(ratings, type_fits)
+
+
+def render(stock: str, opinion: Opinion, company_type: Optional[ct.CompanyType] = None) -> str:
+    ratings = {label: getattr(opinion, f"{key}_rating") for key, label in PERSPECTIVES}
+    verdict = overall(opinion, company_type)
     lines = [f"### 종합: {verdict.label}",
              " · ".join(f"{label} **{rating}**" for label, rating in ratings.items())]
     if company_type:
@@ -112,16 +117,23 @@ class StockOpinionSkill(Skill):
         finally:
             db.close()
 
-    async def run(self, args: StockOpinionArgs, display: str, ctx: SkillContext):
+    async def judge(self, ctx: SkillContext, stock: str) -> Optional[Tuple[Opinion, Optional[ct.CompanyType]]]:
+        """관점별 판정과 유형 판정. 앞 슬롯 요약(ctx.related)이 비었으면 None. 주간 매수 의견(weekly_opinion)도 쓴다."""
         data = "\n\n".join(f"[{title}]\n{summary}" for title, summary in ctx.related if summary)
         if not data:
-            yield empty("차트·실적·보고서 데이터가 없어 의견을 내지 못했습니다").event()
-            return
-        typed = await asyncio.to_thread(self.company_type, ctx, args.stock)
+            return None
+        typed = await asyncio.to_thread(self.company_type, ctx, stock)
         type_text = summary_text(*typed) if typed else "(유형 판정 없음)"
-        prompt = (f"## 사용자 질문\n{ctx.question}\n\n## 종목\n{args.stock}\n\n## 유형 판정 (규칙)\n{type_text}"
+        prompt = (f"## 사용자 질문\n{ctx.question}\n\n## 종목\n{stock}\n\n## 유형 판정 (규칙)\n{type_text}"
                   f"\n\n## 화면 데이터 요약\n{data}")
         agent = Agent(build_model(ctx.ai_config), output_type=Opinion, instructions=OPINION_PROMPT,
                       model_settings={**NO_THINKING, "temperature": 0})
         result = await agent.run(prompt)
-        yield text_result(render(args.stock, result.output, typed[2] if typed else None), kind="markdown").event()
+        return result.output, typed[2] if typed else None
+
+    async def run(self, args: StockOpinionArgs, display: str, ctx: SkillContext):
+        judged = await self.judge(ctx, args.stock)
+        if judged is None:
+            yield empty("차트·실적·보고서 데이터가 없어 의견을 내지 못했습니다").event()
+            return
+        yield text_result(render(args.stock, *judged), kind="markdown").event()

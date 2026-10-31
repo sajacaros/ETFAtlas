@@ -23,11 +23,14 @@ async def lifespan(_app: FastAPI):
         raise
     import asyncio
     from .services.flow import scheduler
+    from .services import weekly_opinion
     flow_scheduler = asyncio.create_task(scheduler.loop())  # 저장한 흐름의 장 마감 뒤 자동 실행
+    opinion_scheduler = asyncio.create_task(weekly_opinion.loop())  # 토요일 아침 전 종목 매수 의견 → 디스코드
     try:
         yield
     finally:
         flow_scheduler.cancel()
+        opinion_scheduler.cancel()
 
 
 app = FastAPI(

@@ -1,5 +1,7 @@
 """Application-level AES-256-GCM column encryption for SQLAlchemy."""
 import base64
+import hashlib
+import hmac
 import os
 from decimal import Decimal
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -13,6 +15,11 @@ def _get_key() -> bytes:
     if not key_hex:
         raise RuntimeError("ENCRYPTION_KEY environment variable is not set")
     return bytes.fromhex(key_hex)
+
+
+def internal_token(purpose: str) -> str:
+    """Airflow DAG가 백엔드 내부 엔드포인트를 부를 때 쓰는 토큰. 두 컨테이너가 같은 ENCRYPTION_KEY를 받으므로 따로 나눠 줄 비밀이 없다."""
+    return hmac.new(_get_key(), purpose.encode(), hashlib.sha256).hexdigest()
 
 
 _aesgcm_instance: AESGCM | None = None

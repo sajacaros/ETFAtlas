@@ -1,5 +1,5 @@
 """주간 매수 의견: 순위, 메시지, 차례 날짜, 회사 소개 정리."""
-from datetime import date, datetime
+from datetime import date
 
 from app.domain.opinion import BUY
 from app.services import weekly_opinion as wo
@@ -51,13 +51,6 @@ def test_format_report_without_buys_says_so():
 def test_chunk_keeps_blocks_whole_under_the_limit():
     messages = wo.chunk(["a" * 60, "b" * 60, "c" * 60, "d" * 300], limit=130)
     assert messages == ["a" * 60 + "\n\n" + "b" * 60, "c" * 60, "d" * 129 + "…"]
-
-
-def test_due_run_is_saturday_morning_or_sunday():
-    assert wo.due_run(datetime(2026, 10, 31, 6, 59)) is None
-    assert wo.due_run(datetime(2026, 10, 31, 7, 0)) == date(2026, 10, 31)
-    assert wo.due_run(datetime(2026, 11, 1, 23, 0)) == date(2026, 10, 31)
-    assert wo.due_run(datetime(2026, 11, 2, 9, 0)) is None
 
 
 def test_tagline_comes_from_the_business_section_and_fits_50_chars():

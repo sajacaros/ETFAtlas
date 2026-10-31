@@ -4,7 +4,7 @@
 
 ## 흐름
 
-1. **언제**: 백엔드 프로세스 안에서 10분마다 깨어나 토요일 07:00(KST) 뒤 한 번 돈다. 토요일에 백엔드가 내려가 있었으면 일요일에 돈다. `opinion_runs`에 그 주 토요일 날짜로 한 행을 넣어 맡고, 맡은 프로세스가 30분 넘게 소식이 없으면 다른 프로세스(다시 뜬 백엔드)가 이어 맡는다.
+1. **언제**: Airflow `weekly_opinion` DAG가 토요일 07:00(KST)에 백엔드 내부 엔드포인트(`POST /internal/weekly-opinion/{날짜}`, `routers/internal.py`)를 불러 시작시킨다. 판정은 백엔드 프로세스 안에서 돈다(airflow에는 `pydantic_ai`·챗봇 스킬이 없다). DAG를 꺼 둔 로컬에서는 돌지 않는다. `opinion_runs`에 그 날짜로 한 행을 넣어 맡고, DAG는 그 행이 `done`이 될 때까지 5분마다 다시 부른다 — 맡은 프로세스가 30분 넘게 소식이 없으면(백엔드가 다시 떴으면) 다시 뜬 백엔드가 이어 맡는다.
 2. **종목마다**: 챗봇 '살까 말까' 답과 같은 영역 — `stock_technical`(차트), `company_financials`(분기 8개), `company_valuation`, `company_type`, `company_report`(개요) — 을 스킬로 채우고, 그 요약으로 `stock_opinion.judge`가 관점별(차트·재무·보고서) 판정을 낸다. 종합 의견은 `domain/opinion.py` 규칙. 동시 3종목(챗봇과 LLM을 나눠 쓴다). 판정한 종목은 바로 `stock_opinions`에 남겨 다시 뜬 백엔드가 건너뛴다.
 3. **순위**: '사 볼 만하다'만, 점수(관점 평균 −2~+2) → 재무 판정 → 시가총액 순으로 10개. 10개가 안 되면 있는 만큼만. 순위는 `stock_opinions.rank`.
 4. **회사 소개**: 뽑힌 종목만 최신 보고서 개요의 '사업 구조'로 50자 한 줄을 만들어 `stock_reports.tagline`에 남긴다 (보고서마다 한 번). 개요는 `dart_report_index`의 `make_overviews`가 미리 만든다.
@@ -29,5 +29,7 @@ DRAM과 NAND Flash 등 메모리 반도체를 생산하는 기업
 docker exec etf-atlas-backend python -m app.services.weekly_opinion --codes 005930,000660 --dry-run  # 저장·발송 없이 출력
 docker exec etf-atlas-backend python -m app.services.weekly_opinion --date 2026-10-31               # 그 차례를 맡아 끝까지
 ```
+
+또는 Airflow에서 `weekly_opinion` DAG를 `date` 인자로 실행한다.
 
 `--limit`·`--codes`는 `--dry-run`과 함께만 쓴다 (일부만 돌고 차례를 마치면 그 주는 다시 돌지 않는다). 다시 돌리려면 `opinion_runs`의 그 날짜 행을 지운다 (`stock_opinions`는 CASCADE).

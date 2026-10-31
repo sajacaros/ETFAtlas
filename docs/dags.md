@@ -14,6 +14,7 @@ AGE 수집 공용 로직은 `airflow/dags/age_utils.py`에 모여 있다.
 | `backfill_prices` | `backfill_prices.py` | 수동 | AGE | ETF·종목 가격 이력 백필 (기본 400일) |
 | `dart_sync_rdb` | `dart_sync_rdb.py` | `20 19 * * 1-5` (평일 19:20 KST) | RDB | 챗봇 기업 분석의 DART 고유번호·공시·주요계정·현금흐름 |
 | `dart_report_index` | `dart_report_index.py` | `0 21 * * *` (매일 21:00 KST) | RDB, LLM | 정기보고서 목차 트리 색인 (원문 → 트리 → 등록 LLM 노드 요약 → 종목별 최신 보고서 개요) |
+| `weekly_opinion` | `weekly_opinion.py` | `0 7 * * 6` (토 07:00 KST) | 백엔드 | 전 종목 매수 의견 → 디스코드 상위 10개 (판정은 백엔드) |
 
 ### 데이터 소스
 
@@ -291,6 +292,10 @@ queue_reports → build_trees → summarize_nodes → prune_reports → make_ove
 - `make_overviews`: 종목별 최신 보고서(`company_report.pick_report`와 같은 기준)에 개요(사업 구조·이번 기간 영업 상황·위험 요인·소송·제재)가 없으면 등록된 LLM으로 만들어 `stock_reports.overview`에 남긴다. 입력·프롬프트는 챗봇 `company_report`와 같은 `report_tree.overview_*`. 매수 의견(`stock_opinion`)이 개요를 읽으므로 질문이 오기 전에 채워 둔다. 노드 요약에 더 붙인 서버는 쓰지 않고 등록 LLM만(동시 6개), 실행당 180분. 처음 약 560건을 채운 뒤로는 새 보고서만이다.
 
 ---
+
+## 8. weekly_opinion (백엔드)
+
+판정은 백엔드가 한다 — airflow에는 `pydantic_ai`·챗봇 스킬이 없다. 이 DAG는 `POST http://backend:8000/internal/weekly-opinion/{날짜}`로 차례를 시작시키고, `opinion_runs`의 그 날짜 행이 `done`이 될 때까지 5분마다 보며 다시 부른다(이미 돌고 있으면 백엔드가 무시하고, 30분 넘게 소식이 없으면 이어 맡는다). 토큰은 두 컨테이너가 받는 `ENCRYPTION_KEY`로 만든 HMAC(`X-Internal-Token`)이라 따로 둘 비밀이 없다. 실행당 6시간. 로컬은 DAG를 꺼 두므로 돌지 않는다. 자세한 흐름은 [weekly-opinion.md](weekly-opinion.md).
 
 ## 저장 대상별 요약
 

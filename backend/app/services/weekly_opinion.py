@@ -5,13 +5,14 @@
 - 순위: '사 볼 만하다' 중 점수(관점 평균) → 재무 판정 → 시가총액 순. 10개가 안 되면 있는 만큼만 알린다.
 - 결과는 stock_opinions에 남는다. 백엔드가 중간에 다시 떠도 판정한 종목은 건너뛰고, 다음 주는 새로 들어온 종목을 표시한다.
 - 회사 소개(50자)는 뽑힌 종목만 보고서 개요의 사업 구조로 만들어 stock_reports.tagline에 남긴다.
-- 백엔드 프로세스 안에서 CHECK_EVERY마다 깨어난다 (flow.scheduler와 같은 방식). 손으로 돌리려면
-  `python -m app.services.weekly_opinion --limit 5 --dry-run` (저장·발송 없이 메시지만 출력).
+- 언제 돌지는 Airflow `weekly_opinion` DAG가 정해 내부 엔드포인트(routers/internal.py)로 start()를 부른다.
+  airflow에는 pydantic_ai·챗봇 스킬이 없어 판정은 백엔드가 한다. DAG를 꺼 둔 로컬에서는 돌지 않는다.
+  손으로 돌리려면 `python -m app.services.weekly_opinion --limit 5 --dry-run` (저장·발송 없이 메시지만 출력).
 """
 import argparse
 import asyncio
 import logging
-from datetime import date, datetime, time as dtime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Set
 
 import httpx
@@ -40,9 +41,6 @@ from .llm import NO_THINKING, build_model
 
 logger = logging.getLogger(__name__)
 
-CHECK_EVERY = 600  # 초
-RUN_WEEKDAY = 5  # 토요일 — 금요일 종가까지 들어온 뒤
-START = dtime(7, 0)
 WORKERS = 3  # 동시에 판정할 종목 수. 챗봇과 같은 LLM을 나눠 쓴다
 STALE = timedelta(minutes=30)  # 맡은 프로세스가 이만큼 소식이 없으면 다른 프로세스가 이어 맡는다
 TOP = 10
@@ -412,31 +410,25 @@ async def run_week(run_on: date, limit: Optional[int] = None, dry_run: bool = Fa
     return messages
 
 
-def due_run(now: datetime) -> Optional[date]:
-    """이번 차례의 토요일. 토요일 START부터 일요일까지 (토요일에 백엔드가 내려가 있었으면 일요일에 돈다)."""
-    if now.weekday() == RUN_WEEKDAY and now.time() >= START:
-        return now.date()
-    if now.weekday() == (RUN_WEEKDAY + 1) % 7:
-        return now.date() - timedelta(days=1)
-    return None
+_running: Set[asyncio.Task] = set()  # 끝나기 전에 가비지 컬렉션되지 않게 잡아 둔다
 
 
-async def tick(now: datetime) -> None:
-    run_on = due_run(now)
-    if run_on is None or not await asyncio.to_thread(claim, run_on):
-        return
-    await run_week(run_on)
+async def _run_logged(run_on: date) -> None:
+    try:
+        await run_week(run_on)
+    except Exception:
+        # 차례는 running으로 남고, STALE이 지나면 DAG가 다시 부를 때 이어 맡는다
+        logger.exception("Weekly opinion %s failed", run_on)
 
 
-async def loop() -> None:
-    while True:
-        try:
-            await tick(datetime.now(KST).replace(tzinfo=None))
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Weekly opinion tick failed")
-        await asyncio.sleep(CHECK_EVERY)
+async def start(run_on: date) -> bool:
+    """이 차례를 맡을 수 있으면 백그라운드로 시작한다. 이미 끝났거나 다른 프로세스가 돌고 있으면 False."""
+    if not await asyncio.to_thread(claim, run_on):
+        return False
+    task = asyncio.create_task(_run_logged(run_on))
+    _running.add(task)
+    task.add_done_callback(_running.discard)
+    return True
 
 
 def main() -> None:

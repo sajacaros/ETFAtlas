@@ -5,7 +5,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
 from .utils.session import get_current_user_id
-from .routers import auth, etfs, watchlist, portfolio, tags, chat, notifications, admin, shared, flows
+from .routers import auth, etfs, watchlist, portfolio, tags, chat, notifications, admin, shared, flows, internal
 
 logger = logging.getLogger(__name__)
 
@@ -23,14 +23,11 @@ async def lifespan(_app: FastAPI):
         raise
     import asyncio
     from .services.flow import scheduler
-    from .services import weekly_opinion
     flow_scheduler = asyncio.create_task(scheduler.loop())  # 저장한 흐름의 장 마감 뒤 자동 실행
-    opinion_scheduler = asyncio.create_task(weekly_opinion.loop())  # 토요일 아침 전 종목 매수 의견 → 디스코드
     try:
         yield
     finally:
         flow_scheduler.cancel()
-        opinion_scheduler.cancel()
 
 
 app = FastAPI(
@@ -65,6 +62,8 @@ app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
 app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
 app.include_router(flows.router, prefix="/api/flows", tags=["Flows"])
+# Airflow DAG만 부른다. nginx는 /api만 넘기므로 밖에서는 닿지 않는다
+app.include_router(internal.router, prefix="/internal", tags=["Internal"])
 
 
 @app.get("/")

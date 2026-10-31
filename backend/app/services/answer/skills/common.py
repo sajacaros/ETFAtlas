@@ -1,7 +1,14 @@
 """데이터 스킬들이 함께 쓰는 도우미."""
-from typing import List
+from typing import Dict, List
 
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+
+from ...content import BarView, DonutView, TableView, TreemapView
+from ...entities import normalize_name
+from ...graph_service import GraphService, node
+
+DONUT_MAX_SLICES = 8  # 넘으면 나머지를 '기타'로 묶는다
 
 # 질문에 기간이 없을 때의 기간. 가격 추이와 수익률 순위가 같은 기간을 써야 '수익률 상위 → 추이'가 맞물린다
 DEFAULT_PERIOD = "1m"
@@ -47,3 +54,40 @@ def missing_notes(missing: List[str]) -> List[str]:
 def period_span(start: str, end: str, label: str = "") -> str:
     """결과에 보이는 조회 구간 문구 (예: '조회 기간: 2026-09-24 ~ 2026-10-24 (1개월)')."""
     return f"조회 기간: {start} ~ {end}" + (f" ({label})" if label else "")
+
+
+def share_view(display: str, name: str = "name", value: str = "weight"):
+    """비중 목록(구성종목·합산 비중)의 표시 방식 → 화면 view. 고르지 않은 방식은 표."""
+    if display == "treemap":
+        return TreemapView(name=name, value=value)
+    if display == "donut":
+        return DonutView(name=name, value=value)
+    if display == "bar":
+        return BarView(x=name, y=[value], horizontal=True)
+    return TableView()
+
+
+def theme_word(theme: str) -> str:
+    """'반도체 ETF' → '반도체'."""
+    word = theme.strip()
+    return word[:-3].strip() if word.upper().endswith("ETF") else word
+
+
+def theme_etfs(db: Session, theme: str) -> List[Dict]:
+    """태그 이름과 같으면 그 태그의 ETF, 아니면 이름에 그 단어가 든 ETF. 순자산 큰 순."""
+    query = normalize_name(theme)
+    if not query:
+        return []
+    graph = GraphService(db)
+    tagged = node(
+        graph,
+        "MATCH (e:ETF)-[:TAGGED]->(t:Tag) WHERE replace(toLower(t.name), ' ', '') = $query "
+        "RETURN {code: e.code, name: e.name, net_assets: e.net_assets} ORDER BY e.net_assets DESC",
+        {"query": query},
+    )
+    return tagged or node(
+        graph,
+        "MATCH (e:ETF) WHERE replace(toLower(e.name), ' ', '') CONTAINS $query "
+        "RETURN {code: e.code, name: e.name, net_assets: e.net_assets} ORDER BY e.net_assets DESC",
+        {"query": query},
+    )

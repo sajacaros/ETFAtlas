@@ -7,6 +7,7 @@ import asyncio
 import copy
 import json
 import logging
+import threading
 from dataclasses import dataclass, field
 from typing import Annotated, Any, Callable, Dict, List, Literal, Optional, Set, Union
 
@@ -20,10 +21,10 @@ from ..chat_memory import ConversationContext
 from ..content import slot_type
 from ..embedding_service import EmbeddingService
 from ..entities import is_etf_name
-from ..llm import NO_THINKING, build_model
-from .refs import REF_RE, RefError, expanded, rank_gaps, refs_in, split_hint
+from ..llm import CACHED_CONFIGS, NO_THINKING, build_model
+from .refs import REF_RE, RefError, expanded, rank_gaps, refs_in, split_hint, strings, with_dependents
 from .skills import FALLBACK_SKILL, REGISTRY
-from .skills.base import KIND_LABEL, Skill
+from .skills.base import KIND_LABEL, PlanLookups, Skill
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +225,7 @@ def _kind_errors(step: BaseModel, named: Dict[str, BaseModel], registry: Dict[st
     errors = []
     dumped = step.args.model_dump()
     for field, need in registry[step.skill].arg_kinds(dumped).items():
-        for value in _strings(dumped.get(field)):
+        for value in strings(dumped.get(field)):
             m = REF_RE.match(value.strip())
             target = named.get(m.group(1)) if m else None
             if target is None or not registry[target.skill].exports:  # 없는 이름·내보내지 않는 스킬은 따로 알린다
@@ -245,22 +246,12 @@ def _gap_errors(steps: List[BaseModel]) -> List[str]:
     errors = []
     by_skill: Dict[str, List[Any]] = {}
     for step in steps:
-        by_skill.setdefault(step.skill, []).extend(_strings(step.args.model_dump()))
+        by_skill.setdefault(step.skill, []).extend(strings(step.args.model_dump()))
     for skill, values in by_skill.items():
         for name, missing in rank_gaps(values).items():
             listed = ", ".join(f"{r}위" for r in missing)
             errors.append(f"{skill} 슬롯들이 '@{name}' 순위를 나눠 담으면서 {listed}를 빠뜨렸습니다. 빠짐없이 이어지게 나누세요")
     return errors
-
-
-def _strings(value: Any) -> List[str]:
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, dict):
-        return [s for v in value.values() for s in _strings(v)]
-    if isinstance(value, list):
-        return [s for v in value for s in _strings(v)]
-    return []
 
 
 def _at(value: Any, loc: tuple) -> Any:
@@ -339,8 +330,8 @@ def to_rows(plan: BaseModel) -> List[List[PlannedSlot]]:
     return rows
 
 
-def fallback_rows(question: str) -> List[List[PlannedSlot]]:
-    skill = REGISTRY[FALLBACK_SKILL]
+def fallback_rows(question: str, registry: Dict[str, Skill]) -> List[List[PlannedSlot]]:
+    skill = registry[FALLBACK_SKILL]
     return [[PlannedSlot(id="s1", skill=skill.name, title="", display=skill.displays[0],
                          args=skill.Args(question=question))]]
 
@@ -364,34 +355,31 @@ def layout_tree(rows: List[List[PlannedSlot]], splits: Optional[Dict[str, List[P
     return {"type": "column", "children": children}
 
 
-def data_lookups(session_factory: Callable[[], Session]) -> Dict[str, Callable]:
-    """플래너가 DB를 보는 함수들 — Planner(**data_lookups(...))로 넘긴다. 부를 때마다 세션을 따로 연다 (스레드에서 돈다)."""
-    def with_session(fn):
+def data_lookups(session_factory: Callable[[], Session], config: Optional[AIConfig] = None) -> Dict[str, Callable]:
+    """플래너가 DB를 보는 함수들 — Planner(**data_lookups(...))로 넘긴다. 부를 때마다 세션을 따로 연다 (스레드에서 돈다).
+    config를 주면 예시 검색이 접속 설정을 다시 읽지 않는다."""
+    def with_session(fn, *extra):
         def call(*args):
             db = session_factory()
             try:
-                return fn(db, *args)
+                return fn(db, *args, *extra)
             finally:
                 db.close()
         return call
 
-    return {"find_examples": with_session(find_layout_examples), "is_etf_name": with_session(is_etf_name)}
+    return {"find_examples": with_session(find_layout_examples, config), "is_etf_name": with_session(is_etf_name)}
 
 
-def data_errors(plan: BaseModel, is_etf_name: Callable[[str], bool]) -> List[str]:
-    """스키마로는 알 수 없고 데이터를 봐야 아는 계획 오류."""
-    errors = []
-    for step in (step for row in plan.rows for step in row.slots):
-        # 테마로 되묻는데 그 '테마'가 상장 ETF의 정확한 이름이면, 대상이 이미 정해진 것이다
-        if step.skill == "etf_choice" and step.args.by == "theme" and is_etf_name(step.args.condition):
-            errors.append(f"{_label(step)}: '{step.args.condition}'은(는) 테마가 아니라 ETF 상품 이름입니다. "
-                          "되묻지 말고 그 이름을 데이터 스킬의 인자에 그대로 적으세요")
-    return errors
+def data_errors(plan: BaseModel, registry: Dict[str, Skill], lookups: PlanLookups) -> List[str]:
+    """스키마로는 알 수 없고 데이터를 봐야 아는 계획 오류 — 스킬마다 plan_errors로 검사한다."""
+    return [f"{_label(step)}: {error}"
+            for step in (step for row in plan.rows for step in row.slots)
+            for error in registry[step.skill].plan_errors(step.args, lookups)]
 
 
-def find_layout_examples(db: Session, question: str) -> List[Dict[str, Any]]:
+def find_layout_examples(db: Session, question: str, config: Optional[AIConfig] = None) -> List[Dict[str, Any]]:
     """질문과 유형이 비슷한 화면 설계 예시. 예시는 고유명사를 뺀 일반화 질문으로 임베딩되어 있어 검색 질의도 일반화한다."""
-    service = EmbeddingService(db)
+    service = EmbeddingService(db, config)
     if EXAMPLE_SELECTOR:  # 선택기가 고를 후보: 넓게, 1위와의 거리 차이로 자르지 않는다
         params = {"top_k": EXAMPLE_CANDIDATES, "max_distance": EXAMPLE_CANDIDATE_MAX_DISTANCE, "similarity_gap": 0}
     else:
@@ -412,9 +400,16 @@ def examples_prompt(examples: List[Dict[str, Any]]) -> str:
 
 
 @dataclass
-class ReplanDeps:
-    previous: List[List[Dict[str, Any]]]  # 이전 계획 (줄 → 슬롯 step)
-    editable: Set[str]  # 바꿔도 되는 슬롯 id: 고칠 수 있는 실패, 그 결과를 받는 슬롯, 해설
+class PlanDeps:
+    """설계 에이전트의 출력 검사기가 요청마다 받는 것 (에이전트는 설정별로 캐시해 여러 요청이 함께 쓴다)."""
+    registry: Dict[str, Skill] = field(default_factory=dict)
+    lookups: Optional[PlanLookups] = None  # 없으면 데이터를 봐야 아는 검사는 하지 않는다
+
+
+@dataclass
+class ReplanDeps(PlanDeps):
+    previous: List[List[Dict[str, Any]]] = field(default_factory=list)  # 이전 계획 (줄 → 슬롯 step)
+    editable: Set[str] = field(default_factory=set)  # 바꿔도 되는 슬롯 id: 고칠 수 있는 실패, 그 결과를 받는 슬롯, 해설
 
 
 class ExampleChoice(BaseModel):
@@ -447,14 +442,7 @@ def replan_errors(plan: BaseModel, deps: ReplanDeps) -> List[str]:
 
 def editable_slots(slots: List[PlannedSlot], results: Dict[str, Dict[str, Any]], registry: Dict[str, Skill]) -> Set[str]:
     """다시 설계에서 바꿔도 되는 슬롯: 고칠 수 있는 실패, 그 결과를 (참조로 이어서) 받는 슬롯, 해설 같은 after_others."""
-    editable = {s.id for s in slots if results.get(s.id, {}).get("retryable")}
-    changed = True
-    while changed:
-        changed = False
-        for s in slots:
-            if s.id not in editable and set(s.depends_on) & editable:
-                editable.add(s.id)
-                changed = True
+    editable = with_dependents(slots, {s.id for s in slots if results.get(s.id, {}).get("retryable")})
     return editable | {s.id for s in slots if registry[s.skill].after_others}
 
 
@@ -487,7 +475,62 @@ def _example_line(i: int, ex: Dict[str, Any]) -> str:
     return f"[{i}] {ex.get('question_generalized') or ex['question']}{why} / 스킬: {shape}{' (참조)' if uses_refs else ''}"
 
 
+async def _check_data(ctx: RunContext[PlanDeps], output):
+    if ctx.deps.lookups is not None:
+        errors = await asyncio.to_thread(data_errors, output, ctx.deps.registry, ctx.deps.lookups)
+        if errors:  # 스키마 검증 오류와 같이, 이유를 플래너에게 돌려줘 다시 쓰게 한다
+            raise ModelRetry("\n".join(errors))
+    return output
+
+
+async def _check_replan(ctx: RunContext[ReplanDeps], output):
+    errors = replan_errors(output, ctx.deps)
+    if errors:
+        raise ModelRetry("\n".join(errors))
+    return await _check_data(ctx, output)
+
+
+@dataclass(frozen=True)
+class PlannerAgents:
+    plan: Agent
+    replan: Agent
+    select: Agent
+
+
+_agents: Dict[tuple, PlannerAgents] = {}
+_agents_lock = threading.Lock()
+
+
+def planner_agents(config: AIConfig, registry: Dict[str, Skill]) -> PlannerAgents:
+    """설계·다시 설계·예시 선택 에이전트. 출력 스키마를 스킬마다 만드는 일이 무거워 (접속 설정, 스킬 목록)마다 한 번만 만든다.
+    설정을 바꾸면 키가 달라 다음 요청부터 새 에이전트를 쓴다. 요청마다 다른 것은 deps(PlanDeps)로 넘긴다."""
+    key = (config, tuple(registry.items()))
+    with _agents_lock:
+        if key in _agents:
+            return _agents[key]
+    plan_model = build_plan_model(registry)
+    instructions = f"{PLANNER_PROMPT}\n{skill_catalog(registry)}"
+    # 설계는 스키마를 생성 단계에서 강제한다(NativeOutput). 도구 호출 방식보다 빠르고, 재시도는 내용 검사에만 쓰여
+    # 다시 설계가 한도를 넘겨 실패하지 않는다 (evals --output으로 비교). 선택기는 native면 예시를 덜 골라 그대로 둔다
+    agents = PlannerAgents(
+        plan=Agent(build_model(config), output_type=NativeOutput(plan_model), deps_type=PlanDeps,
+                   instructions=instructions, model_settings=NO_THINKING, retries=2),
+        replan=Agent(build_model(config), output_type=NativeOutput(plan_model), deps_type=ReplanDeps,
+                     instructions=instructions + REPLAN_RULES, model_settings=NO_THINKING, retries=2),
+        select=Agent(build_model(config), output_type=ExampleChoice,
+                     instructions=SELECTOR_PROMPT.format(top_k=EXAMPLES_TOP_K), model_settings=NO_THINKING, retries=1),
+    )
+    agents.plan.output_validator(_check_data)
+    agents.replan.output_validator(_check_replan)
+    with _agents_lock:
+        if len(_agents) >= CACHED_CONFIGS:  # 예전 설정의 에이전트가 쌓이지 않게
+            _agents.clear()
+        return _agents.setdefault(key, agents)
+
+
 class Planner:
+    """요청마다 만든다 (마지막 설계에 넣은 예시를 들고 있다). 무거운 에이전트는 planner_agents가 캐시한다."""
+
     def __init__(
         self, config: AIConfig, registry: Dict[str, Skill] = REGISTRY,
         find_examples: Optional[Callable[[str], List[Dict[str, Any]]]] = None,
@@ -496,42 +539,20 @@ class Planner:
         self._registry = registry
         self._find_examples = find_examples
         self.last_examples: List[Dict[str, Any]] = []  # 마지막 설계에 넣은 예시 (다시 설계와 평가에서 쓴다)
-        plan_model = build_plan_model(registry)
-        instructions = f"{PLANNER_PROMPT}\n{skill_catalog(registry)}"
-        # 설계는 스키마를 생성 단계에서 강제한다(NativeOutput). 도구 호출 방식보다 빠르고, 재시도는 내용 검사에만 쓰여
-        # 다시 설계가 한도를 넘겨 실패하지 않는다 (evals --output으로 비교). 선택기는 native면 예시를 덜 골라 그대로 둔다
-        self._agent = Agent(build_model(config), output_type=NativeOutput(plan_model), instructions=instructions,
-                            model_settings=NO_THINKING, retries=2)
-        self._replanner = Agent(build_model(config), output_type=NativeOutput(plan_model), deps_type=ReplanDeps,
-                                instructions=instructions + REPLAN_RULES, model_settings=NO_THINKING, retries=2)
-        self._selector = Agent(build_model(config), output_type=ExampleChoice,
-                               instructions=SELECTOR_PROMPT.format(top_k=EXAMPLES_TOP_K), model_settings=NO_THINKING, retries=1)
-
-        async def check_data(output):
-            if is_etf_name is not None:
-                errors = await asyncio.to_thread(data_errors, output, is_etf_name)
-                if errors:  # 스키마 검증 오류와 같이, 이유를 플래너에게 돌려줘 다시 쓰게 한다
-                    raise ModelRetry("\n".join(errors))
-            return output
-
-        async def check_replan(ctx: RunContext[ReplanDeps], output):
-            errors = replan_errors(output, ctx.deps)
-            if errors:
-                raise ModelRetry("\n".join(errors))
-            return await check_data(output)
-
-        self._agent.output_validator(check_data)
-        self._replanner.output_validator(check_replan)
+        self._lookups = PlanLookups(is_etf_name=is_etf_name) if is_etf_name is not None else None
+        agents = planner_agents(config, registry)
+        self._agent, self._replanner, self._selector = agents.plan, agents.replan, agents.select
 
     async def plan(self, question: str, context: ConversationContext) -> List[List[PlannedSlot]]:
         self.last_examples = await self._examples(question)
         try:
-            result = await self._agent.run(self._prompt(question, context))
+            result = await self._agent.run(self._prompt(question, context),
+                                           deps=PlanDeps(registry=self._registry, lookups=self._lookups))
             rows = to_rows(result.output)
         except Exception:
             logger.exception("Layout planning failed; falling back to the agent skill")
-            return fallback_rows(question)
-        return rows or fallback_rows(question)
+            return fallback_rows(question, self._registry)
+        return rows or fallback_rows(question, self._registry)
 
     async def replan(
         self, question: str, context: ConversationContext, rows: List[List[PlannedSlot]], results: Dict[str, Dict[str, Any]],
@@ -539,7 +560,8 @@ class Planner:
         """실행 결과를 보고 고칠 수 있는 슬롯만 다시 설계한다. 배치는 그대로라 슬롯 id가 유지된다. 실패하면 None."""
         slots = [s for row in rows for s in row]
         editable = editable_slots(slots, results, self._registry)
-        deps = ReplanDeps(previous=[[_step_dict(s) for s in row] for row in rows], editable=editable)
+        deps = ReplanDeps(registry=self._registry, lookups=self._lookups,
+                          previous=[[_step_dict(s) for s in row] for row in rows], editable=editable)
         prompt = self._prompt(question, context, extra=results_prompt(slots, results, editable))
         try:
             result = await self._replanner.run(prompt, deps=deps)

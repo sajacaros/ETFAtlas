@@ -5,9 +5,10 @@
 > 범위: 답변 화면의 `agent` 스킬 안에서 도는 tool-calling 에이전트(`ChatService`)와 그 도구.
 > 챗봇 전체 흐름은 웹 화면의 Architecture 페이지(`frontend/public/architecture.html`), 레이아웃·스킬 구현은 [answer-skills.md](answer-skills.md)를 본다.
 
-`ChatService`는 **pydantic-ai** tool-calling 에이전트이며, **10개의 커스텀 도구**와 **답변 화면의 데이터 스킬 중 `tool = True`인 8개**(아래 '스킬 도구')를 가진다.
+`ChatService`는 **pydantic-ai** tool-calling 에이전트이며, **6개의 커스텀 도구**와 **답변 화면의 데이터 스킬 중 `tool = True`인 13개**(아래 '스킬 도구')를 가진다.
 레이아웃 설계가 스킬로 표현할 수 없는 질문(태그·운용사별 목록, 유사 ETF, 비중 변화, 복잡한 그래프 조건 등)이나 설계에 실패한 질문을 `agent` 슬롯으로 넘기면 이 에이전트가 마크다운으로 답한다.
-모든 도구는 `backend/app/services/chat_service.py`에 정의되어 있습니다.
+커스텀 도구는 `backend/app/services/chat_service.py`에, 스킬 도구는 `backend/app/services/answer/tools.py`가 만든다.
+ETF 정보·가격 추이·비교처럼 스킬이 있는 일은 스킬 도구가 맡는다 — 예전의 `get_etf_info`·`get_etf_prices`·`get_stock_prices`·`compare_etfs`는 없앴다 (아래 '없앤 도구').
 
 ---
 
@@ -26,9 +27,9 @@
 |----------|------|------|------|
 | `query` | string | O | 검색 키워드 (ETF 이름 또는 코드) |
 
-**출력**: 최대 10건의 ETF 목록 (JSON)
+**출력**: 최대 10건의 ETF 목록 (JSON). 숫자 열은 아래 '도구 결과의 서식'대로 바뀐다
 ```json
-[{"code": "069500", "name": "KODEX 200", "expense_ratio": 0.15}]
+[{"code": "069500", "name": "KODEX 200", "expense_ratio": "0.15%"}]
 ```
 
 **Cypher 패턴**
@@ -78,43 +79,7 @@ ORDER BY e.name LIMIT 10
 
 ---
 
-### 4. get_etf_info - ETF 종합 정보 조회
-
-| 항목 | 내용 |
-|------|------|
-| **클래스** | `GetETFInfoTool` |
-| **용도** | ETF의 기본정보(기초지수·상장일·운용사 설명 포함), 운용사, 태그, 상위 보유종목 10개, 최근 수익률 종합 조회 |
-| **데이터 소스** | Apache AGE (기본정보/태그/보유종목) + PostgreSQL (가격/수익률) |
-
-**입력**
-| 파라미터 | 타입 | 필수 | 설명 |
-|----------|------|------|------|
-| `etf_code` | string | O | ETF 종목코드 (예: '069500') |
-
-**출력**: ETF 종합 정보 (JSON)
-```json
-{
-  "code": "069500",
-  "name": "KODEX 200",
-  "expense_ratio": 0.15,
-  "company": "삼성자산운용",
-  "tags": ["대형주", "시장대표"],
-  "top_holdings": [
-    {"stock_code": "005930", "stock_name": "삼성전자", "weight": 30.5}
-  ],
-  "returns": {"1w": 1.23, "1m": 3.45, "3m": -2.10}
-}
-```
-
-**내부 동작**: 4개의 하위 쿼리 실행
-1. 기본정보 + 운용사 (Cypher: `ETF → MANAGED_BY → Company`)
-2. 태그 (Cypher: `ETF → TAGGED → Tag`)
-3. 상위 보유종목 10개 (Cypher: `ETF → CURRENT_HOLDS → Stock`, 비중순)
-4. 최근 수익률 1주/1개월/3개월 (`ETFService.get_etf_prices()`)
-
----
-
-### 5. find_similar_etfs - 유사 ETF 조회
+### 4. find_similar_etfs - 유사 ETF 조회
 
 | 항목 | 내용 |
 |------|------|
@@ -130,7 +95,7 @@ ORDER BY e.name LIMIT 10
 **출력**: 유사 ETF 목록 (JSON)
 ```json
 [
-  {"etf_code": "102110", "name": "TIGER 200", "overlap": 180, "similarity": 92.5}
+  {"etf_code": "102110", "name": "TIGER 200", "overlap": 180, "similarity": "92.50%"}
 ]
 ```
 
@@ -138,7 +103,7 @@ ORDER BY e.name LIMIT 10
 
 ---
 
-### 6. get_holdings_changes - 보유종목 변화 조회
+### 5. get_holdings_changes - 보유종목 변화 조회
 
 | 항목 | 내용 |
 |------|------|
@@ -164,104 +129,7 @@ ORDER BY e.name LIMIT 10
 
 ---
 
-### 7. get_etf_prices - ETF 가격 추이 조회
-
-| 항목 | 내용 |
-|------|------|
-| **클래스** | `GetETFPricesTool` |
-| **용도** | ETF의 과거 가격 데이터 (종가, 거래량, 시가총액, 순자산총액) 조회 |
-| **데이터 소스** | `ETFService.get_etf_prices()` (PostgreSQL) |
-
-**입력**
-| 파라미터 | 타입 | 필수 | 설명 |
-|----------|------|------|------|
-| `etf_code` | string | O | ETF 종목코드 (예: '069500') |
-| `period` | string | - | 조회 기간: `'1w'`, `'1m'`(기본값), `'3m'`, `'6m'`, `'1y'` |
-
-**출력**: 요약 통계 + 일별 데이터 (JSON)
-```json
-{
-  "summary": {
-    "etf_code": "069500", "period": "1m", "data_count": 22,
-    "start_date": "2026-01-12", "end_date": "2026-02-12",
-    "start_close": 35000, "end_close": 36500,
-    "high": 37000, "low": 34500, "change_rate": 4.29,
-    "avg_volume": 1234567,
-    "latest_market_cap": 15000000000,
-    "latest_net_assets": 14500000000
-  },
-  "daily": [
-    {"date": "2026-02-12", "close": 36500, "volume": 1200000, "market_cap": 15000000000, "net_assets": 14500000000}
-  ]
-}
-```
-
----
-
-### 8. get_stock_prices - 주식 종목 가격 추이 조회
-
-| 항목 | 내용 |
-|------|------|
-| **클래스** | `GetStockPricesTool` |
-| **용도** | 개별 주식(ETF가 아닌)의 OHLCV 가격 데이터 조회 |
-| **데이터 소스** | `ETFService.get_stock_prices()` (PostgreSQL) |
-
-**입력**
-| 파라미터 | 타입 | 필수 | 설명 |
-|----------|------|------|------|
-| `stock_code` | string | O | 종목코드 (예: '005930') |
-| `period` | string | - | 조회 기간: `'1w'`, `'1m'`(기본값), `'3m'`, `'6m'`, `'1y'` |
-
-**출력**: 요약 통계 + 일별 OHLCV (JSON)
-```json
-{
-  "summary": {
-    "stock_code": "005930", "period": "1m", "data_count": 22,
-    "start_date": "2026-01-12", "end_date": "2026-02-12",
-    "start_close": 70000, "end_close": 72000,
-    "high": 73000, "low": 69500, "change_rate": 2.86,
-    "avg_volume": 987654
-  },
-  "daily": [
-    {"date": "2026-02-12", "open": 71500, "high": 72200, "low": 71300, "close": 72000, "volume": 1000000, "change_rate": 0.7}
-  ]
-}
-```
-
----
-
-### 9. compare_etfs - ETF 비교
-
-| 항목 | 내용 |
-|------|------|
-| **클래스** | `CompareETFsTool` |
-| **용도** | 2~3개 ETF를 한번에 비교 (보수율, 태그, 수익률, 보유종목) |
-| **데이터 소스** | Apache AGE + PostgreSQL |
-
-**입력**
-| 파라미터 | 타입 | 필수 | 설명 |
-|----------|------|------|------|
-| `etf_codes` | string | O | 쉼표 구분 ETF 코드 (예: `'069500,102110,229200'`), 최소 2개, 최대 3개 |
-
-**출력**: ETF별 비교 정보 배열 (JSON)
-```json
-[
-  {
-    "code": "069500", "name": "KODEX 200", "expense_ratio": 0.15,
-    "company": "삼성자산운용",
-    "tags": ["대형주", "시장대표"],
-    "top_holdings": [{"stock_code": "005930", "stock_name": "삼성전자", "weight": 30.5}],
-    "return_1m": 3.45,
-    "latest_net_assets": 15000000000
-  }
-]
-```
-
-**비교 항목**: 기본정보(보수율, 순자산), 운용사, 태그, 상위 보유종목 5개(`CURRENT_HOLDS`), 최근 1개월 수익률
-
----
-
-### 10. graph_query - 그래프 DB 직접 쿼리
+### 6. graph_query - 그래프 DB 직접 쿼리
 
 | 항목 | 내용 |
 |------|------|
@@ -338,6 +206,17 @@ LIMIT 5
 RETURN {etf_code: e.code, etf_name: e.name, weight_samsung: h1.weight, weight_tes: h2.weight, total_weight: total_weight}
 ```
 
+### 도구 결과의 서식
+
+커스텀 도구는 결과의 숫자 열을 답변 화면 요약과 같은 서식(`app/domain/format.py`의 `format_value`)으로 바꿔 넘긴다 (`chat_service.format_fields`). LLM이 단위를 헷갈리지 않게 하려는 것이다.
+
+| 열 | 서식 | 예 |
+|---|---|---|
+| `expense_ratio`, `weight`, `similarity`, `return_*`, `change_rate`, `market_cap_change_1w`, 비중 변화 열 | `percent` | `0.15%` |
+| `net_assets`, `market_cap`, `trade_value` 등 금액 | `krw` (1억원 미만은 원 단위) | `12조 3,456억원`, `5,000,000원` |
+
+예전에는 금액을 도구마다 `12,345억원`처럼 억 단위로만 적어 스킬 요약(`1조 2,345억원`)과 달랐다.
+
 ---
 
 ## 스킬 도구 (`answer/tools.py`)
@@ -355,11 +234,29 @@ RETURN {etf_code: e.code, etf_name: e.name, weight_samsung: h1.weight, weight_te
 | `rank` | ETF·종목 후보를 수익률·순자산·총보수·분배율로 정렬·필터 |
 | `overlap` | 두 ETF의 공통 종목과 겹치는 비중 |
 | `portfolio_lookthrough` | ETF·종목 포트폴리오의 종목별 합산 비중 |
+| `etf_compare` | ETF 기본 정보(운용사·기초지수·총보수·순자산·1일·1주 수익률·분배·상장일). 도구로는 ETF 하나도 받는다(`tool_args`) |
+| `holdings` | ETF 하나의 구성종목과 비중 (상위 최대 30개) |
+| `price_trend` | ETF 가격 추이 (기간 시작·끝 종가, 등락률, 최고·최저) |
+| `stock_trend` | 종목 가격 추이 |
 
 - 결과는 슬롯과 같은 요약(`summary`)과 주석이다. 화면 슬롯과 agent 답이 같은 숫자를 읽는다.
 - 인자가 스키마에 맞지 않으면 오류를 모델에게 돌려줘 다시 부르게 한다(`ModelRetry`). 슬롯의 `'@이름.순위'` 참조는 도구에서 쓸 수 없다 — 이름이나 코드를 적는다.
-- 부를 때마다 DB 세션을 따로 열어 스킬 도구끼리는 병렬로 돈다. 공유 세션을 쓰는 기존 도구 10개는 `sequential=True`라 순차로 돈다(pydantic-ai에서 장벽).
-- 기존 도구와 하는 일이 겹치는 스킬(`price_trend`·`get_etf_prices`, `stock_trend`·`get_stock_prices`, `etf_compare`·`compare_etfs` 등)은 켜지 않았다. 해결 절차 예시(`code_examples`)가 기존 도구 이름을 쓰고 있어, 기존 도구를 지우려면 예시를 먼저 옮겨야 한다.
+- 부를 때마다 DB 세션을 따로 열어 스킬 도구끼리는 병렬로 돈다. 공유 세션을 쓰는 커스텀 도구 6개는 `sequential=True`라 순차로 돈다(pydantic-ai에서 장벽).
+- 도구로 부를 때 인자 모델을 바꿔야 하는 스킬은 `tool_args`를 둔다 (`etf_compare`: 화면 슬롯은 ETF 2~5개, 도구는 1~5개).
+- 스킬 도구 목록은 `agent` 스킬이 그 답변의 레지스트리(`SkillContext.registry`)에서 만들어 `ChatService`에 넣는다. `chat_service`는 `answer/`를 가져오지 않는다.
+
+### 없앤 도구
+
+스킬과 하는 일이 겹쳐 없앴다. 같은 질문은 스킬 도구가 답한다.
+
+| 없앤 도구 | 대신 | 달라진 점 |
+|---|---|---|
+| `get_etf_info` | `etf_compare`(기본 정보) + `holdings`(구성종목) + `period_returns`(기간 수익률) | 수익률을 달력일로 직접 세지 않고 화면과 같은 기준(기간 전 마지막 거래일)으로 계산한다. 태그·운용사 설명(`description`)은 `graph_query`로 |
+| `get_etf_prices` | `price_trend` | 일별 원시 데이터 대신 기간 요약(시작·끝 종가, 등락률, 최고·최저)을 돌려준다 |
+| `get_stock_prices` | `stock_trend` (보조지표는 `stock_technical`) | 위와 같다 |
+| `compare_etfs` | `etf_compare` (+ `holdings`·`period_returns`) | 태그·상위 보유종목은 비교표에 없다 |
+
+- 해결 절차 예시(`code_examples`)와 승인된 로그의 `generated_code`에는 없앤 도구를 부르는 예시가 남아 있다. 에이전트가 없는 도구를 부르지 않도록 그런 예시는 프롬프트에 넣지 않는다 (`chat_service.usable_examples`, 뺀 예시 id는 로그에 남는다). 시드(`docker/db/seed/code_examples.py`)와 DB의 예시를 새 도구 이름으로 옮기면 다시 쓰인다.
 
 ---
 
@@ -367,16 +264,13 @@ RETURN {etf_code: e.code, etf_name: e.name, weight_samsung: h1.weight, weight_te
 
 | # | 도구명 | 용도 | 입력 | 데이터 소스 |
 |---|--------|------|------|-------------|
-| 1 | `etf_search` | ETF 검색 | query | AGE |
-| 2 | `stock_search` | 주식 종목 검색 | query | AGE |
+| 1 | `etf_search` | ETF 검색 | query, limit? | AGE |
+| 2 | `stock_search` | 주식 종목 검색 | query, limit? | AGE |
 | 3 | `list_tags` | 태그/테마 목록 | (없음) | AGE |
-| 4 | `get_etf_info` | ETF 종합 정보 | etf_code | AGE + PG |
-| 5 | `find_similar_etfs` | 유사 ETF 조회 | etf_code | AGE |
-| 6 | `get_holdings_changes` | 보유종목 변화 | etf_code, period? | AGE |
-| 7 | `get_etf_prices` | ETF 가격 추이 | etf_code, period? | PG |
-| 8 | `get_stock_prices` | 주식 가격 추이 | stock_code, period? | PG |
-| 9 | `compare_etfs` | ETF 비교 (2~3개) | etf_codes | AGE + PG |
-| 10 | `graph_query` | Cypher 직접 실행 | cypher | AGE |
+| 4 | `find_similar_etfs` | 유사 ETF 조회 | etf_code | AGE |
+| 5 | `get_holdings_changes` | 보유종목 변화 | etf_code, period? | AGE |
+| 6 | `graph_query` | Cypher 직접 실행 | cypher | AGE |
+| - | 스킬 도구 13개 | 위 '스킬 도구' 표 | 스킬의 `Args` (이름·코드를 그대로) | AGE + PG |
 
 > **AGE** = Apache AGE 그래프 DB, **PG** = PostgreSQL
 
@@ -386,12 +280,10 @@ RETURN {etf_code: e.code, etf_name: e.name, weight_samsung: h1.weight, weight_te
 
 ### 실행 흐름
 
-질문 재작성과 대화 기억은 답변 화면 오케스트레이터(`AnswerService`)가 먼저 처리하고, `agent` 스킬은 재작성된 질문을 넘긴다 (`refine=False`).
+질문 재작성과 대화 기억은 답변 화면 오케스트레이터(`AnswerService`)가 먼저 처리하고, `agent` 스킬은 재작성된 질문을 넘긴다. `ChatService`에는 재작성 단계가 없다.
 
 ```
-agent 스킬
-    ↓
-ChatMemory.load_context()   ← 세션 요약(오래된 턴) + 최근 5턴 원문
+agent 스킬                  ← 대화 맥락(세션 요약 + 최근 5턴)은 AnswerService가 읽어 SkillContext로 넘긴다
     ↓
 ChatService._build_prompt() ← 유사 해결 절차 예시(재작성 질문으로 검색) + 대화 맥락 + 재작성 질문
     ↓
@@ -450,9 +342,8 @@ agent.run_stream_events(prompt)  ← instructions = 시스템 프롬프트 + 태
 #### 예시 2: "KODEX 200과 TIGER 200 비교해줘"
 
 ```
-[Step 1] etf_search(query="KODEX 200")     ┐ 한 번의 모델 응답에서
-[Step 2] etf_search(query="TIGER 200")     ┘ 병렬 호출
-[Step 3] compare_etfs(etf_codes="069500,102110")
+[Step 1] etf_compare(etfs=["KODEX 200", "TIGER 200"])     ┐ 한 번의 모델 응답에서 병렬 호출
+[Step 2] period_returns(etfs=["KODEX 200", "TIGER 200"])  ┘ (스킬 도구는 이름을 그대로 받는다)
 [답변]   비교 표
 ```
 
@@ -462,29 +353,29 @@ agent.run_stream_events(prompt)  ← instructions = 시스템 프롬프트 + 태
 2. **태그/테마** 등장 → instructions의 태그 목록에서 정확한 태그명 확인
 3. **ETF명** 등장 → `etf_search`로 코드 먼저 확인
 4. 확인된 코드/태그명으로 → **전용 도구** 실행
-5. ETF 비교 → `compare_etfs` 사용
+5. ETF 기본정보·비교 → `etf_compare`(하나도 됨), 구성종목 → `holdings`, 기간 수익률 → `period_returns`, 가격 추이 → `price_trend`·`stock_trend`
 6. 전용 도구로 불가능한 복잡한 관계 → `graph_query`로 Cypher 직접 작성
+7. 실적·밸류에이션·공시·차트 분석·순위·겹침·포트폴리오 합산 → 스킬 도구 ('분석 도구'로 instructions에 붙는다)
 
 ### 에이전트 설정
 
 ```python
-model = OpenAIChatModel(
-    settings.llm_model,                 # LLM_MODEL (기본 qwen38-27b)
-    provider=OpenAIProvider(
-        base_url=settings.llm_api_base, # LLM_API_BASE (기본 http://localhost:4000)
-        api_key=settings.llm_api_key,   # LLM_API_KEY
-    ),
-)
-agent = Agent(model, instructions=..., tools=[t.as_agent_tool() for t in tools])
+# agent 스킬 (answer/skills/agent.py)
+service = ChatService(db, ctx.ai_config, skill_tools(ctx.registry, ctx.session_factory))
+
+# ChatService
+agent = Agent(build_model(config),      # llm.build_model: 접속 설정별로 캐시, 요청 타임아웃 LLM_TIMEOUT(120초)
+              instructions=..., tools=[t.as_agent_tool() for t in tools] + skill_tools)
 agent.run_stream_events(prompt, usage_limits=UsageLimits(request_limit=15))
 ```
 
 | 설정 | 값 | 설명 |
 |------|-----|------|
 | LLM | `LLM_MODEL` (기본 qwen38-27b) | LiteLLM 프록시(OpenAI 호환), `pydantic-ai-slim[openai]` |
-| 최대 모델 요청 | 15 | 무한 루프 방지 (`UsageLimitExceeded` 시 폴백) |
+| 최대 모델 요청 | 15 | 무한 루프 방지 (`UsageLimitExceeded`면 실패로 마친다) |
+| 요청 타임아웃 | 120초 | `llm.LLM_TIMEOUT`. 흘려받을 때는 조각 사이 간격에 걸린다 |
 | 대화 히스토리 | 세션 요약 + 최근 5턴 | `CHAT_HISTORY_WINDOW`. 질문 재작성과 프롬프트 "참고용" 맥락에 사용 |
-| 관찰 결과 제한 | 2,000자 | UI 성능 보호 |
+| 관찰 결과 제한 | 2,000자 | `OBSERVATION_CHARS` — step 이벤트(실행 과정 패널·로그)에만. 모델은 전부 받는다 |
 | few-shot 예제 | 유사 해결 절차 최대 3개 | `code_examples` pgvector 검색 (`EMBEDDING_MODEL`, 768차원, `EMBEDDING_API_KEY`) |
 
 ### 해결 절차 예시(few-shot)와 피드백 루프
@@ -495,11 +386,12 @@ agent.run_stream_events(prompt, usage_limits=UsageLimits(request_limit=15))
 - 검색할 때도 사용자 질문을 같은 프롬프트로 일반화한 뒤 임베딩한다(`현대차와 기아…` → `특정 종목 2개…`). 일반화는 추론을 끄고 호출해 0.2~0.4초 걸린다.
 - 채팅 로그의 `generated_code`는 성공한 도구 호출을 `name(key="value")` 한 줄씩 이어 붙인 것 → 관리자가 승인해 임베딩하면 새 예시가 된다
 
-### 에러 처리 (폴백)
+### 에러 처리
 
-1. 정상 종료 → 최종 텍스트 반환
-2. 요청 한도 초과/예외, 도구 결과 있음 → 마지막 도구 결과를 답변으로 사용
-3. 모두 실패 → `"죄송합니다. 답변 생성에 실패했습니다. 다시 질문해 주세요."`
+1. 정상 종료 → 최종 텍스트, `result=completed`
+2. 중지 → 그때까지의 답(없으면 중지 안내 문구), `result=cancelled`
+3. 요청 한도 초과·예외로 답을 쓰지 못함 → `result=failed`, 답은 `"죄송합니다. 답변 생성에 실패했습니다. 다시 질문해 주세요."`. 예전처럼 마지막 도구 결과(원시 JSON)를 답으로 내지 않는다
+4. `agent` 스킬은 `result`로 실패를 판정해 슬롯을 `failed`("답변을 만들지 못했습니다")로 마감한다
 
 ### 스트리밍 동작
 
@@ -518,8 +410,11 @@ agent.run_stream_events(prompt, usage_limits=UsageLimits(request_limit=15))
 // 도구 호출 1건마다 (code = 도구 호출 표기)
 {"type": "step", "data": {"step_number": 1, "code": "etf_search(query=\"KODEX\")", "observations": "...", "tool_calls": [...], "error": null}}
 
-// 최종 답변
-{"type": "answer", "data": {"answer": "최종 답변 텍스트"}}
+// 최종 답변 (result: completed | cancelled | failed | clarifying)
+{"type": "answer", "data": {"answer": "최종 답변 텍스트", "result": "completed"}}
+
+// 스트림 도중 예상하지 못한 오류 (내부 오류 문구는 로그에만, 화면에는 고정 문구)
+{"type": "error", "data": {"message": "답변 중 오류가 발생했습니다. 잠시 뒤 다시 질문해 주세요."}}
 
 // 로그 저장 후
 {"type": "chat_log_id", "data": {"chat_log_id": 345}}

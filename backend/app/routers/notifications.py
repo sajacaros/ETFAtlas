@@ -1,23 +1,23 @@
 import asyncio
-import json
 import select
 import psycopg2
 import psycopg2.extensions
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from datetime import datetime, timezone
 from ..database import SessionLocal, get_db
 from ..config import get_settings
 from ..models.user import User
 from ..models.collection_run import CollectionRun
 from ..utils.session import SESSION_COOKIE, get_current_user_id, resolve_user_id
+from ..utils.sse import sse_event
+from ..utils.time import iso_utc, utcnow
 
 router = APIRouter()
 
 
 @router.get("/status")
-async def get_notification_status(
+def get_notification_status(
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
@@ -46,19 +46,19 @@ async def get_notification_status(
 
 
 @router.post("/check")
-async def check_notifications(
+def check_notifications(
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
     """알림 확인 처리 (last_notification_checked_at 갱신)"""
     user = db.query(User).filter(User.id == user_id).first()
-    user.last_notification_checked_at = datetime.now(timezone.utc)
+    user.last_notification_checked_at = utcnow()
     db.commit()
-    return {"checked_at": user.last_notification_checked_at.isoformat()}
+    return {"checked_at": iso_utc(user.last_notification_checked_at)}
 
 
 @router.get("/stream")
-async def notification_stream(request: Request):
+def notification_stream(request: Request):
     """SSE 스트림 — pg_notify LISTEN으로 새 수집 즉시 감지 (세션 쿠키 인증)"""
     # 스트림이 열려 있는 동안 커넥션 풀을 붙잡지 않도록 get_db 대신 인증 때만 세션을 연다
     with SessionLocal() as db:
@@ -83,11 +83,7 @@ async def notification_stream(request: Request):
                     conn.poll()
                     while conn.notifies:
                         notify = conn.notifies.pop(0)
-                        data = json.dumps({
-                            "type": "new_changes",
-                            "collected_at": notify.payload,
-                        })
-                        yield f"data: {data}\n\n"
+                        yield sse_event({"type": "new_changes", "collected_at": notify.payload})
         finally:
             cur.close()
             conn.close()

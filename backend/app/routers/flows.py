@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 from typing import Any, Dict, Optional
 
@@ -16,14 +15,17 @@ from ..services.flow.executor import FlowGraph, FlowGraphError, run_flow, topo_o
 from ..services.flow.market_data import default_market_data
 from ..services.flow.nodes import REGISTRY
 from ..services.flow.performance import evaluate
-from ..services.flow.records import PickCollector, record_run, recordable, today_kst
+from ..services.flow.records import PickCollector, record_run, recordable
+from ..utils.time import iso_utc, today_kst
 from ..services.flow.templates import TEMPLATES
 from ..utils.session import get_current_user_id
-from .chat import _with_heartbeat
+from ..utils.sse import DONE, sse_event, with_heartbeat
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+RUN_ERROR = "실행 중 오류가 발생했습니다. 잠시 뒤 다시 실행해 주세요."  # 원인은 로그에만 남긴다
 
 
 class FlowSave(BaseModel):
@@ -45,7 +47,7 @@ def _flow_out(flow: AnalysisFlow, with_graph: bool = True) -> Dict[str, Any]:
     out = {
         "id": flow.id,
         "name": flow.name,
-        "updated_at": flow.updated_at.isoformat() if flow.updated_at else None,
+        "updated_at": iso_utc(flow.updated_at),
         "schedule_enabled": flow.schedule_enabled,
         "notify": flow.notify,
     }
@@ -62,18 +64,18 @@ def _get_own(db: Session, user_id: int, flow_id: int) -> AnalysisFlow:
 
 
 @router.get("/catalog")
-async def get_catalog(user_id: int = Depends(get_current_user_id)):
+def get_catalog(user_id: int = Depends(get_current_user_id)):
     return {"nodes": [node_spec(n) for n in REGISTRY.values()], "templates": TEMPLATES}
 
 
 @router.get("")
-async def list_flows(db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
+def list_flows(db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
     flows = db.query(AnalysisFlow).filter(AnalysisFlow.user_id == user_id).order_by(AnalysisFlow.updated_at.desc()).all()
     return [_flow_out(f, with_graph=False) for f in flows]
 
 
 @router.post("", status_code=201)
-async def create_flow(body: FlowSave, db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
+def create_flow(body: FlowSave, db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
     flow = AnalysisFlow(user_id=user_id, name=body.name.strip(), graph=body.graph.model_dump())
     db.add(flow)
     db.commit()
@@ -82,12 +84,12 @@ async def create_flow(body: FlowSave, db: Session = Depends(get_db), user_id: in
 
 
 @router.get("/{flow_id}")
-async def get_flow(flow_id: int, db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
+def get_flow(flow_id: int, db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
     return _flow_out(_get_own(db, user_id, flow_id))
 
 
 @router.put("/{flow_id}")
-async def update_flow(flow_id: int, body: FlowSave, db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
+def update_flow(flow_id: int, body: FlowSave, db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
     flow = _get_own(db, user_id, flow_id)
     flow.name = body.name.strip()
     flow.graph = body.graph.model_dump()
@@ -97,7 +99,7 @@ async def update_flow(flow_id: int, body: FlowSave, db: Session = Depends(get_db
 
 
 @router.put("/{flow_id}/schedule")
-async def update_schedule(flow_id: int, body: FlowSchedule, db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
+def update_schedule(flow_id: int, body: FlowSchedule, db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
     """영업일 장 마감 뒤 자동 실행과 디스코드 알림. 그래프는 바꾸지 않는다."""
     flow = _get_own(db, user_id, flow_id)
     flow.schedule_enabled = body.schedule_enabled
@@ -108,22 +110,22 @@ async def update_schedule(flow_id: int, body: FlowSchedule, db: Session = Depend
 
 
 @router.get("/{flow_id}/performance")
-async def get_performance(flow_id: int, db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
-    """기록된 날마다 고른 종목의 사후 수익률을 기준 지수와 비교한다."""
+def get_performance(flow_id: int, db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
+    """기록된 날마다 고른 종목의 사후 수익률을 기준 지수와 비교한다. 조회·시세 받기 모두 동기라 스레드풀에서 돈다."""
     _get_own(db, user_id, flow_id)
     runs = db.query(FlowRun).filter(FlowRun.flow_id == flow_id).order_by(FlowRun.run_date.desc()).all()
     data = [{"run_date": r.run_date.isoformat(), "trigger": r.trigger, "picks": r.picks} for r in runs]
-    return await asyncio.to_thread(evaluate, data, default_market_data())
+    return evaluate(data, default_market_data())
 
 
 @router.delete("/{flow_id}", status_code=204)
-async def delete_flow(flow_id: int, db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
+def delete_flow(flow_id: int, db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
     db.delete(_get_own(db, user_id, flow_id))
     db.commit()
 
 
 @router.post("/run")
-async def run(body: FlowRunIn, db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
+def run(body: FlowRunIn, db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
     """저장하지 않은 그래프도 그대로 실행한다. 그래프 모양 오류는 스트림을 열기 전에 400으로.
 
     flow_id를 주고 그래프가 저장본과 같으면 결과 노드에 닿은 종목을 오늘 날짜로 기록한다 (run_done의 recorded).
@@ -162,15 +164,15 @@ async def run(body: FlowRunIn, db: Session = Depends(get_db), user_id: int = Dep
                 collector.feed(event)
                 if event["type"] == "run_done":
                     event["data"]["recorded"] = await asyncio.to_thread(_record, collector) if record and not ctx.stop.is_set() else False
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-        except Exception as e:
+                yield sse_event(event)
+        except Exception:
             logger.exception("Flow run error")
-            yield f"data: {json.dumps({'type': 'error', 'data': {'message': str(e)}}, ensure_ascii=False)}\n\n"
-        yield "data: [DONE]\n\n"
+            yield sse_event({"type": "error", "data": {"message": RUN_ERROR}})
+        yield DONE
 
     async def stream():
         try:
-            async for chunk in _with_heartbeat(events()):
+            async for chunk in with_heartbeat(events()):
                 yield chunk
         finally:
             ctx.stop.set()  # 클라이언트가 끊으면 남은 LLM 호출을 보내지 않는다

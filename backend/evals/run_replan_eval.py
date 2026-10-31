@@ -61,7 +61,7 @@ async def run_one(item: Dict, config, sem: asyncio.Semaphore) -> Dict:
         PLAN_RETRIES.set(plan_retries)
         db = SessionLocal()
         try:
-            service = AnswerService(db, planner=given)
+            service = AnswerService(config, planner=given)
             service._store = _NullStore()
             events = [e async for e in service.stream(item["q"], ConversationContext(), 0, asyncio.Event())]
         finally:

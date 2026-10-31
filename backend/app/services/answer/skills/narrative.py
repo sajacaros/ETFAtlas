@@ -1,7 +1,6 @@
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent
 
-from ...llm import NO_THINKING, build_model
+from ...llm import build_model, stream_text
 from .base import Skill, SkillContext, text_result
 
 NARRATIVE_PROMPT = """당신은 ETF Atlas의 AI 어시스턴트입니다. 화면에는 이미 표와 차트가 표시되어 있고, 당신은 그 해설을 씁니다.
@@ -30,12 +29,8 @@ class NarrativeSkill(Skill):
     async def run(self, args: NarrativeArgs, display: str, ctx: SkillContext):
         data = "\n\n".join(f"[{title}]\n{summary}" for title, summary in ctx.related if summary) or "(데이터 없음)"
         prompt = f"## 사용자 질문\n{ctx.question}\n\n## 화면 데이터 요약\n{data}\n\n## 작성 지시\n{args.instruction}"
-        agent = Agent(build_model(ctx.ai_config), instructions=NARRATIVE_PROMPT, model_settings=NO_THINKING)
         text = ""
-        async with agent.run_stream(prompt) as result:
-            async for delta in result.stream_text(delta=True):
-                text += delta
-                yield {"type": "delta", "text": delta}
-                if ctx.stop.is_set():
-                    break
+        async for delta in stream_text(build_model(ctx.ai_config), NARRATIVE_PROMPT, prompt, ctx.stop):
+            text += delta
+            yield {"type": "delta", "text": delta}
         yield text_result(text.strip()).event()

@@ -165,7 +165,7 @@ class FakePlanner:
 
 
 class FakeMemory:
-    def __init__(self, db):
+    def __init__(self, db, config=None):
         pass
 
     def refine(self, message, context):
@@ -191,7 +191,6 @@ class MemoryStore:
 
 def _service(monkeypatch, rows, registry):
     monkeypatch.setattr(orch, "ChatMemory", FakeMemory)
-    monkeypatch.setattr(orch, "load_ai_config", lambda db: None)
     service = orch.AnswerService(None, session_factory=lambda: None, registry=registry, planner=FakePlanner(rows))
     service._store = MemoryStore()
     return service
@@ -387,9 +386,9 @@ def test_answer_that_asks_back_is_clarifying(monkeypatch):
 # --- 종목 스킬 / 해석기 ---
 
 def test_resolver_strips_characters_that_could_break_the_query():
-    from app.services.entities import _normalize
-    assert _normalize("KODEX 미국S&P500(H)") == "kodex미국s&p500(h)"
-    assert _normalize("x' OR 1=1 $$ ;\\") == "xor11"
+    from app.services.entities import normalize_name
+    assert normalize_name("KODEX 미국S&P500(H)") == "kodex미국s&p500(h)"
+    assert normalize_name("x' OR 1=1 $$ ;\\") == "xor11"
 
 
 class FakeStockResolver:
@@ -406,14 +405,14 @@ def test_stock_holders_ranks_etfs_by_weight(monkeypatch):
     calls = []
 
     def fake_node(graph, cypher, params):
-        calls.append(cypher)
+        calls.append(params)
         return [{"code": "448100", "name": "WON 200", "stock": "005930", "weight": 35.21, "expense_ratio": 0.05,
                  "date": "2026-10-07"}]
 
     monkeypatch.setattr(mod, "node", fake_node)
     skill = REGISTRY["stock_holders"]
     result = skill.fetch(skill.Args(stocks=["삼성전자"], top=5), "bar", None, FakeStockResolver())
-    assert "IN ['005930']" in calls[0]
+    assert calls[0] == {"codes": ["005930"]}
     assert result.content["view"] == {"kind": "bar", "x": "name", "y": ["w_005930"], "horizontal": True, "stacked": False}
     assert "WON 200 35.21%" in result.summary
 
@@ -681,7 +680,7 @@ def test_etf_choice_lists_holders_and_asks(monkeypatch):
 
 
 def test_etf_choice_by_theme_prefers_the_tag_then_names(monkeypatch):
-    from app.services.answer.skills import etf_choice as mod
+    from app.services.answer.skills import common as mod  # 테마 후보는 rank와 함께 쓰는 common.theme_etfs가 찾는다
     queries = []
 
     def fake_node(graph, cypher, params):
@@ -990,7 +989,7 @@ def test_planner_plans_without_examples_when_search_fails(monkeypatch):
     class FakeAgent:
         prompt = None
 
-        async def run(self, prompt):
+        async def run(self, prompt, deps=None):
             FakeAgent.prompt = prompt
             raise RuntimeError("stop here")
 
@@ -998,7 +997,7 @@ def test_planner_plans_without_examples_when_search_fails(monkeypatch):
         raise RuntimeError("embedding down")
 
     planner = planner_mod.Planner.__new__(planner_mod.Planner)
-    planner._agent, planner._find_examples = FakeAgent(), broken_search
+    planner._agent, planner._find_examples, planner._registry, planner._lookups = FakeAgent(), broken_search, REGISTRY, None
     rows = asyncio.run(planner.plan("질문", ConversationContext()))
     assert FakeAgent.prompt == "## 질문\n질문"
     assert rows[0][0].skill == "agent"
@@ -1062,8 +1061,9 @@ def test_plan_accepts_ranks_without_gaps_or_picked_one_by_one(etf_lists):
 
 def test_related_text_carries_notes_to_the_narrative():
     result = {"summary": "KODEX 200: 1일 -3.83%", "content": {"notes": ["찾지 못한 ETF: ACE KRX금현물(관리하지 않는 ETF)"]}}
-    assert orch._related_text(result) == "KODEX 200: 1일 -3.83%\n(참고) 찾지 못한 ETF: ACE KRX금현물(관리하지 않는 ETF)"
-    assert orch._related_text({"message": "결과 없음"}) == "결과 없음"
+    from app.services.answer.skills.base import related_text
+    assert related_text(result) == "KODEX 200: 1일 -3.83%\n(참고) 찾지 못한 ETF: ACE KRX금현물(관리하지 않는 ETF)"
+    assert related_text({"message": "결과 없음"}) == "결과 없음"
 
 
 def _choice(condition, by="theme"):
@@ -1078,7 +1078,8 @@ def _choice(condition, by="theme"):
 ])
 def test_planner_rejects_a_theme_that_is_an_etf_name(slot, errors):
     from app.services.answer.planner import data_errors
-    found = data_errors(_plan_steps(slot), lambda name: name == "PLUS K방산")
+    from app.services.answer.skills.base import PlanLookups
+    found = data_errors(_plan_steps(slot), REGISTRY, PlanLookups(is_etf_name=lambda name: name == "PLUS K방산"))
     assert len(found) == errors
     if errors:
         assert "ETF 상품 이름입니다" in found[0]
@@ -1348,7 +1349,7 @@ def test_rank_orders_filters_and_exports_by_the_metric(monkeypatch):
     queries = []
 
     def fake_node(graph, cypher, params):
-        queries.append(cypher)
+        queries.append(params)
         return [{"code": "000001", "value": 0.45}, {"code": "000002", "value": 0.05}, {"code": "000003", "value": None}]
 
     monkeypatch.setattr(mod, "node", fake_node)
@@ -1356,7 +1357,7 @@ def test_rank_orders_filters_and_exports_by_the_metric(monkeypatch):
     skill = REGISTRY["rank"]
     args = skill.Args(kind="etf", targets=["가", "나", "다", "없음"], by="expense_ratio", order="asc", top=5)
     result = skill.fetch(args, "table", None, FakeRankResolver())
-    assert "IN ['000001', '000002', '000003']" in queries[0]
+    assert queries[0] == {"codes": ["000001", "000002", "000003"]}
     assert result.exports == [{"code": "000002", "name": "나"}, {"code": "000001", "name": "가"}]
     assert "총보수 낮은 순" in result.summary
     assert any("데이터가 없어 뺀 ETF: 다" in n for n in result.content["notes"])
@@ -1389,17 +1390,20 @@ def test_rank_without_candidates_filters_every_etf_by_dividend_yield(monkeypatch
 
 def test_rank_computes_period_returns_from_prices(monkeypatch):
     from app.services.answer.skills import rank as mod
-    prices = {"000001": [("2026-10-01", 100), ("2026-10-08", 110)], "000002": [("2026-10-01", 100), ("2026-10-08", 90)]}
+    prices = {"000001": [("2026-10-08", 110), ("2026-10-01", 100)], "000002": [("2026-10-01", 100), ("2026-10-08", 90)]}
+    queries = []
 
-    class FakeGraph:
-        def get_stock_prices(self, code, days):
-            return [{"date": d, "close": c} for d, c in prices.get(code, [])]
+    def fake_node(graph, cypher, params):  # 후보 전부의 종가를 한 번에 (날짜 순서는 섞여 와도 된다)
+        queries.append((cypher, params["codes"]))
+        return [{"code": code, "date": d, "close": c} for code in params["codes"] for d, c in prices.get(code, [])]
 
-    monkeypatch.setattr(mod, "GraphService", lambda db: FakeGraph())
+    monkeypatch.setattr(mod, "node", fake_node)
+    monkeypatch.setattr(mod, "GraphService", lambda db: None)
     skill = REGISTRY["rank"]
     result = skill.fetch(skill.Args(kind="stock", targets=["가", "나", "다"], by="return_1w", top=1),
                          "bar", None, FakeRankResolver())
     assert result.exports == [{"code": "000001", "name": "가"}]
+    assert len(queries) == 1 and "(n:Stock)" in queries[0][0] and queries[0][1] == ["000001", "000002", "000003"]
     assert result.content["dataset"]["rows"][0]["value"] == 10.0
     assert "후보 종목 3개 중 1주 수익률 높은 순" in result.summary
     assert result.content["notes"][0] == "조회 기간: 2026-10-01 ~ 2026-10-08 (종가 기준)"
@@ -1618,4 +1622,93 @@ def test_skills_marked_as_tools_reach_the_agent_with_the_slot_summary():
     assert "참조를 쓸 수 없다" in built[0].description
     assert {s.name for s in REGISTRY.values() if s.tool} == {
         "company_financials", "company_valuation", "company_type", "company_disclosures", "stock_technical", "period_returns", "rank",
-        "overlap", "portfolio_lookthrough"}
+        "overlap", "portfolio_lookthrough", "price_trend", "stock_trend", "etf_compare", "holdings"}
+    # 비교 스킬은 도구로는 ETF 하나의 기본 정보에도 쓴다 (화면 슬롯은 2개 이상)
+    compare = next(t for t in tools.skill_tools(REGISTRY, lambda: None) if t.name == "etf_compare")
+    assert compare.function_schema.json_schema["properties"]["etfs"]["minItems"] == 1
+    assert REGISTRY["etf_compare"].Args.model_json_schema()["properties"]["etfs"]["minItems"] == 2
+
+
+def test_etf_profile_reads_the_whole_universe_once_per_price_date(monkeypatch):
+    from app.services.answer.skills import etf_profile as mod
+    scans, as_of = [], {"date": "2026-10-30"}
+
+    class Graph:
+        def get_latest_price_date(self):
+            return as_of["date"]
+
+    def fake_node(graph, cypher, params):
+        scans.append(cypher)
+        if "CURRENT_HOLDS" in cypher:
+            return [{"code": "000001", "weights": [5.0] * 12}]
+        return [{"code": "000001", "expense_ratio": 0.1, "net_assets": 1e12}, {"code": "000002", "expense_ratio": 0.5}]
+
+    monkeypatch.setattr(mod, "node", fake_node)
+    monkeypatch.setattr(mod, "_universe", {})
+    assert mod.etf_universe(Graph())[1]["000001"]["top10_weight"] == 50.0
+    mod.etf_universe(Graph())
+    assert len(scans) == 2  # 같은 시세일이면 다시 훑지 않는다
+    as_of["date"] = "2026-10-31"
+    assert mod.etf_universe(Graph())[0] == "2026-10-31" and len(scans) == 4  # 시세가 새로 들어오면 다시 읽는다
+
+
+def test_planner_agents_are_built_once_per_config(monkeypatch):
+    from app.services.ai_config import AIConfig
+    from app.services.answer import planner as planner_mod
+    monkeypatch.setattr(planner_mod, "_agents", {})
+    config = AIConfig("http://llm", "k", "m", "http://emb", "k", "e")
+    a = planner_mod.Planner(config)
+    b = planner_mod.Planner(config)
+    assert a._agent is b._agent and a._replanner is b._replanner
+    assert a.last_examples is not b.last_examples  # 요청마다 다른 상태는 Planner에 남는다
+    other = planner_mod.Planner(AIConfig("http://llm", "k", "다른 모델", "http://emb", "k", "e"))
+    assert other._agent is not a._agent  # 설정을 바꾸면 다음 요청부터 새 에이전트
+
+
+def test_skill_results_follow_titles_and_split_parts():
+    from app.services.answer.skills.base import skill_results
+
+    class Splitting(Skill):
+        name, description, Args, displays = "s", "", NoArgs, ("table",)
+
+        async def run(self, args, display, ctx):
+            yield {"type": "title", "title": "보고서 이름"}
+            yield {"type": "delta", "text": "버리는 조각"}
+            yield {"type": "split", "parts": [{"id": "chart1", "title": "차트", "display": "bar"},
+                                              {"id": "text", "title": "요약", "display": "markdown"}]}
+            yield {**text_result("A").event(), "part": "chart1"}
+            yield {**text_result("B").event(), "part": "text"}
+
+    class Plain(Skill):
+        name, description, Args, displays = "p", "", NoArgs, ("table",)
+
+        async def run(self, args, display, ctx):
+            yield {"type": "title", "title": "바뀐 제목"}
+            yield text_result("C").event()
+
+    async def collect(skill):
+        return [(t, r["summary"]) async for t, r in skill_results(skill, NoArgs(), "table", None, "처음 제목")]
+
+    assert asyncio.run(collect(Splitting())) == [("차트", "A"), ("요약", "B")]
+    assert asyncio.run(collect(Plain())) == [("바뀐 제목", "C")]
+
+
+def test_stream_text_stops_after_the_chunk_when_asked():
+    from pydantic_ai.models.function import FunctionModel
+    from app.services.llm import stream_text
+
+    async def chunks(messages, info):
+        for part in ("가", "나", "다"):
+            yield part
+            await asyncio.sleep(0.15)  # 조각을 묶어 보내는 간격(0.1초)보다 길게
+
+    stop = asyncio.Event()
+
+    async def collect():
+        out = []
+        async for delta in stream_text(FunctionModel(stream_function=chunks), "지시", "질문", stop):
+            out.append(delta)
+            stop.set()
+        return out
+
+    assert asyncio.run(collect()) == ["가"]

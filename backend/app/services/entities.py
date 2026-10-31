@@ -24,11 +24,11 @@ CANDIDATES = {
 }
 
 
-# GraphService는 파라미터를 쿼리 문자열에 치환하므로, LLM이 적은 이름에서 이름에 쓰이는 문자만 남긴다
+# 이름 비교용: LLM이 적은 이름에서 공백과 종목 이름에 쓰이지 않는 문자(따옴표·괄호 밖 기호 등)를 지운다
 UNSAFE_RE = re.compile(r"[^0-9A-Za-z가-힣&().+\-]")
 
 
-def _normalize(name: str) -> str:
+def normalize_name(name: str) -> str:
     return UNSAFE_RE.sub("", re.sub(r"\s+", "", name)).lower()
 
 
@@ -107,7 +107,7 @@ class EntityResolver:
         return found, missing
 
     def _resolve(self, db: Session, label: str, name: str) -> Optional[Dict]:
-        key = (label, _normalize(name))
+        key = (label, normalize_name(name))
         with self._lock:
             cached = self._cache.get(key, ...)
         if cached is ...:
@@ -140,14 +140,14 @@ class EntityResolver:
                 corp = _dart_corp(db, code.group(1), "")
                 if corp:
                     raise UnmanagedStock(corp, listed=True)
-        query = _normalize(CODE_RE.sub("", name)) if code else _normalize(name)
+        query = normalize_name(CODE_RE.sub("", name)) if code else normalize_name(name)
         if not query:
             return None
         rows = graph.execute_cypher(CANDIDATES[label], {"query": query}, raise_errors=True)
         candidates = [GraphService.parse_agtype(r["result"]) for r in rows]
         if label == "Stock":
             candidates.sort(key=lambda c: len(c["name"]))
-        exact = [c for c in candidates if _normalize(c["name"]) == query]
+        exact = [c for c in candidates if normalize_name(c["name"]) == query]
         if label == "ETF" and not exact:
             # 정확히 같은 이름이 관리하지 않는 ETF면 그게 사용자가 말한 ETF다 (비슷한 이름의 관리 ETF로 바꾸거나 되묻지 않는다)
             unmanaged = _unmanaged_etf(db, None, query)
@@ -196,5 +196,5 @@ def _dart_corp(db: Session, stock_code: Optional[str], query: str) -> Optional[D
 
 def is_etf_name(db: Session, name: str) -> bool:
     """상장 ETF(관리 여부와 상관없이) 중 이름이 정확히 같은 것이 있는지 (공백·대소문자 무시)."""
-    query = _normalize(name)
+    query = normalize_name(name)
     return bool(query) and db.query(ETF.id).filter(func.lower(func.replace(ETF.name, " ", "")) == query).first() is not None

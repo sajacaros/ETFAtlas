@@ -28,7 +28,7 @@ from app.services.ai_config import load_ai_config
 from app.services.chat_memory import ConversationContext
 from app.services.embedding_service import EmbeddingService
 from app.services.answer import planner as planner_mod
-from app.services.answer.orchestrator import AnswerService
+from app.services.answer.orchestrator import AnswerRun, AnswerService
 from app.services.answer.planner import Planner
 
 REF_RE = re.compile(r"^@\w+\.(\d+)(?:-(\d+))?$")
@@ -107,16 +107,16 @@ async def execute(question: str, rows) -> List[str]:
     """계획대로 슬롯을 실행해 영역마다 문구·요약·주석을 모은다."""
     db = SessionLocal()
     try:
-        service = AnswerService(db)
-        service._store = _NullStore()
-        slots = [s for r in rows for s in r]
-        results: Dict[str, Dict] = {}
-        async for _ in service._run_slots(slots, question, ConversationContext(), 0, asyncio.Event(), results):
-            pass
+        config = load_ai_config(db)
     finally:
         db.close()
+    service = AnswerService(config)
+    service._store = _NullStore()
+    answer = AnswerRun(question, ConversationContext(), 0, asyncio.Event(), rows)
+    async for _ in service._fill(answer, answer.slots):
+        pass
     texts = []
-    for r in results.values():
+    for r in answer.results.values():
         texts += [r.get("message") or "", r.get("summary") or ""]
         texts += (r.get("content") or {}).get("notes") or []
     return [t for t in texts if t]

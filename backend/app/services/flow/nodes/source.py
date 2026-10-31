@@ -10,7 +10,7 @@ from ...entities import AmbiguousETF, EntityResolver, UnmanagedETF, UnmanagedSto
 from ...graph_service import GraphService, node as cypher
 from ..base import FlowContext, Node, StockSet, result
 
-SAFE_CODE_RE = re.compile(r"[0-9A-Z]{6}")  # 쿼리 문자열에 직접 넣으므로 코드 모양만 허용
+CODE_RE = re.compile(r"[0-9A-Z]{6}")  # 상장 종목 코드 모양 (현금 등 다른 티커와 구분)
 
 MODES = {
     "all": "ETF가 담은 전체 종목",
@@ -44,14 +44,13 @@ def universe(db: Session) -> List[Dict]:
 
 def etf_holdings(db: Session, etf_codes: List[str]) -> List[Dict]:
     """ETF들의 현재 구성종목 중 주식 [{etf, etf_name, code, name, weight}], 비중 큰 순."""
-    codes = [c for c in etf_codes if SAFE_CODE_RE.fullmatch(c)]
-    if not codes:
+    if not etf_codes:
         return []
     rows = cypher(
         GraphService(db),
-        f"MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock) WHERE e.code IN [{', '.join(repr(c) for c in codes)}] "
+        "MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock) WHERE e.code IN $codes "
         "AND s.is_etf = false RETURN {etf: e.code, etf_name: e.name, code: s.code, name: s.name, weight: h.weight}",
-        {},
+        {"codes": etf_codes},
     )
     return sorted(rows, key=lambda r: -(r.get("weight") or 0))
 
@@ -117,7 +116,7 @@ class SourceNode(Node):
         portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id, Portfolio.user_id == user_id).first()
         if not portfolio:
             raise ValueError("포트폴리오를 찾지 못했습니다")
-        tickers = [h.ticker for h in db.query(Holding).filter(Holding.portfolio_id == portfolio.id) if SAFE_CODE_RE.fullmatch(h.ticker)]
+        tickers = [h.ticker for h in db.query(Holding).filter(Holding.portfolio_id == portfolio.id) if CODE_RE.fullmatch(h.ticker)]
         if not tickers:
             raise ValueError(f"{portfolio.name}에 보유 종목이 없습니다")
         # 보유 ETF는 구성종목으로 풀고, 직접 보유한 주식은 그대로 넣는다
@@ -148,7 +147,7 @@ class SourceNode(Node):
                 stock = resolver.stock(db, name)
             except UnmanagedStock as e:  # ETF가 담지 않은 상장사도 시세로 분석할 수 있다
                 stock = e.corp if e.corp["code"] else None
-            if SAFE_CODE_RE.fullmatch(name.upper()):  # 코드는 그래프에 없어도 시세는 받을 수 있다
+            if CODE_RE.fullmatch(name.upper()):  # 코드는 그래프에 없어도 시세는 받을 수 있다
                 code = name.upper()
                 items.rows[code] = {"code": code, "name": stock["name"] if stock else code}
             elif stock:

@@ -23,7 +23,7 @@ def hash_token(token: str) -> str:
 
 
 def create_session(db: Session, user_id: int) -> str:
-    """세션을 만들고 쿠키에 넣을 원본 토큰을 반환한다. 만료된 세션도 이때 정리한다."""
+    """세션을 만들고 쿠키에 넣을 원본 토큰을 반환한다. 만료된 세션도 이때 정리한다. 커밋은 호출 측이 한다."""
     now = utcnow()
     db.query(AuthSession).filter(AuthSession.expires_at <= now).delete()
     token = secrets.token_urlsafe(32)
@@ -32,13 +32,11 @@ def create_session(db: Session, user_id: int) -> str:
         token_hash=hash_token(token),
         expires_at=now + timedelta(minutes=settings.session_expire_minutes),
     ))
-    db.commit()
     return token
 
 
 def revoke_session(db: Session, token: str) -> None:
     db.query(AuthSession).filter(AuthSession.token_hash == hash_token(token)).delete()
-    db.commit()
 
 
 def resolve_user_id(db: Session, token: Optional[str]) -> Optional[int]:

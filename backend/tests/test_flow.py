@@ -346,3 +346,72 @@ def test_return_period_is_fixed_and_old_saved_option_is_ignored():
     assert metrics(_bars(closes), p)["ret"] == pytest.approx(round((closes[-1] / closes[-1 - RETURN_DAYS] - 1) * 100, 2))
     keys = [s["key"] for s in node_spec(ChartFilterNode)["params"]]
     assert "return_days" not in keys
+
+
+def test_market_data_does_not_cache_a_failed_download(monkeypatch):
+    """다운로드가 실패한 종목은 캐시하지 않아 다음 요청이 다시 받는다. 두 시장 모두 받았는데 없는 종목만 빈 값으로 남긴다."""
+    calls, down = [], {"on": True}
+
+    def flaky(tickers):
+        calls.append(sorted(tickers))
+        if down["on"]:
+            return None
+        return {t: _bars([1, 2]) for t in tickers if t == "A.KS"}
+
+    md = YFinanceMarketData()
+    monkeypatch.setattr(md, "_download", flaky)
+    assert md.bars(["A", "Z"]) == {}
+    assert md._cache == {}
+    down["on"] = False
+    assert set(md.bars(["A", "Z"])) == {"A"}
+    assert "Z" in md._cache and md._cache["Z"][1] == []  # 받았는데 없으면 같은 날 다시 시도하지 않는다
+    calls.clear()
+    md.bars(["A", "Z"])
+    assert calls == []
+
+
+def test_market_data_reads_the_cache_while_another_request_downloads(monkeypatch):
+    """다운로드 중에는 락을 잡지 않는다 — 다른 요청이 캐시된 종목을 기다리지 않고 읽는다."""
+    import threading
+    md = YFinanceMarketData()
+    started, release = threading.Event(), threading.Event()
+
+    def slow(tickers):
+        if "SLOW.KS" in tickers:
+            started.set()
+            release.wait(5)
+        return {t: _bars([1, 2]) for t in tickers}
+
+    monkeypatch.setattr(md, "_download", slow)
+    md.bars(["A"])
+    worker = threading.Thread(target=md.bars, args=(["SLOW"],))
+    worker.start()
+    assert started.wait(5)
+    try:
+        assert set(md.bars(["A"])) == {"A"}  # 락을 잡은 채 받고 있었다면 여기서 멈춘다
+    finally:
+        release.set()
+        worker.join(5)
+
+
+def test_chart_filter_conditions_read_from_one_table():
+    from app.services.flow.nodes.chart_filter import conditions
+    p = ChartFilterParams(ma_aligned=True, return_min=5, rsi_max=70, stoch_cross_days=3, stoch_cross_below=20, bb_pctb_min=100)
+    assert conditions(p) == ["이평 정배열(5>20>60)", "20일 수익률 ≥ 5%", "RSI ≤ 70",
+                             "스토캐스틱 골든크로스 3거래일 이내(교차 때 %K ≤ 20)", "볼린저 %B ≥ 100"]
+    assert conditions(ChartFilterParams()) == []
+    m = {"ma_aligned": True, "ret": 6, "rsi": 50, "stoch_cross": 1, "stoch_cross_k": 30, "bb_pctb": 120}
+    assert passes(m, p) is False  # 교차 때 %K가 20을 넘었다
+    assert passes({**m, "stoch_cross_k": 15}, p) is True
+
+
+def test_run_flow_hides_internal_errors_from_the_node_message(fake_registry, monkeypatch):
+    class Broken(FakeSource):
+        async def run(self, params, inputs, ctx):
+            raise RuntimeError("password=secret connection refused")
+            yield  # pragma: no cover
+
+    monkeypatch.setitem(ex.REGISTRY, "source", Broken)
+    events = asyncio.run(_collect(ex.run_flow(_graph([("src", "source", {"mode": "codes", "codes": "A"})], []), _ctx())))
+    error = next(e for e in events if e["type"] == "node_error")
+    assert error["data"]["message"] == "실행 중 오류가 났습니다"

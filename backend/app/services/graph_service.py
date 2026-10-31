@@ -1,37 +1,34 @@
 import json
+import logging
 import re
 from datetime import date, timedelta, timezone, datetime
-from decimal import Decimal
 from typing import List, Dict, Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+
+from app.domain.weight_diff import diff_holdings
+from app.utils import cypher
+
+logger = logging.getLogger(__name__)
+
+# ETF 목록 화면(ETFListItem)이 쓰는 필드
+ETF_LIST_ITEM = "{code: e.code, name: e.name, net_assets: e.net_assets, return_1d: e.return_1d, return_1w: e.return_1w, return_1m: e.return_1m, market_cap_change_1w: e.market_cap_change_1w, active: e.active}"
 
 
 class GraphService:
     def __init__(self, db: Session):
         self.db = db
 
-    def execute_cypher(self, query: str, params: Dict[str, Any] = None, raise_errors: bool = False) -> List[Dict]:
+    def execute_cypher(self, query: str, params: Dict[str, Any] = None, raise_errors: bool = True) -> List[Dict]:
+        """Cypher 실행. 실패는 SAVEPOINT까지만 되돌려 같은 세션에 쌓인 다른 변경은 지키고, 기본으로 예외를 올린다.
+
+        raise_errors=False는 "없음"으로 다뤄도 되는 조회만 쓴다.
+        """
         set_path = "SET search_path = ag_catalog, \"$user\", public;"
         load_age = "LOAD 'age';"
-
-        # Substitute $param with actual values in Cypher query
-        cypher = query
-        if params:
-            for key, value in params.items():
-                if isinstance(value, str):
-                    escaped = value.replace("'", "\\'")
-                    cypher = cypher.replace(f"${key}", f"'{escaped}'")
-                elif isinstance(value, (int, float)):
-                    cypher = cypher.replace(f"${key}", str(value))
-
-        # 쿼리는 $$ 사이에 들어가므로 $$가 섞이면 Cypher 밖의 SQL로 빠져나간다
-        if "$$" in cypher:
-            raise ValueError("Cypher query must not contain '$$'")
-
         cypher_query = f"""
         SELECT * FROM cypher('etf_graph', $$
-            {cypher}
+            {cypher.bind(query, params)}
         $$) as (result agtype);
         """
 
@@ -42,11 +39,11 @@ class GraphService:
         escaped_full = full_query.replace(":", "\\:")
 
         try:
-            result = self.db.execute(text(escaped_full))
-            return [dict(row._mapping) for row in result]
-        except Exception as e:
-            print(f"Cypher query error: {e}")
-            self.db.rollback()
+            with self.db.begin_nested():
+                result = self.db.execute(text(escaped_full))
+                return [dict(row._mapping) for row in result]
+        except Exception:
+            logger.exception("Cypher query error")
             if raise_errors:
                 raise
             return []
@@ -85,28 +82,6 @@ class GraphService:
         except (json.JSONDecodeError, TypeError):
             return s
 
-    def create_etf_stock_relationship(self, etf_code: str, stock_code: str, weight: float):
-        query = """
-        MERGE (e:ETF {code: $etf_code})
-        MERGE (s:Stock {code: $stock_code})
-        MERGE (e)-[r:HOLDS]->(s)
-        SET r.weight = $weight
-        RETURN e, r, s
-        """
-        return self.execute_cypher(query, {
-            "etf_code": etf_code,
-            "stock_code": stock_code,
-            "weight": weight
-        })
-
-    def find_etfs_holding_stock(self, stock_code: str) -> List[Dict]:
-        query = """
-        MATCH (e:ETF)-[r:HOLDS]->(s:Stock {code: $stock_code})
-        RETURN e.code as etf_code, r.weight as weight
-        ORDER BY r.weight DESC
-        """
-        return self.execute_cypher(query, {"stock_code": stock_code})
-
     def find_similar_etfs(self, etf_code: str, min_overlap: int = 5) -> List[Dict]:
         # 1) 입력 ETF의 비중 합 (정규화 기준)
         self_sum_query = """
@@ -136,23 +111,6 @@ class GraphService:
             r["similarity"] = round(r["similarity"] / self_sum * 100, 1)
         return results
 
-    def find_common_stocks(self, etf_code1: str, etf_code2: str) -> List[Dict]:
-        query = """
-        MATCH (e1:ETF {code: $etf_code1})-[:HOLDS]->(s:Stock)<-[:HOLDS]-(e2:ETF {code: $etf_code2})
-        RETURN s.code as stock_code
-        """
-        return self.execute_cypher(query, {"etf_code1": etf_code1, "etf_code2": etf_code2})
-
-    def get_stock_exposure(self, stock_code: str) -> Dict:
-        query = """
-        MATCH (e:ETF)-[r:HOLDS]->(s:Stock {code: $stock_code})
-        RETURN COUNT(e) as etf_count, AVG(r.weight) as avg_weight
-        """
-        result = self.execute_cypher(query, {"stock_code": stock_code})
-        if result:
-            return result[0]
-        return {"etf_count": 0, "avg_weight": 0}
-
     SORT_FIELDS = {
         "market_cap": "e.net_assets",
         "market_cap_change_1w": "e.market_cap_change_1w",
@@ -178,16 +136,16 @@ class GraphService:
                      active: bool | None = None) -> List[Dict]:
         """AGE Universe 내 ETF 목록 (정렬 기준 선택 가능, active로 액티브/패시브만 거를 수 있다)"""
         order_field = self.SORT_FIELDS.get(sort, "e.net_assets")
-        active_filter = "" if active is None else f" AND e.active = {'true' if active else 'false'}"
+        active_filter = "" if active is None else " AND e.active = $active"
         cypher = f"""
         MATCH (e:ETF)
         WHERE {order_field} IS NOT NULL{active_filter}
-        RETURN {{code: e.code, name: e.name, net_assets: e.net_assets, return_1d: e.return_1d, return_1w: e.return_1w, return_1m: e.return_1m, market_cap_change_1w: e.market_cap_change_1w, active: e.active}}
+        RETURN {ETF_LIST_ITEM}
         ORDER BY {order_field} DESC, e.code
         SKIP $offset
         LIMIT $limit
         """
-        rows = self.execute_cypher(cypher, {"offset": offset, "limit": limit})
+        rows = self.execute_cypher(cypher, {"offset": offset, "limit": limit, "active": active})
         return [self.parse_agtype(row["result"]) for row in rows]
 
     def search_etfs_in_universe(self, query: str, limit: int = 20, offset: int = 0) -> List[Dict]:
@@ -201,7 +159,7 @@ class GraphService:
         cypher = """
         MATCH (e:ETF)
         WHERE """ + where + """
-        RETURN {code: e.code, name: e.name, net_assets: e.net_assets, return_1d: e.return_1d, return_1w: e.return_1w, return_1m: e.return_1m, market_cap_change_1w: e.market_cap_change_1w, active: e.active}
+        RETURN """ + ETF_LIST_ITEM + """
         ORDER BY e.net_assets DESC, e.code
         SKIP $offset
         LIMIT $limit
@@ -230,19 +188,9 @@ class GraphService:
         """AGE에서 ETF 코드→이름 매핑 조회"""
         if not codes:
             return {}
-        # AGE는 IN 연산자 미지원 → 개별 조회 대신 전체 스캔 + 필터
-        query = """
-        MATCH (e:ETF)
-        RETURN {code: e.code, name: e.name}
-        """
-        rows = self.execute_cypher(query)
-        result = {}
-        code_set = set(codes)
-        for row in rows:
-            parsed = self.parse_agtype(row["result"])
-            if parsed["code"] in code_set:
-                result[parsed["code"]] = parsed["name"]
-        return result
+        rows = self.execute_cypher("MATCH (e:ETF) WHERE e.code IN $codes RETURN {code: e.code, name: e.name}",
+                                   {"codes": list(codes)})
+        return {r["code"]: r["name"] for r in map(self.parse_agtype, (row["result"] for row in rows))}
 
     PINNED_TAGS = ['코스피', '코스닥']
 
@@ -263,9 +211,9 @@ class GraphService:
 
     def get_etfs_by_tag(self, tag_name: str) -> List[Dict]:
         """태그에 속한 ETF 목록 (이름, 코드, 순자산)"""
-        query = """
-        MATCH (e:ETF)-[:TAGGED]->(t:Tag {name: $tag_name})
-        RETURN {code: e.code, name: e.name, net_assets: e.net_assets, return_1d: e.return_1d, return_1w: e.return_1w, return_1m: e.return_1m, market_cap_change_1w: e.market_cap_change_1w, active: e.active}
+        query = f"""
+        MATCH (e:ETF)-[:TAGGED]->(t:Tag {{name: $tag_name}})
+        RETURN {ETF_LIST_ITEM}
         ORDER BY e.net_assets DESC
         """
         rows = self.execute_cypher(query, {"tag_name": tag_name})
@@ -291,6 +239,22 @@ class GraphService:
         """
         rows = self.execute_cypher(query, {"etf_code": etf_code})
         return [self.parse_agtype(row["result"])["name"] for row in rows]
+
+    def get_tags_of(self, etf_codes: List[str]) -> Dict[str, List[str]]:
+        """ETF 코드 → 태그 이름 목록(이름순). 한 번의 쿼리로 가져온다."""
+        if not etf_codes:
+            return {}
+        rows = self.execute_cypher("""
+        MATCH (e:ETF)-[:TAGGED]->(t:Tag)
+        WHERE e.code IN $codes
+        RETURN {code: e.code, name: t.name}
+        ORDER BY t.name
+        """, {"codes": list(etf_codes)})
+        tags: Dict[str, List[str]] = {}
+        for row in rows:
+            r = self.parse_agtype(row["result"])
+            tags.setdefault(r["code"], []).append(r["name"])
+        return tags
 
     # ── 태그 관리 (관리자) ──
     # ETF.manual_tags가 있으면 age_tagging DAG가 규칙/LLM 대신 그 값을 쓴다. 빈 리스트는 "태그 없음"으로 고정.
@@ -326,10 +290,8 @@ class GraphService:
                                 code, raise_errors=True)
             self.db.commit()
             return
-        # 태그 이름은 호출 전에 Tag 노드 목록으로 검증된 값만 들어온다
-        tag_list = "[" + ", ".join(json.dumps(t, ensure_ascii=False).replace('"', "'") for t in tags) + "]"
-        self.execute_cypher(f"MATCH (e:ETF {{code: $etf_code}}) SET e.manual_tags = {tag_list} RETURN e.code",
-                            code, raise_errors=True)
+        self.execute_cypher("MATCH (e:ETF {code: $etf_code}) SET e.manual_tags = $tags RETURN e.code",
+                            {**code, "tags": tags}, raise_errors=True)
         self.execute_cypher("MATCH (e:ETF {code: $etf_code})-[r:TAGGED]->(:Tag) DELETE r RETURN 1",
                             code, raise_errors=True)
         for tag in tags:
@@ -345,10 +307,27 @@ class GraphService:
         MATCH (:ETF {code: $etf_code})-[h:CURRENT_HOLDS]->(s:Stock)
         RETURN {stock_code: s.code, stock_name: s.name,
                 weight: h.weight, shares: h.shares, recorded_at: h.date}
-        ORDER BY h.weight DESC
+        ORDER BY h.weight DESC, s.code
         """
         rows = self.execute_cypher(query, {"etf_code": etf_code})
         return [self.parse_agtype(row["result"]) for row in rows]
+
+    def get_holdings_of(self, etf_codes: List[str]) -> Dict[str, List[Dict]]:
+        """ETF 코드 → 전체 보유종목(get_etf_holdings_full 형식, 비중 큰 순). 한 번의 쿼리로 가져온다."""
+        if not etf_codes:
+            return {}
+        rows = self.execute_cypher("""
+        MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock)
+        WHERE e.code IN $codes
+        RETURN {etf_code: e.code, stock_code: s.code, stock_name: s.name,
+                weight: h.weight, shares: h.shares, recorded_at: h.date}
+        ORDER BY h.weight DESC, s.code
+        """, {"codes": list(etf_codes)})
+        holdings: Dict[str, List[Dict]] = {}
+        for row in rows:
+            r = self.parse_agtype(row["result"])
+            holdings.setdefault(r.pop("etf_code"), []).append(r)
+        return holdings
 
     def _get_holdings_at(self, etf_code: str, target_date: str = None) -> tuple[Dict[str, Dict], str | None]:
         """특정 날짜의 보유종목 조회. target_date 이전 가장 가까운 거래일 데이터를 사용.
@@ -528,52 +507,9 @@ class GraphService:
             if not today_h or not prev_h:
                 continue
             compared.append(prev_date)
-            for code in set(today_h) | set(prev_h):
-                curr, prev = today_h.get(code), prev_h.get(code)
-                cw = curr["weight"] if curr else 0
-                pw = prev["weight"] if prev else 0
-                diff = round(cw - pw, 4)
-                if diff == 0:
-                    continue
-                if curr and not prev:
-                    change_type = "added"
-                elif prev and not curr:
-                    change_type = "removed"
-                else:
-                    change_type = "increased" if diff > 0 else "decreased"
-                changes.append({
-                    "etf_code": etf_code,
-                    "etf_name": etf_names[etf_code],
-                    "prev_date": prev_date,
-                    "stock_code": code,
-                    "stock_name": (curr or prev)["name"],
-                    "change_type": change_type,
-                    "current_weight": cw,
-                    "previous_weight": pw,
-                    "weight_change": diff,
-                })
+            changes.extend({"etf_code": etf_code, "etf_name": etf_names[etf_code], "prev_date": prev_date, **change}
+                           for change in diff_holdings(prev_h, today_h))
         return changes, max(compared, default=None)
-
-    def get_company_etfs(self, company_name: str = None) -> List[Dict]:
-        """운용사별 ETF 목록 조회. company_name 없으면 전체 운용사 목록 + ETF 수 반환"""
-        if company_name:
-            query = """
-            MATCH (e:ETF)-[:MANAGED_BY]->(c:Company)
-            WHERE c.name CONTAINS $name
-            RETURN {code: e.code, name: e.name, expense_ratio: e.expense_ratio, company: c.name}
-            ORDER BY e.name
-            """
-            rows = self.execute_cypher(query, {"name": company_name})
-            return [self.parse_agtype(row["result"]) for row in rows]
-        else:
-            query = """
-            MATCH (e:ETF)-[:MANAGED_BY]->(c:Company)
-            WITH c.name as company, count(e) as cnt
-            RETURN {company: company, etf_count: cnt}
-            ORDER BY cnt DESC
-            """
-            rows = self.execute_cypher(query)
-            return [self.parse_agtype(row["result"]) for row in rows]
 
     # ── Price query methods (AGE Price nodes) ──
 
@@ -639,65 +575,6 @@ class GraphService:
             results.append(parsed)
         return results
 
-    def get_etf_market_cap(self, etf_code: str, days: int = 365) -> List[Dict]:
-        """시가총액/순자산 조회 (Price 노드)"""
-        end_date = date.today()
-        start_date = end_date - timedelta(days=days)
-
-        query = """
-        MATCH (e:ETF {code: $etf_code})-[:HAS_PRICE]->(p:Price)
-        WHERE p.date >= $start_date AND p.date <= $end_date
-        RETURN {date: p.date, market_cap: p.market_cap,
-                net_assets: p.net_assets, close_price: p.close}
-        ORDER BY p.date
-        """
-        rows = self.execute_cypher(query, {
-            "etf_code": etf_code,
-            "start_date": start_date.isoformat(),
-            "end_date": end_date.isoformat(),
-        })
-        results = []
-        for row in rows:
-            parsed = self.parse_agtype(row["result"])
-            if parsed.get("close_price") is not None:
-                parsed["close_price"] = float(parsed["close_price"])
-            if parsed.get("market_cap") is not None:
-                parsed["market_cap"] = int(parsed["market_cap"])
-            if parsed.get("net_assets") is not None:
-                parsed["net_assets"] = int(parsed["net_assets"])
-            results.append(parsed)
-        return results
-
-    def get_latest_close_prices(self, tickers: List[str]) -> Dict[str, Decimal]:
-        """당일(KST) 종가 조회 — PriceService에서 호출"""
-        today_kst = datetime.now(timezone(timedelta(hours=9))).date()
-        today_str = today_kst.isoformat()
-
-        prices: Dict[str, Decimal] = {}
-        for ticker in tickers:
-            # Try ETF first
-            query = """
-            MATCH (e:ETF {code: $ticker})-[:HAS_PRICE]->(p:Price {date: $today})
-            RETURN {close: p.close}
-            """
-            rows = self.execute_cypher(query, {"ticker": ticker, "today": today_str})
-            if rows:
-                parsed = self.parse_agtype(rows[0]["result"])
-                if parsed.get("close") is not None:
-                    prices[ticker] = Decimal(str(parsed["close"]))
-                    continue
-            # Try Stock
-            query = """
-            MATCH (s:Stock {code: $ticker})-[:HAS_PRICE]->(p:Price {date: $today})
-            RETURN {close: p.close}
-            """
-            rows = self.execute_cypher(query, {"ticker": ticker, "today": today_str})
-            if rows:
-                parsed = self.parse_agtype(rows[0]["result"])
-                if parsed.get("close") is not None:
-                    prices[ticker] = Decimal(str(parsed["close"]))
-        return prices
-
     # ── Watchlist methods (User)-[:WATCHES]->(ETF) direct relationship ──
 
     def get_user_watches(self, user_id: int) -> List[Dict]:
@@ -711,10 +588,10 @@ class GraphService:
         return [self.parse_agtype(row["result"]) for row in rows]
 
     def get_watched_etfs(self, user_id: int) -> List[Dict]:
-        """사용자의 즐겨찾기 ETF 목록 (UniverseETFResponse 형식)"""
-        query = """
-        MATCH (u:User {user_id: $user_id})-[r:WATCHES]->(e:ETF)
-        RETURN {code: e.code, name: e.name, net_assets: e.net_assets, return_1d: e.return_1d, return_1w: e.return_1w, return_1m: e.return_1m, market_cap_change_1w: e.market_cap_change_1w, active: e.active}
+        """사용자의 즐겨찾기 ETF 목록 (ETFListItem 형식)"""
+        query = f"""
+        MATCH (u:User {{user_id: $user_id}})-[r:WATCHES]->(e:ETF)
+        RETURN {ETF_LIST_ITEM}
         ORDER BY e.net_assets DESC
         """
         rows = self.execute_cypher(query, {"user_id": user_id})
@@ -785,38 +662,6 @@ class GraphService:
         })
         self.db.commit()
         return len(rows) > 0
-
-    def get_latest_close_prices_fallback(self, tickers: List[str]) -> Dict[str, Decimal]:
-        """최신 종가 폴백 조회 (날짜 무관, 가장 최근 Price) — PriceService에서 호출"""
-        prices: Dict[str, Decimal] = {}
-        for ticker in tickers:
-            # Try ETF first
-            query = """
-            MATCH (e:ETF {code: $ticker})-[:HAS_PRICE]->(p:Price)
-            RETURN {close: p.close}
-            ORDER BY p.date DESC
-            LIMIT 1
-            """
-            rows = self.execute_cypher(query, {"ticker": ticker})
-            if rows:
-                parsed = self.parse_agtype(rows[0]["result"])
-                if parsed.get("close") is not None:
-                    prices[ticker] = Decimal(str(parsed["close"]))
-                    continue
-            # Try Stock
-            query = """
-            MATCH (s:Stock {code: $ticker})-[:HAS_PRICE]->(p:Price)
-            RETURN {close: p.close}
-            ORDER BY p.date DESC
-            LIMIT 1
-            """
-            rows = self.execute_cypher(query, {"ticker": ticker})
-            if rows:
-                parsed = self.parse_agtype(rows[0]["result"])
-                if parsed.get("close") is not None:
-                    prices[ticker] = Decimal(str(parsed["close"]))
-        return prices
-
 
 def node(graph: GraphService, cypher: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
     """{...} 맵 하나를 RETURN하는 쿼리의 결과 행. DB 오류를 "데이터 없음"으로 삼키지 않고 슬롯 실패로 드러낸다."""

@@ -6,7 +6,7 @@
 """
 import json
 import re
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, Iterable, Iterator, List, Set
 
 REF_RE = re.compile(r"^@([A-Za-z_]\w*)\.(\d+)(?:-(\d+))?$")
 
@@ -20,20 +20,35 @@ class RefPastEnd(RefError):
     계획을 고쳐도 데이터가 늘지 않으므로 다시 설계하지 않는다."""
 
 
-def _walk(value: Any):
+def strings(value: Any) -> Iterator[str]:
+    """인자(model_dump 결과) 안의 문자열 전부 — 참조는 어느 문자열 인자에든 올 수 있다."""
     if isinstance(value, str):
         yield value
     elif isinstance(value, dict):
         for v in value.values():
-            yield from _walk(v)
+            yield from strings(v)
     elif isinstance(value, list):
         for v in value:
-            yield from _walk(v)
+            yield from strings(v)
 
 
 def refs_in(args: Dict[str, Any]) -> Set[str]:
     """인자(model_dump 결과)가 참조하는 슬롯 이름들."""
-    return {m.group(1) for s in _walk(args) if (m := REF_RE.match(s.strip()))}
+    return {m.group(1) for s in strings(args) if (m := REF_RE.match(s.strip()))}
+
+
+def with_dependents(slots: Iterable[Any], seeds: Set[str]) -> Set[str]:
+    """seeds(슬롯 id)와, 그 결과를 참조로 (이어서) 받는 슬롯의 id. 슬롯은 id·depends_on이 있으면 된다."""
+    slots = list(slots)
+    out = set(seeds)
+    changed = True
+    while changed:
+        changed = False
+        for s in slots:
+            if s.id not in out and set(s.depends_on) & out:
+                out.add(s.id)
+                changed = True
+    return out
 
 
 def _pick(match: re.Match, exports: Dict[str, List[Dict[str, str]]]) -> List[Dict[str, str]]:
@@ -79,7 +94,7 @@ def expanded(args: Dict[str, Any]) -> Dict[str, Any]:
     """실행 때 참조가 펼쳐질 모양 (계획 검증용). 범위 참조는 끝 순위만큼의 항목이 된다 —
     앞 슬롯의 결과가 그보다 적으면 실행 때는 더 짧아지므로, 인자 개수 제한은 이 최대치로 검사한다."""
     ends: Dict[str, int] = {}
-    for s in _walk(args):
+    for s in strings(args):
         m = REF_RE.match(s.strip())
         if m:
             ends[m.group(1)] = max(ends.get(m.group(1), 0), int(m.group(3) or m.group(2)))
@@ -138,7 +153,7 @@ def split_hint(items: List[Any], max_items: int) -> str:
 def describe(args: Dict[str, Any], exports: Dict[str, List[Dict[str, str]]], titles: Dict[str, str]) -> List[str]:
     """화면에 남길 참조 풀이. 예: "'삼성전자 비중 높은 ETF' 1위: WON 200(448100)"."""
     notes = []
-    for s in _walk(args):
+    for s in strings(args):
         m = REF_RE.match(s.strip())
         if not m:
             continue

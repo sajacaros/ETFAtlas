@@ -48,7 +48,7 @@ API 전체 목록은 Swagger(`http://localhost:9601/docs`)를 본다.
 
 ## 3. Backend (`backend/app`)
 
-- `routers/` 10개. `portfolio.py`(~1000줄)가 CRUD·정렬·공유·대시보드·리스크 분석·리밸런싱 계산을 모두 담당
+- `routers/` 11개. 요청 스키마는 `schemas/`, 그래프 쿼리 파라미터 치환은 `utils/cypher.py`(airflow와 공용). `portfolio.py`가 CRUD·정렬·공유·대시보드를 맡고, 가상 수익률·위험 지표는 `domain/portfolio_metrics.py`, 리밸런싱 계산은 `domain/portfolio_calculation.py`
 - `domain/portfolio_calculation.py`: 리밸런싱/수익률 계산 순수 로직
 - 인증: ID/비밀번호 + 서버 세션(HttpOnly 쿠키 `etf_atlas_session`, 7일, 토큰 해시를 `auth_sessions`에 저장). 비밀번호는 bcrypt. 보호 라우트는 모두 `utils/session.get_current_user_id` 하나에 의존, 관리자 판정은 `services/auth_service.is_admin`
   - 최초 실행 시 사용자가 0명이면 프론트가 `/setup`으로 보내고, 거기서 만든 계정이 admin
@@ -122,6 +122,4 @@ API 전체 목록은 Swagger(`http://localhost:9601/docs`)를 본다.
 
 - **보수율은 비공식 API**: KIS/KRX Open API 모두 ETF 총보수를 제공하지 않아 네이버 증권 모바일 API(`etfAnalysis.totalFee`)를 쓴다. 형식이 바뀌면 신규 ETF의 보수율만 비고 수집은 계속된다
 - **실시간 현재가는 yfinance**: `rdb_realtime_prices`는 아직 yfinance(`.KS`)를 쓴다. KIS 현재가로 옮기면 시세 소스를 KIS 하나로 통일할 수 있다
-- **테스트**: 백엔드(`backend/tests`: 인증·챗봇·답변 화면 등)와 KIS·유틸(`airflow/tests`)에 있다. 포트폴리오 계산(`domain/portfolio_calculation.py`) 단위 테스트가 비어 있다. 레이아웃 설계 품질은 `backend/evals/`로 본다
-- **대형 파일**: `routers/portfolio.py`(1000줄), `frontend/src/app/PortfolioPage.tsx`(1100줄+), `airflow/dags/age_utils.py`(1500줄+) 분리 필요
-- **프론트 lint 미동작**: `npm run lint`가 ESLint 설정 파일이 없어 실패(기존부터). ESLint 9 flat config로 새로 구성 필요
+- **테스트**: 백엔드(`backend/tests`: 인증·챗봇·답변 화면 등)와 KIS·유틸(`airflow/tests`)에 있다. 리밸런싱 계산(`domain/portfolio_calculation.py`) 단위 테스트가 비어 있다(수익률·위험 지표 `domain/portfolio_metrics.py`는 있다). 레이아웃 설계 품질은 `backend/evals/`로 본다

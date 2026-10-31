@@ -132,6 +132,7 @@ class PriceTrendSkill(PriceTrendBase):
         "candlestick은 ETF 하나의 일별 시가·고가·저가·종가와 거래량, table은 ETF별 기간 요약(시작·끝 종가, 등락률, 최고·최저)"
     )
     Args = PriceTrendArgs
+    tool = True
     target = "ETF"
     subject = "etf"
     entity_args = {"etfs": "etf"}

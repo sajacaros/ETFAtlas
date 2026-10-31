@@ -1,11 +1,10 @@
 import uuid
-import math
 from fastapi import APIRouter, Depends, HTTPException, Response, status, Query
-from typing import List
+from typing import List, NamedTuple, Optional
 from decimal import Decimal
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from sqlalchemy.orm import Session
-from sqlalchemy import func, text as sa_text
+from sqlalchemy import func
 from ..database import get_db
 from ..models.portfolio import Portfolio, TargetAllocation, Holding, PortfolioSnapshot, SharedPortfolio
 from ..models.ticker_price import TickerPrice
@@ -24,10 +23,14 @@ from ..schemas.portfolio import (
     RiskAnalysisResponse, RiskChartPoint, DrawdownPoint,
 )
 from ..domain.portfolio_calculation import (
-    calculate_portfolio, TargetInput, HoldingInput,
+    CASH_TICKER, calculate_portfolio, TargetInput, HoldingInput,
 )
 from ..services.price_service import PriceService
-from ..utils.time import utcnow
+from ..domain.periods import period_start
+from ..domain.portfolio_metrics import (
+    BASE_AMOUNT, common_dates, daily_change, invested_amount, risk_metrics, simulate,
+)
+from ..utils.time import iso_utc, today_kst, utcnow
 
 router = APIRouter()
 
@@ -45,29 +48,17 @@ def _get_portfolio_or_404(db: Session, portfolio_id: int, user_id: int) -> Portf
 # --- Portfolio CRUD ---
 
 @router.get("/", response_model=List[PortfolioResponse])
-async def get_portfolios(
+def get_portfolios(
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db)
 ):
     portfolios = db.query(Portfolio).filter(Portfolio.user_id == user_id).order_by(Portfolio.display_order).all()
 
     # 각 포트폴리오의 투자금액 계산 (avg_price 기반)
-    all_holdings = db.query(Holding).filter(
-        Holding.portfolio_id.in_([p.id for p in portfolios]),
-    ).all()
-    invested_map: dict[int, Decimal] = {}
-    cash_map: dict[int, Decimal] = {}
-    has_avg_price_set: set[int] = set()
-    for h in all_holdings:
-        if h.ticker == 'CASH' and h.quantity:
-            cash_map[h.portfolio_id] = Decimal(str(h.quantity))
-        elif h.avg_price is not None and h.quantity:
-            has_avg_price_set.add(h.portfolio_id)
-            invested_map[h.portfolio_id] = invested_map.get(h.portfolio_id, Decimal('0')) + Decimal(str(h.quantity)) * Decimal(str(h.avg_price))
-    # CASH는 ETF avg_price가 하나라도 있는 포트폴리오에만 합산
-    for pid in has_avg_price_set:
-        if pid in cash_map:
-            invested_map[pid] = invested_map.get(pid, Decimal('0')) + cash_map[pid]
+    holdings_by_portfolio: dict[int, list[Holding]] = {}
+    for h in db.query(Holding).filter(Holding.portfolio_id.in_([p.id for p in portfolios])):
+        holdings_by_portfolio.setdefault(h.portfolio_id, []).append(h)
+    invested_map = {pid: invested_amount(hs) for pid, hs in holdings_by_portfolio.items()}
 
     # 각 포트폴리오의 최신 스냅샷에서 current_value 가져오기
     latest_sub = db.query(
@@ -121,7 +112,7 @@ async def get_portfolios(
 
 
 @router.put("/reorder")
-async def reorder_portfolios(
+def reorder_portfolios(
     request: PortfolioReorderRequest,
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
@@ -140,7 +131,7 @@ async def reorder_portfolios(
 
 
 @router.post("/", response_model=PortfolioResponse, status_code=status.HTTP_201_CREATED)
-async def create_portfolio(
+def create_portfolio(
     request: PortfolioCreate,
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db)
@@ -153,8 +144,8 @@ async def create_portfolio(
     ).scalar() or 0
     targets = [TargetAllocation(ticker=t.ticker, target_weight=t.target_weight) for t in request.targets]
     # 현금은 기본으로 0% 넣어 둔다 (새 포트폴리오, 구성종목 분석에서 저장 모두)
-    if not any(t.ticker.upper() == "CASH" for t in request.targets):
-        targets.append(TargetAllocation(ticker="CASH", target_weight=Decimal("0")))
+    if not any(t.ticker.upper() == CASH_TICKER for t in request.targets):
+        targets.append(TargetAllocation(ticker=CASH_TICKER, target_weight=Decimal("0")))
     portfolio = Portfolio(
         user_id=user_id,
         name=request.name,
@@ -171,7 +162,7 @@ async def create_portfolio(
 
 
 @router.post("/{portfolio_id}/duplicate", response_model=PortfolioResponse, status_code=status.HTTP_201_CREATED)
-async def duplicate_portfolio(
+def duplicate_portfolio(
     portfolio_id: int,
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db)
@@ -216,7 +207,7 @@ def _is_same_snapshot(name: str, account_types: list[str], allocations: list[dic
 
 
 @router.post("/{portfolio_id}/share", response_model=ShareCreateResponse)
-async def share_portfolio(
+def share_portfolio(
     portfolio_id: int,
     response: Response,
     user_id: int = Depends(get_current_user_id),
@@ -258,7 +249,7 @@ async def share_portfolio(
 
 
 @router.get("/{portfolio_id}", response_model=PortfolioDetailResponse)
-async def get_portfolio(
+def get_portfolio(
     portfolio_id: int,
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db)
@@ -277,14 +268,14 @@ async def get_portfolio(
 
 
 def _try_create_immediate_snapshot(db: Session, portfolio: Portfolio):
-    """snapshot_enabled 토글 ON 시 ticker_prices 기반으로 즉시 스냅샷 생성 시도."""
+    """snapshot_enabled 토글 ON 시 ticker_prices 기반으로 즉시 스냅샷 생성 시도. 커밋은 호출 측이 한다."""
     holdings = db.query(Holding).filter(Holding.portfolio_id == portfolio.id).all()
     if not holdings:
         return
 
-    tickers = [h.ticker for h in holdings if h.ticker != 'CASH']
+    tickers = [h.ticker for h in holdings if h.ticker != CASH_TICKER]
     if not tickers:
-        total_value = sum(Decimal(str(h.quantity)) for h in holdings if h.ticker == 'CASH')
+        total_value = sum(Decimal(str(h.quantity)) for h in holdings if h.ticker == CASH_TICKER)
     else:
         latest_date = db.query(func.max(TickerPrice.date)).scalar()
         if not latest_date:
@@ -301,19 +292,22 @@ def _try_create_immediate_snapshot(db: Session, portfolio: Portfolio):
 
         total_value = Decimal('0')
         for h in holdings:
-            if h.ticker == 'CASH':
+            if h.ticker == CASH_TICKER:
                 total_value += Decimal(str(h.quantity))
             else:
                 total_value += Decimal(str(h.quantity)) * price_map[h.ticker]
 
-    today = date.today()
+    today = today_kst()
     existing = db.query(PortfolioSnapshot).filter(
         PortfolioSnapshot.portfolio_id == portfolio.id,
         PortfolioSnapshot.date == today,
     ).first()
 
     if existing:
+        # 전일 값은 그대로 두고 오늘 값이 바뀐 만큼 변화량도 다시 계산한다
+        prev_value = Decimal(str(existing.prev_value)) if existing.prev_value is not None else None
         existing.total_value = total_value
+        existing.change_amount, existing.change_rate = daily_change(total_value, prev_value)
         existing.updated_at = utcnow()
     else:
         prev_snapshot = db.query(PortfolioSnapshot).filter(
@@ -322,8 +316,7 @@ def _try_create_immediate_snapshot(db: Session, portfolio: Portfolio):
         ).order_by(PortfolioSnapshot.date.desc()).first()
 
         prev_value = Decimal(str(prev_snapshot.total_value)) if prev_snapshot else None
-        change_amount = total_value - prev_value if prev_value else None
-        change_rate = float(change_amount / prev_value * 100) if prev_value and prev_value != 0 else None
+        change_amount, change_rate = daily_change(total_value, prev_value)
 
         snapshot = PortfolioSnapshot(
             portfolio_id=portfolio.id,
@@ -335,11 +328,9 @@ def _try_create_immediate_snapshot(db: Session, portfolio: Portfolio):
         )
         db.add(snapshot)
 
-    db.commit()
-
 
 @router.put("/{portfolio_id}", response_model=PortfolioResponse)
-async def update_portfolio(
+def update_portfolio(
     portfolio_id: int,
     request: PortfolioUpdate,
     user_id: int = Depends(get_current_user_id),
@@ -370,17 +361,18 @@ async def update_portfolio(
             PortfolioSnapshot.portfolio_id == portfolio.id,
         ).delete(synchronize_session=False)
 
-    db.commit()
-    db.refresh(portfolio)
-
     if snapshot_just_enabled:
+        db.flush()
         _try_create_immediate_snapshot(db, portfolio)
 
+    # 설정 변경과 즉시 스냅샷을 한 번에 커밋한다
+    db.commit()
+    db.refresh(portfolio)
     return portfolio
 
 
 @router.put("/{portfolio_id}/batch", response_model=PortfolioDetailResponse)
-async def batch_update_portfolio(
+def batch_update_portfolio(
     portfolio_id: int,
     request: PortfolioBatchUpdate,
     user_id: int = Depends(get_current_user_id),
@@ -458,7 +450,7 @@ async def batch_update_portfolio(
 
 
 @router.delete("/{portfolio_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_portfolio(
+def delete_portfolio(
     portfolio_id: int,
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db)
@@ -469,6 +461,13 @@ async def delete_portfolio(
 
 
 # --- Dashboard ---
+
+class SnapshotRow(NamedTuple):
+    """여러 포트폴리오 스냅샷을 날짜별로 합친 행 (_build_dashboard_response 입력)"""
+    date: date
+    total_value: Decimal
+    updated_at: Optional[datetime] = None
+
 
 def _build_dashboard_response(snapshots: list) -> DashboardResponse:
     """스냅샷 리스트로부터 대시보드 응답 생성.
@@ -547,14 +546,14 @@ def _build_dashboard_response(snapshots: list) -> DashboardResponse:
             yearly=yearly,
             ytd=ytd,
             snapshot_date=last.date.isoformat() if snapshots else None,
-            updated_at=last_updated_at.isoformat() if last_updated_at else None,
+            updated_at=iso_utc(last_updated_at),
         ),
         chart_data=chart_data,
     )
 
 
 @router.get("/dashboard/total", response_model=DashboardResponse)
-async def get_total_dashboard(
+def get_total_dashboard(
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
@@ -577,12 +576,6 @@ async def get_total_dashboard(
         if s.updated_at and (date_agg[key]['updated_at'] is None or s.updated_at > date_agg[key]['updated_at']):
             date_agg[key]['updated_at'] = s.updated_at
 
-    class SnapshotRow:
-        def __init__(self, d, tv, ua=None):
-            self.date = d
-            self.total_value = tv
-            self.updated_at = ua
-
     snapshots = [
         SnapshotRow(d, agg['total_value'], agg['updated_at'])
         for d, agg in sorted(date_agg.items())
@@ -591,7 +584,7 @@ async def get_total_dashboard(
 
 
 @router.get("/dashboard/total/holdings", response_model=TotalHoldingsResponse)
-async def get_total_holdings(
+def get_total_holdings(
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
@@ -620,7 +613,7 @@ async def get_total_holdings(
     items: list[tuple[str, Decimal]] = []
     grand_total = Decimal('0')
     for ticker, qty in ticker_qty.items():
-        if ticker == 'CASH':
+        if ticker == CASH_TICKER:
             value = qty
         else:
             price = prices.get(ticker, Decimal('0'))
@@ -632,7 +625,7 @@ async def get_total_holdings(
     holdings_out = []
     for ticker, value in items:
         qty = ticker_qty[ticker]
-        if ticker == 'CASH':
+        if ticker == CASH_TICKER:
             price = Decimal('1')
         else:
             price = prices.get(ticker, Decimal('0'))
@@ -652,7 +645,7 @@ async def get_total_holdings(
 
 
 @router.get("/{portfolio_id}/risk-analysis", response_model=RiskAnalysisResponse)
-async def get_risk_analysis(
+def get_risk_analysis(
     portfolio_id: int,
     period: str = Query(default="3m", pattern="^(1m|3m|6m|1y)$"),
     user_id: int = Depends(get_current_user_id),
@@ -665,115 +658,34 @@ async def get_risk_analysis(
         .filter(TargetAllocation.portfolio_id == portfolio.id)
         .all()
     )
-    tickers = [a.ticker for a in allocations if a.ticker != "CASH"]
-    weights = {a.ticker: float(a.target_weight) / 100.0 for a in allocations if a.ticker != "CASH"}
-
-    if not tickers:
+    weights = {a.ticker: float(a.target_weight) for a in allocations if a.ticker != CASH_TICKER}
+    if not weights:
         raise HTTPException(status_code=400, detail="No ETF tickers in portfolio")
 
-    period_days = {"1m": 30, "3m": 90, "6m": 180, "1y": 365}
-    today = date.today()
-    start_date = today - timedelta(days=period_days[period])
-
-
-    result = db.execute(
-        sa_text("""
-            SELECT ticker, date, price
-            FROM ticker_prices
-            WHERE ticker = ANY(:tickers)
-              AND date >= :start_date
-            ORDER BY date
-        """),
-        {"tickers": tickers, "start_date": start_date},
-    )
-
-    price_map: dict[date, dict[str, float]] = {}
-    all_dates: set[date] = set()
-    for row in result:
-        t, d, p = row.ticker, row.date, float(row.price)
-        price_map.setdefault(d, {})[t] = p
-        all_dates.add(d)
-
-    common_dates = sorted(
-        d for d in all_dates
-        if all(t in price_map.get(d, {}) for t in tickers)
-    )
-
-    if len(common_dates) < 2:
+    since = period_start(period, today_kst())
+    prices = PriceService(db).get_price_history(list(weights), since)
+    values = simulate(weights, prices, common_dates(prices, weights))
+    if values is None:
         raise HTTPException(status_code=404, detail="Insufficient price data")
-
-    total_weight = sum(weights.values())
-    norm_weights = {t: w / total_weight for t, w in weights.items()} if total_weight > 0 else weights
-
-    base_amount = 10_000_000
-    start = common_dates[0]
-    virtual_quantities: dict[str, float] = {}
-    for t in tickers:
-        allocated = base_amount * norm_weights.get(t, 0)
-        start_price = price_map[start][t]
-        virtual_quantities[t] = allocated / start_price if start_price > 0 else 0
-
-    daily_values: list[tuple[date, float]] = []
-    for d in common_dates:
-        value = sum(virtual_quantities[t] * price_map[d][t] for t in tickers)
-        daily_values.append((d, value))
-
-    total_return = ((daily_values[-1][1] - base_amount) / base_amount) * 100
-
-    peak = daily_values[0][1]
-    mdd = 0.0
-    drawdown_data = []
-    for d, v in daily_values:
-        if v > peak:
-            peak = v
-        dd = ((v - peak) / peak) * 100 if peak > 0 else 0.0
-        if dd < mdd:
-            mdd = dd
-        drawdown_data.append(DrawdownPoint(date=d.isoformat(), drawdown=round(dd, 2)))
-
-    daily_returns: list[float] = []
-    for i in range(1, len(daily_values)):
-        prev_val = daily_values[i - 1][1]
-        curr_val = daily_values[i][1]
-        daily_returns.append((curr_val - prev_val) / prev_val if prev_val > 0 else 0.0)
-
-    if len(daily_returns) >= 2:
-        mean_r = sum(daily_returns) / len(daily_returns)
-        variance = sum((r - mean_r) ** 2 for r in daily_returns) / (len(daily_returns) - 1)
-        daily_vol = math.sqrt(variance)
-        volatility = daily_vol * math.sqrt(252) * 100
-    else:
-        volatility = 0.0
-
-    sharpe_ratio = None
-    if volatility > 0:
-        trading_days = len(daily_returns)
-        annualized_return = ((daily_values[-1][1] / base_amount) ** (252 / trading_days) - 1) * 100 if trading_days > 0 else 0.0
-        sharpe_ratio = round((annualized_return - 3.5) / volatility, 2)
-
-    chart_data = []
-    for d, v in daily_values:
-        ret = ((v - base_amount) / base_amount) * 100
-        chart_data.append(RiskChartPoint(
-            date=d.isoformat(),
-            value=round(v, 0),
-            return_rate=round(ret, 2),
-        ))
+    metrics = risk_metrics(values)
 
     return RiskAnalysisResponse(
         period=period,
-        actual_start_date=common_dates[0].isoformat(),
-        total_return=round(total_return, 2),
-        mdd=round(mdd, 2),
-        volatility=round(volatility, 2),
-        sharpe_ratio=sharpe_ratio,
-        chart_data=chart_data,
-        drawdown_data=drawdown_data,
+        actual_start_date=values[0][0].isoformat(),
+        total_return=round(metrics.total_return, 2),
+        mdd=round(metrics.mdd, 2),
+        volatility=round(metrics.volatility, 2),
+        sharpe_ratio=metrics.sharpe_ratio,
+        chart_data=[
+            RiskChartPoint(date=d.isoformat(), value=round(v, 0), return_rate=round((v - BASE_AMOUNT) / BASE_AMOUNT * 100, 2))
+            for d, v in values
+        ],
+        drawdown_data=[DrawdownPoint(date=d.isoformat(), drawdown=round(dd, 2)) for d, dd in metrics.drawdowns],
     )
 
 
 @router.get("/{portfolio_id}/dashboard", response_model=DashboardResponse)
-async def get_portfolio_dashboard(
+def get_portfolio_dashboard(
     portfolio_id: int,
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
@@ -786,24 +698,12 @@ async def get_portfolio_dashboard(
     response = _build_dashboard_response(snapshots)
 
     # 투자금액 대비 수익률 계산
-    holdings = db.query(Holding).filter(Holding.portfolio_id == portfolio.id).all()
-    invested_amount = Decimal('0')
-    cash_amount = Decimal('0')
-    has_avg_price = False
-    for h in holdings:
-        if h.ticker == 'CASH' and h.quantity:
-            cash_amount = Decimal(str(h.quantity))
-        elif h.avg_price is not None and h.quantity:
-            invested_amount += Decimal(str(h.quantity)) * Decimal(str(h.avg_price))
-            has_avg_price = True
-    if has_avg_price:
-        invested_amount += cash_amount
-
-    if has_avg_price and invested_amount > 0:
-        response.summary.invested_amount = invested_amount
+    invested = invested_amount(db.query(Holding).filter(Holding.portfolio_id == portfolio.id))
+    if invested:
+        response.summary.invested_amount = invested
         current_value = response.summary.current_value
-        return_amount = current_value - invested_amount
-        return_rate = float(return_amount / invested_amount * 100)
+        return_amount = current_value - invested
+        return_rate = float(return_amount / invested * 100)
         response.summary.investment_return = DashboardSummaryItem(
             amount=return_amount, rate=round(return_rate, 2),
         )
@@ -814,7 +714,7 @@ async def get_portfolio_dashboard(
 # --- Target Allocations ---
 
 @router.post("/{portfolio_id}/targets", response_model=TargetAllocationResponse, status_code=status.HTTP_201_CREATED)
-async def add_target(
+def add_target(
     portfolio_id: int,
     request: TargetAllocationCreate,
     user_id: int = Depends(get_current_user_id),
@@ -840,7 +740,7 @@ async def add_target(
 
 
 @router.put("/{portfolio_id}/targets/{target_id}", response_model=TargetAllocationResponse)
-async def update_target(
+def update_target(
     portfolio_id: int,
     target_id: int,
     request: TargetAllocationUpdate,
@@ -862,7 +762,7 @@ async def update_target(
 
 
 @router.delete("/{portfolio_id}/targets/{target_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_target(
+def delete_target(
     portfolio_id: int,
     target_id: int,
     user_id: int = Depends(get_current_user_id),
@@ -883,7 +783,7 @@ async def delete_target(
 # --- Holdings ---
 
 @router.post("/{portfolio_id}/holdings", response_model=HoldingResponse, status_code=status.HTTP_201_CREATED)
-async def add_holding(
+def add_holding(
     portfolio_id: int,
     request: HoldingCreate,
     user_id: int = Depends(get_current_user_id),
@@ -915,7 +815,7 @@ async def add_holding(
 
 
 @router.put("/{portfolio_id}/holdings/{holding_id}", response_model=HoldingResponse)
-async def update_holding(
+def update_holding(
     portfolio_id: int,
     holding_id: int,
     request: HoldingUpdate,
@@ -940,7 +840,7 @@ async def update_holding(
 
 
 @router.delete("/{portfolio_id}/holdings/{holding_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_holding(
+def delete_holding(
     portfolio_id: int,
     holding_id: int,
     user_id: int = Depends(get_current_user_id),
@@ -961,7 +861,7 @@ async def delete_holding(
 # --- Calculation ---
 
 @router.get("/{portfolio_id}/calculate", response_model=CalculationResponse)
-async def calculate(
+def calculate(
     portfolio_id: int,
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db)

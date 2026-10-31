@@ -19,7 +19,6 @@ from ...content import DataField, Dataset, Source, TableView
 from ...entities import EntityResolver
 from ...graph_service import GraphService, node
 from .base import DataSkill, SkillResult, data_result, empty
-from .stock_holders import SAFE_CODE_RE
 
 PRICE_DAYS = 14  # 최근 종가를 찾는 범위 (연휴 여유)
 
@@ -118,15 +117,14 @@ class CompanyValuationSkill(DataSkill):
 
     def fetch(self, args: CompanyValuationArgs, display: str, db: Session, resolver: EntityResolver) -> SkillResult:
         stocks, missing = resolver.stocks(db, args.stocks)
-        stocks = [s for s in stocks if SAFE_CODE_RE.fullmatch(s["code"])]
         if not stocks:
             return empty(f"찾지 못한 종목: {', '.join(missing)}" if missing else "종목을 찾지 못했습니다")
         graph = GraphService(db)
         codes = [s["code"] for s in stocks]
         props = {r["code"]: r for r in node(graph, (
-            "MATCH (s:Stock) WHERE s.code IN [" + ", ".join(f"'{c}'" for c in codes) + "] "
+            "MATCH (s:Stock) WHERE s.code IN $codes "
             "RETURN {code: s.code, shares: s.listed_shares, kis_per: s.kis_per, kis_pbr: s.kis_pbr, quote_date: s.quote_date}"
-        ), {})}
+        ), {"codes": codes})}
         rows, lines, notes, as_of = [], [], [], []
         for stock in stocks:
             name, code = stock["name"], stock["code"]

@@ -1,19 +1,16 @@
-import re
 from typing import Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ....domain.composition import ETFAllocation, aggregate_composition
-from ...content import BarView, DataField, Dataset, DonutView, Source, TableView, TreemapView
-from ...entities import AmbiguousETF, EntityResolver, UnmanagedETF, UnmanagedStock, _normalize
+from ...content import DataField, Dataset, Source
+from ...entities import AmbiguousETF, EntityResolver, UnmanagedETF, UnmanagedStock, normalize_name
 from ...graph_service import GraphService, node
 from .base import DataSkill, SkillResult, data_result, empty, not_found
-from .common import cut_note, min_weight_field
+from .common import DONUT_MAX_SLICES, cut_note, min_weight_field, share_view
 
-DONUT_MAX_SLICES = 8  # 넘으면 나머지를 '기타'로 묶는다
 OTHER = "_OTHER"  # 집계용 표식: ETF 안에서 상위 30개 밖 종목·현금
-SAFE_CODE_RE = re.compile(r"[0-9A-Z]{6}")  # 쿼리 문자열에 직접 넣으므로 코드 모양만 허용
 
 
 class PortfolioItem(BaseModel):
@@ -38,14 +35,13 @@ class PortfolioLookthroughArgs(BaseModel):
 
 def _holdings(db: Session, codes: List[str]) -> Dict[str, List[Dict]]:
     """ETF 코드 → 구성종목 [{stock_code, stock_name, weight, date}]. 한 번의 쿼리로 가져온다."""
-    codes = [c for c in codes if SAFE_CODE_RE.fullmatch(c)]
     if not codes:
         return {}
     rows = node(
         GraphService(db),
-        f"MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock) WHERE e.code IN [{', '.join(repr(c) for c in codes)}] "
+        "MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock) WHERE e.code IN $codes "
         "RETURN {etf: e.code, stock_code: s.code, stock_name: s.name, weight: h.weight, date: h.date}",
-        {},
+        {"codes": codes},
     )
     result: Dict[str, List[Dict]] = {}
     for r in rows:
@@ -63,7 +59,7 @@ def _find(db: Session, resolver: EntityResolver, asset: str) -> Optional[Tuple[s
         return "unlisted", e.etf
     except AmbiguousETF:
         stock = _stock(db, resolver, asset)
-        if stock and _normalize(stock["name"]) == _normalize(asset):
+        if stock and normalize_name(stock["name"]) == normalize_name(asset):
             return "stock", stock
         raise
     if etf:
@@ -111,7 +107,7 @@ class PortfolioLookthroughSkill(DataSkill):
             bucket = {"etf": etfs, "stock": stocks, "unlisted": unlisted}[kind]
             entry = bucket.setdefault(entity["code"], {**entity, "allocation": 0.0})
             entry["allocation"] += item.allocation
-            if entity["code"] != item.asset.strip().upper() and _normalize(entity["name"]) != _normalize(item.asset):
+            if entity["code"] != item.asset.strip().upper() and normalize_name(entity["name"]) != normalize_name(item.asset):
                 resolved.append(f"{item.asset} → {entity['name']}({entity['code']})")
         if not (etfs or stocks or unlisted):
             return not_found(f"포트폴리오 항목을 찾지 못했습니다: {', '.join(missing)}")
@@ -128,7 +124,9 @@ class PortfolioLookthroughSkill(DataSkill):
                 hs = [*hs, {"stock_code": OTHER, "stock_name": "기타", "weight": rest}]
             allocations.append(ETFAllocation(code, e["name"], e["allocation"], hs))
         # 구성을 모르는 ETF는 ETF 한 행으로, 직접 담은 종목은 자기 자신 100%로 넣는다
-        for e in [*no_holdings, *unlisted.values()]:
+        unknown = [*no_holdings, *unlisted.values()]
+        unknown_codes = {e["code"] for e in unknown}  # 이 코드의 행은 종목이 아니라 ETF 한 덩어리다 (코드·참조 대상에서 뺀다)
+        for e in unknown:
             allocations.append(ETFAllocation(e["code"], "구성 미확인", e["allocation"], [
                 {"stock_code": e["code"], "stock_name": f"{e['name']} (구성 미확인)", "weight": 100},
             ]))
@@ -149,7 +147,7 @@ class PortfolioLookthroughSkill(DataSkill):
         rows = [
             {
                 "name": x.stock_name,
-                "code": None if x.stock_name.endswith("(구성 미확인)") else x.stock_code,
+                "code": None if x.stock_code in unknown_codes else x.stock_code,
                 "weight": round(x.weight, 2),
                 "via": " · ".join(f"{c.name} {c.weight:.2f}" for c in x.etfs),
             }
@@ -170,14 +168,9 @@ class PortfolioLookthroughSkill(DataSkill):
             ],
             rows=rows,
         )
-        view = {
-            "treemap": TreemapView(name="name", value="weight"),
-            "donut": DonutView(name="name", value="weight"),
-            "bar": BarView(x="name", y=["weight"], horizontal=True),
-        }.get(display, TableView())
+        view = share_view(display)
 
         notes: List[str] = []
-        unknown = [*no_holdings, *unlisted.values()]
         if unknown:
             names = ", ".join(f"{e['name']}({e['code']})" for e in unknown)
             notes.append(f"구성종목 데이터가 없어 ETF 단위로 표시: {names}")
@@ -203,6 +196,5 @@ class PortfolioLookthroughSkill(DataSkill):
             Source(label=f"{e['name']} 구성종목", as_of=max((h.get("date") or "" for h in holdings[code]), default="") or None)
             for code, e in etfs.items() if code in holdings
         ]
-        exports = [{"code": x.stock_code, "name": x.stock_name} for x in named
-                   if not x.stock_name.endswith("(구성 미확인)")]
+        exports = [{"code": x.stock_code, "name": x.stock_name} for x in named if x.stock_code not in unknown_codes]
         return data_result(dataset, view, summary, sources, notes, exports=exports)

@@ -1,79 +1,61 @@
+"""agent 스킬이 쓰는 tool-calling 에이전트. 다른 스킬로 표현할 수 없는 질문을 도구를 불러 가며 마크다운으로 답한다.
+
+도구는 두 가지다. 여기서 정의한 검색·태그·유사 ETF·비중 변화·graph_query와, 답변 화면의 데이터 스킬 중
+tool = True인 것(answer/tools.py가 만들어 넘긴다). 가격 추이·기간 수익률·ETF 비교처럼 스킬이 있는 일은
+스킬 도구가 맡는다 — 같은 일을 하는 도구를 따로 두지 않는다.
+이 모듈은 답변 화면(answer/)을 가져오지 않는다. agent 스킬이 이 모듈을 가져와 스킬 도구를 넣어 준다.
+"""
 import asyncio
 import json
 import logging
-from typing import Any, AsyncIterator, Dict, List, Optional
+import re
+from typing import Any, AsyncIterator, Dict, List, Optional, Sequence
 
 from pydantic_ai import (
     Agent, AgentRunResultEvent, FunctionToolCallEvent, FunctionToolResultEvent, Tool as AgentTool,
 )
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import RetryPromptPart
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.usage import UsageLimits
 from sqlalchemy.orm import Session
 
-from ..database import SessionLocal
+from ..domain.format import format_value
 from ..models.chat import ChatLogResult
-from .ai_config import load_ai_config
-from .answer.skills import REGISTRY
-from .answer.tools import skill_tools
-from .chat_memory import ChatMemory, ConversationContext
+from .ai_config import AIConfig
+from .chat_memory import ConversationContext
 from .chat_prompt import SYSTEM_PROMPT
 from .embedding_service import EmbeddingService
 from .graph_service import GraphService
+from .llm import build_model
 
 logger = logging.getLogger(__name__)
 
-
-def _format_expense_ratio(results: list[dict]) -> list[dict]:
-    """expense_ratio를 '0.80%' 형식 문자열로 변환하여 LLM의 단위 혼동을 방지한다."""
-    for r in results:
-        if r.get("expense_ratio") is not None:
-            r["expense_ratio"] = f'{float(r["expense_ratio"]):.2f}%'
-    return results
-
-
-def _format_korean_money(n) -> str:
-    """숫자를 한국식 단위(억, 만)로 포맷."""
-    n = int(float(n))
-    abs_n = abs(n)
-    sign = "-" if n < 0 else ""
-    if abs_n >= 1_0000_0000:
-        eok = abs_n // 1_0000_0000
-        return f"{sign}{eok:,}억원"
-    if abs_n >= 1_0000:
-        man = abs_n // 1_0000
-        return f"{sign}{man:,}만원"
-    if abs_n >= 1000:
-        return f"{sign}{abs_n:,}원"
-    return f"{sign}{abs_n}원"
-
-
-_MONETARY_FIELDS = {"market_cap", "net_assets", "latest_market_cap", "latest_net_assets", "trade_value"}
-
-
-def _format_monetary_fields(data: dict) -> dict:
-    """딕셔너리의 금액 필드를 한국식 단위로 포맷."""
-    for k in _MONETARY_FIELDS:
-        if k in data and data[k] is not None:
-            data[k] = _format_korean_money(data[k])
-    return data
-
-
-_PERCENT_FIELDS = {
-    "change_rate", "return_1d", "return_1w", "return_1m", "return_3m",
-    "market_cap_change_1w", "similarity",
-    "weight", "current_weight", "previous_weight", "weight_change",
+# 도구 결과의 숫자 열 → 요약 텍스트와 같은 서식(domain.format). LLM이 단위를 헷갈리지 않게 '%'·'억원'을 붙여 넘긴다
+FIELD_FORMATS = {
+    **{k: "percent" for k in (
+        "expense_ratio", "change_rate", "return_1d", "return_1w", "return_1m", "return_3m",
+        "market_cap_change_1w", "similarity", "weight", "current_weight", "previous_weight", "weight_change",
+    )},
+    **{k: "krw" for k in ("market_cap", "net_assets", "latest_market_cap", "latest_net_assets", "trade_value")},
 }
 
 
-def _format_percent_fields(data: dict) -> dict:
-    """백분율 필드에 '%' 접미사를 추가하여 LLM의 단위 혼동을 방지한다."""
-    for k in _PERCENT_FIELDS:
-        if k in data and data[k] is not None:
-            data[k] = f'{float(data[k]):.2f}%'
-    return data
+def format_fields(row: Dict[str, Any]) -> Dict[str, Any]:
+    """숫자 열을 FIELD_FORMATS의 서식 문자열로 바꾼다 (숫자가 아니면 그대로). 1억원보다 작은 금액은 원 단위로."""
+    for key, fmt in FIELD_FORMATS.items():
+        value = row.get(key)
+        if value is None or isinstance(value, bool):
+            continue
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            continue
+        row[key] = format_value(value, "price" if fmt == "krw" and abs(value) < 1_0000_0000 else fmt)
+    return row
+
+
+def _rows_json(rows: List[Dict[str, Any]]) -> str:
+    return json.dumps([format_fields(r) for r in rows], ensure_ascii=False, default=str)
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +85,12 @@ class ChatTool:
     def as_agent_tool(self) -> AgentTool:
         def run(**kwargs) -> str:
             # 선택 인자에 null이 오면 forward 기본값 사용
-            return self.forward(**{k: v for k, v in kwargs.items() if v is not None})
+            try:
+                return self.forward(**{k: v for k, v in kwargs.items() if v is not None})
+            except Exception:
+                # DB 오류를 "결과 없음"으로 숨기지 않고, 에이전트 전체를 멈추지도 않는다
+                logger.exception("Chat tool %s failed", self.name)
+                return f"도구 실행 오류: {self.name} 조회에 실패했습니다. 같은 도구를 다시 부르지 말고 다른 방법을 쓰세요."
 
         # 도구들이 하나의 DB 세션을 공유하므로 병렬 실행하지 않는다
         return AgentTool.from_schema(
@@ -146,15 +133,13 @@ class ETFSearchTool(ChatTool):
         rows = graph_service.execute_cypher(cypher, {"query": query})
         if not rows:
             return "검색 결과 없음"
-        results = _format_expense_ratio([GraphService.parse_agtype(row["result"]) for row in rows])
-        results = [_format_monetary_fields(r) for r in results]
-        return json.dumps(results, ensure_ascii=False, default=str)
+        return _rows_json([GraphService.parse_agtype(row["result"]) for row in rows])
 
 
 class StockSearchTool(ChatTool):
     name = "stock_search"
     description = """주식 종목(삼성전자, SK하이닉스 등 개별 주식)을 이름이나 코드로 검색합니다. ETF 검색은 etf_search를 사용하세요.
-예: '삼성전자' 검색 → code: '005930'. 찾은 코드를 get_stock_prices 등에서 사용하세요.
+예: '삼성전자' 검색 → code: '005930'. 찾은 코드를 graph_query 등에서 사용하세요 (분석 도구는 이름을 그대로 받습니다).
 사용자가 "다 찾아줘", "전부", "모두" 등 전체 결과를 요청하면 limit을 50으로 설정하세요."""
     inputs = {
         "query": {
@@ -185,8 +170,7 @@ class StockSearchTool(ChatTool):
         rows = graph_service.execute_cypher(cypher, {"query": query})
         if not rows:
             return "검색 결과 없음"
-        results = [GraphService.parse_agtype(row["result"]) for row in rows]
-        return json.dumps(results, ensure_ascii=False, default=str)
+        return _rows_json([GraphService.parse_agtype(row["result"]) for row in rows])
 
 
 class ListTagsTool(ChatTool):
@@ -204,7 +188,7 @@ class ListTagsTool(ChatTool):
         tags = graph_service.get_all_tags()
         if not tags:
             return "태그 없음"
-        return json.dumps(tags, ensure_ascii=False, default=str)
+        return _rows_json(tags)
 
 
 class FindSimilarETFsTool(ChatTool):
@@ -228,73 +212,7 @@ etf_search로 ETF 코드를 먼저 확인한 후 사용하세요.
         results = graph_service.find_similar_etfs(etf_code)
         if not results:
             return "유사 ETF 없음"
-        results = [_format_percent_fields(r) for r in results]
-        return json.dumps(results, ensure_ascii=False, default=str)
-
-
-class GetETFInfoTool(ChatTool):
-    name = "get_etf_info"
-    description = """ETF의 메타 정보를 종합 조회합니다. 기본 정보(코드, 이름, 보수율, 기초지수, 상장일, 운용사 설명), 운용사, 태그, 상위 보유종목 10개, 최근 수익률(1주/1개월/3개월)을 한번에 반환합니다.
-보수율 비교, ETF 상세 정보 확인, "이 ETF는 무엇에 투자하나" 같은 질문에 이 도구를 사용하세요.
-etf_search로 ETF 코드를 먼저 확인한 후 사용하세요."""
-    inputs = {
-        "etf_code": {
-            "type": "string",
-            "description": "ETF 종목코드 (예: '069500')"
-        }
-    }
-
-    def __init__(self, db: Session):
-        super().__init__()
-        self.db = db
-
-    def forward(self, etf_code: str) -> str:
-        graph_service = GraphService(self.db)
-        # 기본 정보 + 운용사
-        basic = graph_service.execute_cypher(
-            "MATCH (e:ETF {code: $etf_code}) "
-            "OPTIONAL MATCH (e)-[:MANAGED_BY]->(c:Company) "
-            "RETURN {code: e.code, name: e.name, expense_ratio: e.expense_ratio, company: c.name, "
-            "base_index: e.base_index, listed_date: e.listed_date, dividend_cycle: e.dividend_cycle, "
-            "dividend_yield: e.dividend_yield, dividend_per_share: e.dividend_per_share, description: e.description}",
-            {"etf_code": etf_code},
-        )
-        if not basic:
-            return "해당 ETF를 찾을 수 없습니다"
-        info = _format_expense_ratio([GraphService.parse_agtype(basic[0]["result"])])[0]
-        # 태그
-        tags = graph_service.execute_cypher(
-            "MATCH (e:ETF {code: $etf_code})-[:TAGGED]->(t:Tag) RETURN {tag: t.name}",
-            {"etf_code": etf_code},
-        )
-        info["tags"] = [GraphService.parse_agtype(t["result"])["tag"] for t in tags] if tags else []
-        # 상위 보유종목
-        holdings = graph_service.execute_cypher(
-            "MATCH (e:ETF {code: $etf_code})-[h:CURRENT_HOLDS]->(s:Stock) "
-            "RETURN {stock_code: s.code, stock_name: s.name, weight: h.weight} "
-            "ORDER BY h.weight DESC LIMIT 10",
-            {"etf_code": etf_code},
-        )
-        info["top_holdings"] = [_format_percent_fields(GraphService.parse_agtype(h["result"])) for h in holdings] if holdings else []
-        # 최근 수익률 (1주/1개월/3개월)
-        prices = graph_service.get_etf_prices(etf_code, days=90)
-        if prices:
-            closes = [(p["date"], p["close"]) for p in prices if p["close"] is not None]
-            if len(closes) >= 2:
-                latest_close = closes[-1][1]
-                returns = {}
-                for label, days_back in [("1w", 7), ("1m", 30), ("3m", 90)]:
-                    target = [c for c in closes if c[0] <= closes[-1][0]]
-                    # 가장 가까운 과거 데이터 찾기
-                    from datetime import date as dt_date, timedelta
-                    target_date = (dt_date.fromisoformat(closes[-1][0]) - timedelta(days=days_back)).isoformat()
-                    past = [c for c in closes if c[0] <= target_date]
-                    if past:
-                        past_close = past[-1][1]
-                        returns[label] = f'{round((latest_close - past_close) / past_close * 100, 2):.2f}%'
-                if returns:
-                    info["returns"] = returns
-        return json.dumps(info, ensure_ascii=False, default=str)
+        return _rows_json(results)
 
 
 class GetHoldingsChangesTool(ChatTool):
@@ -324,218 +242,7 @@ etf_search로 ETF 코드를 먼저 확인한 후 사용하세요."""
         filtered = [c for c in changes if c["change_type"] != "unchanged"]
         if not filtered:
             return "변동 없음"
-        filtered = [_format_percent_fields(c) for c in filtered]
-        return json.dumps(filtered, ensure_ascii=False, default=str)
-
-
-class GetETFPricesTool(ChatTool):
-    name = "get_etf_prices"
-    description = """ETF의 과거 가격 데이터를 조회합니다. 주식 종목이 아닌 ETF 전용입니다. 기간별 종가, 거래량, 수익률, 시가총액, 순자산총액을 확인할 수 있습니다.
-etf_search로 ETF 코드를 먼저 확인한 후 사용하세요. 주식 종목 가격은 get_stock_prices를 사용하세요.
-결과: 기간 내 일별 종가/시가총액/순자산총액 목록 + 요약 통계"""
-    inputs = {
-        "etf_code": {
-            "type": "string",
-            "description": "ETF 종목코드 (예: '069500')"
-        },
-        "period": {
-            "type": "string",
-            "description": "조회 기간: '1w', '1m', '3m', '6m', '1y'. 기본값 '1m'",
-            "nullable": True,
-        }
-    }
-
-    PERIOD_DAYS = {
-        "1w": 7,
-        "1m": 30,
-        "3m": 90,
-        "6m": 180,
-        "1y": 365,
-    }
-
-    def __init__(self, db: Session):
-        super().__init__()
-        self.db = db
-
-    def forward(self, etf_code: str, period: str = "1m") -> str:
-        days = self.PERIOD_DAYS.get(period, 30)
-        graph_service = GraphService(self.db)
-        prices = graph_service.get_etf_prices(etf_code, days=days)
-        if not prices:
-            return "해당 기간의 가격 데이터가 없습니다"
-
-        closes = [p["close"] for p in prices if p["close"] is not None]
-        volumes = [p["volume"] for p in prices if p["volume"] is not None]
-        market_caps = [p.get("market_cap") for p in prices if p.get("market_cap") is not None]
-        net_assets_list = [p.get("net_assets") for p in prices if p.get("net_assets") is not None]
-
-        summary = _format_percent_fields(_format_monetary_fields({
-            "etf_code": etf_code,
-            "period": period,
-            "data_count": len(prices),
-            "start_date": prices[0]["date"],
-            "end_date": prices[-1]["date"],
-            "start_close": closes[0] if closes else None,
-            "end_close": closes[-1] if closes else None,
-            "high": max(closes) if closes else None,
-            "low": min(closes) if closes else None,
-            "change_rate": round((closes[-1] - closes[0]) / closes[0] * 100, 2) if len(closes) >= 2 else None,
-            "avg_volume": round(sum(volumes) / len(volumes)) if volumes else None,
-            "latest_market_cap": market_caps[-1] if market_caps else None,
-            "latest_net_assets": net_assets_list[-1] if net_assets_list else None,
-        }))
-
-        daily = [
-            _format_monetary_fields({
-                "date": p["date"],
-                "close": p["close"],
-                "volume": p["volume"],
-                "market_cap": p.get("market_cap"),
-                "net_assets": p.get("net_assets"),
-            })
-            for p in prices
-        ]
-
-        return json.dumps({"summary": summary, "daily": daily}, ensure_ascii=False, default=str)
-
-
-class GetStockPricesTool(ChatTool):
-    name = "get_stock_prices"
-    description = """주식 종목(삼성전자, SK하이닉스 등 개별 주식)의 과거 가격 데이터를 조회합니다. ETF가 아닌 주식 전용입니다. 기간별 OHLCV(시/고/저/종/거래량), 등락률을 확인할 수 있습니다.
-stock_search로 종목 코드를 먼저 확인한 후 사용하세요. ETF 가격은 get_etf_prices를 사용하세요.
-결과: 기간 내 일별 가격 목록 + 요약 통계(시작가, 최종가, 최고가, 최저가, 등락률)"""
-    inputs = {
-        "stock_code": {
-            "type": "string",
-            "description": "종목코드 (예: '005930')"
-        },
-        "period": {
-            "type": "string",
-            "description": "조회 기간: '1w', '1m', '3m', '6m', '1y'. 기본값 '1m'",
-            "nullable": True,
-        }
-    }
-
-    PERIOD_DAYS = {
-        "1w": 7,
-        "1m": 30,
-        "3m": 90,
-        "6m": 180,
-        "1y": 365,
-    }
-
-    def __init__(self, db: Session):
-        super().__init__()
-        self.db = db
-
-    def forward(self, stock_code: str, period: str = "1m") -> str:
-        days = self.PERIOD_DAYS.get(period, 30)
-        graph_service = GraphService(self.db)
-        prices = graph_service.get_stock_prices(stock_code, days=days)
-        if not prices:
-            return "해당 기간의 가격 데이터가 없습니다"
-
-        closes = [p["close"] for p in prices if p["close"] is not None]
-        volumes = [p["volume"] for p in prices if p["volume"] is not None]
-
-        summary = _format_percent_fields({
-            "stock_code": stock_code,
-            "period": period,
-            "data_count": len(prices),
-            "start_date": prices[0]["date"],
-            "end_date": prices[-1]["date"],
-            "start_close": closes[0] if closes else None,
-            "end_close": closes[-1] if closes else None,
-            "high": max(closes) if closes else None,
-            "low": min(closes) if closes else None,
-            "change_rate": round((closes[-1] - closes[0]) / closes[0] * 100, 2) if len(closes) >= 2 else None,
-            "avg_volume": round(sum(volumes) / len(volumes)) if volumes else None,
-        })
-
-        daily = [
-            _format_percent_fields({
-                "date": p["date"],
-                "open": p["open"],
-                "high": p["high"],
-                "low": p["low"],
-                "close": p["close"],
-                "volume": p["volume"],
-                "change_rate": p["change_rate"],
-            })
-            for p in prices
-        ]
-
-        return json.dumps({"summary": summary, "daily": daily}, ensure_ascii=False, default=str)
-
-
-class CompareETFsTool(ChatTool):
-    name = "compare_etfs"
-    description = """2~3개 ETF를 한번에 비교합니다. 비교 항목: 기본정보(보수율, 순자산), 태그, 최근 1개월 수익률, 상위 보유종목 5개.
-etf_search로 ETF 코드를 먼저 확인한 후 사용하세요."""
-    inputs = {
-        "etf_codes": {
-            "type": "string",
-            "description": "비교할 ETF 코드들 (쉼표 구분, 예: '069500,102110,229200')"
-        }
-    }
-
-    def __init__(self, db: Session):
-        super().__init__()
-        self.db = db
-
-    def forward(self, etf_codes: str) -> str:
-        codes = [c.strip() for c in etf_codes.split(",") if c.strip()]
-        if len(codes) < 2:
-            return "비교하려면 최소 2개의 ETF 코드가 필요합니다"
-        if len(codes) > 3:
-            codes = codes[:3]
-
-        graph_service = GraphService(self.db)
-        results = []
-
-        for code in codes:
-            etf_data = {}
-            # 기본 정보 + 운용사
-            basic = graph_service.execute_cypher(
-                "MATCH (e:ETF {code: $etf_code}) "
-                "OPTIONAL MATCH (e)-[:MANAGED_BY]->(c:Company) "
-                "RETURN {code: e.code, name: e.name, expense_ratio: e.expense_ratio, company: c.name}",
-                {"etf_code": code},
-            )
-            if not basic:
-                results.append({"code": code, "error": "ETF를 찾을 수 없습니다"})
-                continue
-            etf_data = _format_expense_ratio([GraphService.parse_agtype(basic[0]["result"])])[0]
-
-            # 태그
-            tags = graph_service.execute_cypher(
-                "MATCH (e:ETF {code: $etf_code})-[:TAGGED]->(t:Tag) RETURN {tag: t.name}",
-                {"etf_code": code},
-            )
-            etf_data["tags"] = [GraphService.parse_agtype(t["result"])["tag"] for t in tags] if tags else []
-
-            # 상위 보유종목 5개
-            holdings = graph_service.execute_cypher(
-                "MATCH (e:ETF {code: $etf_code})-[h:CURRENT_HOLDS]->(s:Stock) "
-                "RETURN {stock_code: s.code, stock_name: s.name, weight: h.weight} "
-                "ORDER BY h.weight DESC LIMIT 5",
-                {"etf_code": code},
-            )
-            etf_data["top_holdings"] = [_format_percent_fields(GraphService.parse_agtype(h["result"])) for h in holdings] if holdings else []
-
-            # 최근 1개월 수익률 + 순자산
-            prices = graph_service.get_etf_prices(code, days=30)
-            if prices:
-                closes = [p["close"] for p in prices if p["close"] is not None]
-                if len(closes) >= 2:
-                    etf_data["return_1m"] = f'{round((closes[-1] - closes[0]) / closes[0] * 100, 2):.2f}%'
-                net_assets_list = [p.get("net_assets") for p in prices if p.get("net_assets") is not None]
-                if net_assets_list:
-                    etf_data["latest_net_assets"] = net_assets_list[-1]
-
-            results.append(_format_monetary_fields(etf_data))
-
-        return json.dumps(results, ensure_ascii=False, default=str)
+        return _rows_json(filtered)
 
 
 class GraphQueryTool(ChatTool):
@@ -606,10 +313,7 @@ RETURN {code: e.code, name: e.name, company: c.name}"""
             return "쿼리 오류: " + cause.strip().splitlines()[0][:300]
         if not rows:
             return "조회 결과 없음"
-        results = _format_expense_ratio([GraphService.parse_agtype(row["result"]) for row in rows])
-        results = [_format_percent_fields(_format_monetary_fields(r)) for r in results]
-        return json.dumps(results, ensure_ascii=False, default=str)
-
+        return _rows_json([GraphService.parse_agtype(row["result"]) for row in rows])
 
 
 # ---------------------------------------------------------------------------
@@ -617,8 +321,12 @@ RETURN {code: e.code, name: e.name, company: c.name}"""
 # ---------------------------------------------------------------------------
 
 MAX_MODEL_REQUESTS = 15
+OBSERVATION_CHARS = 2000  # step 이벤트에 싣는 도구 결과 길이 (실행 과정 패널·로그용, 모델에는 전부 간다)
+ERROR_CHARS = 500
 FALLBACK_ANSWER = "죄송합니다. 답변 생성에 실패했습니다. 다시 질문해 주세요."
 STOPPED_ANSWER = "요청하신 대로 중지했습니다. 지금까지 실행한 단계는 '실행 과정'에서 확인할 수 있어요."
+EXAMPLES_TOP_K = 3
+_CALL_RE = re.compile(r"^\s*(\w+)\(", re.M)
 
 
 def format_tool_call(name: str, args: Dict[str, Any]) -> str:
@@ -636,24 +344,37 @@ def _step_call(step_number: int, name: str, args: Dict[str, Any]) -> Dict[str, A
     }
 
 
-def _analysis_tools_prompt() -> str:
-    """답변 화면의 스킬 중 도구로 켠 것 — 화면과 같은 계산을 텍스트로 돌려준다 (answer/tools.py)."""
-    names = [s.name for s in REGISTRY.values() if s.tool]
+def _analysis_tools_prompt(names: Sequence[str]) -> str:
+    """답변 화면의 스킬 도구 — 화면과 같은 계산을 텍스트로 돌려준다 (answer/tools.py)."""
     return ("## 분석 도구\n"
             f"{', '.join(names)}: 답변 화면과 같은 계산으로 요약 텍스트를 돌려줍니다. "
             "종목·ETF는 이름이나 6자리 코드를 그대로 넣으세요 (stock_search·etf_search를 먼저 부르지 않아도 됩니다). "
             "결과의 숫자와 날짜를 그대로 옮기고, 결과에 없는 수치는 만들지 마세요.")
 
 
+def usable_examples(examples: List[Dict[str, Any]], tool_names: Sequence[str]) -> List[Dict[str, Any]]:
+    """지금 없는 도구를 부르는 해결 절차 예시는 뺀다 (도구를 스킬로 옮기기 전에 쌓인 예시가 없는 도구를 부르게 한다)."""
+    known = set(tool_names)
+    usable = [ex for ex in examples if set(_CALL_RE.findall(ex.get("code") or "")) <= known]
+    if len(usable) < len(examples):
+        logger.info("Skipped code examples calling removed tools: %s",
+                    [ex.get("id") for ex in examples if ex not in usable])
+    return usable
+
+
 class ChatService:
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, config: AIConfig, skill_tools: Sequence[AgentTool] = ()):
+        """skill_tools: 답변 화면의 스킬 도구 (agent 스킬이 answer/tools.skill_tools로 만들어 넘긴다)."""
         self.db = db
-        self._ai_config = load_ai_config(db)
         self._tag_names = self._load_tag_names()
-        self._embedding_service = EmbeddingService(db)
-        self.memory = ChatMemory(db)
+        self._embedding_service = EmbeddingService(db, config)
         self._tools = self._create_tools()
-        self._init_agent()
+        self._skill_tools = list(skill_tools)
+        self.agent = Agent(
+            build_model(config),
+            instructions=self._instructions(),
+            tools=[t.as_agent_tool() for t in self._tools.values()] + self._skill_tools,
+        )
 
     def _load_tag_names(self) -> List[str]:
         """그래프 DB에서 태그 목록을 미리 로드한다."""
@@ -670,46 +391,33 @@ class ChatService:
             ETFSearchTool(db=self.db),
             StockSearchTool(db=self.db),
             ListTagsTool(db=self.db),
-            GetETFInfoTool(db=self.db),
             FindSimilarETFsTool(db=self.db),
             GetHoldingsChangesTool(db=self.db),
-            GetETFPricesTool(db=self.db),
-            GetStockPricesTool(db=self.db),
-            CompareETFsTool(db=self.db),
             GraphQueryTool(db=self.db),
         ]
         return {t.name: t for t in tools}
 
-    def _init_agent(self):
-        """tool-calling 에이전트 초기화 (LiteLLM 프록시, OpenAI 호환 API)."""
-        model = OpenAIChatModel(
-            self._ai_config.llm_model,
-            provider=OpenAIProvider(
-                base_url=self._ai_config.llm_api_base,
-                api_key=self._ai_config.llm_api_key,
-            ),
-        )
-        self.agent = Agent(
-            model,
-            instructions=self._instructions(),
-            tools=[t.as_agent_tool() for t in self._tools.values()] + skill_tools(REGISTRY, SessionLocal),
-        )
+    def tool_names(self) -> List[str]:
+        return [*self._tools, *(t.name for t in self._skill_tools)]
 
     def _instructions(self) -> str:
-        parts = [SYSTEM_PROMPT, _analysis_tools_prompt()]
+        parts = [SYSTEM_PROMPT]
+        if self._skill_tools:
+            parts.append(_analysis_tools_prompt([t.name for t in self._skill_tools]))
         if self._tag_names:
             parts.append(f"## 사용 가능한 태그 목록\n{', '.join(self._tag_names)}")
         return "\n\n".join(parts)
 
-    def _build_prompt(self, question: str, context: ConversationContext, original: str) -> tuple:
+    def _build_prompt(self, question: str, context: ConversationContext) -> tuple:
         """사용자 프롬프트(참고 예시 + 대화 맥락 + 현재 질문)와 매칭된 예시를 반환한다.
 
-        question은 맥락으로 재작성된 독립 질문, original은 사용자가 입력한 원문.
+        question은 답변 화면이 맥락으로 재작성한 독립 질문이다.
         """
         parts = []
         # 예시는 일반화된 질문으로 임베딩되어 있으므로 검색 질의도 같은 방식으로 일반화한다
         search_query = self._embedding_service.generalize_question(question)
-        code_examples = self._embedding_service.find_similar_code_examples(search_query, top_k=3)
+        code_examples = usable_examples(
+            self._embedding_service.find_similar_code_examples(search_query, top_k=EXAMPLES_TOP_K), self.tool_names())
         if code_examples:
             parts.append("## 참고 해결 절차 예시")
             parts.append("비슷한 유형의 질문을 해결한 도구 호출 순서입니다. "
@@ -726,67 +434,30 @@ class ChatService:
             parts.append(context.render())
             parts.append("")
         parts.append(f"## 현재 질문 (이 질문의 조건만 따르세요):\n{question}")
-        if question != original:
-            parts.append(f"(사용자 원문: {original})")
         return "\n".join(parts), code_examples
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
-    async def chat(
-        self, message: str, context: Optional[ConversationContext] = None, refine: bool = True,
-    ) -> Dict:
-        answer = FALLBACK_ANSWER
-        result = ChatLogResult.FAILED.value
-        refined_question = message
-        steps: List[Dict] = []
-        matched_examples: List[Dict] = []
-        async for event in self.chat_stream(message, context, refine=refine):
-            if event["type"] == "refined_question":
-                refined_question = event["data"]["question"]
-            elif event["type"] == "step":
-                steps.append(event["data"])
-            elif event["type"] == "answer":
-                answer = event["data"]["answer"]
-                result = event["data"]["result"]
-            elif event["type"] == "matched_examples":
-                matched_examples = event["data"]["examples"]
-        return {
-            "answer": answer, "result": result, "refined_question": refined_question,
-            "steps": steps, "matched_examples": matched_examples,
-        }
-
     async def chat_stream(
-        self, message: str, context: Optional[ConversationContext] = None,
-        stop: Optional[asyncio.Event] = None, refine: bool = True,
+        self, question: str, context: Optional[ConversationContext] = None, stop: Optional[asyncio.Event] = None,
     ) -> AsyncIterator[Dict]:
         """도구 호출을 step_start로, 그 결과를 step 이벤트로, 최종 응답을 answer 이벤트로 스트리밍한다.
 
-        맥락이 있으면 먼저 질문을 독립 질문으로 재작성하고, 바뀌었으면 refined_question 이벤트를 보낸다.
+        question은 이미 맥락으로 재작성된 질문이다 (재작성은 답변 화면 오케스트레이터가 한다).
         step_start: {step_number, code(도구 호출 표기), tool_calls}
         step: step_start 필드 + {observations, error}
-        status: {stage} — 도구 실행 전 준비 단계(refining → searching_examples → thinking)를 알린다
+        status: {stage} — 도구 실행 전 준비 단계(searching_examples → thinking)를 알린다
+        answer: {answer, result} — result가 failed면 answer는 안내 문구다 (도구 결과를 답으로 내지 않는다)
         stop이 설정되면 실행 중인 도구는 결과까지 기다리고, 다음 모델 요청/도구 호출 전에 멈춘다.
-        refine=False면 이미 재작성된 질문으로 보고 재작성 단계를 건너뛴다 (답변 화면의 agent 스킬).
         """
         stop = stop or asyncio.Event()
         context = context or ConversationContext()
-        # LLM/임베딩 호출(동기 HTTP/DB)은 이벤트 루프를 막지 않도록 스레드에서 실행
-        question = message
-        if refine and not context.is_empty():  # 맥락이 없으면 재작성하지 않는다
-            yield {"type": "status", "data": {"stage": "refining"}}
-            question = await asyncio.to_thread(self.memory.refine, message, context)
-            if question != message:
-                yield {"type": "refined_question", "data": {"question": question}}
+        # 임베딩·예시 검색(동기 HTTP/DB)은 이벤트 루프를 막지 않도록 스레드에서 실행
         yield {"type": "status", "data": {"stage": "searching_examples"}}
-        prompt, matched_examples = await asyncio.to_thread(self._build_prompt, question, context, message)
+        prompt, matched_examples = await asyncio.to_thread(self._build_prompt, question, context)
         if matched_examples:
             yield {"type": "matched_examples", "data": {"examples": matched_examples}}
 
         pending: Dict[str, Dict[str, Any]] = {}
         step_number = 0
-        last_observations = ""
         answer = None
         if stop.is_set():
             yield {"type": "answer", "data": {"answer": STOPPED_ANSWER, "result": ChatLogResult.CANCELLED.value}}
@@ -813,14 +484,12 @@ class ChatService:
                             call = _step_call(step_number, "unknown", {})
                         is_error = isinstance(event.part, RetryPromptPart)
                         content = event.part.model_response() if is_error else str(event.part.content)
-                        if not is_error:
-                            last_observations = content
                         yield {
                             "type": "step",
                             "data": {
                                 **call,
-                                "observations": content[:2000],
-                                "error": content[:500] if is_error else None,
+                                "observations": content[:OBSERVATION_CHARS],
+                                "error": content[:ERROR_CHARS] if is_error else None,
                             },
                         }
                         if stop.is_set() and not pending:
@@ -832,14 +501,11 @@ class ChatService:
         except Exception:
             logger.exception("Chat agent failed")
 
+        # 답을 쓰지 못하고 끝났으면(한도 초과·오류) 실패다. 마지막 도구 결과(원시 JSON)를 답으로 내지 않는다
         if stop.is_set():
-            result = ChatLogResult.CANCELLED
-        elif answer or last_observations:
+            result, answer = ChatLogResult.CANCELLED, answer or STOPPED_ANSWER
+        elif answer:
             result = ChatLogResult.COMPLETED
         else:
-            result = ChatLogResult.FAILED
-        if not answer and stop.is_set():
-            answer = STOPPED_ANSWER
-        if not answer:
-            answer = last_observations[:2000] if last_observations else FALLBACK_ANSWER
+            result, answer = ChatLogResult.FAILED, FALLBACK_ANSWER
         yield {"type": "answer", "data": {"answer": answer, "result": result.value}}

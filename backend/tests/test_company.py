@@ -268,16 +268,16 @@ class SettingDB:
 
 def test_dart_key_is_stored_encrypted_and_masked(encryption_key):
     from app.routers import admin
-    from app.schemas.chat import DartSettingsUpdate
+    from app.schemas.admin import DartSettingsUpdate
     from app.services import dart_config
 
     db = SettingDB()
-    assert asyncio.run(admin.get_dart_settings(db=db, admin_id=1)) == {"api_key_masked": None}
-    response = asyncio.run(admin.update_dart_settings(DartSettingsUpdate(api_key=" secret-9876 "), db=db, admin_id=1))
+    assert admin.get_dart_settings(db=db, admin_id=1) == {"api_key_masked": None}
+    response = admin.update_dart_settings(DartSettingsUpdate(api_key=" secret-9876 "), db=db, admin_id=1)
     assert isinstance(db.setting, DartSetting) and db.setting.api_key != "secret-9876"  # 평문으로 저장하지 않는다
     assert dart_config.load_dart_key(db) == "secret-9876"
     assert response == {"api_key_masked": "…9876"}
-    response = asyncio.run(admin.update_dart_settings(DartSettingsUpdate(api_key=""), db=db, admin_id=1))
+    response = admin.update_dart_settings(DartSettingsUpdate(api_key=""), db=db, admin_id=1)
     assert db.setting.api_key is None and response == {"api_key_masked": None}
     assert dart_config.check_dart_key(dart_config.load_dart_key(db)) == {"ok": False, "error": "저장한 DART API 키가 없습니다"}
 
@@ -453,6 +453,25 @@ class ReportDB(FakeDB):
 
     def commit(self):
         self.commits += 1
+
+
+@pytest.fixture(autouse=True)
+def report_store(monkeypatch):
+    """보고서 조회 저장소 함수를 가짜 DB의 행에서 고르는 것으로 바꿔 끼운다 (가짜 쿼리는 조건을 보지 않는다)."""
+    from app.models.dart import ReportNode, StockReport
+    from app.services.answer.skills import company_report
+    from app.services.report_tree import Block
+
+    def nodes(db, rcept_no):
+        return sorted((r for r in db.rows if isinstance(r, ReportNode) and r.rcept_no == rcept_no), key=lambda n: n.seq)
+
+    monkeypatch.setattr(company_report, "report_rows", lambda db, code: [
+        r for r in db.rows if isinstance(r, StockReport) and r.stock_code == code])
+    monkeypatch.setattr(company_report, "report_entries", lambda db, rcept_no: [
+        company_report.Entry(n.node_id, n.parent_id, n.level, n.title, n.path, n.chars, n.summary)
+        for n in nodes(db, rcept_no)])
+    monkeypatch.setattr(company_report, "node_blocks", lambda db, rcept_no, ids: {
+        n.node_id: [Block.from_json(b) for b in json.loads(n.blocks)] for n in nodes(db, rcept_no) if n.node_id in ids})
 
 
 def _indexed(status="summarized", summaries=None, **report):

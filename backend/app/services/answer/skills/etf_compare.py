@@ -40,6 +40,8 @@ class ETFCompareSkill(DataSkill):
     )
     Args = CompareArgs
     displays = ("table",)
+    tool = True
+    tool_args = ETFListArgs  # agent는 ETF 하나의 기본 정보도 이 표로 본다
     subject = "etf"
     entity_args = {"etfs": "etf"}
 

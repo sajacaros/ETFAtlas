@@ -15,7 +15,6 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Set
 
-import httpx
 from pydantic_ai import Agent
 from sqlalchemy import update
 from sqlalchemy.dialects.postgresql import insert
@@ -25,18 +24,17 @@ from ..domain.opinion import BUY, SCORE, UNDECIDED
 from ..models.dart import StockReport
 from ..models.discord_notification_log import DiscordNotificationLog
 from ..models.stock_opinion import OpinionRun, StockOpinion
-from ..utils.time import utcnow
+from ..utils.discord import SAFE_CONTENT as DISCORD_MAX
+from ..utils.time import KST, utcnow
+from . import discord_notify
 from .ai_config import AIConfig, load_ai_config
-from .answer.orchestrator import _related_text
 from .answer.skills import REGISTRY
-from .answer.skills.base import SkillContext
-from .answer.skills.company_report import pick_report
+from .answer.skills.base import SkillContext, related_text, skill_results
+from .answer.skills.company_report import pick_report, report_rows
 from .answer.skills.stock_opinion import PERSPECTIVES, TYPE_LABEL, overall
 from .chat_memory import ConversationContext
 from .entities import EntityResolver
 from .flow.nodes.source import universe
-from .flow.records import KST
-from .flow.scheduler import DISCORD_MAX, webhook_url
 from .llm import NO_THINKING, build_model
 
 logger = logging.getLogger(__name__)
@@ -84,18 +82,13 @@ async def judge_stock(stock: Dict[str, str], ai_config: AIConfig) -> Dict[str, A
     related = []
     for skill_name, title, display, args in SLOTS:
         skill = REGISTRY[skill_name]
-        title, parts = f"{name} {title}", {}
+        title = f"{name} {title}"
         try:
-            async for event in skill.run(skill.Args(**args(code)), display, ctx):
-                kind = event["type"]
-                if kind == "title":
-                    title = event["title"]
-                elif kind == "split":  # 매출 구성 차트로 나눈 정기보고서
-                    parts = {p["id"]: p["title"] for p in event["parts"]}
-                elif kind == "result":
-                    related.append((parts.get(event.get("part"), title), _related_text(event)))
-                    if skill_name == "company_valuation":
-                        row["market_cap"] = _market_cap(event)
+            # 정기보고서는 매출 구성 차트로 영역을 나누면 영역마다 결과가 온다
+            async for shown, result in skill_results(skill, skill.Args(**args(code)), display, ctx, title):
+                related.append((shown, related_text(result)))
+                if skill_name == "company_valuation":
+                    row["market_cap"] = _market_cap(result)
         except Exception:
             logger.exception("Weekly opinion: %s (%s) %s failed", name, code, skill_name)
             related.append((title, "이 영역을 채우지 못했습니다"))
@@ -201,7 +194,7 @@ def clean_tagline(text: str) -> str:
 def _latest_report(code: str) -> Optional[StockReport]:
     db = SessionLocal()
     try:
-        row = pick_report(db.query(StockReport).filter(StockReport.stock_code == code).all(), None)
+        row = pick_report(report_rows(db, code), None)
         if row is not None:
             db.expunge(row)
         return row
@@ -343,24 +336,7 @@ def record_notice(run_on: date, picks: List[Dict[str, Any]], count: int, error: 
 
 async def send(messages: List[str]) -> Optional[str]:
     """보내지 못하면 그 이유. 웹훅이 없거나 꺼져 있으면 보내지 않고 None."""
-    url = await asyncio.to_thread(webhook_url)
-    if not url:
-        logger.info("Weekly opinion: Discord webhook is off, not sending")
-        return None
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            for content in messages:
-                resp = await client.post(url, json={"content": content})
-                if resp.status_code == 429:
-                    await asyncio.sleep(float(resp.json().get("retry_after", 1)))
-                    resp = await client.post(url, json={"content": content})
-                resp.raise_for_status()
-    except httpx.HTTPError as e:
-        # 예외 메시지에 웹훅 주소(토큰 포함)가 들어가므로 종류만 남긴다
-        status = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else None
-        logger.warning("Weekly opinion Discord notification failed: %s status=%s", type(e).__name__, status)
-        return f"{type(e).__name__} status={status}"
-    return None
+    return await discord_notify.send(messages, "Weekly opinion")
 
 
 # --- 한 차례 ---

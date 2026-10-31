@@ -15,12 +15,12 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
-from sqlalchemy.orm import defer
+from sqlalchemy.orm import Session, defer
 
 from ....models.dart import ReportNode, StockReport
 from ...content import Source
 from ...entities import UnmanagedStock
-from ...llm import NO_THINKING, build_model
+from ...llm import NO_THINKING, build_model, stream_text
 from ...report_tree import (OVERVIEW_PROMPT, SUMMARY_MIN_CHARS, Block, clip, filed_date, overview_entries, overview_prompt,
                             overview_source, render, segment_notes)
 from . import report_breakdowns
@@ -97,6 +97,26 @@ def pick_report(rows: Sequence[StockReport], period: Optional[str]) -> Optional[
     return max(ready, key=lambda r: (r.period or "", r.rcept_no), default=None)
 
 
+# --- 저장소: 보고서·목차·본문 조회 (테스트는 이 함수들을 바꿔 끼운다) ---
+
+def report_rows(db: Session, stock_code: str) -> List[StockReport]:
+    """종목의 정기보고서 행 전부 (색인 상태와 상관없이)."""
+    return db.query(StockReport).filter(StockReport.stock_code == stock_code).all()
+
+
+def report_entries(db: Session, rcept_no: str) -> List[Entry]:
+    """보고서 목차 (본문은 읽지 않는다), 문서 순서대로."""
+    nodes = (db.query(ReportNode).options(defer(ReportNode.blocks))
+             .filter(ReportNode.rcept_no == rcept_no).order_by(ReportNode.seq).all())
+    return [Entry(n.node_id, n.parent_id, n.level, n.title, n.path, n.chars, n.summary) for n in nodes]
+
+
+def node_blocks(db: Session, rcept_no: str, node_ids: Sequence[str]) -> Dict[str, List[Block]]:
+    """노드 id → 본문 블록."""
+    rows = db.query(ReportNode).filter(ReportNode.rcept_no == rcept_no, ReportNode.node_id.in_(list(node_ids))).all()
+    return {r.node_id: [Block.from_json(b) for b in json.loads(r.blocks)] for r in rows}
+
+
 def prepare_report(stock_arg: str, ctx: SkillContext, period: Optional[str] = None):
     """(종목, 보고서, 목차) 또는 결과(SkillResult)."""
     db = ctx.session_factory()
@@ -108,8 +128,7 @@ def prepare_report(stock_arg: str, ctx: SkillContext, period: Optional[str] = No
         if stock is None:
             return not_found(f"종목을 찾지 못했습니다: {stock_arg}")
         name = stock["name"]
-        rows = [r for r in db.query(StockReport).filter(StockReport.stock_code == stock["code"]).all()
-                if r.stock_code == stock["code"]]
+        rows = report_rows(db, stock["code"])
         row = pick_report(rows, period)
         if row is None:
             same = [r for r in rows if r.period == period] if period else rows
@@ -124,10 +143,7 @@ def prepare_report(stock_arg: str, ctx: SkillContext, period: Optional[str] = No
                 return empty(f"{name}의 정기보고서를 아직 색인하지 못했습니다 (매일 저녁 색인합니다)")
             return empty(f"{name}의 정기보고서를 찾지 못했습니다 (DART 수집 전이거나 정기보고서를 내지 않는 종목)")
         report = Report(row.rcept_no, row.report_nm, row.breakdowns, row.overview)
-        nodes = (db.query(ReportNode).options(defer(ReportNode.blocks))
-                 .filter(ReportNode.rcept_no == report.rcept_no).order_by(ReportNode.seq).all())
-        entries = [Entry(n.node_id, n.parent_id, n.level, n.title, n.path, n.chars, n.summary)
-                   for n in sorted(nodes, key=lambda n: n.seq) if n.rcept_no == report.rcept_no]
+        entries = report_entries(db, report.rcept_no)
     finally:
         db.close()
     if not entries:
@@ -138,9 +154,7 @@ def prepare_report(stock_arg: str, ctx: SkillContext, period: Optional[str] = No
 def load_blocks(ctx: SkillContext, rcept_no: str, node_ids: Sequence[str]) -> Dict[str, List[Block]]:
     db = ctx.session_factory()
     try:
-        rows = db.query(ReportNode).filter(ReportNode.rcept_no == rcept_no, ReportNode.node_id.in_(list(node_ids))).all()
-        return {r.node_id: [Block.from_json(b) for b in json.loads(r.blocks)]
-                for r in rows if r.rcept_no == rcept_no and r.node_id in node_ids}
+        return node_blocks(db, rcept_no, node_ids)
     finally:
         db.close()
 
@@ -243,15 +257,11 @@ def short_path(path: str) -> str:
 
 
 async def stream_answer(ctx: SkillContext, instructions: str, prompt: str, tagged):
-    """LLM 답을 흘려보내며 모은다. 중간에 멈추면 (텍스트, False)."""
-    agent = Agent(build_model(ctx.ai_config), instructions=instructions, model_settings=NO_THINKING)
+    """LLM 답을 흘려보내며(delta 이벤트) 모으고, 마지막에 모은 텍스트를 낸다."""
     text = ""
-    async with agent.run_stream(prompt) as result:
-        async for delta in result.stream_text(delta=True):
-            text += delta
-            yield tagged({"type": "delta", "text": delta})
-            if ctx.stop.is_set():
-                break
+    async for delta in stream_text(build_model(ctx.ai_config), instructions, prompt, ctx.stop):
+        text += delta
+        yield tagged({"type": "delta", "text": delta})
     yield text.strip()
 
 
@@ -327,9 +337,9 @@ class CompanyReportSkill(Skill):
         yield {"type": "title", "title": f"{name} {report.report_nm}: {need}"}
         try:
             picked, words = await pick_nodes(ctx, entries, need)
-        except Exception as e:
-            logger.warning("Could not pick report nodes", exc_info=True)
-            yield SkillResult(status="failed", message=f"보고서 목차에서 절을 고르지 못했습니다: {str(e)[:120]}").event()
+        except Exception:
+            logger.warning("Could not pick report nodes", exc_info=True)  # 원인은 로그에만 — 화면에는 고정 문구
+            yield SkillResult(status="failed", message="보고서 목차에서 절을 고르지 못했습니다").event()
             return
         if not picked:
             yield empty(f"{name}의 {report.report_nm} 목차에서 '{need}'에 맞는 절을 찾지 못했습니다").event()

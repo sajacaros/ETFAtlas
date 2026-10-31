@@ -3,6 +3,8 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
+from ..domain.portfolio_calculation import CASH_TICKER
+
 
 class PriceService:
     def __init__(self, db: Session):
@@ -16,7 +18,7 @@ class PriceService:
         2. 없으면 yfinance로 조회 (폴백)
         CASH is excluded (handled by domain layer).
         """
-        query_tickers = [t for t in tickers if t != "CASH"]
+        query_tickers = [t for t in tickers if t != CASH_TICKER]
         if not query_tickers:
             return {}
 
@@ -78,7 +80,7 @@ class PriceService:
 
     def get_prev_prices(self, tickers: list[str]) -> dict[str, Decimal]:
         """ticker_prices 테이블에서 각 티커의 전일(두 번째 최신) 가격 조회."""
-        query_tickers = [t for t in tickers if t != "CASH"]
+        query_tickers = [t for t in tickers if t != CASH_TICKER]
         if not query_tickers:
             return {}
 
@@ -101,11 +103,11 @@ class PriceService:
         if not tickers:
             return {}
 
-        query_tickers = [t for t in tickers if t != "CASH"]
+        query_tickers = [t for t in tickers if t != CASH_TICKER]
         names: dict[str, str] = {}
 
-        if "CASH" in tickers:
-            names["CASH"] = "현금"
+        if CASH_TICKER in tickers:
+            names[CASH_TICKER] = "현금"
 
         if not query_tickers:
             return names
@@ -131,3 +133,14 @@ class PriceService:
                 names[t] = t
 
         return names
+
+    def get_price_history(self, tickers: list[str], since: date) -> dict[str, dict[date, float]]:
+        """since 이후 일별 종가. 티커 → 날짜 → 종가"""
+        rows = self.db.execute(
+            text("SELECT ticker, date, price FROM ticker_prices WHERE ticker = ANY(:tickers) AND date >= :since"),
+            {"tickers": tickers, "since": since},
+        )
+        history: dict[str, dict[date, float]] = {}
+        for row in rows:
+            history.setdefault(row.ticker, {})[row.date] = float(row.price)
+        return history

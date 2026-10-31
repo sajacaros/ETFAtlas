@@ -3,13 +3,11 @@ from typing import Optional
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from ...content import BarView, DataField, Dataset, DonutView, Source, TableView, TreemapView
+from ...content import DataField, Dataset, Source
 from ...entities import EntityResolver
 from ...graph_service import GraphService, node
 from .base import DataSkill, SkillResult, data_result, empty, not_found
-from .common import cut_note, min_weight_field
-
-DONUT_MAX_SLICES = 8  # 넘으면 나머지를 '기타'로 묶는다
+from .common import DONUT_MAX_SLICES, cut_note, min_weight_field, share_view
 
 
 class HoldingsArgs(BaseModel):
@@ -26,6 +24,7 @@ class HoldingsSkill(DataSkill):
     )
     Args = HoldingsArgs
     displays = ("treemap", "donut", "bar", "table")
+    tool = True
     exports = "종목 목록, ETF 내 비중 높은 순 (상위 30개)"
     subject = "etf"
     exports_kind = "stock"
@@ -68,11 +67,7 @@ class HoldingsSkill(DataSkill):
             ],
             rows=rows,
         )
-        view = {
-            "treemap": TreemapView(name="name", value="weight"),
-            "donut": DonutView(name="name", value="weight"),
-            "bar": BarView(x="name", y=["weight"], horizontal=True),
-        }.get(display, TableView())
+        view = share_view(display)
         condition = f"비중 {args.min_weight:g}% 이상 " if args.min_weight is not None else ""
         summary = (
             f"{etf['name']} {condition}상위 {len(shown)}개 종목: "

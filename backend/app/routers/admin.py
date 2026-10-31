@@ -1,30 +1,31 @@
 import json
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..utils.session import get_current_user_id
 from ..services.embedding_service import EmbeddingService
+from ..services.example_embedding import clear_embedding, embed_example
 from ..services.auth_service import AuthService, is_admin
 from ..services.graph_service import GraphService
 from ..services.member_service import MemberNotFoundError, MemberService, SelfActionError
-from ..models.chat import ChatLog, ChatLogStatus
+from ..models.chat import ChatLog
 from ..models.code_example import CodeExample
 from ..models.layout_example import LayoutExample
 from ..models.discord_setting import DiscordSetting
 from ..models.discord_notification_log import DiscordNotificationLog
 from ..models.ai_setting import AISetting
 from ..services.ai_config import AI_CONFIG_FIELDS, SECRET_FIELDS, load_ai_config, stored_value
+from ..services.llm import NO_THINKING_BODY
 from ..models.dart import DartSetting
 from ..services.dart_config import check_dart_key, load_dart_key
 from ..utils.encryption import encrypt_value
 from ..models.invitation import Invitation
 from ..models.user import User
-from ..utils.time import utcnow
-from ..schemas.chat import (
+from ..utils import discord
+from ..utils.time import iso_utc, utcnow
+from ..schemas.admin import (
     CodeExampleCreate,
     CodeExampleUpdate,
     LayoutExampleCreate,
@@ -35,6 +36,7 @@ from ..schemas.chat import (
     DiscordSettingsUpdate,
     AISettingsUpdate,
     DartSettingsUpdate,
+    MemberRoleUpdate,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,7 +59,7 @@ def get_admin_user_id(
 # === Code Example CRUD ===
 
 @router.get("/code-examples")
-async def list_code_examples(
+def list_code_examples(
     status: str = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
@@ -81,8 +83,8 @@ async def list_code_examples(
                 "status": item.status,
                 "has_embedding": item.embedding is not None,
                 "source_chat_log_id": item.source_chat_log_id,
-                "created_at": item.created_at.isoformat() if item.created_at else None,
-                "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+                "created_at": iso_utc(item.created_at),
+                "updated_at": iso_utc(item.updated_at),
             }
             for item in items
         ],
@@ -91,7 +93,7 @@ async def list_code_examples(
 
 
 @router.get("/code-examples/search")
-async def search_similar_code_examples(
+def search_similar_code_examples(
     q: str = Query(..., min_length=1),
     top_k: int = Query(5, ge=1, le=20),
     generalize: bool = Query(False),
@@ -110,7 +112,7 @@ async def search_similar_code_examples(
 
 
 @router.post("/code-examples")
-async def create_code_example(
+def create_code_example(
     body: CodeExampleCreate,
     db: Session = Depends(get_db),
     admin_id: int = Depends(get_admin_user_id),
@@ -118,30 +120,17 @@ async def create_code_example(
     """Create a new code example with synchronous embedding."""
     embedding_service = EmbeddingService(db)
     question_generalized = embedding_service.generalize_question(body.question)
-    try:
-        emb = embedding_service.get_embedding(question_generalized)
-        emb_str = "[" + ",".join(str(v) for v in emb) + "]"
-    except Exception as e:
-        logger.warning(f"Embedding generation failed: {e}")
-        emb_str = None
-
     example = CodeExample(
         question=body.question,
         question_generalized=question_generalized,
         code=body.code,
         description=body.description,
         created_by=admin_id,
-        status="embedded" if emb_str else "active",
+        status="active",
     )
     db.add(example)
     db.flush()
-
-    # Set embedding via raw SQL (pgvector type)
-    if emb_str:
-        db.execute(
-            text("UPDATE code_examples SET embedding = :emb\\:\\:vector WHERE id = :id"),
-            {"emb": emb_str, "id": example.id},
-        )
+    embedded = embed_example(db, "code_examples", example.id, question_generalized, embedding_service)
 
     db.commit()
     db.refresh(example)
@@ -149,12 +138,12 @@ async def create_code_example(
         "id": example.id,
         "question": example.question,
         "status": example.status,
-        "has_embedding": emb_str is not None,
+        "has_embedding": embedded,
     }
 
 
 @router.put("/code-examples/{example_id}")
-async def update_code_example(
+def update_code_example(
     example_id: int,
     body: CodeExampleUpdate,
     db: Session = Depends(get_db),
@@ -179,22 +168,8 @@ async def update_code_example(
     # Re-embed if question changed
     if question_changed:
         embedding_service = EmbeddingService(db)
-        question_generalized = embedding_service.generalize_question(example.question)
-        example.question_generalized = question_generalized
-        try:
-            emb = embedding_service.get_embedding(question_generalized)
-            emb_str = "[" + ",".join(str(v) for v in emb) + "]"
-            db.execute(
-                text("UPDATE code_examples SET embedding = :emb\\:\\:vector, status = 'embedded' WHERE id = :id"),
-                {"emb": emb_str, "id": example.id},
-            )
-        except Exception as e:
-            logger.warning(f"Re-embedding failed: {e}")
-            # 임베딩 실패 시 active로 되돌려 DAG이 재처리하도록
-            db.execute(
-                text("UPDATE code_examples SET embedding = NULL, status = 'active' WHERE id = :id"),
-                {"id": example.id},
-            )
+        example.question_generalized = embedding_service.generalize_question(example.question)
+        embed_example(db, "code_examples", example.id, example.question_generalized, embedding_service)
 
     db.commit()
     db.refresh(example)
@@ -207,7 +182,7 @@ async def update_code_example(
 
 
 @router.delete("/code-examples/{example_id}")
-async def archive_code_example(
+def archive_code_example(
     example_id: int,
     db: Session = Depends(get_db),
     admin_id: int = Depends(get_admin_user_id),
@@ -216,10 +191,7 @@ async def archive_code_example(
     example = db.query(CodeExample).filter(CodeExample.id == example_id).first()
     if not example:
         raise HTTPException(status_code=404, detail="Code example not found")
-    db.execute(
-        text("UPDATE code_examples SET embedding = NULL, status = 'active', updated_at = :now WHERE id = :id"),
-        {"now": utcnow(), "id": example.id},
-    )
+    clear_embedding(db, "code_examples", example.id)
     db.commit()
     return {"id": example.id, "status": "active", "has_embedding": False}
 
@@ -235,8 +207,8 @@ def _layout_example_json(item: LayoutExample) -> dict:
         "description": item.description,
         "status": item.status,
         "has_embedding": item.embedding is not None,
-        "created_at": item.created_at.isoformat() if item.created_at else None,
-        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+        "created_at": iso_utc(item.created_at),
+        "updated_at": iso_utc(item.updated_at),
     }
 
 
@@ -257,23 +229,11 @@ def _embed_layout_example(db: Session, example: LayoutExample) -> None:
     """일반화 질문으로 임베딩한다. 실패하면 active로 두어 embed_code_examples DAG가 다시 처리하게 한다."""
     embedding_service = EmbeddingService(db)
     example.question_generalized = embedding_service.generalize_question(example.question)
-    try:
-        emb = embedding_service.get_embedding(example.question_generalized)
-        emb_str = "[" + ",".join(str(v) for v in emb) + "]"
-        db.execute(
-            text("UPDATE layout_examples SET embedding = :emb\\:\\:vector, status = 'embedded' WHERE id = :id"),
-            {"emb": emb_str, "id": example.id},
-        )
-    except Exception as e:
-        logger.warning(f"Layout example embedding failed: {e}")
-        db.execute(
-            text("UPDATE layout_examples SET embedding = NULL, status = 'active' WHERE id = :id"),
-            {"id": example.id},
-        )
+    embed_example(db, "layout_examples", example.id, example.question_generalized, embedding_service)
 
 
 @router.get("/layout-examples")
-async def list_layout_examples(
+def list_layout_examples(
     status: str = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
@@ -289,7 +249,7 @@ async def list_layout_examples(
 
 
 @router.get("/layout-examples/search")
-async def search_similar_layout_examples(
+def search_similar_layout_examples(
     q: str = Query(..., min_length=1),
     top_k: int = Query(5, ge=1, le=20),
     generalize: bool = Query(False),
@@ -304,7 +264,7 @@ async def search_similar_layout_examples(
 
 
 @router.post("/layout-examples")
-async def create_layout_example(
+def create_layout_example(
     body: LayoutExampleCreate,
     db: Session = Depends(get_db),
     admin_id: int = Depends(get_admin_user_id),
@@ -322,7 +282,7 @@ async def create_layout_example(
 
 
 @router.put("/layout-examples/{example_id}")
-async def update_layout_example(
+def update_layout_example(
     example_id: int,
     body: LayoutExampleUpdate,
     db: Session = Depends(get_db),
@@ -348,7 +308,7 @@ async def update_layout_example(
 
 
 @router.delete("/layout-examples/{example_id}")
-async def archive_layout_example(
+def archive_layout_example(
     example_id: int,
     db: Session = Depends(get_db),
     admin_id: int = Depends(get_admin_user_id),
@@ -357,10 +317,7 @@ async def archive_layout_example(
     example = db.query(LayoutExample).filter(LayoutExample.id == example_id).first()
     if not example:
         raise HTTPException(status_code=404, detail="Layout example not found")
-    db.execute(
-        text("UPDATE layout_examples SET embedding = NULL, status = 'active', updated_at = :now WHERE id = :id"),
-        {"now": utcnow(), "id": example.id},
-    )
+    clear_embedding(db, "layout_examples", example.id)
     db.commit()
     db.refresh(example)
     return _layout_example_json(example)
@@ -369,7 +326,7 @@ async def archive_layout_example(
 # === Chat Log Review ===
 
 @router.get("/chat-logs")
-async def list_chat_logs(
+def list_chat_logs(
     status: str = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
@@ -393,7 +350,7 @@ async def list_chat_logs(
                 "generated_code": item.generated_code,
                 "status": item.status,
                 "result": item.result,
-                "created_at": item.created_at.isoformat(),
+                "created_at": iso_utc(item.created_at),
             }
             for item in items
         ],
@@ -402,7 +359,7 @@ async def list_chat_logs(
 
 
 @router.post("/chat-logs/{log_id}/review")
-async def review_chat_log(
+def review_chat_log(
     log_id: int,
     body: ReviewRequest,
     db: Session = Depends(get_db),
@@ -413,29 +370,17 @@ async def review_chat_log(
     if not chat_log:
         raise HTTPException(status_code=404, detail="Chat log not found")
 
-    if body.action == "approve":
-        if chat_log.status not in (ChatLogStatus.LIKED.value, ChatLogStatus.REJECTED.value):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Cannot approve from status '{chat_log.status}'"
-            )
-        chat_log.status = ChatLogStatus.APPROVED.value
-    elif body.action == "reject":
-        if chat_log.status not in (ChatLogStatus.LIKED.value, ChatLogStatus.APPROVED.value):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Cannot reject from status '{chat_log.status}'"
-            )
-        chat_log.status = ChatLogStatus.REJECTED.value
-    else:
-        raise HTTPException(status_code=400, detail="Action must be 'approve' or 'reject'")
+    try:
+        chat_log.review(body.action)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     db.commit()
     return {"id": chat_log.id, "status": chat_log.status}
 
 
 @router.post("/chat-logs/{log_id}/embed")
-async def embed_chat_log(
+def embed_chat_log(
     log_id: int,
     body: EmbedRequest,
     db: Session = Depends(get_db),
@@ -445,7 +390,7 @@ async def embed_chat_log(
     chat_log = db.query(ChatLog).filter(ChatLog.id == log_id).first()
     if not chat_log:
         raise HTTPException(status_code=404, detail="Chat log not found")
-    if chat_log.status != ChatLogStatus.APPROVED.value:
+    if not chat_log.can_review("embed"):
         raise HTTPException(
             status_code=400,
             detail=f"Can only embed from APPROVED status, current: '{chat_log.status}'"
@@ -458,16 +403,8 @@ async def embed_chat_log(
         raise HTTPException(status_code=400, detail="No code available to embed")
     description = body.description or ""
 
-    # Generate embedding (using generalized question)
     embedding_service = EmbeddingService(db)
     question_generalized = embedding_service.generalize_question(question)
-    try:
-        emb = embedding_service.get_embedding(question_generalized)
-        emb_str = "[" + ",".join(str(v) for v in emb) + "]"
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Embedding generation failed: {e}")
-
-    # Insert into code_examples
     example = CodeExample(
         question=question,
         question_generalized=question_generalized,
@@ -475,19 +412,15 @@ async def embed_chat_log(
         description=description,
         created_by=admin_id,
         source_chat_log_id=chat_log.id,
-        status="embedded",
+        status="active",
     )
     db.add(example)
     db.flush()
+    if not embed_example(db, "code_examples", example.id, question_generalized, embedding_service):
+        # 커밋하지 않으므로 방금 넣은 예시도 남지 않는다
+        raise HTTPException(status_code=502, detail="임베딩을 만들지 못했습니다. AI 설정을 확인하세요")
 
-    # Set embedding via raw SQL
-    db.execute(
-        text("UPDATE code_examples SET embedding = :emb\\:\\:vector WHERE id = :id"),
-        {"emb": emb_str, "id": example.id},
-    )
-
-    # Update chat log status
-    chat_log.status = ChatLogStatus.EMBEDDED.value
+    chat_log.review("embed")
     db.commit()
 
     return {
@@ -498,7 +431,7 @@ async def embed_chat_log(
 
 
 @router.post("/chat-logs/{log_id}/withdraw")
-async def withdraw_embedding(
+def withdraw_embedding(
     log_id: int,
     db: Session = Depends(get_db),
     admin_id: int = Depends(get_admin_user_id),
@@ -507,7 +440,7 @@ async def withdraw_embedding(
     chat_log = db.query(ChatLog).filter(ChatLog.id == log_id).first()
     if not chat_log:
         raise HTTPException(status_code=404, detail="Chat log not found")
-    if chat_log.status != ChatLogStatus.EMBEDDED.value:
+    if not chat_log.can_review("withdraw"):
         raise HTTPException(
             status_code=400,
             detail=f"Can only withdraw from EMBEDDED status, current: '{chat_log.status}'"
@@ -523,12 +456,9 @@ async def withdraw_embedding(
         .first()
     )
     if example:
-        db.execute(
-            text("UPDATE code_examples SET embedding = NULL, status = 'active', updated_at = :now WHERE id = :id"),
-            {"now": utcnow(), "id": example.id},
-        )
+        clear_embedding(db, "code_examples", example.id)
 
-    chat_log.status = ChatLogStatus.APPROVED.value
+    chat_log.review("withdraw")
     db.commit()
 
     return {"chat_log_id": chat_log.id, "status": chat_log.status}
@@ -537,7 +467,7 @@ async def withdraw_embedding(
 # === ETF Tags ===
 
 @router.get("/etf-tags")
-async def list_etf_tags(
+def list_etf_tags(
     db: Session = Depends(get_db),
     admin_id: int = Depends(get_admin_user_id),
 ):
@@ -547,7 +477,7 @@ async def list_etf_tags(
 
 
 @router.put("/etf-tags/{etf_code}")
-async def update_etf_tags(
+def update_etf_tags(
     etf_code: str,
     body: ETFTagsUpdate,
     db: Session = Depends(get_db),
@@ -577,8 +507,7 @@ def _mask_webhook(url: str | None) -> str | None:
 
 def _discord_settings_response(setting: DiscordSetting | None) -> dict:
     if setting is None:
-        return {"enabled": True, "threshold": 3.0, "added_threshold": 2.0, "rise_threshold": 3.0,
-                "webhook_url_masked": None, "configured": False}
+        return {**discord.DEFAULT_SETTINGS, "webhook_url_masked": None, "configured": False}
     return {
         "enabled": setting.enabled,
         "threshold": setting.threshold,
@@ -590,7 +519,7 @@ def _discord_settings_response(setting: DiscordSetting | None) -> dict:
 
 
 @router.get("/settings/discord")
-async def get_discord_settings(
+def get_discord_settings(
     db: Session = Depends(get_db),
     admin_id: int = Depends(get_admin_user_id),
 ):
@@ -599,7 +528,7 @@ async def get_discord_settings(
 
 
 @router.put("/settings/discord")
-async def update_discord_settings(
+def update_discord_settings(
     body: DiscordSettingsUpdate,
     db: Session = Depends(get_db),
     admin_id: int = Depends(get_admin_user_id),
@@ -648,7 +577,7 @@ async def test_discord_webhook(
 
 
 @router.get("/settings/discord/logs")
-async def get_discord_notification_logs(
+def get_discord_notification_logs(
     limit: int = Query(30, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
@@ -669,7 +598,7 @@ async def get_discord_notification_logs(
                 "items": r.items,
                 "message_count": r.message_count,
                 "error": r.error,
-                "sent_at": r.sent_at.isoformat() if r.sent_at else None,
+                "sent_at": iso_utc(r.sent_at),
             }
             for r in rows
         ],
@@ -704,7 +633,7 @@ def _ai_settings_response(db: Session) -> dict:
 
 
 @router.get("/settings/ai")
-async def get_ai_settings(
+def get_ai_settings(
     db: Session = Depends(get_db),
     admin_id: int = Depends(get_admin_user_id),
 ):
@@ -712,7 +641,7 @@ async def get_ai_settings(
 
 
 @router.put("/settings/ai")
-async def update_ai_settings(
+def update_ai_settings(
     body: AISettingsUpdate,
     db: Session = Depends(get_db),
     admin_id: int = Depends(get_admin_user_id),
@@ -744,7 +673,7 @@ def _check_ai_connection(config) -> dict:
             model=config.llm_model,
             messages=[{"role": "user", "content": "ping"}],
             max_tokens=1,
-            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            extra_body=NO_THINKING_BODY,
         )
         result["llm"] = {"ok": True, "error": None}
     except Exception as e:
@@ -777,7 +706,7 @@ def _dart_settings_response(db: Session) -> dict:
 
 
 @router.get("/settings/dart")
-async def get_dart_settings(
+def get_dart_settings(
     db: Session = Depends(get_db),
     admin_id: int = Depends(get_admin_user_id),
 ):
@@ -785,7 +714,7 @@ async def get_dart_settings(
 
 
 @router.put("/settings/dart")
-async def update_dart_settings(
+def update_dart_settings(
     body: DartSettingsUpdate,
     db: Session = Depends(get_db),
     admin_id: int = Depends(get_admin_user_id),
@@ -825,15 +754,15 @@ def _invitation_response(inv: Invitation, used_by_username: str | None) -> dict:
         "id": inv.id,
         "token": inv.token,
         "status": status,
-        "created_at": inv.created_at.isoformat() if inv.created_at else None,
-        "expires_at": inv.expires_at.isoformat(),
-        "used_at": inv.used_at.isoformat() if inv.used_at else None,
+        "created_at": iso_utc(inv.created_at),
+        "expires_at": iso_utc(inv.expires_at),
+        "used_at": iso_utc(inv.used_at),
         "used_by_username": used_by_username,
     }
 
 
 @router.get("/invitations")
-async def list_invitations(
+def list_invitations(
     db: Session = Depends(get_db),
     admin_id: int = Depends(get_admin_user_id),
 ):
@@ -849,7 +778,7 @@ async def list_invitations(
 
 
 @router.post("/invitations", status_code=201)
-async def create_invitation(
+def create_invitation(
     db: Session = Depends(get_db),
     admin_id: int = Depends(get_admin_user_id),
 ):
@@ -857,7 +786,7 @@ async def create_invitation(
 
 
 @router.delete("/invitations/{invitation_id}", status_code=204)
-async def delete_invitation(
+def delete_invitation(
     invitation_id: int,
     db: Session = Depends(get_db),
     admin_id: int = Depends(get_admin_user_id),
@@ -874,12 +803,8 @@ async def delete_invitation(
 
 # === Members ===
 
-class MemberRoleUpdate(BaseModel):
-    is_admin: bool
-
-
 @router.get("/members")
-async def list_members(
+def list_members(
     db: Session = Depends(get_db),
     admin_id: int = Depends(get_admin_user_id),
 ):
@@ -887,7 +812,7 @@ async def list_members(
 
 
 @router.put("/members/{user_id}/role", status_code=204)
-async def update_member_role(
+def update_member_role(
     user_id: int,
     body: MemberRoleUpdate,
     db: Session = Depends(get_db),
@@ -903,7 +828,7 @@ async def update_member_role(
 
 
 @router.post("/members/{user_id}/logout")
-async def logout_member(
+def logout_member(
     user_id: int,
     db: Session = Depends(get_db),
     admin_id: int = Depends(get_admin_user_id),
@@ -916,7 +841,7 @@ async def logout_member(
 
 
 @router.delete("/members/{user_id}", status_code=204)
-async def delete_member(
+def delete_member(
     user_id: int,
     db: Session = Depends(get_db),
     admin_id: int = Depends(get_admin_user_id),
@@ -930,7 +855,7 @@ async def delete_member(
 
 
 @router.post("/members/{user_id}/password-reset", status_code=201)
-async def create_password_reset(
+def create_password_reset(
     user_id: int,
     db: Session = Depends(get_db),
     admin_id: int = Depends(get_admin_user_id),
@@ -939,4 +864,4 @@ async def create_password_reset(
     if db.get(User, user_id) is None:
         raise HTTPException(status_code=404, detail="Member not found")
     token, reset = AuthService(db).create_password_reset(user_id, admin_id)
-    return {"token": token, "expires_at": reset.expires_at.isoformat()}
+    return {"token": token, "expires_at": iso_utc(reset.expires_at)}

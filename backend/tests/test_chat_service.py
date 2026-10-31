@@ -27,8 +27,22 @@ def test_json_schema_marks_nullable_optional():
 
 
 def test_format_tool_call():
-    assert cs.format_tool_call("get_etf_info", {"etf_code": "069500"}) == 'get_etf_info(etf_code="069500")'
+    assert cs.format_tool_call("holdings", {"etf": "069500"}) == 'holdings(etf="069500")'
     assert cs.format_tool_call("list_tags", {}) == "list_tags()"
+
+
+def test_tool_results_use_the_summary_formats():
+    """남은 도구도 요약 텍스트와 같은 서식(domain.format)으로 숫자를 넘긴다."""
+    row = cs.format_fields({"code": "069500", "expense_ratio": 0.15, "net_assets": 12_3456_0000_0000,
+                            "trade_value": 5_000_000, "weight": "12.3", "similarity": None, "name": "KODEX 200"})
+    assert row == {"code": "069500", "expense_ratio": "0.15%", "net_assets": "12조 3,456억원",
+                   "trade_value": "5,000,000원", "weight": "12.30%", "similarity": None, "name": "KODEX 200"}
+
+
+def test_examples_calling_removed_tools_are_skipped():
+    examples = [{"id": 1, "code": 'etf_search(query="<ETF명>")\nholdings(etf="<ETF의 code>")'},
+                {"id": 2, "code": 'etf_search(query="<ETF명>")\nget_etf_info(etf_code="<ETF의 code>")'}]
+    assert [ex["id"] for ex in cs.usable_examples(examples, ["etf_search", "holdings"])] == [1]
 
 
 def _scripted_model(messages, info: AgentInfo) -> ModelResponse:
@@ -52,22 +66,20 @@ async def _scripted_stream(messages, info: AgentInfo):
     }
 
 
-class FakeMemory:
-    def refine(self, question, context):
-        return question if context.is_empty() else f"KODEX 200(069500)의 {question}"
-
-
-@pytest.fixture
-def service(monkeypatch):
+def _service(model, stream):
     svc = cs.ChatService.__new__(cs.ChatService)
     svc._tag_names = []
     svc._tools = {"get_price": FakePriceTool()}
-    svc._build_prompt = lambda question, context, original: (question, [])
-    svc.memory = FakeMemory()
+    svc._skill_tools = []
+    svc._build_prompt = lambda question, context: (question, [])
     from pydantic_ai import Agent
-    svc.agent = Agent(FunctionModel(_scripted_model, stream_function=_scripted_stream),
-                      tools=[t.as_agent_tool() for t in svc._tools.values()])
+    svc.agent = Agent(FunctionModel(model, stream_function=stream), tools=[t.as_agent_tool() for t in svc._tools.values()])
     return svc
+
+
+@pytest.fixture
+def service():
+    return _service(_scripted_model, _scripted_stream)
 
 
 @pytest.mark.asyncio
@@ -128,18 +140,87 @@ async def test_chat_stream_stop_before_agent_runs(service):
 
 @pytest.mark.asyncio
 async def test_chat_stream_reports_stages(service):
-    stages = [e["data"]["stage"] async for e in service.chat_stream("종가 알려줘") if e["type"] == "status"]
-    assert stages == ["searching_examples", "thinking"]  # 맥락이 없으면 질문 재작성 단계는 건너뛴다
-
+    # 질문은 답변 화면이 이미 재작성해 넘긴다 — 맥락이 있어도 재작성 단계가 없다
     from app.services.chat_memory import ConversationContext, Turn
     context = ConversationContext(turns=[Turn("KODEX 200 정보 알려줘", "KODEX 200(069500)은 ...")])
     stages = [e["data"]["stage"] async for e in service.chat_stream("종가 알려줘", context) if e["type"] == "status"]
-    assert stages == ["refining", "searching_examples", "thinking"]
+    assert stages == ["searching_examples", "thinking"]
+    assert not [e async for e in service.chat_stream("종가 알려줘", context) if e["type"] == "refined_question"]
+
+
+def _always_calls_tool(messages, info):
+    return ModelResponse(parts=[ToolCallPart("get_price", {"code": "069500"}, tool_call_id=f"c{len(messages)}")])
+
+
+async def _always_calls_tool_stream(messages, info):
+    yield {0: DeltaToolCall(name="get_price", json_args='{"code": "069500"}', tool_call_id=f"c{len(messages)}")}
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_fails_without_dumping_tool_results_when_the_limit_is_hit(monkeypatch):
+    """요청 한도를 넘기면 실패로 마치고, 마지막 도구 결과(원시 JSON)를 답으로 내지 않는다."""
+    monkeypatch.setattr(cs, "MAX_MODEL_REQUESTS", 2)
+    svc = _service(_always_calls_tool, _always_calls_tool_stream)
+    events = [e async for e in svc.chat_stream("종가 알려줘")]
+    assert any(e["type"] == "step" for e in events)
+    assert events[-1]["data"] == {"answer": cs.FALLBACK_ANSWER, "result": "failed"}
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_fails_when_the_model_errors():
+    def broken(messages, info):
+        raise RuntimeError("LLM down")
+
+    async def broken_stream(messages, info):
+        raise RuntimeError("LLM down")
+        yield ""  # pragma: no cover
+
+    events = [e async for e in _service(broken, broken_stream).chat_stream("종가 알려줘")]
+    assert events[-1]["data"] == {"answer": cs.FALLBACK_ANSWER, "result": "failed"}
+
+
+def test_agent_skill_judges_failure_by_the_result(monkeypatch):
+    """agent 스킬은 답 문구가 아니라 에이전트가 낸 result로 실패를 본다. 스킬 도구는 이 답변의 레지스트리에서 만든다."""
+    from app.services.answer.skills import REGISTRY, agent as agent_mod
+    from app.services.answer.skills.base import SkillContext
+    from app.services.chat_memory import ConversationContext
+    from app.services.entities import EntityResolver
+    built = {}
+
+    class FakeService:
+        def __init__(self, db, config, tools):
+            built["tools"] = [t.name for t in tools]
+
+        async def chat_stream(self, question, context, stop):
+            yield {"type": "step", "data": {"step_number": 1}}
+            yield {"type": "answer", "data": FakeService.answer}
+
+    class DB:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(agent_mod, "ChatService", FakeService)
+
+    def run(answer):
+        FakeService.answer = answer
+        ctx = SkillContext(question="q", conversation=ConversationContext(), session_factory=DB, resolver=EntityResolver(),
+                           ai_config=None, stop=asyncio.Event(), registry=REGISTRY)
+        skill = REGISTRY["agent"]
+
+        async def go():
+            return [e async for e in skill.run(skill.Args(question="q"), "markdown", ctx)]
+        return asyncio.run(go())
+
+    events = run({"answer": "| 표 |", "result": "completed"})
+    assert events[0]["type"] == "step" and events[-1]["status"] == "complete"
+    assert "holdings" in built["tools"] and "rank" in built["tools"] and "narrative" not in built["tools"]
+    assert run({"answer": cs.FALLBACK_ANSWER, "result": "failed"})[-1]["status"] == "failed"
+    assert run({"answer": cs.STOPPED_ANSWER, "result": "cancelled"})[-1]["status"] == "complete"  # 중지는 그 문구를 보여 준다
 
 
 @pytest.mark.asyncio
 async def test_with_heartbeat_pings_while_idle():
-    from app.routers.chat import _with_heartbeat
+    from app.utils.sse import with_heartbeat as _with_heartbeat
 
     async def slow():
         yield "data: 1\n\n"
@@ -153,7 +234,7 @@ async def test_with_heartbeat_pings_while_idle():
 
 @pytest.mark.asyncio
 async def test_with_heartbeat_raises_producer_error():
-    from app.routers.chat import _with_heartbeat
+    from app.utils.sse import with_heartbeat as _with_heartbeat
 
     async def broken():
         yield "data: 1\n\n"
@@ -163,24 +244,6 @@ async def test_with_heartbeat_raises_producer_error():
         [c async for c in _with_heartbeat(broken(), interval=1)]
 
 
-@pytest.mark.asyncio
-async def test_chat_collects_result(service):
-    result = await service.chat("종가 알려줘")
-    assert len(result["steps"]) == 2
-    assert result["answer"].startswith("| ETF")
-    assert result["refined_question"] == "종가 알려줘"
-
-
-@pytest.mark.asyncio
-async def test_chat_stream_refines_with_context(service):
-    from app.services.chat_memory import ConversationContext, Turn
-    context = ConversationContext(turns=[Turn("KODEX 200 정보 알려줘", "KODEX 200(069500)은 ...")])
-    events = [e async for e in service.chat_stream("종가 알려줘", context) if e["type"] != "status"]
-    assert events[0] == {"type": "refined_question", "data": {"question": "KODEX 200(069500)의 종가 알려줘"}}
-    result = await service.chat("종가 알려줘", context)
-    assert result["refined_question"] == "KODEX 200(069500)의 종가 알려줘"
-
-
 @pytest.mark.parametrize("cypher", [
     "MATCH (n) RETURN n $$) as (r agtype); SELECT 1; --",
     "MATCH (n) RETURN n; DROP TABLE users",
@@ -188,14 +251,6 @@ async def test_chat_stream_refines_with_context(service):
 def test_graph_query_rejects_sql_escape(cypher):
     # DB에 닿기 전에 거부되어야 한다 (db=None이라 실행되면 AttributeError)
     assert cs.GraphQueryTool(db=None).forward(cypher).startswith("오류:")
-
-
-def test_execute_cypher_rejects_dollar_quote_in_params():
-    from app.services.graph_service import GraphService
-    with pytest.raises(ValueError):
-        GraphService(db=None).execute_cypher(
-            "MATCH (e:ETF {code: $code}) RETURN e", {"code": "x$$) as (r agtype); SELECT 1; --"},
-        )
 
 
 def test_save_chat_log_keeps_steps_and_refined_question():

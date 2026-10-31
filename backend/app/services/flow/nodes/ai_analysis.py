@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import re
 from typing import Any, Dict, List, Literal
 
@@ -7,10 +8,11 @@ from pydantic_ai import Agent
 
 from ....domain import indicators as ind
 from ....domain.format import format_value
-from ...graph_service import GraphService, node as cypher
 from ...llm import NO_THINKING, build_model
 from ..base import FlowContext, Node, StockSet, result
-from .source import SAFE_CODE_RE
+from ..lookups import held_by
+
+logger = logging.getLogger(__name__)
 
 CONCURRENCY = 3  # LLM 프록시에 동시에 보내는 요청 수
 HAN_RE = re.compile(r"[\u3400-\u9fff]")  # 모델이 가끔 한자·중국어 낱말을 섞는다
@@ -77,22 +79,6 @@ def facts(row: Dict[str, Any], bars: List[ind.Bar], held_by: List[Dict], fields)
     return lines
 
 
-def held_by(db, codes: List[str]) -> Dict[str, List[Dict]]:
-    codes = [c for c in codes if SAFE_CODE_RE.fullmatch(c)]
-    if not codes:
-        return {}
-    rows = cypher(
-        GraphService(db),
-        f"MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock) WHERE s.code IN [{', '.join(repr(c) for c in codes)}] "
-        "RETURN {code: s.code, etf: e.name, weight: h.weight}",
-        {},
-    )
-    out: Dict[str, List[Dict]] = {}
-    for r in sorted(rows, key=lambda r: -(r.get("weight") or 0)):
-        out.setdefault(r["code"], []).append(r)
-    return out
-
-
 class AIAnalysisNode(Node):
     type = "ai_analysis"
     label = "AI 분석"
@@ -132,8 +118,9 @@ class AIAnalysisNode(Node):
                         retry = await agent.run(prompt + "\n\n(앞 답에 한자가 섞였습니다. 한글로만 다시 쓰세요.)")
                         text = retry.output.strip()
                     return code, text
-                except Exception as e:
-                    return code, f"분석 실패: {e}"
+                except Exception:
+                    logger.warning("AI analysis of %s failed", code, exc_info=True)  # 원인은 로그에만
+                    return code, "분석 실패"
 
         tasks = [asyncio.create_task(analyze(code, row)) for code, row in targets]
         texts: Dict[str, str] = {}

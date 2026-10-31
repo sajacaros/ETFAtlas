@@ -1,10 +1,9 @@
-import asyncio
-
 import pytest
 from fastapi import HTTPException
 
 from app.domain.composition import ETFAllocation, aggregate_composition, normalize_weights
 from app.routers import etfs
+from app.schemas.etf import CompositionItem, CompositionRequest
 
 
 def _h(code, name, weight):
@@ -90,17 +89,17 @@ def fake_graph(monkeypatch):
         def __init__(self, db):
             pass
 
-        def get_etf_holdings_full(self, code):
-            calls.append(code)
-            return holdings.get(code, [])
+        def get_holdings_of(self, codes):
+            calls.extend(codes)
+            return {c: holdings[c] for c in codes if c in holdings}
 
     monkeypatch.setattr(etfs, "GraphService", FakeGraph)
     return calls
 
 
 def _run(items):
-    request = etfs.CompositionRequest(items=[etfs.CompositionItem(code=c, weight=w) for c, w in items])
-    return asyncio.run(etfs.get_composition(request, db=FakeDB()))
+    request = CompositionRequest(items=[CompositionItem(code=c, weight=w) for c, w in items])
+    return etfs.get_composition(request, db=FakeDB())
 
 
 def test_composition_endpoint_limits_to_top_30(fake_graph):

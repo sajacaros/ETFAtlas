@@ -1,5 +1,6 @@
 import asyncio
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -55,71 +56,69 @@ def metrics(bars: List[ind.Bar], p: ChartFilterParams) -> Dict[str, Any]:
     return {k: (round(v, 2) if isinstance(v, float) else v) for k, v in m.items()}
 
 
+def _ge(value: Optional[float], bound: float) -> bool:
+    return value is not None and value >= bound
+
+
+def _le(value: Optional[float], bound: float) -> bool:
+    return value is not None and value <= bound
+
+
+def _lt(value: Optional[float], bound: float) -> bool:
+    return value is not None and value < bound
+
+
+def _gt(value: Optional[float], bound: float) -> bool:
+    return value is not None and value > bound
+
+
+@dataclass(frozen=True)
+class Condition:
+    """조건 하나: 켜졌는지, 통과했는지(값이 없으면 통과하지 못한다), 사람이 읽는 문구(None이면 앞 조건 문구에 들어 있다)."""
+    on: Callable[[ChartFilterParams], bool]
+    check: Callable[[Dict[str, Any], ChartFilterParams], bool]
+    text: Optional[Callable[[ChartFilterParams], str]]
+
+
+# 판정과 문구를 한 줄에. 순서가 노트·AI 프롬프트의 조건 순서다
+CONDITIONS = (
+    Condition(lambda p: p.ma_aligned, lambda m, p: m["ma_aligned"] is True, lambda p: "이평 정배열(5>20>60)"),
+    Condition(lambda p: bool(p.above_ma), lambda m, p: _gt(m.get("ma_gap"), 0),
+              lambda p: f"종가 > {p.above_ma}일 이평"),
+    Condition(lambda p: p.near_high_pct is not None, lambda m, p: _ge(m["from_high"], -p.near_high_pct),
+              lambda p: f"{p.high_days}일 고가 대비 -{p.near_high_pct:g}% 이내"),
+    Condition(lambda p: p.return_min is not None, lambda m, p: _ge(m["ret"], p.return_min),
+              lambda p: f"{RETURN_DAYS}일 수익률 ≥ {p.return_min:g}%"),
+    Condition(lambda p: p.return_max is not None, lambda m, p: _le(m["ret"], p.return_max),
+              lambda p: f"{RETURN_DAYS}일 수익률 ≤ {p.return_max:g}%"),
+    Condition(lambda p: p.volume_ratio_min is not None, lambda m, p: _ge(m["vol_ratio"], p.volume_ratio_min),
+              lambda p: f"거래량 ≥ 20일 평균 × {p.volume_ratio_min:g}"),
+    Condition(lambda p: p.rsi_min is not None, lambda m, p: _ge(m["rsi"], p.rsi_min), lambda p: f"RSI ≥ {p.rsi_min:g}"),
+    Condition(lambda p: p.rsi_max is not None, lambda m, p: _le(m["rsi"], p.rsi_max), lambda p: f"RSI ≤ {p.rsi_max:g}"),
+    Condition(lambda p: p.vcp, lambda m, p: m["vcp"] is True, lambda p: "변동성 수축(간이 VCP)"),
+    Condition(lambda p: bool(p.macd_cross_days), lambda m, p: _lt(m["macd_cross"], p.macd_cross_days),
+              lambda p: f"MACD 골든크로스 {p.macd_cross_days}거래일 이내"),
+    Condition(lambda p: bool(p.stoch_cross_days), lambda m, p: _lt(m["stoch_cross"], p.stoch_cross_days),
+              lambda p: f"스토캐스틱 골든크로스 {p.stoch_cross_days}거래일 이내"
+                        + (f"(교차 때 %K ≤ {p.stoch_cross_below:g})" if p.stoch_cross_below is not None else "")),
+    # 교차 때 %K는 스토캐스틱 교차와 함께만 본다 — 문구는 위 줄에 붙는다
+    Condition(lambda p: bool(p.stoch_cross_days) and p.stoch_cross_below is not None,
+              lambda m, p: _le(m["stoch_cross_k"], p.stoch_cross_below), None),
+    Condition(lambda p: p.bb_pctb_min is not None, lambda m, p: _ge(m["bb_pctb"], p.bb_pctb_min),
+              lambda p: f"볼린저 %B ≥ {p.bb_pctb_min:g}"),
+    Condition(lambda p: p.bb_pctb_max is not None, lambda m, p: _le(m["bb_pctb"], p.bb_pctb_max),
+              lambda p: f"볼린저 %B ≤ {p.bb_pctb_max:g}"),
+)
+
+
 def passes(m: Dict[str, Any], p: ChartFilterParams) -> bool:
-    """값이 없으면(기간 부족) 그 조건은 통과하지 못한다."""
-    checks = []
-    if p.ma_aligned:
-        checks.append(m["ma_aligned"] is True)
-    if p.above_ma:
-        checks.append(m.get("ma_gap") is not None and m["ma_gap"] > 0)
-    if p.near_high_pct is not None:
-        checks.append(m["from_high"] is not None and m["from_high"] >= -p.near_high_pct)
-    if p.return_min is not None:
-        checks.append(m["ret"] is not None and m["ret"] >= p.return_min)
-    if p.return_max is not None:
-        checks.append(m["ret"] is not None and m["ret"] <= p.return_max)
-    if p.volume_ratio_min is not None:
-        checks.append(m["vol_ratio"] is not None and m["vol_ratio"] >= p.volume_ratio_min)
-    if p.rsi_min is not None:
-        checks.append(m["rsi"] is not None and m["rsi"] >= p.rsi_min)
-    if p.rsi_max is not None:
-        checks.append(m["rsi"] is not None and m["rsi"] <= p.rsi_max)
-    if p.vcp:
-        checks.append(m["vcp"] is True)
-    if p.macd_cross_days:
-        checks.append(m["macd_cross"] is not None and m["macd_cross"] < p.macd_cross_days)
-    if p.stoch_cross_days:
-        checks.append(m["stoch_cross"] is not None and m["stoch_cross"] < p.stoch_cross_days)
-        if p.stoch_cross_below is not None:
-            checks.append(m["stoch_cross_k"] is not None and m["stoch_cross_k"] <= p.stoch_cross_below)
-    if p.bb_pctb_min is not None:
-        checks.append(m["bb_pctb"] is not None and m["bb_pctb"] >= p.bb_pctb_min)
-    if p.bb_pctb_max is not None:
-        checks.append(m["bb_pctb"] is not None and m["bb_pctb"] <= p.bb_pctb_max)
-    return all(checks)
+    """켠 조건을 모두 통과해야 한다. 값이 없으면(기간 부족) 그 조건은 통과하지 못한다."""
+    return all(c.check(m, p) for c in CONDITIONS if c.on(p))
 
 
 def conditions(p: ChartFilterParams) -> List[str]:
     """켠 조건을 사람이 읽는 문구로 (노트와 AI 프롬프트에 쓴다)."""
-    out = []
-    if p.ma_aligned:
-        out.append("이평 정배열(5>20>60)")
-    if p.above_ma:
-        out.append(f"종가 > {p.above_ma}일 이평")
-    if p.near_high_pct is not None:
-        out.append(f"{p.high_days}일 고가 대비 -{p.near_high_pct:g}% 이내")
-    if p.return_min is not None:
-        out.append(f"{RETURN_DAYS}일 수익률 ≥ {p.return_min:g}%")
-    if p.return_max is not None:
-        out.append(f"{RETURN_DAYS}일 수익률 ≤ {p.return_max:g}%")
-    if p.volume_ratio_min is not None:
-        out.append(f"거래량 ≥ 20일 평균 × {p.volume_ratio_min:g}")
-    if p.rsi_min is not None:
-        out.append(f"RSI ≥ {p.rsi_min:g}")
-    if p.rsi_max is not None:
-        out.append(f"RSI ≤ {p.rsi_max:g}")
-    if p.vcp:
-        out.append("변동성 수축(간이 VCP)")
-    if p.macd_cross_days:
-        out.append(f"MACD 골든크로스 {p.macd_cross_days}거래일 이내")
-    if p.stoch_cross_days:
-        below = f"(교차 때 %K ≤ {p.stoch_cross_below:g})" if p.stoch_cross_below is not None else ""
-        out.append(f"스토캐스틱 골든크로스 {p.stoch_cross_days}거래일 이내{below}")
-    if p.bb_pctb_min is not None:
-        out.append(f"볼린저 %B ≥ {p.bb_pctb_min:g}")
-    if p.bb_pctb_max is not None:
-        out.append(f"볼린저 %B ≤ {p.bb_pctb_max:g}")
-    return out
+    return [c.text(p) for c in CONDITIONS if c.on(p) and c.text]
 
 
 class ChartFilterNode(Node):

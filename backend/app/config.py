@@ -1,6 +1,8 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
+from .utils.ai_settings import AI_DEFAULTS
+
 
 class Settings(BaseSettings):
     # Database
@@ -14,14 +16,14 @@ class Settings(BaseSettings):
     encryption_key: str = ""  # 32-byte hex key for AES-256-GCM
 
     # AI (LiteLLM 프록시, OpenAI 호환)
-    llm_api_base: str = "http://localhost:4000"
-    llm_api_key: str = ""
-    llm_model: str = "qwen38-27b"
+    llm_api_base: str = AI_DEFAULTS["llm_api_base"]
+    llm_api_key: str = AI_DEFAULTS["llm_api_key"]
+    llm_model: str = AI_DEFAULTS["llm_model"]
     # 챗봇 세션: 최근 N턴은 원문으로, 그 이전은 요약으로 기억
     chat_history_window: int = 5
-    embedding_api_base: str = "http://localhost:4000"
-    embedding_api_key: str = ""
-    embedding_model: str = "embedding-gemma-300m"  # 768차원
+    embedding_api_base: str = AI_DEFAULTS["embedding_api_base"]
+    embedding_api_key: str = AI_DEFAULTS["embedding_api_key"]
+    embedding_model: str = AI_DEFAULTS["embedding_model"]
 
     # Frontend
     frontend_url: str = "http://localhost:9600"

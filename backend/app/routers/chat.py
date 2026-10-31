@@ -1,19 +1,21 @@
 import asyncio
-import json
 import logging
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import AsyncIterator, List, Optional
+from typing import Callable, List, Optional, TypeVar
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
-from ..database import get_db
+from ..database import SessionLocal, get_db
 from ..models.chat import ChatLog, ChatLogResult, ChatLogStatus, ChatSession, ChatSlot
 from ..schemas.chat import FeedbackRequest, ChatSessionUpdate
+from ..services.ai_config import load_ai_config
 from ..services.answer import AnswerService
+from ..services.chat_memory import ChatMemory
 from ..utils.session import get_current_user_id
-from ..utils.time import utcnow
+from ..utils.sse import DONE, sse_event, with_heartbeat
+from ..utils.time import iso_utc, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -21,12 +23,12 @@ router = APIRouter()
 
 
 SESSION_TITLE_LENGTH = 50
-
-# 모델이 오래 생각하는 동안에도 프록시(nginx 기본 60초)가 유휴 연결을 끊지 않도록 보내는 주기
-HEARTBEAT_INTERVAL = 15.0
+STREAM_ERROR = "답변 중 오류가 발생했습니다. 잠시 뒤 다시 질문해 주세요."  # 원인은 로그에만 남긴다
 
 # 진행 중인 스트림의 중지 신호 ((user_id, session_id) → Event). uvicorn 단일 워커라 프로세스 메모리로 충분하다
 _stop_events: dict[tuple[int, int], asyncio.Event] = {}
+
+T = TypeVar("T")
 
 
 class ChatRequest(BaseModel):
@@ -41,35 +43,22 @@ def _extract_generated_code(steps: List[dict]) -> Optional[str]:
     return "\n".join(calls) or None
 
 
-async def _with_heartbeat(chunks: AsyncIterator[str], interval: float = HEARTBEAT_INTERVAL) -> AsyncIterator[str]:
-    """chunks를 그대로 흘려보내되, interval 동안 아무것도 없으면 SSE 주석(`: ping`)을 끼워 넣는다.
-
-    에이전트 스트림은 진입한 task 안에서만 닫을 수 있어서, 한 task가 끝까지 돌리고 큐로 넘겨받는다.
-    """
-    queue: asyncio.Queue = asyncio.Queue()
-    done = object()
-
-    async def produce():
-        try:
-            async for chunk in chunks:
-                await queue.put(chunk)
-        finally:
-            await queue.put(done)
-
-    producer = asyncio.create_task(produce())
+def _in_session(work: Callable[[Session], T], session_factory: Callable[[], Session] = SessionLocal) -> T:
+    """짧은 DB 작업 하나를 새 세션으로 (스트림 안에서 스레드로 부른다 — 답이 끝날 때까지 세션을 잡고 있지 않는다)."""
+    db = session_factory()
     try:
-        while True:
-            try:
-                chunk = await asyncio.wait_for(queue.get(), timeout=interval)
-            except asyncio.TimeoutError:
-                yield ": ping\n\n"
-                continue
-            if chunk is done:
-                break
-            yield chunk
-        await producer  # 생산 중 예외가 있었으면 여기서 드러난다
+        return work(db)
     finally:
-        producer.cancel()  # 클라이언트가 끊으면 에이전트 실행도 멈춘다
+        db.close()
+
+
+def _own_log(db: Session, user_id: int, log_id: int) -> ChatLog:
+    chat_log = db.query(ChatLog).filter(ChatLog.id == log_id).first()
+    if not chat_log:
+        raise HTTPException(status_code=404, detail="Chat log not found")
+    if chat_log.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Not your chat log")
+    return chat_log
 
 
 def _get_own_session(db: Session, user_id: int, session_id: int) -> ChatSession:
@@ -155,24 +144,23 @@ def _finish_chat_log(
 
 
 @router.post("/message/stream")
-async def stream_message(
+def stream_message(
     request: ChatRequest,
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
 ):
-    # 세션 확인(404)은 스트림을 열기 전에 한다
+    # 세션 확인(404)과 새 세션은 스트림을 열기 전에 한다. 스트림 안에서는 이 요청 세션을 쓰지 않고
+    # 필요할 때마다 짧게 연다 (LLM 답이 끝날 때까지 연결을 잡지 않고, 다른 스레드와 세션을 나누지 않게)
     session = _resolve_session(db, user_id, request.session_id, request.message)
+    session_id, title = session.id, session.title
 
-    def sse(event: dict) -> str:
-        return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-
-    stop_key = (user_id, session.id)
+    stop_key = (user_id, session_id)
     stop = asyncio.Event()
     _stop_events[stop_key] = stop
 
     async def event_generator():
         try:
-            async for chunk in _with_heartbeat(_stream_events()):
+            async for chunk in with_heartbeat(_stream_events()):
                 yield chunk
         finally:
             # 끝났거나 클라이언트가 끊었을 때 등록을 지운다 (같은 세션의 새 스트림이 덮어썼으면 그대로 둔다)
@@ -180,21 +168,45 @@ async def stream_message(
                 del _stop_events[stop_key]
 
     async def _stream_events():
-        yield sse({"type": "session", "data": {"session_id": session.id, "title": session.title}})
+        yield sse_event({"type": "session", "data": {"session_id": session_id, "title": title}})
         answer = ""
         refined_question = None
         steps = []
         layout = None
         result = ChatLogResult.FAILED.value  # 답변 이벤트 없이 끝나면 실패
         chat_log_id = None
-        memory = None
-        try:
-            service = AnswerService(db)
-            memory = service.memory
-            await asyncio.to_thread(memory.update_summary, session)  # 지난 요약이 실패했으면 여기서 따라잡는다
-            context = memory.load_context(session)
+        config = None
+
+        def prepare(db: Session):
+            config = load_ai_config(db)
+            memory = ChatMemory(db, config)
+            chat_session = db.get(ChatSession, session_id)
+            memory.update_summary(chat_session)  # 지난 요약이 실패했으면 여기서 따라잡는다
+            context = memory.load_context(chat_session)
             # 맥락을 읽은 뒤에 만든다 — 먼저 만들면 답이 빈 이번 턴이 맥락에 끼어든다
-            chat_log_id = _start_chat_log(db, user_id, session, request.message)
+            # memory는 질문 재작성(LLM)에만 다시 쓰이므로 이 세션이 닫혀도 된다
+            return config, memory, context, _start_chat_log(db, user_id, chat_session, request.message)
+
+        def finish(db: Session) -> int:
+            chat_session = db.get(ChatSession, session_id)
+            if chat_log_id is None:
+                return _save_chat_log(
+                    db, user_id, chat_session, request.message, refined_question, answer or "", steps, result
+                )
+            _finish_chat_log(
+                db, chat_log_id, chat_session, request.message, refined_question, answer or "", steps, layout, result
+            )
+            return chat_log_id
+
+        def summarize(db: Session) -> None:
+            chat_session = db.get(ChatSession, session_id)
+            if chat_session is not None:  # 그사이 세션을 지웠으면 요약할 것이 없다
+                ChatMemory(db, config).update_summary(chat_session)
+
+        # 동기 DB 작업은 스레드에서 돌려 이벤트 루프(다른 요청·스트림)를 막지 않는다
+        try:
+            config, memory, context, chat_log_id = await asyncio.to_thread(_in_session, prepare)
+            service = AnswerService(config, memory=memory)
             async for event in service.stream(request.message, context, chat_log_id, stop, refine=request.refine):
                 if event.get("type") == "refined_question":
                     refined_question = event["data"]["question"]
@@ -205,39 +217,32 @@ async def stream_message(
                 elif event.get("type") == "answer":
                     answer = event["data"]["answer"]
                     result = event["data"]["result"]
-                yield sse(event)
-        except Exception as e:
+                yield sse_event(event)
+        except Exception:
             logger.exception("Chat stream error")
             result = ChatLogResult.FAILED.value
-            yield sse({"type": "error", "data": {"message": str(e)}})
+            yield sse_event({"type": "error", "data": {"message": STREAM_ERROR}})
 
         try:
-            if chat_log_id is None:
-                chat_log_id = _save_chat_log(
-                    db, user_id, session, request.message, refined_question, answer or "", steps, result
-                )
-            else:
-                _finish_chat_log(
-                    db, chat_log_id, session, request.message, refined_question, answer or "", steps, layout, result
-                )
-            yield sse({"type": "chat_log_id", "data": {"chat_log_id": chat_log_id}})
-        except Exception as e:
-            logger.warning(f"Failed to save chat log: {e}")
+            chat_log_id = await asyncio.to_thread(_in_session, finish)
+            yield sse_event({"type": "chat_log_id", "data": {"chat_log_id": chat_log_id}})
+        except Exception:
+            logger.warning("Failed to save chat log", exc_info=True)
 
         # 답변을 보낸 뒤에 요약하므로 사용자는 기다리지 않는다
-        if memory is not None:
+        if config is not None:
             try:
-                await asyncio.to_thread(memory.update_summary, session)
-            except Exception as e:
-                logger.warning(f"Failed to update chat summary: {e}")
+                await asyncio.to_thread(_in_session, summarize)
+            except Exception:
+                logger.warning("Failed to update chat summary", exc_info=True)
 
-        yield "data: [DONE]\n\n"
+        yield DONE
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.post("/sessions/{session_id}/stop", status_code=204)
-async def stop_message(
+async def stop_message(  # asyncio.Event는 스레드 안전하지 않으므로 루프에서 set한다
     session_id: int,
     user_id: int = Depends(get_current_user_id),
 ):
@@ -264,7 +269,7 @@ def parse_session_cursor(cursor: str) -> tuple[datetime, int]:
 
 
 @router.get("/sessions")
-async def list_sessions(
+def list_sessions(
     limit: int = Query(30, ge=1, le=100),
     cursor: Optional[str] = Query(None, description="이전 응답의 next_cursor — 그 다음(더 오래된) 세션부터"),
     db: Session = Depends(get_db),
@@ -282,7 +287,7 @@ async def list_sessions(
     page = sessions[:limit]
     return {
         "items": [
-            {"id": s.id, "title": s.title, "created_at": s.created_at.isoformat(), "updated_at": s.updated_at.isoformat()}
+            {"id": s.id, "title": s.title, "created_at": iso_utc(s.created_at), "updated_at": iso_utc(s.updated_at)}
             for s in page
         ],
         "next_cursor": session_cursor(page[-1]) if len(sessions) > limit else None,
@@ -290,7 +295,7 @@ async def list_sessions(
 
 
 @router.get("/sessions/{session_id}")
-async def get_session(
+def get_session(
     session_id: int,
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
@@ -321,7 +326,7 @@ async def get_session(
                 "slots": slot_status.get(log.id, {}),
                 "status": log.status,
                 "result": log.result,
-                "created_at": log.created_at.isoformat(),
+                "created_at": iso_utc(log.created_at),
             }
             for log in logs
         ],
@@ -329,7 +334,7 @@ async def get_session(
 
 
 @router.patch("/sessions/{session_id}")
-async def rename_session(
+def rename_session(
     session_id: int,
     body: ChatSessionUpdate,
     db: Session = Depends(get_db),
@@ -342,7 +347,7 @@ async def rename_session(
 
 
 @router.delete("/sessions/{session_id}", status_code=204)
-async def delete_session(
+def delete_session(
     session_id: int,
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
@@ -356,18 +361,14 @@ async def delete_session(
 # --- User Feedback & History (Phase 4) ---
 
 @router.post("/logs/{log_id}/feedback")
-async def toggle_feedback(
+def toggle_feedback(
     log_id: int,
     request: FeedbackRequest,
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
 ):
     """Toggle like/dislike on a chat log. Only allowed before admin action."""
-    chat_log = db.query(ChatLog).filter(ChatLog.id == log_id).first()
-    if not chat_log:
-        raise HTTPException(status_code=404, detail="Chat log not found")
-    if chat_log.user_id != user_id:
-        raise HTTPException(status_code=403, detail="Not your chat log")
+    chat_log = _own_log(db, user_id, log_id)
 
     # Only allow feedback change when status is PENDING/LIKED/DISLIKED
     allowed = {ChatLogStatus.PENDING.value, ChatLogStatus.LIKED.value, ChatLogStatus.DISLIKED.value}
@@ -387,7 +388,7 @@ async def toggle_feedback(
 
 
 @router.get("/logs/mine")
-async def get_my_chat_logs(
+def get_my_chat_logs(
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -406,7 +407,7 @@ async def get_my_chat_logs(
                 "answer": item.answer,
                 "generated_code": item.generated_code,
                 "status": item.status,
-                "created_at": item.created_at.isoformat(),
+                "created_at": iso_utc(item.created_at),
             }
             for item in items
         ],
@@ -415,18 +416,14 @@ async def get_my_chat_logs(
 
 
 @router.get("/logs/{log_id}/slots/{slot_id}")
-async def get_chat_slot(
+def get_chat_slot(
     log_id: int,
     slot_id: str,
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
 ):
     """답변 화면 한 영역의 내용. 스트림의 slot 완료 알림을 받거나 지난 대화를 열 때 가져간다."""
-    chat_log = db.query(ChatLog).filter(ChatLog.id == log_id).first()
-    if not chat_log:
-        raise HTTPException(status_code=404, detail="Chat log not found")
-    if chat_log.user_id != user_id:
-        raise HTTPException(status_code=403, detail="Not your chat log")
+    _own_log(db, user_id, log_id)
     slot = db.get(ChatSlot, (log_id, slot_id))
     if not slot:
         raise HTTPException(status_code=404, detail="Slot not found")
@@ -434,17 +431,13 @@ async def get_chat_slot(
 
 
 @router.get("/logs/{log_id}")
-async def get_chat_log(
+def get_chat_log(
     log_id: int,
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
 ):
     """Get a specific chat log detail."""
-    chat_log = db.query(ChatLog).filter(ChatLog.id == log_id).first()
-    if not chat_log:
-        raise HTTPException(status_code=404, detail="Chat log not found")
-    if chat_log.user_id != user_id:
-        raise HTTPException(status_code=403, detail="Not your chat log")
+    chat_log = _own_log(db, user_id, log_id)
     return {
         "id": chat_log.id,
         "question": chat_log.question,
@@ -452,6 +445,6 @@ async def get_chat_log(
         "answer": chat_log.answer,
         "generated_code": chat_log.generated_code,
         "status": chat_log.status,
-        "created_at": chat_log.created_at.isoformat(),
+        "created_at": iso_utc(chat_log.created_at),
     }
 

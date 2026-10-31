@@ -1,4 +1,5 @@
 import re
+from datetime import date, timedelta
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, Field, model_validator
@@ -10,9 +11,7 @@ from ...content import BarView, DataField, Dataset, Source, TableView
 from ...entities import EntityResolver
 from ...graph_service import GraphService, node
 from .base import DataSkill, EntityKind, SkillResult, data_result, empty, not_found
-from .common import DEFAULT_PERIOD, PERIOD_DESCRIPTION, period_span
-from .etf_choice import _theme_etfs, _theme_word
-from .stock_holders import SAFE_CODE_RE
+from .common import DEFAULT_PERIOD, PERIOD_DESCRIPTION, period_span, theme_etfs, theme_word
 
 # 기준: (표시 이름, 서식, ETF만 되는지). 수익률은 마지막 거래일부터 period만큼 거슬러 센다 (period_returns와 같은 계산)
 METRICS = {
@@ -24,6 +23,26 @@ METRICS = {
 # 예전 계획(레이아웃 예시 등)의 'return_1m' 같은 기준은 by=return + period로 읽는다
 LEGACY_RETURN = re.compile(r"return_(\w+)")
 MAX_TARGETS = 30
+PRICE_LABEL = {"etf": "ETF", "stock": "Stock"}  # 시세(Price)가 달린 노드 — 코드에서만 고르는 이름이라 쿼리에 바로 넣는다
+
+
+def closes_by_code(graph: GraphService, kind: str, codes: List[str], days: int) -> Dict[str, List[Dict]]:
+    """후보 전부의 최근 days일 종가를 한 번의 쿼리로: code → [{date, close}] 날짜 순 (종가 없는 날은 뺀다)."""
+    if not codes:
+        return {}
+    end = date.today()
+    rows = node(
+        graph,
+        f"MATCH (n:{PRICE_LABEL[kind]})-[:HAS_PRICE]->(p:Price) "
+        "WHERE n.code IN $codes AND p.date >= $start AND p.date <= $end "
+        "RETURN {code: n.code, date: p.date, close: p.close}",
+        {"codes": codes, "start": (end - timedelta(days=days)).isoformat(), "end": end.isoformat()},
+    )
+    out: Dict[str, List[Dict]] = {}
+    for r in sorted(rows, key=lambda r: r["date"]):
+        if r.get("close"):
+            out.setdefault(r["code"], []).append({"date": r["date"], "close": float(r["close"])})
+    return out
 
 
 class RankArgs(BaseModel):
@@ -95,7 +114,7 @@ class RankSkill(DataSkill):
         graph = GraphService(db)
         missing: List[str] = []
         if args.theme:
-            candidates = _theme_etfs(db, _theme_word(args.theme))
+            candidates = theme_etfs(db, theme_word(args.theme))
             if not candidates:
                 return not_found(f"'{args.theme}' 테마의 ETF를 찾지 못했습니다")
         elif args.kind == "etf" and not args.targets:
@@ -163,17 +182,17 @@ class RankSkill(DataSkill):
                 candidates: List[Dict]) -> Tuple[Dict[str, Optional[float]], Dict[str, Tuple[str, str]]]:
         """{code: 값}과, 수익률이면 값을 낸 대상의 {code: (시작일, 끝일)}."""
         if args.by == "return":
-            prices = graph.get_etf_prices if args.kind == "etf" else graph.get_stock_prices
+            closes = closes_by_code(graph, args.kind, [c["code"] for c in candidates], period_days(args.period))
             out, spans = {}, {}
             for c in candidates:
-                series = [p for p in prices(c["code"], days=period_days(args.period)) if p.get("close")]
+                series = closes.get(c["code"], [])
                 base = period_base(series, args.period) if series else None
                 out[c["code"]] = pct_change(base["close"], series[-1]["close"]) if base else None
                 if base:
                     spans[c["code"]] = (base["date"], series[-1]["date"])
             return out, spans
-        codes = ", ".join(repr(c["code"]) for c in candidates if SAFE_CODE_RE.fullmatch(c["code"]))
-        rows = node(graph, f"MATCH (e:ETF) WHERE e.code IN [{codes}] RETURN {{code: e.code, value: e.{args.by}}}", {})
+        codes = [c["code"] for c in candidates]
+        rows = node(graph, f"MATCH (e:ETF) WHERE e.code IN $codes RETURN {{code: e.code, value: e.{args.by}}}", {"codes": codes})
         return {r["code"]: (float(r["value"]) if r.get("value") is not None else None) for r in rows}, {}
 
     @staticmethod

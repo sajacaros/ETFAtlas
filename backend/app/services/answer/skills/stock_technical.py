@@ -22,6 +22,8 @@ DEFAULT_TECH_PERIOD = "6m"  # 120일선·MACD 교차를 읽으려면 한 달로�
 WARMUP_DAYS = 200  # 화면 첫날 120일선에 필요한 거래일(약 170일)과 휴장일 여유
 RANGES = ("1m", "6m", "1y")  # 화면에서 고르는 표시 기간. 질문한 기간이 다르면 하나 더 붙는다
 MA_PERIODS = (5, 20, 60, 120)
+# 화면에는 없지만 신호 판정이 읽는 이평: 미너비니 조건(50·150·200일선), 와인스타인 단계(150일선)
+SIGNAL_MA_PERIODS = (50, sig.STAGE_MA, 200)
 RSI_LEVELS = (30, 70)
 TREND_DAYS = 3  # 히스토그램 증감을 보는 최근 거래일 수
 
@@ -240,7 +242,7 @@ class StockTechnicalSkill(DataSkill):
 
         n = len(bars)
         closes = [b["close"] for b in bars]
-        mas = {p: _pad(ind.rolling_mean(closes, p), n) for p in {*MA_PERIODS, 50, sig.STAGE_MA, 200}}
+        mas = {p: _pad(ind.rolling_mean(closes, p), n) for p in {*MA_PERIODS, *SIGNAL_MA_PERIODS}}
         bands = _pad(ind.bollinger_series(closes), n)
         macd = ind.macd(closes)
         macd_line, macd_sig = (_pad(macd[0], n), _pad(macd[1], n)) if macd else ([None] * n, [None] * n)
@@ -269,8 +271,9 @@ class StockTechnicalSkill(DataSkill):
         all_rows, rows = rows, [r for r in rows if r["date"] >= (base or bars[0])["date"]]
         span = period_span(rows[0]["date"], rows[-1]["date"], period_label(args.period))
         notes = [span, "이동평균·보조지표는 기간 앞의 일봉까지 넣어 계산했습니다"]
-        if not base:
-            notes.append(f"요청한 기간보다 데이터가 짧습니다: {rows[0]['date']}부터")
+        short = None if base else f"요청한 기간보다 데이터가 짧습니다: {rows[0]['date']}부터"
+        if short:
+            notes.append(short)
         missing_ma = [p for p in MA_PERIODS if rows[0][f"ma{p}"] is None]
         if missing_ma:
             notes.append("데이터가 모자라 기간 첫날부터 그리지 못한 이평: " + ", ".join(f"{p}일선" for p in missing_ma))
@@ -282,7 +285,7 @@ class StockTechnicalSkill(DataSkill):
 
         first, last = rows[0], rows[-1]
         summary_lines = [
-            span + (f" — {notes[2]}" if not base else ""),
+            span + (f" — {short}" if short else ""),
             f"{name}: 종가 {_price(first['close'])} → {_price(last['close'])} ({pct_change(first['close'], last['close']):+.2f}%), "
             f"기간 최고 {_price(max(r['high'] for r in rows))}, 최저 {_price(min(r['low'] for r in rows))}, 마지막 거래일 {last['date']}",
             *_ma_lines(rows), _signal_line(signals["trend"]),

@@ -2,13 +2,13 @@ import logging
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-from openai import OpenAI
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
-from .ai_config import load_ai_config
 from ..models.chat import ChatLog, ChatLogResult, ChatSession
+from .ai_config import AIConfig, load_ai_config
 from .chat_memory_prompt import REFINE_SYSTEM_PROMPT, SUMMARY_SYSTEM_PROMPT
+from .llm import complete, openai_client
 
 logger = logging.getLogger(__name__)
 
@@ -52,23 +52,17 @@ def _turn(log: ChatLog) -> Turn:
 class ChatMemory:
     """세션 히스토리 관리: 최근 window턴은 원문, 그 이전은 요약으로 유지하고 질문을 맥락으로 재작성한다."""
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, config: Optional[AIConfig] = None):
+        """config를 이미 읽었으면 넘긴다 (한 요청에서 설정을 두 번 읽지 않게)."""
         self.db = db
-        config = load_ai_config(db)
-        self._client = OpenAI(base_url=config.llm_api_base, api_key=config.llm_api_key)
+        config = config or load_ai_config(db)
+        self._client = openai_client(config.llm_api_base, config.llm_api_key)
         self._llm_model = config.llm_model
         self.window = get_settings().chat_history_window
 
     def _complete(self, system: str, user: str, max_tokens: int) -> str:
-        resp = self._client.chat.completions.create(
-            model=self._llm_model,
-            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-            temperature=0,
-            max_tokens=max_tokens,
-            # 채팅마다 호출되는 보조 단계라 추론 없이 빠르게
-            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-        )
-        return (resp.choices[0].message.content or "").strip()
+        # 채팅마다 호출되는 보조 단계라 추론 없이 빠르게
+        return complete(self._client, self._llm_model, system, user, max_tokens)
 
     def _session_logs(self, session: ChatSession, after_id: int = 0) -> List[ChatLog]:
         return (

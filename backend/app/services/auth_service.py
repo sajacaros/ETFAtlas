@@ -147,7 +147,7 @@ class AuthService:
 
     def authenticate(self, username: str, password: str) -> Optional[User]:
         user = self.db.query(User).filter(User.username == username).first()
-        if user and verify_password(password, user.password_hash):
+        if verify_password(password, user.password_hash if user else None):
             return user
         return None
 

@@ -1,4 +1,3 @@
-import re
 from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
@@ -10,7 +9,6 @@ from ...graph_service import GraphService, node
 from .base import DataSkill, SkillResult, data_result, empty, not_found
 from .common import cut_note, min_weight_field, object_particle
 
-SAFE_CODE_RE = re.compile(r"[0-9A-Z]{6}")  # 쿼리 문자열에 직접 넣으므로 코드 모양만 허용
 
 
 class StockHoldersArgs(BaseModel):
@@ -37,7 +35,6 @@ class StockHoldersSkill(DataSkill):
 
     def fetch(self, args: StockHoldersArgs, display: str, db: Session, resolver: EntityResolver) -> SkillResult:
         stocks, missing = resolver.stocks(db, args.stocks)
-        stocks = [s for s in stocks if SAFE_CODE_RE.fullmatch(s["code"])]
         if not stocks:
             return not_found(f"종목을 찾지 못했습니다: {', '.join(args.stocks)}")
         holders = _rank(db, stocks)
@@ -91,12 +88,11 @@ class StockHoldersSkill(DataSkill):
 
 def _rank(db: Session, stocks: List[Dict]) -> List[Dict]:
     """종목들을 담은 ETF를 종목 비중 합계가 높은 순으로. [{code, name, expense_ratio, date, weights: {종목 코드: 비중}, total}]"""
-    codes = ", ".join(repr(s["code"]) for s in stocks)
     rows = node(
         GraphService(db),
-        f"MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock) WHERE s.code IN [{codes}] "
+        "MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock) WHERE s.code IN $codes "
         "RETURN {code: e.code, name: e.name, stock: s.code, weight: h.weight, expense_ratio: e.expense_ratio, date: h.date}",
-        {},
+        {"codes": [s["code"] for s in stocks]},
     )
     etfs: Dict[str, Dict] = {}
     for r in rows:

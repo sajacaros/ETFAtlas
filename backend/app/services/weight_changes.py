@@ -1,19 +1,14 @@
 from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
-from ..models.discord_setting import DiscordSetting
 from ..models.weight_change import WeightChange, WeightChangeDate
-
-DEFAULT_ALERT_THRESHOLD = 3.0
-DEFAULT_ADDED_THRESHOLD = 2.0
+from .discord_notify import load_settings
 
 
 def get_alert_thresholds(db: Session) -> tuple[float, float]:
     """(비중변화 기준값, 신규편입 기준값) %p. 디스코드 알림과 웹 비중변화 화면이 같은 값을 쓴다 (관리자 페이지에서 설정)."""
-    setting = db.get(DiscordSetting, 1)
-    if not setting:
-        return DEFAULT_ALERT_THRESHOLD, DEFAULT_ADDED_THRESHOLD
-    return setting.threshold, setting.added_threshold
+    settings = load_settings(db)
+    return settings["threshold"], settings["added_threshold"]
 
 
 def is_significant(change_type: str, weight_change: float, threshold: float, added_threshold: float) -> bool:

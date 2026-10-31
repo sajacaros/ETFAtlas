@@ -130,10 +130,10 @@ async def run_flow(graph: FlowGraph, ctx: FlowContext) -> AsyncIterator[Dict[str
             failed.add(node_id)
             yield {"type": "node_error", "data": {"id": node_id, "message": str(e)}}
             continue
-        except Exception as e:
-            logger.exception("Flow node %s (%s) failed", node_id, spec.type)
+        except Exception:
+            logger.exception("Flow node %s (%s) failed", node_id, spec.type)  # 내부 오류 문구는 로그에만
             failed.add(node_id)
-            yield {"type": "node_error", "data": {"id": node_id, "message": f"실행 오류: {e}"}}
+            yield {"type": "node_error", "data": {"id": node_id, "message": "실행 중 오류가 났습니다"}}
             continue
         if items is None:
             failed.add(node_id)

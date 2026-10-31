@@ -1,9 +1,13 @@
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PlainSerializer
 from typing import Annotated, Literal, Optional
 from decimal import Decimal
 
+# 금액·수량·비중. 계산은 Decimal로 하고 JSON에는 숫자로 내보낸다 (Pydantic 기본값은 문자열)
+Num = Annotated[Decimal, PlainSerializer(float, return_type=float, when_used="json")]
+
 
 AccountType = Literal["IRP", "PENSION_SAVINGS"]
+CalculationBase = Literal["CURRENT_TOTAL", "TARGET_AMOUNT"]
 ACCOUNT_TYPE_ORDER: tuple[str, ...] = ("IRP", "PENSION_SAVINGS")
 
 
@@ -18,23 +22,23 @@ AccountTypes = Annotated[list[AccountType], Field(min_length=1), AfterValidator(
 
 class TargetAllocationCreate(BaseModel):
     ticker: str
-    target_weight: Decimal
+    target_weight: Num
 
 
 # --- Portfolio ---
 class PortfolioCreate(BaseModel):
     name: str = "My Portfolio"
     account_types: AccountTypes = ["PENSION_SAVINGS"]
-    calculation_base: str = "CURRENT_TOTAL"
-    target_total_amount: Optional[Decimal] = None
+    calculation_base: CalculationBase = "CURRENT_TOTAL"
+    target_total_amount: Optional[Num] = None
     targets: list[TargetAllocationCreate] = []  # 구성종목 분석에서 저장할 때 목표 비중을 함께 넣는다
 
 
 class PortfolioUpdate(BaseModel):
     name: Optional[str] = None
     account_types: Optional[AccountTypes] = None
-    calculation_base: Optional[str] = None
-    target_total_amount: Optional[Decimal] = None
+    calculation_base: Optional[CalculationBase] = None
+    target_total_amount: Optional[Num] = None
     snapshot_enabled: Optional[bool] = None
 
 
@@ -51,14 +55,14 @@ class PortfolioResponse(BaseModel):
     id: int
     name: str
     account_types: list[AccountType]
-    calculation_base: str
-    target_total_amount: Optional[Decimal] = None
-    current_value: Optional[Decimal] = None
+    calculation_base: CalculationBase
+    target_total_amount: Optional[Num] = None
+    current_value: Optional[Num] = None
     current_value_date: Optional[str] = None
     current_value_updated_at: Optional[str] = None
-    daily_change_amount: Optional[Decimal] = None
+    daily_change_amount: Optional[Num] = None
     daily_change_rate: Optional[float] = None
-    invested_amount: Optional[Decimal] = None
+    invested_amount: Optional[Num] = None
     investment_return_rate: Optional[float] = None
     snapshot_enabled: bool = False
 
@@ -67,14 +71,14 @@ class PortfolioResponse(BaseModel):
 
 # --- Target Allocation ---
 class TargetAllocationUpdate(BaseModel):
-    target_weight: Decimal
+    target_weight: Num
 
 
 class TargetAllocationResponse(BaseModel):
     id: int
     portfolio_id: int
     ticker: str
-    target_weight: Decimal
+    target_weight: Num
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -82,21 +86,21 @@ class TargetAllocationResponse(BaseModel):
 # --- Holding ---
 class HoldingCreate(BaseModel):
     ticker: str
-    quantity: Decimal = Decimal("0")
-    avg_price: Optional[Decimal] = None
+    quantity: Num = Decimal("0")
+    avg_price: Optional[Num] = None
 
 
 class HoldingUpdate(BaseModel):
-    quantity: Optional[Decimal] = None
-    avg_price: Optional[Decimal] = None
+    quantity: Optional[Num] = None
+    avg_price: Optional[Num] = None
 
 
 class HoldingResponse(BaseModel):
     id: int
     portfolio_id: int
     ticker: str
-    quantity: Decimal
-    avg_price: Optional[Decimal] = None
+    quantity: Num
+    avg_price: Optional[Num] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -105,28 +109,28 @@ class HoldingResponse(BaseModel):
 class CalculationRowResponse(BaseModel):
     ticker: str
     name: str
-    target_weight: Decimal
-    current_price: Decimal
-    target_amount: Decimal
-    target_quantity: Decimal
-    holding_quantity: Decimal
-    holding_amount: Decimal
-    required_quantity: Decimal
-    adjustment_amount: Decimal
+    target_weight: Num
+    current_price: Num
+    target_amount: Num
+    target_quantity: Num
+    holding_quantity: Num
+    holding_amount: Num
+    required_quantity: Num
+    adjustment_amount: Num
     status: str  # BUY / SELL / HOLD
-    avg_price: Optional[Decimal] = None
-    profit_loss_rate: Optional[Decimal] = None
-    profit_loss_amount: Optional[Decimal] = None
-    price_change_rate: Optional[Decimal] = None
+    avg_price: Optional[Num] = None
+    profit_loss_rate: Optional[Num] = None
+    profit_loss_amount: Optional[Num] = None
+    price_change_rate: Optional[Num] = None
 
 
 class CalculationResponse(BaseModel):
     rows: list[CalculationRowResponse]
-    base_amount: Decimal
-    total_weight: Decimal
-    total_holding_amount: Decimal
-    total_adjustment_amount: Decimal
-    total_profit_loss_amount: Optional[Decimal] = None
+    base_amount: Num
+    total_weight: Num
+    total_holding_amount: Num
+    total_adjustment_amount: Num
+    total_profit_loss_amount: Optional[Num] = None
     weight_warning: Optional[str] = None
 
 
@@ -135,8 +139,8 @@ class PortfolioDetailResponse(BaseModel):
     id: int
     name: str
     account_types: list[AccountType]
-    calculation_base: str
-    target_total_amount: Optional[Decimal] = None
+    calculation_base: CalculationBase
+    target_total_amount: Optional[Num] = None
     snapshot_enabled: bool = False
     target_allocations: list[TargetAllocationResponse] = []
     holdings: list[HoldingResponse] = []
@@ -146,18 +150,18 @@ class PortfolioDetailResponse(BaseModel):
 
 # --- Dashboard ---
 class DashboardSummaryItem(BaseModel):
-    amount: Decimal
+    amount: Num
     rate: float
 
 
 class DashboardSummary(BaseModel):
-    current_value: Decimal
+    current_value: Num
     cumulative: DashboardSummaryItem
     daily: Optional[DashboardSummaryItem] = None
     monthly: Optional[DashboardSummaryItem] = None
     yearly: Optional[DashboardSummaryItem] = None
     ytd: Optional[DashboardSummaryItem] = None
-    invested_amount: Optional[Decimal] = None
+    invested_amount: Optional[Num] = None
     investment_return: Optional[DashboardSummaryItem] = None
     snapshot_date: Optional[str] = None
     updated_at: Optional[str] = None
@@ -165,7 +169,7 @@ class DashboardSummary(BaseModel):
 
 class ChartDataPoint(BaseModel):
     date: str
-    total_value: Decimal
+    total_value: Num
     cumulative_rate: float
 
 
@@ -178,34 +182,34 @@ class DashboardResponse(BaseModel):
 class TotalHoldingItem(BaseModel):
     ticker: str
     name: str
-    quantity: Decimal
-    current_price: Decimal
-    value: Decimal
+    quantity: Num
+    current_price: Num
+    value: Num
     weight: float
 
 
 class TotalHoldingsResponse(BaseModel):
     holdings: list[TotalHoldingItem]
-    total_value: Decimal
+    total_value: Num
 
 
 # --- Batch Update ---
 class BatchTargetItem(BaseModel):
     ticker: str
-    target_weight: Decimal
+    target_weight: Num
 
 
 class BatchHoldingItem(BaseModel):
     ticker: str
-    quantity: Decimal
-    avg_price: Optional[Decimal] = None
+    quantity: Num
+    avg_price: Optional[Num] = None
 
 
 class PortfolioBatchUpdate(BaseModel):
     name: Optional[str] = None
     account_types: Optional[AccountTypes] = None
-    calculation_base: Optional[str] = None
-    target_total_amount: Optional[Decimal] = None
+    calculation_base: Optional[CalculationBase] = None
+    target_total_amount: Optional[Num] = None
     targets: list[BatchTargetItem]
     holdings: list[BatchHoldingItem]
 

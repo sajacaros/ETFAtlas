@@ -16,6 +16,15 @@ class ChatLogStatus(str, Enum):
     EMBEDDED = "embedded"
 
 
+# 관리자 검수: 동작 → (이 상태에서만 할 수 있다, 바뀌는 상태)
+REVIEW_TRANSITIONS = {
+    "approve": ((ChatLogStatus.LIKED, ChatLogStatus.REJECTED), ChatLogStatus.APPROVED),
+    "reject": ((ChatLogStatus.LIKED, ChatLogStatus.APPROVED), ChatLogStatus.REJECTED),
+    "embed": ((ChatLogStatus.APPROVED,), ChatLogStatus.EMBEDDED),
+    "withdraw": ((ChatLogStatus.EMBEDDED,), ChatLogStatus.APPROVED),
+}
+
+
 class ChatLogResult(str, Enum):
     """답변을 어떻게 마쳤는지. status(평가·예제 검수)와는 별개다."""
     RUNNING = "running"  # 답변을 만드는 중 (서버가 도중에 죽으면 그대로 남는다)
@@ -40,6 +49,7 @@ class ChatSession(Base):
 
 
 class ChatLog(Base):
+    """질문 하나와 답. status는 사용자 평가와 관리자 검수(few-shot 예시로 쓸지)를 함께 나타낸다."""
     __tablename__ = "chat_logs"
     __table_args__ = (
         Index("idx_chat_logs_user_id", "user_id"),
@@ -62,6 +72,15 @@ class ChatLog(Base):
     status = Column(String(20), default=ChatLogStatus.PENDING.value)
     result = Column(String(20), nullable=False, default=ChatLogResult.COMPLETED.value)
     created_at = Column(DateTime, default=utcnow)
+
+    def can_review(self, action: str) -> bool:
+        return self.status in {s.value for s in REVIEW_TRANSITIONS[action][0]}
+
+    def review(self, action: str) -> None:
+        """REVIEW_TRANSITIONS대로 상태를 바꾼다. 지금 상태에서 할 수 없는 동작이면 ValueError."""
+        if not self.can_review(action):
+            raise ValueError(f"Cannot {action} from status '{self.status}'")
+        self.status = REVIEW_TRANSITIONS[action][1].value
 
 
 class ChatSlot(Base):

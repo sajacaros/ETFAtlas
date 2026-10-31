@@ -2,7 +2,10 @@ import asyncio
 
 from pydantic import BaseModel, Field
 
-from .base import Skill, SkillContext, SkillResult, text_result
+from ....models.chat import ChatLogResult
+from ...chat_service import ChatService
+from ..tools import skill_tools
+from .base import PROCESS_EVENTS, Skill, SkillContext, SkillResult, text_result
 
 
 class AgentArgs(BaseModel):
@@ -21,19 +24,20 @@ class AgentSkill(Skill):
     uses_llm = True
 
     async def run(self, args: AgentArgs, display: str, ctx: SkillContext):
-        from ...chat_service import FALLBACK_ANSWER, ChatService  # chat_service가 이 패키지를 가져오지 않도록 늦게 가져온다
-
         db = ctx.session_factory()
         try:
-            service = await asyncio.to_thread(ChatService, db)
-            answer = None
-            async for event in service.chat_stream(args.question, ctx.conversation, stop=ctx.stop, refine=False):
+            # 이 답변의 스킬 중 tool인 것을 에이전트의 도구로 (화면 슬롯과 같은 계산)
+            tools = skill_tools(ctx.registry, ctx.session_factory)
+            service = await asyncio.to_thread(ChatService, db, ctx.ai_config, tools)
+            answer, result = None, ChatLogResult.FAILED.value
+            async for event in service.chat_stream(args.question, ctx.conversation, stop=ctx.stop):
                 if event["type"] == "answer":
-                    answer = event["data"]["answer"]
-                elif event["type"] in ("step_start", "step", "matched_examples"):
+                    answer, result = event["data"]["answer"], event["data"]["result"]
+                elif event["type"] in PROCESS_EVENTS:
                     yield event
-            # 에이전트는 실패해도 안내 문구를 답으로 돌려주므로 그 경우를 실패로 본다
-            yield (text_result(answer, kind="markdown") if answer and answer != FALLBACK_ANSWER
-                   else SkillResult(status="failed", message="답변을 만들지 못했습니다")).event()
+            # 실패는 에이전트가 낸 결과 값으로 본다 (실패해도 안내 문구가 답으로 온다)
+            yield (SkillResult(status="failed", message="답변을 만들지 못했습니다")
+                   if result == ChatLogResult.FAILED.value or not answer
+                   else text_result(answer, kind="markdown")).event()
         finally:
             db.close()

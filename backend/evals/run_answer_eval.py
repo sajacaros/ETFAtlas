@@ -59,9 +59,10 @@ async def run_one(item: Dict, sem: asyncio.Semaphore) -> Dict:
         db = SessionLocal()
         started = time.monotonic()
         slots, answer, result, stages = {}, "", "", []
-        planner = RecordingPlanner(load_ai_config(db), **data_lookups(SessionLocal))
+        config = load_ai_config(db)
+        planner = RecordingPlanner(config, **data_lookups(SessionLocal, config))
         try:
-            service = AnswerService(db, planner=planner)
+            service = AnswerService(config, planner=planner)
             service._store = _NullStore()
             async for event in service.stream(item["q"], ConversationContext(), 0, asyncio.Event(), refine=False):
                 kind, data = event["type"], event["data"]

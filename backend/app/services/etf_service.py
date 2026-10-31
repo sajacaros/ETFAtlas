@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from ..models.etf import ETF
@@ -56,7 +56,4 @@ class ETFService:
         # Preserve the order from the SQL query
         code_to_etf = {etf.code: etf for etf in etfs}
         return [code_to_etf[code] for code in codes if code in code_to_etf]
-
-    def get_etf_by_code(self, code: str) -> Optional[ETF]:
-        return self.db.query(ETF).filter(ETF.code == code).first()
 

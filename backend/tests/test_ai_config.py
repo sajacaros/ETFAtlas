@@ -1,10 +1,8 @@
-import asyncio
-
 import pytest
 
 from app.models.ai_setting import AISetting
 from app.routers import admin
-from app.schemas.chat import AISettingsUpdate
+from app.schemas.admin import AISettingsUpdate
 from app.services import ai_config
 from app.utils import encryption
 
@@ -64,7 +62,7 @@ def test_load_ignores_undecryptable_key(env):
 def test_update_encrypts_keys_and_clears_with_empty_string(env):
     db = FakeDB(AISetting(id=1, llm_model="old-model"))
     body = AISettingsUpdate(llm_api_base=" https://new/llm/ ", llm_api_key="secret-1234", llm_model="")
-    response = asyncio.run(admin.update_ai_settings(body, db=db, admin_id=1))
+    response = admin.update_ai_settings(body, db=db, admin_id=1)
 
     assert db.setting.llm_api_base == "https://new/llm"
     assert db.setting.llm_api_key != "secret-1234"  # 평문으로 저장하지 않는다

@@ -7,30 +7,31 @@
 """
 import asyncio
 import logging
-import os
 import time
+from dataclasses import dataclass
 from datetime import date, datetime, time as dtime
 from typing import Dict, List, Optional
 
-import httpx
 from sqlalchemy import or_, update
 
 from ...database import SessionLocal
 from ...models.analysis_flow import AnalysisFlow
-from ...models.discord_setting import DiscordSetting
 from ...models.user import User
-from ..ai_config import load_ai_config
+from ...utils import discord
+from .. import discord_notify
+from ..ai_config import AIConfig, load_ai_config
 from .base import FlowContext
 from .executor import FlowGraph, FlowGraphError, run_flow, topo_order
 from .market_data import FreshMarketData, MarketData, default_market_data
 from .performance import BENCHMARK
-from .records import KST, PickCollector, previous_picks, record_run
+from ...utils.time import KST
+from .records import PickCollector, previous_picks, record_run
 
 logger = logging.getLogger(__name__)
 
 CHECK_EVERY = 600  # 초
 START, END = dtime(16, 10), dtime(20, 0)  # 장 마감(15:30) 뒤 일봉이 들어올 시간을 둔다
-DISCORD_MAX = 1900  # 디스코드 2,000자 제한에 여유를 둔다
+DISCORD_MAX = discord.SAFE_CONTENT
 LIST_NAMES = 15  # 새로 들어옴·빠짐 목록에 이름을 보여 줄 최대 수
 
 
@@ -104,48 +105,54 @@ def change_message(name: str, owner: str, day: date, picks: List[Dict[str, str]]
     return text if len(text) <= DISCORD_MAX else text[: DISCORD_MAX - 1] + "…"
 
 
-def webhook_url() -> Optional[str]:
-    """비중 변화 알림과 같은 웹훅을 쓴다. 관리자가 디스코드 알림을 꺼 두었으면 보내지 않는다."""
-    db = SessionLocal()
-    try:
-        setting = db.get(DiscordSetting, 1)
-        if setting is not None:
-            return setting.webhook_url if setting.enabled else None
-        return os.environ.get("DISCORD_WEBHOOK_URL") or None
-    finally:
-        db.close()
-
-
 async def send_discord(content: str) -> None:
-    url = webhook_url()
-    if not url:
-        return
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(url, json={"content": content})
-            if resp.status_code == 429:
-                await asyncio.sleep(float(resp.json().get("retry_after", 1)))
-                resp = await client.post(url, json={"content": content})
-            resp.raise_for_status()
-    except httpx.HTTPError as e:
-        # 예외 메시지에 웹훅 주소(토큰 포함)가 들어가므로 종류만 남긴다
-        status = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else None
-        logger.warning("Flow Discord notification failed: %s status=%s", type(e).__name__, status)
+    await discord_notify.send([content], "Flow")
 
 
-async def run_scheduled(flow_id: int, today: date, market: MarketData) -> None:
+@dataclass
+class ScheduledFlow:
+    name: str
+    notify: bool
+    user_id: int
+    owner_name: str
+    graph: FlowGraph
+    ai_config: AIConfig
+
+
+def load_flow(flow_id: int) -> Optional[ScheduledFlow]:
+    """자동 실행에 필요한 것을 한 세션에서 읽는다 (스레드에서 부른다). 그사이 지워졌으면 None."""
     db = SessionLocal()
     try:
         flow = db.get(AnalysisFlow, flow_id)
         if flow is None:
-            return
+            return None
         owner = db.get(User, flow.user_id)
-        name, notify, user_id = flow.name, flow.notify, flow.user_id
-        owner_name = (owner.name or owner.username) if owner else "?"
-        graph = FlowGraph.model_validate(flow.graph)
-        ai_config = load_ai_config(db)
+        return ScheduledFlow(
+            name=flow.name, notify=flow.notify, user_id=flow.user_id,
+            owner_name=(owner.name or owner.username) if owner else "?",
+            graph=FlowGraph.model_validate(flow.graph), ai_config=load_ai_config(db),
+        )
     finally:
         db.close()
+
+
+def record_scheduled(flow_id: int, today: date, picks: List[Dict[str, str]]) -> Optional[List[Dict[str, str]]]:
+    """오늘 고른 종목을 남기고, 그 전 기록의 종목을 돌려준다 (알림에서 바뀐 것을 가린다). 스레드에서 부른다."""
+    db = SessionLocal()
+    try:
+        previous = previous_picks(db, flow_id, today)
+        record_run(db, flow_id, today, "schedule", picks)
+        return previous
+    finally:
+        db.close()
+
+
+async def run_scheduled(flow_id: int, today: date, market: MarketData) -> None:
+    # 이벤트 루프에서는 DB를 직접 열지 않는다 — 동기 조회는 묶어서 스레드로
+    loaded = await asyncio.to_thread(load_flow, flow_id)
+    if loaded is None:
+        return
+    name, notify, user_id, owner_name, graph = loaded.name, loaded.notify, loaded.user_id, loaded.owner_name, loaded.graph
 
     try:
         topo_order(graph)
@@ -155,7 +162,8 @@ async def run_scheduled(flow_id: int, today: date, market: MarketData) -> None:
             await send_discord(f"⚠️ **스크리너: {name}** ({today.isoformat()}, {owner_name}) 자동 실행 실패: {e}")
         return
 
-    ctx = FlowContext(user_id=user_id, session_factory=SessionLocal, ai_config=ai_config, market=market, stop=asyncio.Event())
+    ctx = FlowContext(user_id=user_id, session_factory=SessionLocal, ai_config=loaded.ai_config, market=market,
+                      stop=asyncio.Event())
     collector = PickCollector(graph)
     errors: List[str] = []
     async for event in run_flow(graph, ctx):
@@ -170,12 +178,7 @@ async def run_scheduled(flow_id: int, today: date, market: MarketData) -> None:
             await send_discord(f"⚠️ **스크리너: {name}** ({today.isoformat()}, {owner_name}) 자동 실행 실패: {reason}")
         return
 
-    db = SessionLocal()
-    try:
-        previous = previous_picks(db, flow_id, today)
-        record_run(db, flow_id, today, "schedule", picks)
-    finally:
-        db.close()
+    previous = await asyncio.to_thread(record_scheduled, flow_id, today, picks)
     logger.info("Scheduled flow %s recorded %d picks", flow_id, len(picks))
     if notify:
         message = change_message(name, owner_name, today, picks, previous)

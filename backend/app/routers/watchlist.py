@@ -1,35 +1,25 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
 from typing import List
 from sqlalchemy.orm import Session
 from ..database import get_db
+from ..schemas.etf import WatchlistItemResponse
 from ..services.graph_service import GraphService
 from ..utils.session import get_current_user_id
 
 router = APIRouter()
 
 
-class WatchlistItemResponse(BaseModel):
-    etf_code: str
-    etf_name: str
-    category: str | None = None
-
-
 @router.get("/", response_model=List[WatchlistItemResponse])
-async def get_watches(
+def get_watches(
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
     graph = GraphService(db)
     items = graph.get_user_watches(user_id)
 
-    # AGE에서 태그 조회하여 category로 사용
-    codes = [item["etf_code"] for item in items]
-    tag_map = {}
-    for code in codes:
-        tags = graph.get_tags_by_etf(code)
-        if tags:
-            tag_map[code] = tags[0]  # 첫 번째 태그를 category로
+    # 첫 번째 태그를 category로
+    tags = graph.get_tags_of([item["etf_code"] for item in items])
+    tag_map = {code: names[0] for code, names in tags.items() if names}
 
     return [
         WatchlistItemResponse(
@@ -42,7 +32,7 @@ async def get_watches(
 
 
 @router.get("/codes", response_model=List[str])
-async def get_watched_codes(
+def get_watched_codes(
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
@@ -51,17 +41,17 @@ async def get_watched_codes(
 
 
 @router.get("/etfs")
-async def get_watched_etfs(
+def get_watched_etfs(
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
-    """즐겨찾기 ETF 목록 (시총/수익률 포함, UniverseETFResponse 형식)"""
+    """즐겨찾기 ETF 목록 (시총/수익률 포함, ETFListItem 형식)"""
     graph = GraphService(db)
     return graph.get_watched_etfs(user_id)
 
 
 @router.post("/{etf_code}", response_model=WatchlistItemResponse, status_code=status.HTTP_201_CREATED)
-async def add_watch(
+def add_watch(
     etf_code: str,
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
@@ -83,7 +73,7 @@ async def add_watch(
 
 
 @router.delete("/{etf_code}", status_code=status.HTTP_204_NO_CONTENT)
-async def remove_watch(
+def remove_watch(
     etf_code: str,
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),

@@ -3,17 +3,18 @@
 레이아웃 에이전트는 등록된 스킬의 name/description/Args/displays만 보고 슬롯을 설계하고,
 오케스트레이터는 스킬의 run()이 내는 이벤트만 다룬다. 새 기능은 스킬을 하나 만들어 registry에 올리면 된다.
 
-run()이 내는 이벤트 (dict):
-  {"type": "delta", "text"}                         텍스트를 흘려보낼 때
-  {"type": "title", "title"}                        실행해 봐야 아는 제목으로 영역 제목을 바꿀 때 (보고서 이름 등)
-  {"type": "step_start" | "step" | "matched_examples", "data"}  실행 과정(디버그 패널용)
-  {"type": "split", "parts": [{id, title, display}]}  결과를 보고 영역을 나눌 때 (차트 + 설명 등). 그 뒤의
-                                                    delta·result는 "part": id로 나눈 영역을 가리키고, 영역마다 result 한 번
-  {"type": "result", ...SkillResult}                마지막에 한 번 (나누지 않았을 때)
+run()이 내는 이벤트는 아래 SkillEvent (dict)다:
+  DeltaEvent    {"type": "delta", "text"}            텍스트를 흘려보낼 때
+  TitleEvent    {"type": "title", "title"}           실행해 봐야 아는 제목으로 영역 제목을 바꿀 때 (보고서 이름 등)
+  ProcessEvent  {"type": "step_start" | "step" | "matched_examples", "data"}  실행 과정(디버그 패널용)
+  SplitEvent    {"type": "split", "parts": [{id, title, display}]}  결과를 보고 영역을 나눌 때 (차트 + 설명 등). 그 뒤의
+                                                     delta·result는 "part": id로 나눈 영역을 가리키고, 영역마다 result 한 번
+  ResultEvent   {"type": "result", ...SkillResult}   마지막에 한 번 (나누지 않았을 때)
 """
 import asyncio
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Callable, ClassVar, Dict, List, Literal, Optional, Tuple, Type
+from typing import (Any, AsyncIterator, Callable, ClassVar, Dict, List, Literal, NotRequired, Optional, Tuple, Type,
+                    TypedDict, Union)
 
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
@@ -23,13 +24,61 @@ from ....domain.universe import STOCK_SCOPE
 from ...ai_config import AIConfig
 from ...chat_memory import ConversationContext
 from ...content import DataContent, Dataset, Source, TextContent
-from ...entities import CANDIDATE_LIMIT, AmbiguousETF, EntityResolver, UnmanagedETF, UnmanagedStock, _normalize
+from ...entities import CANDIDATE_LIMIT, AmbiguousETF, EntityResolver, UnmanagedETF, UnmanagedStock, normalize_name
 
 CHOICES_SHOWN = 10  # 되물을 때 보여주는 후보 수
 
 EntityKind = Literal["etf", "stock"]
 Subject = Literal["etf", "stock", "portfolio", "any"]
 KIND_LABEL = {"etf": "ETF", "stock": "종목"}
+
+
+# --- 스킬 이벤트 ---
+
+class DeltaEvent(TypedDict):
+    type: Literal["delta"]
+    text: str
+    part: NotRequired[str]
+
+
+class TitleEvent(TypedDict):
+    type: Literal["title"]
+    title: str
+
+
+PROCESS_EVENTS = ("step_start", "step", "matched_examples")  # agent 스킬의 실행 과정. 오케스트레이터는 그대로 넘긴다
+
+
+class ProcessEvent(TypedDict):
+    type: Literal["step_start", "step", "matched_examples"]
+    data: Dict[str, Any]
+
+
+class SplitPart(TypedDict):
+    id: str
+    title: str
+    display: str
+
+
+class SplitEvent(TypedDict):
+    type: Literal["split"]
+    parts: List[SplitPart]
+
+
+class ResultEvent(TypedDict):
+    """SkillResult.event()의 모양. 나눈 영역의 결과면 part가 있다."""
+    type: Literal["result"]
+    status: str
+    content: Optional[Dict[str, Any]]
+    summary: str
+    message: Optional[str]
+    clarify: bool
+    exports: List[Dict[str, str]]
+    retryable: bool
+    part: NotRequired[str]
+
+
+SkillEvent = Union[DeltaEvent, TitleEvent, ProcessEvent, SplitEvent, ResultEvent]
 
 
 @dataclass
@@ -42,6 +91,22 @@ class SkillContext:
     stop: asyncio.Event
     # 먼저 끝난 슬롯들의 (제목, 요약) — after_others 스킬만 받는다
     related: List[Tuple[str, str]] = field(default_factory=list)
+    # 이 답변의 스킬 목록 — agent 스킬이 그중 tool인 것을 에이전트의 도구로 넣는다
+    registry: Dict[str, "Skill"] = field(default_factory=dict)
+
+
+def related_text(result: Dict[str, Any]) -> str:
+    """뒤 슬롯(해설·판정)에 넘기는 앞 영역의 내용: 요약과, 화면에 함께 표시되는 주석
+    (관리하지 않는 ETF·데이터 기간 같은 사실은 주석에만 있어 빠뜨리면 해설이 엉뚱하게 설명한다)."""
+    text = result.get("summary") or result.get("message") or ""
+    notes = (result.get("content") or {}).get("notes") or []
+    return "\n".join([text, *(f"(참고) {n}" for n in notes)]) if notes else text
+
+
+@dataclass
+class PlanLookups:
+    """플래너가 계획을 검사할 때 DB를 보는 함수들 (스킬의 plan_errors가 쓴다). 부를 때마다 세션을 따로 연다."""
+    is_etf_name: Callable[[str], bool]
 
 
 @dataclass
@@ -59,7 +124,7 @@ class SkillResult:
     # 관리하지 않는 ETF·데이터 없음처럼 다시 설계해도 같은 결과면 False
     retryable: bool = False
 
-    def event(self) -> Dict[str, Any]:
+    def event(self) -> ResultEvent:
         return {"type": "result", "status": self.status, "content": self.content,
                 "summary": self.summary, "message": self.message, "clarify": self.clarify,
                 "exports": self.exports, "retryable": self.retryable}
@@ -105,7 +170,7 @@ def _is_stock_name(db: Session, resolver: EntityResolver, name: str) -> bool:
         stock = resolver.stock(db, name)
     except UnmanagedStock as e:  # 그래프 밖의 종목이어도 종목 이름이다 — 종목 스킬로 다시 설계하면 그쪽에서 안내한다
         stock = e.corp
-    return bool(stock) and _normalize(stock["name"]) == _normalize(name)
+    return bool(stock) and normalize_name(stock["name"]) == normalize_name(name)
 
 
 def ambiguous_etf_result(e: AmbiguousETF) -> SkillResult:
@@ -154,8 +219,10 @@ class Skill:
     # 참조('@이름.순위')를 받는 인자 → 그 인자가 받는 대상의 종류. 종류가 다른 참조는 플래너가 설계 단계에서 거절한다
     entity_args: ClassVar[Dict[str, EntityKind]] = {}
     # True면 agent(ChatService)도 이 스킬을 도구로 부른다 (answer/tools.py). DataSkill만 켤 수 있다.
-    # 기존 도구와 겹치는 스킬은 끈다 — 같은 일을 하는 도구가 둘이면 agent가 헷갈린다
+    # agent에는 같은 일을 하는 도구를 따로 두지 않는다 — 둘이면 agent가 헷갈린다
     tool: ClassVar[bool] = False
+    # 도구로 부를 때의 인자 모델. 비우면 Args (예: 비교 스킬을 도구로는 ETF 하나에도 쓴다)
+    tool_args: ClassVar[Optional[Type[BaseModel]]] = None
     # 실행 중 LLM을 부르는지. 오케스트레이터가 한 답변 안에서 이런 슬롯이 동시에 도는 수를 제한한다 (MAX_LLM_SLOTS)
     uses_llm: ClassVar[bool] = False
 
@@ -165,9 +232,28 @@ class Skill:
     def arg_kinds(self, args: Dict[str, Any]) -> Dict[str, EntityKind]:
         return self.entity_args
 
-    async def run(self, args: BaseModel, display: str, ctx: SkillContext) -> AsyncIterator[Dict[str, Any]]:
+    def plan_errors(self, args: BaseModel, lookups: PlanLookups) -> List[str]:
+        """스키마로는 알 수 없고 데이터를 봐야 아는 계획 오류 (플래너가 설계를 다시 쓰게 돌려준다). 기본은 없음."""
+        return []
+
+    async def run(self, args: BaseModel, display: str, ctx: SkillContext) -> AsyncIterator[SkillEvent]:
         raise NotImplementedError
         yield  # pragma: no cover
+
+
+async def skill_results(skill: Skill, args: BaseModel, display: str, ctx: SkillContext,
+                        title: str) -> AsyncIterator[Tuple[str, ResultEvent]]:
+    """스킬 하나를 돌려 (영역 제목, 결과)를 낸다 — 화면 없이 결과만 쓰는 곳(주간 매수 의견 등)용.
+    스킬이 제목을 바꾸면 바뀐 제목, 영역을 나누면 나눈 영역마다 하나. 흘려보낸 조각·실행 과정은 버린다.
+    스킬이 도중에 실패하면 그때까지 낸 결과는 이미 받은 뒤다."""
+    parts: Dict[str, str] = {}
+    async for event in skill.run(args, display, ctx):
+        if event["type"] == "title":
+            title = event["title"]
+        elif event["type"] == "split":
+            parts = {p["id"]: p["title"] for p in event["parts"]}
+        elif event["type"] == "result":
+            yield parts.get(event.get("part", ""), title), event
 
 
 class DataSkill(Skill):
@@ -193,6 +279,6 @@ class DataSkill(Skill):
         finally:
             db.close()
 
-    async def run(self, args: BaseModel, display: str, ctx: SkillContext) -> AsyncIterator[Dict[str, Any]]:
+    async def run(self, args: BaseModel, display: str, ctx: SkillContext) -> AsyncIterator[SkillEvent]:
         result = await asyncio.to_thread(self.execute, args, display, ctx.session_factory, ctx.resolver)
         yield result.event()

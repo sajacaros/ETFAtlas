@@ -202,3 +202,33 @@ def test_etf_signal_needs_weight_change_history(monkeypatch, signal_data):
     monkeypatch.setattr(etf_signal, "recent_dates", lambda db, days: [])
     with pytest.raises(ValueError, match="비중 변화 기록"):
         _run(ETFSignalParams(), StockSet(rows={"A": {"code": "A", "name": "A"}}))
+
+
+def test_run_scheduled_keeps_db_work_off_the_event_loop(monkeypatch):
+    """흐름 읽기와 기록은 스레드에서 (묶어서) 하고, 바뀐 종목만 알린다."""
+    import threading
+    loop_thread = threading.get_ident()
+    threads, sent = [], []
+    graph = _graph([("out", "result", {})])
+
+    def load_flow(flow_id):
+        threads.append(threading.get_ident())
+        return scheduler.ScheduledFlow(name="흐름", notify=True, user_id=1, owner_name="민", graph=graph, ai_config=None)
+
+    def record(flow_id, today, picks):
+        threads.append(threading.get_ident())
+        return [{"code": "A", "name": "가"}]
+
+    async def run_flow(graph, ctx):
+        yield {"type": "node_done", "data": {"id": "out", "dataset": {"rows": [{"code": "A", "name": "가"}, {"code": "B", "name": "나"}]}}}
+
+    async def send(content):
+        sent.append(content)
+
+    monkeypatch.setattr(scheduler, "load_flow", load_flow)
+    monkeypatch.setattr(scheduler, "record_scheduled", record)
+    monkeypatch.setattr(scheduler, "run_flow", run_flow)
+    monkeypatch.setattr(scheduler, "send_discord", send)
+    asyncio.run(scheduler.run_scheduled(7, date(2026, 10, 19), None))
+    assert len(threads) == 2 and loop_thread not in threads
+    assert len(sent) == 1 and "새로 들어옴 (1): 나" in sent[0]

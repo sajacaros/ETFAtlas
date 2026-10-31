@@ -1,42 +1,31 @@
 import logging
-from typing import List, Dict, Any
+from typing import Any, Dict, List, Optional
 
-from openai import OpenAI
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from .ai_config import load_ai_config
+from .ai_config import AIConfig, load_ai_config
 from .generalize_prompt import GENERALIZE_SYSTEM_PROMPT
+from .llm import complete, openai_client
 
 logger = logging.getLogger(__name__)
 
 
-
 class EmbeddingService:
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, config: Optional[AIConfig] = None):
+        """config를 이미 읽었으면 넘긴다. 클라이언트는 설정별로 캐시해 두고 쓴다 (llm.openai_client)."""
         self.db = db
-        config = load_ai_config(db)
-        self._client = OpenAI(base_url=config.llm_api_base, api_key=config.llm_api_key)
-        self._embed_client = OpenAI(base_url=config.embedding_api_base, api_key=config.embedding_api_key)
+        config = config or load_ai_config(db)
+        self._client = openai_client(config.llm_api_base, config.llm_api_key)
+        self._embed_client = openai_client(config.embedding_api_base, config.embedding_api_key)
         self._llm_model = config.llm_model
         self._embedding_model = config.embedding_model  # 768차원 (code_examples.embedding)
 
     def generalize_question(self, question: str) -> str:
         """LLM으로 질문에서 특정 ETF/종목명을 제거하고 패턴만 남긴 일반화 질문 생성."""
         try:
-            resp = self._client.chat.completions.create(
-                model=self._llm_model,
-                messages=[
-                    {"role": "system", "content": GENERALIZE_SYSTEM_PROMPT},
-                    {"role": "user", "content": question},
-                ],
-                temperature=0,
-                max_tokens=512,
-                # 고유명사 치환이라 추론 없이도 결과가 같고, 채팅마다 호출되므로 빠른 쪽을 쓴다
-                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-            )
-            content = resp.choices[0].message.content
-            return content.strip() if content else question
+            # 고유명사 치환이라 추론 없이도 결과가 같고, 채팅마다 호출되므로 빠른 쪽을 쓴다
+            return complete(self._client, self._llm_model, GENERALIZE_SYSTEM_PROMPT, question, max_tokens=512) or question
         except Exception as e:
             logger.warning(f"Question generalization failed: {e}")
             return question

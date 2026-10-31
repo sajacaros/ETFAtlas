@@ -3,9 +3,8 @@
 고른 종목 = 결과 노드에 닿은 종목 (결과 노드가 여럿이면 합치고 순서는 앞 노드부터).
 화면에서 고친 뒤 저장하지 않은 그래프로 돌린 결과는 남기지 않는다 — 무엇을 채점하는지 흐려진다.
 """
-from datetime import date, datetime
+from datetime import date
 from typing import Any, Dict, List, Optional
-from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 from sqlalchemy.dialects.postgresql import insert
@@ -15,13 +14,6 @@ from ...models.analysis_flow import AnalysisFlow, FlowRun
 from ...utils.time import utcnow
 from .executor import FlowGraph
 from .nodes import REGISTRY
-
-KST = ZoneInfo("Asia/Seoul")
-
-
-def today_kst() -> date:
-    return datetime.now(KST).date()
-
 
 def _canonical(graph: FlowGraph) -> tuple:
     """위치·연결 id를 뺀 그래프 모양. 설정은 기본값을 채운 뒤 비교해 빈 값과 기본값을 같게 본다."""

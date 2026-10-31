@@ -393,7 +393,7 @@
       <svg viewBox="0 0 960 620" role="img" aria-labelledby="skills-map-title skills-map-desc"
            font-family="'Noto Sans KR', sans-serif">
         <title id="skills-map-title">ETF Atlas 챗봇의 스킬과 툴 관계</title>
-        <desc id="skills-map-desc">레이아웃 에이전트가 스킬 21개로 답변 화면을 설계하고, agent 스킬은 ChatService의 툴 10개와 tool을 켠 데이터 스킬 9개를 도구로 쓴다. 계산은 스킬과 스크리너가 app/domain을 함께 쓴다.</desc>
+        <desc id="skills-map-desc">레이아웃 에이전트가 스킬 21개로 답변 화면을 설계하고, agent 스킬은 ChatService의 툴 6개와 tool을 켠 데이터 스킬 13개를 도구로 쓴다 (스킬 도구는 채운 점으로 표시). 계산은 스킬과 스크리너가 app/domain을 함께 쓴다.</desc>
         <defs>
           <marker id="sarrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
             <polygon points="0 0, 8 3, 0 6" fill="#b8322a"/>
@@ -465,17 +465,17 @@
         <text x="426" y="419" text-anchor="middle" fill="#b8322a" font-size="13" font-weight="700">ETF·종목 조회</text>
         <g font-size="11">
           <circle cx="304" cy="452" r="5" fill="none" stroke="#b8322a" stroke-width="1.2"/>
-          <text x="316" y="456"><tspan font-family="'Fira Code', monospace" fill="#2b2523">get_etf_info</tspan><tspan fill="#7a706b" dx="6">종합 정보</tspan></text>
+          <text x="316" y="456"><tspan font-family="'Fira Code', monospace" fill="#2b2523">find_similar_etfs</tspan><tspan fill="#7a706b" dx="6">유사 ETF</tspan></text>
           <circle cx="304" cy="476" r="5" fill="none" stroke="#b8322a" stroke-width="1.2"/>
-          <text x="316" y="480"><tspan font-family="'Fira Code', monospace" fill="#2b2523">find_similar_etfs</tspan><tspan fill="#7a706b" dx="6">유사 ETF</tspan></text>
-          <circle cx="304" cy="500" r="5" fill="none" stroke="#b8322a" stroke-width="1.2"/>
-          <text x="316" y="504"><tspan font-family="'Fira Code', monospace" fill="#2b2523">get_holdings_changes</tspan><tspan fill="#7a706b" dx="6">비중 변화</tspan></text>
-          <circle cx="304" cy="524" r="5" fill="none" stroke="#b8322a" stroke-width="1.2"/>
-          <text x="316" y="528"><tspan font-family="'Fira Code', monospace" fill="#2b2523">get_etf_prices</tspan><tspan fill="#7a706b" dx="6">ETF 가격 추이</tspan></text>
-          <circle cx="304" cy="548" r="5" fill="none" stroke="#b8322a" stroke-width="1.2"/>
-          <text x="316" y="552"><tspan font-family="'Fira Code', monospace" fill="#2b2523">get_stock_prices</tspan><tspan fill="#7a706b" dx="6">종목 가격 추이</tspan></text>
-          <circle cx="304" cy="572" r="5" fill="none" stroke="#b8322a" stroke-width="1.2"/>
-          <text x="316" y="576"><tspan font-family="'Fira Code', monospace" fill="#2b2523">compare_etfs</tspan><tspan fill="#7a706b" dx="6">ETF 비교</tspan></text>
+          <text x="316" y="480"><tspan font-family="'Fira Code', monospace" fill="#2b2523">get_holdings_changes</tspan><tspan fill="#7a706b" dx="6">비중 변화</tspan></text>
+          <circle cx="304" cy="500" r="5" fill="#b8322a"/>
+          <text x="316" y="504"><tspan font-family="'Fira Code', monospace" fill="#2b2523">etf_compare</tspan><tspan fill="#7a706b" dx="6">기본 정보·비교</tspan></text>
+          <circle cx="304" cy="524" r="5" fill="#b8322a"/>
+          <text x="316" y="528"><tspan font-family="'Fira Code', monospace" fill="#2b2523">holdings</tspan><tspan fill="#7a706b" dx="6">구성종목</tspan></text>
+          <circle cx="304" cy="548" r="5" fill="#b8322a"/>
+          <text x="316" y="552"><tspan font-family="'Fira Code', monospace" fill="#2b2523">price_trend</tspan><tspan fill="#7a706b" dx="6">ETF 가격 추이</tspan></text>
+          <circle cx="304" cy="572" r="5" fill="#b8322a"/>
+          <text x="316" y="576"><tspan font-family="'Fira Code', monospace" fill="#2b2523">stock_trend</tspan><tspan fill="#7a706b" dx="6">종목 가격 추이</tspan></text>
         </g>
 
         <!-- 카드: 그래프 -->
@@ -490,11 +490,12 @@
         </g>
 
         <!-- 툴 설명 -->
-        <text x="780" y="392" fill="#b8322a" font-size="14" font-weight="700">툴 10개 + 스킬 9개</text>
+        <text x="780" y="392" fill="#b8322a" font-size="14" font-weight="700">툴 6개 + 스킬 13개</text>
         <text x="780" y="414" fill="#2b2523" font-size="12">ChatService</text>
         <text x="780" y="432" fill="#7a706b" font-size="12">pydantic-ai 에이전트</text>
         <text x="780" y="450" fill="#7a706b" font-size="11" font-family="'Fira Code', monospace">chat_service.py</text>
-        <text x="780" y="492" fill="#2b2523" font-size="12" font-weight="700">tool을 켠 데이터 스킬</text>
+        <circle cx="785" cy="488" r="5" fill="#b8322a"/>
+        <text x="796" y="492" fill="#2b2523" font-size="12" font-weight="700">tool을 켠 데이터 스킬</text>
         <text x="780" y="512" fill="#7a706b" font-size="12">agent도 도구로 부른다</text>
         <text x="780" y="530" fill="#7a706b" font-size="11" font-family="'Fira Code', monospace">answer/tools.py</text>
 </svg>
@@ -523,7 +524,7 @@
         <tr><td><code>etf_choice</code></td><td>대상 ETF가 여럿일 때 후보를 보여 주고 되묻기</td><td>markdown</td></tr>
         <tr><td><code>narrative</code> <span class="llm">LLM</span></td><td>다른 영역이 끝난 뒤 해설</td><td>text</td></tr>
         <tr><td><code>stock_opinion</code> <span class="llm">LLM</span></td><td>"살까 말까"에 답한다. 다른 영역이 끝난 뒤 차트·재무(실적·밸류에이션·유형)·보고서 관점마다 긍정~부정 판정과 근거를 내고, 종합 의견(사 볼 만하다·지켜본다·사지 않는 편이 낫다)은 판정 점수로 규칙이 정한다. 네 유형 어디에도 맞지 않으면 사지 않는다. narrative 대신 마지막 영역</td><td>markdown</td></tr>
-        <tr><td><code>agent</code> <span class="llm">LLM</span></td><td>스킬로 표현할 수 없는 질문. 도구 10개(검색·정보·유사 ETF·비교·읽기 전용 Cypher)와 tool을 켠 데이터 스킬 9개(실적·밸류에이션·유형 판정·공시·차트 분석·기간 수익률·순위·겹침·포트폴리오)를 가진 tool-calling 에이전트가 마크다운으로 답한다</td><td>markdown</td></tr>
+        <tr><td><code>agent</code> <span class="llm">LLM</span></td><td>스킬로 표현할 수 없는 질문. 도구 6개(검색·태그·유사 ETF·비중 변화·읽기 전용 Cypher)와 tool을 켠 데이터 스킬 13개(ETF 기본 정보·구성종목·가격 추이·실적·밸류에이션·유형 판정·공시·차트 분석·기간 수익률·순위·겹침·포트폴리오)를 가진 tool-calling 에이전트가 마크다운으로 답한다</td><td>markdown</td></tr>
       </table>
     </div>
     <p style="font-size:12.5px;color:var(--muted);margin-top:8px">⇢ 순위가 있는 결과를 내보내 다른 슬롯이 <code>@name.순위</code>로 받아 쓸 수 있는 스킬</p>

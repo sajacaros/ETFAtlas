@@ -1,13 +1,13 @@
-from typing import Dict, List, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ....domain.format import format_value
-from ...entities import EntityResolver, _normalize
+from ...entities import EntityResolver
 from ...graph_service import GraphService, node
-from .base import CHOICES_SHOWN, DataSkill, SkillResult, choice_result, empty, not_found
-from .common import object_particle
+from .base import CHOICES_SHOWN, DataSkill, PlanLookups, SkillResult, choice_result, empty, not_found
+from .common import object_particle, theme_etfs, theme_word
 
 
 class ETFChoiceArgs(BaseModel):
@@ -16,32 +16,6 @@ class ETFChoiceArgs(BaseModel):
     ))
     condition: str = Field(description="조건 값. by=stock이면 개별 주식 종목 이름 또는 6자리 코드, by=theme이면 그 단어")
     purpose: str = Field(description="ETF를 고른 뒤 보여줄 것 (예: '구성종목', '수익률 추이')")
-
-
-def _theme_word(theme: str) -> str:
-    """'반도체 ETF' → '반도체'."""
-    word = theme.strip()
-    return word[:-3].strip() if word.upper().endswith("ETF") else word
-
-
-def _theme_etfs(db: Session, theme: str) -> List[Dict]:
-    """태그 이름과 같으면 그 태그의 ETF, 아니면 이름에 그 단어가 든 ETF. 순자산 큰 순."""
-    query = _normalize(theme)
-    if not query:
-        return []
-    graph = GraphService(db)
-    tagged = node(
-        graph,
-        "MATCH (e:ETF)-[:TAGGED]->(t:Tag) WHERE replace(toLower(t.name), ' ', '') = $query "
-        "RETURN {code: e.code, name: e.name, net_assets: e.net_assets} ORDER BY e.net_assets DESC",
-        {"query": query},
-    )
-    return tagged or node(
-        graph,
-        "MATCH (e:ETF) WHERE replace(toLower(e.name), ' ', '') CONTAINS $query "
-        "RETURN {code: e.code, name: e.name, net_assets: e.net_assets} ORDER BY e.net_assets DESC",
-        {"query": query},
-    )
 
 
 class ETFChoiceSkill(DataSkill):
@@ -58,10 +32,17 @@ class ETFChoiceSkill(DataSkill):
     displays = ("markdown",)
     subject = "etf"
 
+    def plan_errors(self, args: ETFChoiceArgs, lookups: PlanLookups):
+        # 테마로 되묻는데 그 '테마'가 상장 ETF의 정확한 이름이면, 대상이 이미 정해진 것이다
+        if args.by == "theme" and lookups.is_etf_name(args.condition):
+            return [f"'{args.condition}'은(는) 테마가 아니라 ETF 상품 이름입니다. "
+                    "되묻지 말고 그 이름을 데이터 스킬의 인자에 그대로 적으세요"]
+        return []
+
     def fetch(self, args: ETFChoiceArgs, display: str, db: Session, resolver: EntityResolver) -> SkillResult:
         if args.by == "theme":
-            theme = _theme_word(args.condition)
-            etfs = _theme_etfs(db, theme)
+            theme = theme_word(args.condition)
+            etfs = theme_etfs(db, theme)
             if not etfs:
                 resolver.etf(db, args.condition)  # 테마가 아니라 관리하지 않는 ETF의 이름이면 UnmanagedETF로 그렇다고 알린다
                 return not_found(f"'{theme}'에 해당하는 ETF를 찾지 못했습니다")

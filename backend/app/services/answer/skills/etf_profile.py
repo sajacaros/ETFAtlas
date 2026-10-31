@@ -1,4 +1,6 @@
-from typing import Dict, List, Optional
+import threading
+import time
+from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import Field
 from sqlalchemy.orm import Session
@@ -19,6 +21,45 @@ AXES = [
     ("분산도", "top10_weight", "percent", "low"),
     ("분배율", "dividend_yield", "percent", "high"),
 ]
+UNIVERSE_TTL = 600  # 초. 백분위의 모집단(전체 ETF)은 하루에 몇 번 바뀌지 않는다
+
+_universe: Dict[str, Any] = {}  # {"as_of", "at", "data"}
+_universe_lock = threading.Lock()
+
+
+def _load_universe(graph: GraphService) -> Dict[str, Dict]:
+    """전체 ETF의 지표와 상위 10종목 비중 합 (분산도)."""
+    universe: Dict[str, Dict] = {
+        e["code"]: e
+        for e in node(
+            graph,
+            "MATCH (e:ETF) RETURN {code: e.code, expense_ratio: e.expense_ratio, net_assets: e.net_assets, "
+            "return_1w: e.return_1w, market_cap_change_1w: e.market_cap_change_1w, dividend_yield: e.dividend_yield}",
+            {},
+        )
+    }
+    for row in node(
+        graph,
+        "MATCH (e:ETF)-[h:CURRENT_HOLDS]->(:Stock) WITH e.code AS code, collect(h.weight) AS weights "
+        "RETURN {code: code, weights: weights}",
+        {},
+    ):
+        if row["code"] in universe:
+            universe[row["code"]]["top10_weight"] = round(sum(sorted(row["weights"], reverse=True)[:10]), 2)
+    return universe
+
+
+def etf_universe(graph: GraphService) -> Tuple[Optional[str], Dict[str, Dict]]:
+    """(최신 시세일, 전체 ETF 지표). 부를 때마다 전체 ETF·구성종목을 훑지 않도록, 최신 시세일이 같으면
+    UNIVERSE_TTL 동안 읽어 둔 것을 쓴다 (시세가 새로 들어오면 바로 다시 읽는다). 돌려준 값은 고치지 않는다."""
+    as_of = graph.get_latest_price_date()
+    with _universe_lock:
+        if _universe and _universe["as_of"] == as_of and time.monotonic() - _universe["at"] < UNIVERSE_TTL:
+            return as_of, _universe["data"]
+    data = _load_universe(graph)
+    with _universe_lock:
+        _universe.update(as_of=as_of, at=time.monotonic(), data=data)
+    return as_of, data
 
 
 def percentile(value: Optional[float], population: List[float], better: str) -> Optional[int]:
@@ -49,25 +90,7 @@ class ETFProfileSkill(DataSkill):
         found, missing = resolver.etfs(db, args.etfs)
         if not found:
             return not_found(f"ETF를 찾지 못했습니다: {', '.join(missing)}")
-        graph = GraphService(db)
-        universe: Dict[str, Dict] = {
-            e["code"]: e
-            for e in node(
-                graph,
-                "MATCH (e:ETF) RETURN {code: e.code, expense_ratio: e.expense_ratio, net_assets: e.net_assets, "
-                "return_1w: e.return_1w, market_cap_change_1w: e.market_cap_change_1w, dividend_yield: e.dividend_yield}",
-                {},
-            )
-        }
-        for row in node(
-            graph,
-            "MATCH (e:ETF)-[h:CURRENT_HOLDS]->(:Stock) WITH e.code AS code, collect(h.weight) AS weights "
-            "RETURN {code: code, weights: weights}",
-            {},
-        ):
-            if row["code"] in universe:
-                universe[row["code"]]["top10_weight"] = round(sum(sorted(row["weights"], reverse=True)[:10]), 2)
-
+        as_of, universe = etf_universe(GraphService(db))
         codes = [e["code"] for e in found if e["code"] in universe]
         if not codes:
             return empty("ETF 지표 데이터가 없습니다")
@@ -97,5 +120,5 @@ class ETFProfileSkill(DataSkill):
             f"점수는 전체 {len(universe)}개 ETF 중 백분위(0~100)입니다. 보수와 상위 10종목 비중은 낮을수록 높은 점수입니다",
             *missing_notes(missing),
         ]
-        sources = [Source(label=f"전체 {len(universe)}개 ETF 대비", as_of=graph.get_latest_price_date())]
+        sources = [Source(label=f"전체 {len(universe)}개 ETF 대비", as_of=as_of)]
         return data_result(dataset, view, summary, sources, notes)

@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from ..models.auth_session import AuthSession
 from ..models.role import Role, UserRole
 from ..models.user import User
-from ..utils.time import utcnow
+from ..utils.time import iso_utc, utcnow
 from .graph_service import GraphService
 
 
@@ -40,8 +40,8 @@ class MemberService:
         return [
             {
                 **row,
-                "created_at": row["created_at"].isoformat() if row["created_at"] else None,
-                "last_login_at": row["last_login_at"].isoformat() if row["last_login_at"] else None,
+                "created_at": iso_utc(row["created_at"]),
+                "last_login_at": iso_utc(row["last_login_at"]),
             }
             for row in rows
         ]

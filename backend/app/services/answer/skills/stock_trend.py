@@ -23,6 +23,7 @@ class StockTrendSkill(PriceTrendBase):
         "주가 분석·차트 분석·보조지표는 stock_technical"
     )
     Args = StockTrendArgs
+    tool = True
     target = "종목"
     subject = "stock"
     entity_args = {"stocks": "stock"}

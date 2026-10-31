@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from ....models.weight_change import WeightChange
 from ..base import FlowContext, Node, StockSet, result
-from .ai_analysis import held_by
+from ..lookups import held_by
 
 ACTIVE = {
     "off": "보지 않음",

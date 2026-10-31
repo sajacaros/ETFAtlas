@@ -233,6 +233,8 @@
     <a href="#events">이벤트</a>
     <a href="#company">기업 분석</a>
     <a href="#technical">차트 분석</a>
+    <a href="#opinion">매수 의견</a>
+    <a href="#review">챗봇 점검</a>
     <a href="#screener">종목 스크리너</a>
   </nav>
 </header>
@@ -257,7 +259,7 @@
       <div class="layer-title"><span class="dot"></span>Orchestrator · AnswerService</div>
       <div class="row">
         <div class="box"><div class="name">질문 재작성 <span class="llm">LLM</span></div><div class="desc">이전 대화가 있을 때 독립된 질문으로</div></div>
-        <div class="box agent"><div class="name">Planner <span class="llm">LLM</span></div><div class="desc">화면을 줄·슬롯으로 설계. 도구 없이 구조화된 출력</div></div>
+        <div class="box agent"><div class="name">Planner <span class="llm">LLM</span></div><div class="desc">화면을 줄·슬롯으로 설계. 도구 없이 스키마를 생성 단계에서 강제한 출력</div></div>
         <div class="box"><div class="name">Slot runner</div><div class="desc">의존 관계대로 슬롯을 병렬 실행, 끝나는 대로 저장·알림</div></div>
       </div>
     </div>
@@ -268,20 +270,20 @@
       <div class="layer-title"><span class="dot"></span>Skills</div>
       <div class="row">
         <div class="box"><div class="name">데이터 스킬 ×15</div><div class="desc">그래프와 DART 테이블을 조회해 표·차트 데이터를 만든다. LLM 없음</div></div>
-        <div class="box"><div class="name">company_report <span class="llm">LLM</span></div><div class="desc">정기보고서 원문을 요약하고, 매출 구성이 있으면 영역을 차트와 요약으로 나눈다</div></div>
+        <div class="box"><div class="name">company_report <span class="llm">LLM</span></div><div class="desc">정기보고서 목차에서 답이 있는 절을 골라 읽거나 개요를 보여 주고, 매출 구성이 있으면 영역을 차트와 요약으로 나눈다</div></div>
         <div class="box"><div class="name">narrative <span class="llm">LLM</span></div><div class="desc">다른 영역의 요약만 보고 해설</div></div>
         <div class="box"><div class="name">stock_opinion <span class="llm">LLM</span></div><div class="desc">차트·재무·보고서 영역의 요약을 관점별로 판정하고, 종합 의견은 규칙으로</div></div>
         <div class="box agent"><div class="name">agent <span class="llm">LLM</span></div><div class="desc">스킬로 안 되는 질문을 도구 호출 에이전트로</div></div>
       </div>
     </div>
 
-    <div class="arrow"><span>Cypher · SQL (읽기)</span><span class="line"></span><span>DART 원문 (처음 물을 때)</span></div>
+    <div class="arrow"><span>Cypher · SQL (읽기)</span><span class="line"></span><span>DART 데이터는 Airflow가 미리 수집·색인</span></div>
 
     <div class="layer data">
       <div class="layer-title"><span class="dot"></span>Data · PostgreSQL</div>
       <div class="row">
         <div class="box"><div class="name">Apache AGE 그래프</div><div class="desc">ETF · Stock · Tag · Price · 보유 관계</div></div>
-        <div class="box"><div class="name">DART 테이블</div><div class="desc">공시 · 주요계정 · 현금흐름(매일 수집), 보고서 요약·매출 구성 캐시</div></div>
+        <div class="box"><div class="name">DART 테이블</div><div class="desc">공시 · 주요계정 · 현금흐름(평일 수집), 정기보고서 원문 · 목차 트리 · 노드 요약 · 개요 · 매출 구성(밤마다 색인)</div></div>
         <div class="box"><div class="name">chat_logs · chat_slots</div><div class="desc">질문, 레이아웃, 영역별 내용과 요약</div></div>
         <div class="box"><div class="name">pgvector</div><div class="desc">화면 설계 예시, 에이전트 few-shot 예시</div></div>
       </div>
@@ -363,7 +365,7 @@
     <div class="steps">
       <div class="step"><div><div class="t">질문 재작성</div><div class="d">이전 대화가 있을 때만. "이거 구성종목은?" → "KODEX 반도체 구성종목은?" 묻는 관계(담았다/추종한다, 포함/제외)는 질문의 것을 지킨다. 재작성이 잘못 읽으면 화면의 <b>원문으로 다시 묻기</b>로 재작성 없이 다시 보낸다</div></div><div class="time">~0.5초</div></div>
       <div class="step"><div><div class="t">설계 예시 찾기</div><div class="d">질문을 일반화("삼성전자" → "특정 종목")해 임베딩으로 비슷한 화면 설계 예시 후보를 뽑고, LLM이 그중 <b>질문 유형이 같은 것</b>만 고른다. 예시는 관리자 페이지에서 관리</div></div><div class="time"></div></div>
-      <div class="step"><div><div class="t">화면 설계 (Planner)</div><div class="d">줄 목록, 줄마다 슬롯 1~3개(전체 8개 이하). 슬롯마다 <code>skill</code> · <code>display</code> · <code>title</code> · <code>args</code>. 출력 스키마는 등록된 스킬에서 자동으로 만든다. 참조 오류·없는 ETF 이름 같은 문제는 한꺼번에 돌려줘 다시 쓰게 하고, 그래도 실패하면 <code>agent</code> 슬롯 하나로</div></div><div class="time">2~6초</div></div>
+      <div class="step"><div><div class="t">화면 설계 (Planner)</div><div class="d">줄 목록, 줄마다 슬롯 1~3개(전체 8개 이하). 슬롯마다 <code>skill</code> · <code>display</code> · <code>title</code> · <code>args</code>. 출력 스키마는 등록된 스킬에서 자동으로 만들고, 모델이 생성하는 단계에서 그 스키마를 강제한다(<code>NativeOutput</code>, 추론 끔). 그래서 형식 오류로 다시 쓸 일이 없고, 재시도는 내용 검사에만 쓴다: 참조 오류, 참조 대상의 종류(ETF·종목)가 인자와 안 맞음, 없는 ETF 이름 같은 문제를 한꺼번에 돌려줘 다시 쓰게 한다. 그래도 실패하면 <code>agent</code> 슬롯 하나로</div></div><div class="time">2~6초</div></div>
       <div class="step"><div><div class="t">레이아웃 전송</div><div class="d">슬롯에 <code>s1</code>, <code>s2</code>… id를 붙여 저장하고 <code>layout</code> 이벤트로 보낸다. 프런트는 즉시 빈 자리를 그린다</div></div><div class="time">즉시</div></div>
       <div class="step"><div><div class="t">데이터 슬롯 실행</div><div class="d">서로 의존하지 않는 슬롯은 동시에. 한 슬롯의 순위 결과를 다른 슬롯이 <code>@name.1</code>이나 <code>@name.1-3</code>처럼 번호로 받아 쓰면 그 슬롯이 끝난 뒤에. 범위가 통째로 결과 밖이면(필터로 결과가 적을 때) 다시 설계하지 않고 비운다. 끝날 때마다 저장하고 <code>slot</code> 이벤트. 실행해 봐야 아는 것이 있으면 스킬이 영역 제목을 바꾸거나 영역을 나누고, 그때마다 <code>layout</code>을 다시 보낸다</div></div><div class="time">~0.1초씩</div></div>
       <div class="step"><div><div class="t">한 번 다시 설계</div><div class="d">"ETF가 아니라 종목이었다"처럼 고칠 수 있는 이유로 빈 슬롯이 있으면, 실행 결과를 보여 주고 그 슬롯만 다시 설계·실행한다. 배치는 그대로</div></div><div class="time">필요할 때만</div></div>
@@ -381,7 +383,7 @@
         <p style="font-size:13.5px">멈추면 화면의 답변은 바로 끝나 다음 질문을 할 수 있습니다. 서버에서는 실행 중인 스킬이 스스로 멈추고, 시작하지 않은 슬롯은 "중지했습니다"로 마감한 뒤 로그를 저장합니다. 연결이 끊겨도 같습니다. 중지·실패한 답변은 다시 열어도 그렇게 표시되고, 다음 질문의 대화 맥락에서는 빠집니다.</p>
       </div>
     </div>
-    <div class="callout">데이터 영역은 레이아웃이 나오고 곧바로 채워집니다. 일반적인 ETF·종목 질문은 7~10초, <code>agent</code>로 가는 질문은 15~45초가 걸립니다. 정기보고서 요약은 처음 읽는 보고서만 수십 초가 걸리고, 그 뒤로는 캐시에서 바로 나옵니다.</div>
+    <div class="callout">데이터 영역은 레이아웃이 나오고 곧바로 채워집니다. 일반적인 ETF·종목 질문은 7~10초, <code>agent</code>로 가는 질문은 15~45초가 걸립니다. 정기보고서는 밤마다 미리 색인해 두므로, 절을 골라 읽고 답하는 데 3~9초, 개요는 저장된 것을 바로 보여 줍니다.</div>
   </section>
 
   <section id="skills">
@@ -513,7 +515,7 @@
         <tr><td><code>company_valuation</code></td><td>시가총액(종가 × 상장주식수)과 PER(최근 4분기·직전 연도), PBR, ROE, FCF(최근 4분기)·FCF 수익률·역산 DCF 성장률. 대조용 KIS PER·PBR</td><td>table</td></tr>
         <tr><td><code>company_type</code></td><td>지속 성장주·턴어라운드주·경기민감·성숙기·신흥·초기 단계 중 숫자 기준(연속 성장, 영업이익률, 발생액 품질, 흑자 반등, 영업현금흐름)을 모두 충족한 유형. 해자 같은 정성 기준은 보고서로 확인할 것으로 남긴다</td><td>table</td></tr>
         <tr><td><code>company_disclosures</code></td><td>최근 DART 공시 목록 (원문 링크). 임원·주요주주 지분 보고서는 물을 때만</td><td>markdown</td></tr>
-        <tr><td><code>company_report</code> <span class="llm">LLM</span></td><td>가장 최근 정기보고서 본문 요약. 보고서 표에 매출 구성이 있으면 차트 영역을 스스로 나눠 붙인다</td><td>markdown (+ donut · bar)</td></tr>
+        <tr><td><code>company_report</code> <span class="llm">LLM</span></td><td>가장 최근 정기보고서. 찾을 것(<code>need</code>)이 있으면 목차 트리에서 답이 있는 절 1~3개를 골라 그 절만 읽고 답한다(읽은 절·원문 링크). 없으면 사업 구조·영업 상황·위험·소송의 개요, 보고서 표에 매출 구성이 있으면 차트 영역을 스스로 나눠 붙인다</td><td>markdown (+ donut · bar)</td></tr>
         <tr><td><code>company_revenue_mix</code> <span class="llm">LLM</span></td><td>정기보고서 표의 매출 구성(주요 고객·제품·부문·지역)만 차트로. 질문이 묻는 구성부터 최대 2개로 영역을 나눈다</td><td>bar · donut</td></tr>
         <tr><td><code>portfolio_lookthrough</code> ⇢</td><td>여러 ETF를 섞었을 때 종목별 합산 비중 (최소 비중)</td><td>treemap · bar · donut · table</td></tr>
         <tr><td><code>rank</code> ⇢</td><td>ETF·종목을 기간 수익률·순자산·보수·분배율로 정렬하고 범위로 거르기. 대상은 다른 슬롯의 결과, 이름, 테마 중 하나, 비우면 ETF 전체</td><td>bar · table</td></tr>
@@ -617,7 +619,7 @@ column
 
   <section id="company">
     <h2>기업 분석</h2>
-    <p class="lead">종목 하나를 물으면 ETF Atlas의 데이터(주가, 담은 ETF) 옆에 <b>DART</b>의 실적·공시·정기보고서를 놓습니다. 실적과 공시는 매일 수집한 테이블에서, 보고서 본문은 처음 물을 때 원문을 읽어 캐시합니다.</p>
+    <p class="lead">종목 하나를 물으면 ETF Atlas의 데이터(주가, 담은 ETF) 옆에 <b>DART</b>의 실적·밸류에이션·공시·정기보고서를 놓습니다. 모두 Airflow가 미리 받아 둔 테이블에서 읽고, 정기보고서는 밤마다 <b>목차 트리</b>로 색인해 두었다가 질문이 오면 답이 있는 절만 골라 읽습니다(PageIndex 방식).</p>
 
     <div class="layer fe">
       <div class="layer-title"><span class="dot"></span>Airflow · dart_sync_rdb (평일 19:20)</div>
@@ -629,26 +631,47 @@ column
       </div>
     </div>
 
-    <div class="arrow"><span>SQL (읽기)</span><span class="line"></span><span>키는 관리자 페이지에서 등록, DB에 암호화</span></div>
+    <div class="layer fe" style="margin-top:10px">
+      <div class="layer-title"><span class="dot"></span>Airflow · dart_report_index (매일 21:00, 밤새)</div>
+      <div class="row">
+        <div class="box"><div class="name">queue_reports</div><div class="desc">종목마다 최근 1년 정기보고서. 같은 기간이면 정정본만, 첨부만 바꾼 공시는 뺀다</div></div>
+        <div class="box"><div class="name">build_trees</div><div class="desc">원문 zip을 <code>stock_report_docs</code>에 보관하고 장·절·주석을 노드로 → <code>report_nodes</code>. 표는 병합 셀을 풀어 구조로</div></div>
+        <div class="box"><div class="name">summarize_nodes <span class="llm">LLM</span></div><div class="desc">노드마다 "이 절에 든 항목" 한 줄. 답이 아니라 고르기용. 추론 끔, 동시 6개, 본문이 같으면 다시 하지 않는다</div></div>
+        <div class="box"><div class="name">prune · make_overviews <span class="llm">LLM</span></div><div class="desc">1년 지난 보고서를 지우고(종목마다 최신 1건은 남김), 종목별 최신 보고서의 개요를 미리 만든다</div></div>
+      </div>
+    </div>
+
+    <div class="arrow"><span>SQL (읽기)</span><span class="line"></span><span>DART 키는 관리자 페이지에서 등록, DB에 암호화</span></div>
 
     <div class="layer skills">
       <div class="layer-title"><span class="dot"></span>Skills</div>
       <div class="row">
         <div class="box"><div class="name">company_financials</div><div class="desc">연결이 있으면 연결만. 4분기는 연간 − 3분기 누적, 빠지면 비운다(0으로 채우지 않는다). 순이익이 매출보다 큰 기간은 사실로 적어 해설에 넘긴다</div></div>
+        <div class="box"><div class="name">company_valuation · company_type</div><div class="desc">종가 × 상장주식수와 DART 실적·현금흐름으로 PER·PBR·ROE·FCF·역산 DCF, 숫자 기준으로 유형 판정</div></div>
         <div class="box"><div class="name">company_disclosures</div><div class="desc">최근 공시 제목과 DART 원문 링크. 해설은 제목만 알고 본문은 추측하지 않는다</div></div>
-        <div class="box"><div class="name">company_report <span class="llm">LLM</span></div><div class="desc">정기보고서 원문 → 매출 구성 차트 + 본문 요약. <code>stock_report_summaries</code>에 접수번호로 캐시</div></div>
+        <div class="box"><div class="name">company_report <span class="llm">LLM</span></div><div class="desc">목차 트리에서 절을 골라 답하거나 개요. 매출 구성이 있으면 차트로 영역을 나눈다</div></div>
       </div>
+    </div>
+
+    <h3 style="margin-top:24px">정기보고서는 세 층으로 저장한다</h3>
+    <div class="table-wrap">
+      <table>
+        <tr><th>층</th><th>테이블</th><th>내용</th></tr>
+        <tr><td style="white-space:nowrap">원문</td><td><code>stock_report_docs</code></td><td>DART <code>document.xml</code> zip 그대로. 파서를 고치면 DART를 다시 부르지 않고 이것으로 트리를 다시 만든다</td></tr>
+        <tr><td style="white-space:nowrap">구조</td><td><code>report_nodes</code></td><td>노드 = 장·절·주석. 본문은 소제목·문단·표 블록(JSON). 표는 행 병합을 아래 행에 채워 한 행만 떼어 읽어도 뜻이 통하고, 여러 줄 머리말은 <code>보고부문 / DX 부문 / 3개월</code>처럼 잇는다. 8천 자 넘는 절은 '가.' 소제목마다 하위 노드로</td></tr>
+        <tr><td style="white-space:nowrap">색인</td><td><code>report_nodes.summary</code></td><td>노드에 든 항목 한 줄 (예: "연구개발비용 총계, 매출액 대비 비율, 부문별 연구개발 실적"). 제목만으로는 짐작하기 어려운 절을 고르게 한다</td></tr>
+      </table>
     </div>
 
     <h3 style="margin-top:24px">company_report</h3>
     <div class="steps">
-      <div class="step"><div><div class="t">최근 보고서 찾기</div><div class="d">공시 목록과 주요계정의 접수번호 중 가장 큰 정기보고서(정정 포함). 이름은 "2026년 반기보고서", "2026년 1분기보고서"처럼 — 공시 제목은 1·3분기를 모두 "분기보고서"라 써서 주요계정의 보고서 코드로 가린다</div></div><div class="time">즉시</div></div>
-      <div class="step"><div><div class="t">캐시 확인</div><div class="d">같은 접수번호의 요약과 매출 구성이 있으면 원문을 받지 않는다. 정정 보고서는 접수번호가 달라 새로 읽는다</div></div><div class="time">즉시</div></div>
-      <div class="step"><div><div class="t">원문 읽기</div><div class="d"><code>document.xml</code>(zip)에서 목차로 II. 사업의 내용, IV. 경영진단(사업보고서만), XI. 투자자 보호, 영업부문 주석만 뽑는다. 표는 행 단위 텍스트로, 절당 6천 자·합계 3.6만 자까지</div></div><div class="time">수 초</div></div>
-      <div class="step"><div><div class="t">매출 구성 <span class="llm">LLM</span></div><div class="d">매출·제품·영업부문 절의 표에서 부문·제품·지역·주요 고객별 매출을 구조화된 출력으로 옮긴다(temperature 0). 값과 항목 이름이 원문에 그대로 없거나 항목이 하나뿐이면 그 구성은 버린다. 합계와 맞으면 도넛, 아니면 막대. 질문이 묻는 구성부터 최대 2개</div></div><div class="time">5~10초</div></div>
-      <div class="step"><div><div class="t">영역 나누기</div><div class="d">구성이 있으면 <code>split</code>으로 차트 영역들과 요약 영역으로 나누고 차트를 바로 채운다. 없으면 <code>title</code>로 제목만 보고서 이름으로</div></div><div class="time">즉시</div></div>
-      <div class="step"><div><div class="t">본문 요약 <span class="llm">LLM</span></div><div class="d">사업 구조 · 이번 기간 영업 상황 · 위험 요인 · 소송·제재·기준일 이후 주요사항. 수치는 원문 단위 그대로(환산하다 자릿수를 틀리지 않게), 투자 의견은 쓰지 않는다. 흘려보낸 뒤 캐시</div></div><div class="time">처음만 수십 초</div></div>
+      <div class="step"><div><div class="t">보고서 고르기</div><div class="d">색인된 보고서 중 기간이 가장 최근인 것, 같은 기간이면 가장 최근 접수(정정본). 접수번호만 보면 6월에 낸 사업보고서 정정이 5월의 1분기보고서보다 앞서기 때문. 트리만 있고 요약 전이어도 제목으로 고른다. 이름은 "2026년 반기보고서"처럼</div></div><div class="time">즉시</div></div>
+      <div class="step"><div><div class="t">찾을 것이 있으면: 절 고르기 <span class="llm">LLM</span></div><div class="d">목차(들여쓰기 + <code>[id] 제목 (글자 수) — 요약</code>)와 질문을 주고 답이 있을 절 1~3개와 큰 표에서 골라 읽을 행의 낱말을 받는다(temperature 0). 목차에 없는 id만 고르면 한 번 더 묻고, 본문 없는 장을 고르면 하위 절을 읽는다</div></div><div class="time">1~3초</div></div>
+      <div class="step"><div><div class="t">절 읽고 답하기 <span class="llm">LLM</span></div><div class="d">고른 절을 노드당 1.2만 자·합계 3만 자로 렌더링. 1천 행짜리 임원 명단 같은 큰 표는 앞 3행·합계 행·낱말이 든 행만 넣고 몇 행 중 몇 행인지 밝힌다. 수치는 원문 단위 그대로, 어느 기간(열)의 값인지 함께. 답 머리에 읽은 절과 DART 원문 링크</div></div><div class="time">2~6초</div></div>
+      <div class="step"><div><div class="t">찾을 것이 없으면: 개요</div><div class="d">II. 사업의 내용 · IV. 경영진단 · XI. 투자자 보호 · 부문 주석의 모든 절을 몫을 나눠 읽은 사업 구조 · 영업 상황 · 위험 요인 · 소송·제재. 밤에 <code>make_overviews</code>가 만들어 둔 것을 보여 주고, 없으면 그 자리에서 만들어 남긴다</div></div><div class="time">즉시</div></div>
+      <div class="step"><div><div class="t">매출 구성 <span class="llm">LLM</span></div><div class="d">매출·주요 제품 절과 부문 주석의 표에서 부문·제품·지역·주요 고객별 매출을 구조화된 출력으로 옮긴다. 값과 항목 이름이 렌더링한 원문에 그대로 없거나 항목이 하나뿐이면 버린다. 합계와 맞으면 도넛, 아니면 막대. 보고서마다 한 번 만들어 남기고, 있으면 <code>split</code>으로 차트 영역들과 요약 영역으로 나눈다</div></div><div class="time">처음만 5~10초</div></div>
     </div>
+    <p style="font-size:12.5px;color:var(--muted);margin-top:8px">삼성전자 보고서 2건에 질문 24개(연구개발비, 최대주주, 배당, 직원, 신용등급, 대손충당금 …)씩 물으면, 목차에 제목만 넣었을 때는 보고서마다 19/24, 노드 요약까지 넣으면 24/24가 정답 절을 골랐다. 자세한 것은 <code>docs/report-index.md</code>.</p>
 
     <h3 style="margin-top:24px">화면</h3>
     <div class="kv">
@@ -673,7 +696,7 @@ column
         </div>
       </div>
       <ul class="plain">
-        <li>"분석해줘"는 위 배치, "실적 어때?"는 실적과 공시만, "무슨 사업 해?"·"주 고객은?"은 보고서와 해설만. 모두 레이아웃 예시로 Planner에 알려 준다.</li>
+        <li>"분석해줘"는 위 배치, "실적 어때?"는 실적과 공시만, "무슨 사업 해?"·"주 고객은?"은 보고서와 해설만, "연구개발비 얼마야?"처럼 보고서에 적힌 사실은 찾을 것을 준 <code>company_report</code> 하나. 모두 레이아웃 예시로 Planner에 알려 준다.</li>
         <li>보고서 영역은 계획에서는 하나이고, 매출 구성이 있으면 실행하며 차트 줄과 요약으로 나뉜다.</li>
         <li>해설은 영역들의 요약만 받고, 어느 보고서인지 이름을 밝혀 쓴다.</li>
         <li>수집 ETF가 담지 않은 상장사는 모든 영역이 같은 안내("분석하지 않는 종목")로 비고, 화면은 그 안내를 한 번만 보여 준다.</li>
@@ -742,6 +765,73 @@ column
     <div class="callout">신호는 정해진 규칙으로 본 <b>강세·약세 상태</b>이지 매수·매도 권유가 아닙니다. 대가들의 규칙도 검증된 법칙이 아니라 경험칙이라, 맞는지는 스크리너 백테스트로 따로 확인해야 합니다. 200일선 기울기와 52주 고저가 필요해 일봉이 약 260거래일보다 짧은 종목은 일부 신호가 "데이터 부족"으로 나옵니다.</div>
   </section>
 
+  <section id="opinion">
+    <h2>매수 의견</h2>
+    <p class="lead">"삼성전자 지금 사도 될까?"에는 <code>stock_opinion</code>이 마지막 영역으로 답합니다. LLM은 앞 영역들의 요약을 <b>관점마다</b> 읽어 판정과 근거만 내고, 종합 의견은 그 판정으로 <b>규칙</b>이 정합니다. 같은 판정이면 늘 같은 종합이 나옵니다.</p>
+
+    <div class="layer skills">
+      <div class="layer-title"><span class="dot"></span>앞 영역 → 관점</div>
+      <div class="row">
+        <div class="box"><div class="name">차트</div><div class="desc"><code>stock_technical</code> — 지표 값과 대가들의 규칙으로 본 신호. 앞으로의 방향은 예측하지 않는다</div></div>
+        <div class="box"><div class="name">재무</div><div class="desc"><code>company_financials</code> 분기 8개 · <code>company_valuation</code> · <code>company_type</code>. 역산 DCF 성장률을 실제 성장과 견준다</div></div>
+        <div class="box"><div class="name">보고서</div><div class="desc"><code>company_report</code> 개요 — 사업 구조·영업 상황·위험·소송. 유형 판정이 남긴 "보고서로 확인할 것"을 확인한다</div></div>
+      </div>
+    </div>
+
+    <div class="arrow"><span>관점마다 긍정 · 다소 긍정 · 중립 · 다소 부정 · 부정 · 판단 불가 <span class="llm">LLM</span></span><span class="line"></span><span>근거 1~3개, 사기 전에 확인할 것</span></div>
+
+    <div class="layer orch">
+      <div class="layer-title"><span class="dot"></span>종합 · domain/opinion.py (규칙)</div>
+      <div class="table-wrap">
+        <table>
+          <tr><th>조건</th><th>종합</th></tr>
+          <tr><td>네 유형(지속 성장주 · 턴어라운드주 · 경기민감·성숙기 · 신흥·초기 단계) 어디에도 맞지 않음</td><td>사지 않는 편이 낫다</td></tr>
+          <tr><td>판정한 관점이 2개 미만</td><td>판단 보류</td></tr>
+          <tr><td>관점 평균(긍정 +2 ~ 부정 −2)이 −1 이하</td><td>사지 않는 편이 낫다</td></tr>
+          <tr><td>'부정'인 관점이 하나라도 있음</td><td>지켜본다</td></tr>
+          <tr><td>평균 +1 이상</td><td>사 볼 만하다</td></tr>
+          <tr><td>그 밖</td><td>지켜본다</td></tr>
+        </table>
+      </div>
+    </div>
+    <p style="font-size:12.5px;color:var(--muted);margin-top:8px">유형 판정은 앞 영역에 기대지 않고 직접 계산합니다. 슬롯 구성이 달라져도 "유형에 맞지 않으면 사지 않는다"가 빠지지 않게 하려는 것입니다. <code>narrative</code>는 투자 의견을 쓰지 않으므로 이 질문에는 넣지 않습니다.</p>
+
+    <h3 style="margin-top:24px">주간 매수 의견</h3>
+    <div class="steps">
+      <div class="step"><div><div class="t">차례 맡기</div><div class="d">백엔드 프로세스 안에서 10분마다 깨어나 토요일 07:00 뒤 한 번(토요일에 내려가 있었으면 일요일). <code>opinion_runs</code>에 그 주 토요일로 한 행을 넣어 맡고, 30분 넘게 소식이 없으면 다시 뜬 프로세스가 이어 맡는다</div></div><div class="time">주 1회</div></div>
+      <div class="step"><div><div class="t">종목마다 판정</div><div class="d">ETF가 담은 주식 전체(약 570종목)에 챗봇과 같은 영역을 스킬로 채우고 같은 판정·규칙을 쓴다. 동시 3종목(챗봇과 LLM을 나눠 쓴다). 판정한 종목은 바로 <code>stock_opinions</code>에 남겨, 중간에 끊겨도 이어서 돈다</div></div><div class="time">수 시간</div></div>
+      <div class="step"><div><div class="t">순위 · 소개</div><div class="d">'사 볼 만하다'만 점수 → 재무 판정 → 시가총액 순으로 10개. 뽑힌 종목만 보고서 개요의 사업 구조로 50자 한 줄 소개를 만든다(보고서마다 한 번)</div></div><div class="time"></div></div>
+      <div class="step"><div><div class="t">디스코드</div><div class="d">의견별 종목 수, 상위 10개(점수·관점별 판정·유형·첫 근거), 지난 차례에 없던 종목은 🆕. 2,000자 제한에 맞게 종목 단위로 나눠 보내고, 성공 기록이 있으면 다시 보내지 않는다</div></div><div class="time"></div></div>
+    </div>
+    <div class="callout">매수 의견은 모은 데이터를 정해진 관점으로 읽은 참고 의견이지 투자 권유가 아닙니다. 화면 아래에 그렇게 밝힙니다.</div>
+  </section>
+
+  <section id="review">
+    <h2>챗봇 점검</h2>
+    <p class="lead">매일 08:00 <code>chat_review</code> DAG가 전날 대화를 보고, 제대로 안 나온 답과 고칠 곳을 디스코드로 보고합니다. <b>보고만 합니다</b>. 스킬·레이아웃 예시·코드는 사람이 고칩니다.</p>
+
+    <div class="steps">
+      <div class="step"><div><div class="t">신호 모으기</div><div class="d">LLM 없이 로그에서: 실패·중지·되묻기로 끝난 답, 비거나 실패한 영역, 싫어요, agent 도구 오류 반복, 같은 질문인데 영역 구성이 달랐던 경우</div></div><div class="time"></div></div>
+      <div class="step"><div><div class="t">세션마다 판정 <span class="llm">LLM</span></div><div class="d">턴 하나가 아니라 세션 전체를 본다. 다음 턴의 사용자 말("재무 스킬에서 가져오면 되잖아")이 가장 강한 신호라서. 스킬 목록은 스킬 파일의 이름·설명을 구문 트리로 읽어 넘긴다. 신호가 있어도 답이 맞았으면 올리지 않는다</div></div><div class="time">추론 끔</div></div>
+      <div class="step"><div><div class="t">디스코드</div><div class="d">문제 턴마다 원인 하나와 고칠 곳. 문제가 없거나 대화가 없던 날도 "개선 제안이 없습니다"로 알린다. 같은 날짜는 두 번 보내지 않는다</div></div><div class="time"></div></div>
+    </div>
+
+    <h3 style="margin-top:24px">원인 분류</h3>
+    <div class="table-wrap">
+      <table>
+        <tr><th>원인</th><th>뜻</th><th>고칠 곳</th></tr>
+        <tr><td>스킬 선택</td><td>맞는 스킬이 있는데 다른 스킬(특히 agent)을 골랐다</td><td>스킬 설명, 레이아웃 예시</td></tr>
+        <tr><td>영역 구성</td><td>스킬은 맞지만 영역이 모자라거나 남거나, 원한 표시가 아니다</td><td>레이아웃 예시</td></tr>
+        <tr><td>스킬 결과</td><td>틀린 값, 빈 결과, 질문과 어긋난 내용</td><td>그 스킬 코드</td></tr>
+        <tr><td>agent 도구</td><td>도구 호출을 반복해서 틀렸다</td><td>도구 설명·코드</td></tr>
+        <tr><td>없는 기능</td><td>답할 스킬·도구가 없다</td><td>새 스킬, 기존 스킬 확장</td></tr>
+        <tr><td>데이터 없음</td><td>기능은 있는데 그 대상의 데이터가 없다</td><td>수집</td></tr>
+        <tr><td>중단·오류</td><td>답을 끝내지 못했다</td><td>오케스트레이터·스킬</td></tr>
+      </table>
+    </div>
+    <div class="callout">고친 뒤에는 평가 세트(<code>backend/evals</code>)로 확인합니다. 화면 설계 평가는 질문마다 기대하는 스킬·표시와 실제 계획을 비교해 채점하고, 다시 설계 평가와 답변 전체 평가(실제로 실행해 사람이 채점)가 그 뒤를 받칩니다. 레이아웃 예시나 스킬 설명을 바꿔도 다른 질문이 무너지지 않았는지 이것으로 봅니다.</div>
+  </section>
+
   <section id="screener">
     <h2>종목 스크리너</h2>
     <p class="lead">노드를 이어 만든 그래프를 서버가 <b>위상 순서로 한 노드씩</b> 실행합니다. 노드 사이로는 종목 집합(종목 행 + 열 정의)이 흐르고, 숫자는 서버가 계산하며 LLM은 근거 문장만 씁니다. 코드·API에서는 <code>flow</code>라고 부릅니다.</p>
@@ -791,7 +881,7 @@ column
       <table>
         <tr><th>노드</th><th>입력</th><th>하는 일</th></tr>
         <tr><td>대상 종목 <code>source</code></td><td>0</td><td>ETF가 담은 전체 종목(559) / 특정 ETF 구성종목 / 내 포트폴리오 실보유 / 직접 입력</td></tr>
-        <tr><td>차트 필터 <code>chart_filter</code></td><td>1</td><td>이평 정배열, N일 이평 위, 고가 대비 하락폭, 20일 수익률 범위, 거래량 배수, RSI, 간이 VCP. 켠 조건을 모두 만족하는 종목만</td></tr>
+        <tr><td>차트 필터 <code>chart_filter</code></td><td>1</td><td>이평 정배열, N일 이평 위, 고가 대비 하락폭, 20일 수익률 범위, 거래량 배수, RSI, 간이 VCP, N거래일 안의 MACD·스토캐스틱 골든크로스(%K가 기준 이하에서 난 교차만 고를 수 있다), 볼린저 %B 범위. 켠 조건을 모두 만족하는 종목만. 지표는 챗봇 차트 분석과 같은 <code>domain/indicators.py</code></td></tr>
         <tr><td>ETF 신호 필터 <code>etf_signal</code></td><td>1</td><td>담은 ETF 수, 최근 N개 공시일에 액티브 ETF가 새로 편입하거나 비중을 늘린 수</td></tr>
         <tr><td>합치기 <code>combine</code></td><td>2+</td><td>교집합 / 합집합</td></tr>
         <tr><td>AI 분석 <code>ai_analysis</code> <span class="llm">LLM</span></td><td>1</td><td>앞에서부터 N종목. 한자가 섞이면 한 번 다시 쓰게 한다</td></tr>
@@ -804,7 +894,7 @@ column
     <div class="steps">
       <div class="step"><div><div class="t">실행</div><div class="d">저장하지 않은 그래프도 바로 실행. 모양 오류는 스트림 전에 400, 노드의 입력 수·설정 오류와 실행 실패는 그 노드의 <code>node_error</code>로 알리고 그 뒤로 이어진 노드만 <code>node_skipped</code></div></div><div class="time">첫 실행 ~30초</div></div>
       <div class="step"><div><div class="t">기록</div><div class="d"><code>flow_id</code>를 주고 그래프가 저장본과 같으면(위치 무시, 설정은 기본값을 채워 비교) 결과 노드의 종목을 오늘 날짜로 <code>flow_runs</code>에. 스크리너·날짜마다 한 행, 같은 날 다시 돌리면 덮어쓴다. <code>run_done.recorded</code>로 알림</div></div><div class="time">즉시</div></div>
-      <div class="step"><div><div class="t">채점</div><div class="d">기록한 날 <b>다음 거래일 종가</b>에 같은 금액으로 샀다고 보고 5·20·60거래일 뒤를 KODEX 200과 비교. 초과수익·적중률(지수보다 많이 오른 종목 비율), 기간이 지나지 않았으면 지금까지. 읽을 때마다 계산한다</div></div><div class="time">~4초</div></div>
+      <div class="step"><div><div class="t">채점</div><div class="d">기록한 날 <b>다음 거래일 종가</b>에 같은 금액으로 샀다고 보고 5·20·60거래일 뒤를 KODEX 200과 비교. 초과수익·적중률(지수보다 많이 오른 종목 비율), 이긴 종목과 진 종목의 평균 초과수익과 그 비(손익비), 가장 나빴던 날(기록)의 초과수익. 기간이 지나지 않았으면 지금까지. 거래 비용은 빼지 않는다. 읽을 때마다 계산한다</div></div><div class="time">~4초</div></div>
       <div class="step"><div><div class="t">자동 실행</div><div class="d">평일 16:10~20:00에 10분마다 확인. KODEX 200의 오늘 일봉이 들어와야 돌고(휴장일·지연이면 기다림), 장중에 받아 둔 미완성 일봉은 다시 받는다. 스크리너마다 조건부 UPDATE로 먼저 맡아 하루 한 번만</div></div><div class="time">하루 1회</div></div>
       <div class="step"><div><div class="t">알림</div><div class="d">켜 두었으면 직전 기록과 비교해 새로 들어온·빠진 종목을 비중 변화 알림과 같은 디스코드 웹훅으로. 바뀐 게 없으면 보내지 않는다</div></div><div class="time"></div></div>
     </div>

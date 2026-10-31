@@ -299,7 +299,7 @@
   <h1>ETF Atlas <span>Story</span></h1>
   <div class="nav-controls">
     <button class="nav-btn" id="prevBtn" onclick="go(-1)">&larr;</button>
-    <span class="page-info" id="pageInfo">1 / 11</span>
+    <span class="page-info" id="pageInfo">1 / 13</span>
     <button class="nav-btn" id="nextBtn" onclick="go(1)">&rarr;</button>
   </div>
 </header>
@@ -314,7 +314,7 @@
   <h2 class="chapter-title">오프닝</h2>
   <div class="chapter-divider"></div>
 
-  <p><span class="hl-blue">ETF Atlas</span>는 한국 ETF 데이터를 매일 모아 그래프로 쌓고, 자연어로 물으면 표와 차트로 답하고(ETF가 담은 기업은 DART 공시·실적·정기보고서로 분석까지), 조건을 이어 종목을 골라 그 결과를 날마다 채점하는 웹 서비스입니다. 기술 리서치 프로젝트로 시작해, 실제로 매일 돌아가는 서비스 수준까지 만들었습니다.</p>
+  <p><span class="hl-blue">ETF Atlas</span>는 한국 ETF 데이터를 매일 모아 그래프로 쌓고, 자연어로 물으면 표와 차트로 답하고(ETF가 담은 기업은 DART 공시·실적·정기보고서로 분석하고, 살지 말지 의견까지), 조건을 이어 종목을 골라 그 결과를 날마다 채점하는 웹 서비스입니다. 수집·리포트·매수 의견·챗봇 점검은 디스코드로 알려 옵니다. 기술 리서치 프로젝트로 시작해, 실제로 매일 돌아가는 서비스 수준까지 만들었습니다.</p>
 
   <h3 class="sub-title">풀고 싶었던 문제</h3>
   <p>상장 ETF는 약 1,175개이고, 그중 국내 주식형·순자산 500억 원 이상만 골라도 193개, 이들이 담은 종목은 수천 건의 보유 관계를 이룹니다. "삼성전자를 가장 많이 담은 ETF는?", "KODEX 200과 비슷한 ETF는?" 같은 질문은 모두 <span class="hl-blue">관계 탐색</span>입니다.</p>
@@ -357,14 +357,15 @@ $$) as (result agtype);</pre>
     <li><span class="hl-blue">액티브 ETF 비중 변화</span> &mdash; 액티브 ETF가 종목 비중을 어떻게 바꿨는지 날짜별로, 전날·1주·1개월 전과 비교</li>
     <li><span class="hl-blue">구성종목 분석</span> &mdash; ETF와 투자 비중을 넣으면 실제로 담기는 종목 비중을 계산</li>
     <li><span class="hl-blue">포트폴리오</span> &mdash; 매수 기록, 목표 비중, 계좌 유형(IRP·연금저축), 일별 스냅샷 대시보드, 스냅샷 공유</li>
-    <li><span class="hl-purple">AI 챗봇</span> &mdash; 자연어 질문에 표·차트·해설로 답하는 화면. ETF뿐 아니라 ETF가 담은 기업을 실적·공시·정기보고서로 분석</li>
+    <li><span class="hl-purple">AI 챗봇</span> &mdash; 자연어 질문에 표·차트·해설로 답하는 화면. ETF뿐 아니라 ETF가 담은 기업을 실적·밸류에이션·공시·정기보고서로 분석하고, 차트 신호와 "살까 말까"까지</li>
     <li><span class="hl-purple">종목 스크리너</span> &mdash; 노드를 이어 종목을 고르고 AI로 근거를 정리, 고른 종목을 날마다 기록해 채점하고 자동 실행·알림</li>
+    <li><span class="hl-blue">디스코드 알림</span> &mdash; 비중 변화(아침), 일일 리포트(장 마감 뒤), 스크리너 종목 변동, 챗봇 점검(매일 아침), 주간 매수 의견(토요일)</li>
     <li><span class="hl-blue">관리자</span> &mdash; 챗봇 로그 검수, 화면 설계 예시, ETF 태그, 알림 설정, DART 키</li>
   </ul>
 
   <h3 class="sub-title">구성 요소</h3>
   <figure class="graph-figure">
-    <svg viewBox="0 0 820 430" role="img" aria-label="외부 데이터(KIS, 네이버, yfinance, DART)를 Airflow가 받아 PostgreSQL에 적재하고, 프런트엔드가 백엔드 API를 거쳐 같은 PostgreSQL을 조회하는 구성. 챗봇은 DART 정기보고서 원문을 묻는 때에 직접 받는다. PostgreSQL 안에 그래프, 관계형, 벡터 저장소가 있다">
+    <svg viewBox="0 0 820 430" role="img" aria-label="외부 데이터(KIS, 네이버, yfinance, DART)를 Airflow가 받아 PostgreSQL에 적재하고, 프런트엔드가 백엔드 API를 거쳐 같은 PostgreSQL을 조회하는 구성. PostgreSQL 안에 그래프, 관계형, 벡터 저장소가 있다">
       <defs>
         <marker id="barrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
       </defs>
@@ -387,8 +388,8 @@ $$) as (result agtype);</pre>
       <text x="370" y="98" class="bsub">정기보고서 원문</text>
       <rect x="456" y="46" width="104" height="60" rx="9" class="bbox ext"/>
       <text x="508" y="65" class="bname">Discord</text>
-      <text x="508" y="83" class="bsub">비중 변화 알림</text>
-      <text x="508" y="98" class="bsub">스크리너 알림</text>
+      <text x="508" y="83" class="bsub">비중 · 일일</text>
+      <text x="508" y="98" class="bsub">스크리너 · 주간</text>
       <rect x="590" y="20" width="210" height="82" rx="12" class="bgroup "/>
       <text x="604" y="40" class="btitle">Frontend</text>
       <rect x="602" y="48" width="186" height="40" rx="9" class="bbox "/>
@@ -399,8 +400,8 @@ $$) as (result agtype);</pre>
       <text x="100" y="189" class="bname">수집 DAG</text>
       <text x="100" y="206" class="bsub">아침 · 장중 · 저녁</text>
       <rect x="176" y="168" width="132" height="50" rx="9" class="bbox "/>
-      <text x="242" y="189" class="bname">태깅 DAG</text>
-      <text x="242" y="206" class="bsub">신규 ETF 테마</text>
+      <text x="242" y="189" class="bname">LLM DAG</text>
+      <text x="242" y="206" class="bsub">태깅 · 색인 · 점검</text>
       <rect x="350" y="168" width="110" height="50" rx="9" class="bbox ext"/>
       <text x="405" y="189" class="bname">LiteLLM</text>
       <text x="405" y="206" class="bsub">LLM · 임베딩</text>
@@ -410,8 +411,8 @@ $$) as (result agtype);</pre>
       <text x="547" y="189" class="bname">챗봇</text>
       <text x="547" y="206" class="bsub">설계·스킬</text>
       <rect x="600" y="168" width="90" height="50" rx="9" class="bbox "/>
-      <text x="645" y="189" class="bname">스크리너</text>
-      <text x="645" y="206" class="bsub">자동 실행</text>
+      <text x="645" y="189" class="bname">자동 작업</text>
+      <text x="645" y="206" class="bsub">스크리너 · 주간</text>
       <rect x="698" y="168" width="90" height="50" rx="9" class="bbox "/>
       <text x="743" y="189" class="bname">API</text>
       <text x="743" y="206" class="bsub">탐색·관리</text>
@@ -437,7 +438,6 @@ $$) as (result agtype);</pre>
       <text x="768" y="125" class="blabel">/api</text>
       <polyline points="630,166 630,128 266,128 266,108" class="barrow" fill="none" marker-end="url(#barrowhead)"/>
       <polyline points="660,166 660,122 508,122 508,108" class="barrow" fill="none" marker-end="url(#barrowhead)"/>
-      <polyline points="502,180 476,180 476,134 370,134 370,108" class="barrow" fill="none" marker-end="url(#barrowhead)"/>
       <line x1="170" y1="232" x2="170" y2="278" class="barrow" marker-end="url(#barrowhead)"/>
       <text x="178" y="260" class="blabel">적재</text>
       <line x1="645" y1="232" x2="645" y2="278" class="barrow" marker-end="url(#barrowhead)"/>
@@ -446,9 +446,9 @@ $$) as (result agtype);</pre>
   </figure>
   <ul>
     <li><span class="tech">db</span> &mdash; PostgreSQL 18 + Apache AGE + pgvector + pg_trgm</li>
-    <li><span class="tech">backend</span> &mdash; FastAPI + pydantic-ai. 스크리너의 자동 실행도 백엔드 프로세스 안에서 돕니다</li>
+    <li><span class="tech">backend</span> &mdash; FastAPI + pydantic-ai. 스크리너 자동 실행과 주간 매수 의견도 백엔드 프로세스 안에서 돕니다</li>
     <li><span class="tech">frontend</span> &mdash; React + TypeScript + Vite, nginx가 정적 파일을 서빙하고 <span class="tech">/api</span>를 백엔드로 넘김</li>
-    <li><span class="tech">airflow</span> &mdash; 3.x, 수집·태깅 DAG. 부팅 직후 DAG 폴더 마운트가 비어 있으면 컨테이너가 스스로 끝나 재시작됩니다</li>
+    <li><span class="tech">airflow</span> &mdash; 3.x, 수집·태깅·정기보고서 색인·챗봇 점검 DAG. 부팅 직후 DAG 폴더 마운트가 비어 있으면 컨테이너가 스스로 끝나 재시작됩니다</li>
   </ul>
   <p>모두 Docker Compose로 띄웁니다. 외부에 열린 포트는 프런트엔드 하나이고, 백엔드·DB·Airflow는 내부에만 바인딩합니다. 가입은 초대 링크로 하고, 처음 만든 계정이 관리자가 됩니다.</p>
 
@@ -469,15 +469,16 @@ $$) as (result agtype);</pre>
     <li>ETF 구성종목 &mdash; 보유종목과 비중</li>
     <li>휴장일 &mdash; 개장 여부</li>
   </ul>
-  <p>총보수는 KIS가 주지 않아 네이버 증권에서, 포트폴리오의 장중 현재가와 스크리너가 쓰는 1년 일봉은 yfinance에서 받습니다.</p>
+  <p>총보수와 분배율(최근 12개월 분배금 ÷ 현재가)은 KIS가 주지 않아 네이버 증권에서, 포트폴리오의 장중 현재가와 스크리너가 쓰는 1년 일봉은 yfinance에서 받습니다.</p>
 
   <h3 class="sub-title">DART에서 받는 것</h3>
   <p>챗봇의 기업 분석은 금융감독원 DART OpenAPI를 씁니다. 대상은 ETF들이 담은 종목(559개) 중 DART에 종목코드가 있는 회사입니다. 키는 관리자 페이지에서 등록하고 DB에 암호화해 둡니다.</p>
   <ul>
     <li>회사 고유번호 &mdash; 상장사 전체. 수집 ETF가 담지 않은 상장사를 물으면 "분석 대상이 아니다"라고 구분해 알립니다</li>
     <li>공시 목록 &mdash; 매일 최근 3일 치를 받아 담은 종목 것만 남깁니다</li>
-    <li>주요계정 &mdash; 최근 3개 사업연도의 분기·반기·사업보고서 매출·영업이익·순이익·자산·부채·자본 (연결·별도 모두)</li>
-    <li>정기보고서 원문 &mdash; 수집하지 않고, 챗봇이 처음 물을 때 받아 요약·매출 구성과 함께 접수번호로 남깁니다</li>
+    <li>주요계정 &mdash; 최근 5개 사업연도의 분기·반기·사업보고서 매출·영업이익·순이익·자산·부채·자본 (연결·별도 모두). 3년 연속 성장을 보려면 연간 실적 4개가 있어야 해서입니다</li>
+    <li>현금흐름 &mdash; 영업활동현금흐름과 유·무형자산 취득(설비투자). FCF와 역산 DCF에 씁니다. 새 보고서·정정만 받고, 처음 채울 때는 하루 3,000건으로 나눠 키의 한도를 다른 작업과 나눠 씁니다</li>
+    <li>정기보고서 원문 &mdash; 최근 1년 치를 받아 보관하고, 밤마다 목차 트리로 색인합니다 (Chapter 08)</li>
   </ul>
 
   <h3 class="sub-title">유니버스 &mdash; 193개 ETF</h3>
@@ -485,7 +486,7 @@ $$) as (result agtype);</pre>
 
   <h3 class="sub-title">수집 원칙</h3>
   <ul>
-    <li><span class="hl">백필하지 않는다</span> &mdash; 구성종목 API에 날짜 지정이 없어 과거 보유종목은 얻을 수 없습니다. 첫 실행부터 하루씩 쌓습니다</li>
+    <li><span class="hl">구성종목은 백필하지 않는다</span> &mdash; 구성종목 API에 날짜 지정이 없어 과거 보유종목은 얻을 수 없습니다. 첫 실행부터 하루씩 쌓습니다. 종가·거래량만은 일봉으로 지난 1년을 채울 수 있습니다</li>
     <li><span class="hl">가격은 확정된 날까지만</span> &mdash; 장중에는 미완성 일봉이 오므로 16시 전이면 전날까지만 받습니다</li>
     <li><span class="hl">구성종목은 개장일에, 공시된 날짜로</span> &mdash; KIS는 개장일 아침 08:30에 그날의 구성(직전 거래일 장 마감 기준)을 공시합니다. 개장일에만 받고 그날 날짜로 저장하며, 변화는 ETF별 직전 수집일과 비교합니다</li>
     <li><span class="hl">구성종목은 상위 30개</span> &mdash; API가 비중 상위 30개만 줍니다. 질의용 데이터라 그대로 쓰고, 전체 종목 수는 따로 표시합니다</li>
@@ -493,12 +494,14 @@ $$) as (result agtype);</pre>
 
   <h3 class="sub-title">DAG</h3>
   <ul>
+    <li><span class="tech">chat_review</span> (매일 08:00) &mdash; 전날 챗봇 대화 점검 &rarr; Discord (Chapter 07)</li>
     <li><span class="tech">rdb_sync_metadata</span> (매일 08:40) &mdash; 종목 마스터 &rarr; 관계형 ETF 목록</li>
-    <li><span class="tech">age_sync_universe</span> (매일 08:50) &mdash; 영업일 &rarr; 유니버스·가격 &rarr; 구성종목 &rarr; 주식 가격 &rarr; 수익률 &rarr; 액티브 ETF 비중 변화 &rarr; 신규 ETF 태깅 &rarr; 수집 기록·Discord 알림</li>
+    <li><span class="tech">age_sync_universe</span> (매일 08:50 · 16:30) &mdash; 영업일 &rarr; 유니버스·가격·프로필 &rarr; 구성종목 &rarr; 주식 가격 &rarr; 수익률 &rarr; 액티브 ETF 비중 변화 &rarr; 신규 ETF 태깅 &rarr; 수집 기록·Discord 알림. 아침에는 그날 공시된 구성종목을, 16:30에는 그날 종가를 받고 일일 리포트를 보냅니다</li>
     <li><span class="tech">rdb_realtime_prices</span> (평일 장중 10분마다) &mdash; 보유 티커 현재가 &rarr; 포트폴리오 스냅샷</li>
-    <li><span class="tech">dart_sync_rdb</span> (평일 19:20) &mdash; DART 고유번호 &rarr; 공시 목록 · 주요계정</li>
+    <li><span class="tech">dart_sync_rdb</span> (평일 19:20) &mdash; DART 고유번호 &rarr; 공시 목록 · 주요계정 · 현금흐름</li>
+    <li><span class="tech">dart_report_index</span> (매일 21:00, 밤새) &mdash; 정기보고서 원문 &rarr; 목차 트리 &rarr; 노드 요약 &rarr; 개요</li>
     <li><span class="tech">age_tagging</span> (토 03:00) &mdash; 테마 태깅</li>
-    <li><span class="tech">embed_code_examples</span> (수동) &mdash; 챗봇 예시 임베딩</li>
+    <li><span class="tech">backfill_prices</span> · <span class="tech">embed_code_examples</span> (수동) &mdash; 가격 이력 백필, 챗봇 예시 임베딩</li>
   </ul>
   <p>모든 쓰기는 같은 날짜로 다시 돌려도 결과가 같게 만들었고, 조회에 실패한 ETF는 이전 값을 유지합니다.</p>
 </section>
@@ -584,42 +587,95 @@ ORDER BY similarity DESC LIMIT 5</pre>
   <h2 class="chapter-title">AI 챗봇 &mdash; 답을 화면으로</h2>
   <div class="chapter-divider"></div>
 
-  <p>챗봇은 글로만 답하지 않습니다. 질문을 보고 <span class="hl-purple">화면을 먼저 설계</span>하고, 화면의 각 영역을 <span class="hl-green">스킬</span>이 채웁니다. 자세한 흐름은 Architecture 페이지에 있습니다.</p>
+  <p>챗봇은 글로만 답하지 않습니다. 질문을 보고 <span class="hl-purple">화면을 먼저 설계</span>하고, 화면의 각 영역을 <span class="hl-green">스킬</span>이 채웁니다. 스킬은 21개이고, ETF(가격·수익률·비교·구성종목·겹침·순위), 기업(실적·밸류에이션·유형·공시·정기보고서), 차트 분석, 매수 의견, 해설을 맡습니다. 자세한 흐름은 Architecture 페이지에 있습니다.</p>
 
   <h3 class="sub-title">처리 순서</h3>
   <ul>
     <li><span class="hl">질문 재작성</span> &mdash; 이전 대화가 있으면 "이거 구성종목은?"을 독립된 질문으로. 잘못 읽었으면 원문 그대로 다시 물을 수 있습니다</li>
-    <li><span class="hl">화면 설계</span> &mdash; Planner(LLM)가 화면을 줄과 슬롯으로 나누고, 슬롯마다 스킬·표시 방식·인자를 정합니다. 비슷한 질문의 설계 예시를 참고합니다</li>
-    <li><span class="hl">슬롯 채우기</span> &mdash; 데이터 스킬이 그래프를 조회해 표·차트 데이터를 만듭니다. 서로 독립된 슬롯은 동시에 돌고, 끝나는 대로 화면에 나타납니다. "SK하이닉스를 담은 ETF 중 1주 수익률 상위 3개"처럼 한 슬롯의 결과를 다른 슬롯이 번호로 받아 정렬·필터합니다</li>
+    <li><span class="hl">화면 설계</span> &mdash; Planner(LLM)가 화면을 줄과 슬롯으로 나누고, 슬롯마다 스킬·표시 방식·인자를 정합니다. 비슷한 질문의 설계 예시를 임베딩으로 찾고 LLM이 같은 유형만 골라 참고합니다. 출력 스키마는 등록된 스킬에서 만들어 모델이 생성하는 단계에서 강제하므로 형식이 틀릴 일이 없고, 재시도는 없는 이름·참조 오류 같은 내용 검사에만 씁니다</li>
+    <li><span class="hl">슬롯 채우기</span> &mdash; 데이터 스킬이 그래프와 DART 테이블을 조회해 표·차트 데이터를 만듭니다. 서로 독립된 슬롯은 동시에 돌고, 끝나는 대로 화면에 나타납니다. "SK하이닉스를 담은 ETF 중 1주 수익률 상위 3개"처럼 한 슬롯의 결과를 다른 슬롯이 번호로 받아 쓰고, 받는 쪽이 ETF를 원하는데 종목을 넘기는 식의 어긋남은 설계 단계에서 막습니다</li>
+    <li><span class="hl">한 번 다시 설계</span> &mdash; "ETF가 아니라 종목이었다"처럼 고칠 수 있는 이유로 빈 영역이 생기면, 실행 결과를 보여 주고 그 슬롯만 다시 설계합니다. 이미 그려진 영역은 흔들리지 않습니다</li>
     <li><span class="hl">해설</span> &mdash; 마지막 슬롯이 앞 영역의 요약만 보고 해설을 흘려보냅니다</li>
   </ul>
 
   <h3 class="sub-title">숫자는 LLM을 거치지 않는다</h3>
-  <p>표와 차트의 숫자는 DB에서 곧바로 옵니다. LLM은 화면 설계와 해설만 하고, 해설에는 단위를 붙인 짧은 요약만 넘어갑니다. 그래서 숫자를 지어낼 틈이 없고, 일반 질문은 7~10초 안에 답합니다. 예외는 정기보고서처럼 원문이 글과 표뿐인 경우이고, 이때는 아래처럼 LLM이 옮긴 숫자를 원문과 대조합니다.</p>
-
-  <h3 class="sub-title">기업 분석</h3>
-  <p>"삼성전자 분석해줘"에는 주가 추이와 담은 ETF(이 서비스만의 데이터) 옆에 DART 분기 실적, 최근 공시, 가장 최근 정기보고서 요약을 놓고 해설로 묶습니다. 실적·공시는 매일 수집한 DB에서, 보고서는 처음 물을 때 원문을 받아 읽습니다.</p>
-  <ul>
-    <li><span class="hl">보고서 요약</span> &mdash; 원문에서 사업의 내용, 경영진단, 투자자 보호 사항, 영업부문 주석만 뽑아 사업 구조·영업 상황·위험·소송으로 요약합니다. 수치는 원문 단위 그대로 옮기고, 영역 제목은 "2026년 반기보고서"처럼 어느 보고서인지 밝힙니다</li>
-    <li><span class="hl">매출 구성 차트</span> &mdash; 보고서 표에서 부문·제품·지역·주요 고객별 매출을 LLM이 옮기되, 값과 항목 이름이 원문에 그대로 있을 때만 씁니다. 합계와 맞으면 도넛, 내부거래가 섞여 합이 전체가 아니면 막대로 그립니다</li>
-    <li><span class="hl">영역을 스스로 나눈다</span> &mdash; 계획에는 "보고서 요약" 슬롯 하나만 있고, 스킬이 원문을 읽고 매출 구성이 있으면 그 자리를 차트와 요약으로 나눕니다. 무엇이 나올지는 원문을 봐야 알기 때문입니다</li>
-  </ul>
-  <p>요약과 매출 구성은 접수번호로 캐시해, 같은 보고서는 다음부터 바로 나옵니다. 정정 보고서가 나오면 접수번호가 달라 새로 읽습니다.</p>
+  <p>표와 차트의 숫자는 DB에서 곧바로 옵니다. LLM은 화면 설계와 해설, 정기보고서 읽기만 하고, 해설에는 단위를 붙인 짧은 요약만 넘어갑니다. 그래서 숫자를 지어낼 틈이 없고, 일반 질문은 7~10초 안에 답합니다. 기간 수익률, 실적, 밸류에이션, 차트 신호 같은 계산은 <span class="tech">app/domain</span>에 모아 챗봇과 스크리너가 같은 함수를 씁니다. 예외는 정기보고서처럼 원문이 글과 표뿐인 경우이고, 이때는 LLM이 옮긴 숫자를 원문과 대조합니다(Chapter 08).</p>
 
   <h3 class="sub-title">스킬로 안 되는 질문 &mdash; agent</h3>
-  <p>스킬로 표현할 수 없는 질문은 <span class="tech">agent</span> 슬롯 하나로 넘깁니다. 안에서는 도구 10개를 가진 tool-calling 에이전트가 돌고, 그중 <span class="tech">graph_query</span>는 LLM이 쓴 Cypher를 직접 실행합니다.</p>
+  <p>스킬로 표현할 수 없는 질문은 <span class="tech">agent</span> 슬롯 하나로 넘깁니다. 안에서는 tool-calling 에이전트가 돌고, 도구는 둘로 나뉩니다. 검색·ETF 정보·유사 ETF·비교·가격 같은 도구 10개, 그리고 데이터 스킬 9개(실적·밸류에이션·유형·공시·차트 분석·기간 수익률·순위·겹침·포트폴리오)입니다. 스킬을 도구로 부르면 슬롯과 같은 요약을 돌려받아, 같은 계산이 두 벌로 갈라지지 않습니다. 도구 중 <span class="tech">graph_query</span>는 LLM이 쓴 Cypher를 직접 실행합니다.</p>
   <ul>
     <li>읽기 전용 트랜잭션, 실행 시간 10초 제한, SQL 따옴표를 탈출할 수 있는 <span class="tech">$$</span>·<span class="tech">;</span> 거부</li>
     <li>pgvector로 비슷한 질문의 Cypher 패턴 예시를 찾아 프롬프트에 넣습니다. 고유명사는 자리표시자로 일반화해 엉뚱한 예시가 걸리지 않게 합니다</li>
     <li>어떤 도구를 어떤 인자로 불렀는지 화면에 단계별로 보여 줍니다</li>
   </ul>
 
-  <div class="callout">대상이 애매하면("반도체 ETF 구성종목") 하나를 추측하지 않고 후보를 보여 주며 되묻습니다. 멈추면 화면은 바로 끝나고, 답변마다 완료·중지·실패·되묻기 중 어떻게 끝났는지 남습니다. 관리자가 검수한 대화와 설계 예시가 다시 챗봇의 참고 자료가 됩니다.</div>
+  <h3 class="sub-title">매일 아침 스스로 점검한다</h3>
+  <p>매일 08:00 <span class="tech">chat_review</span> DAG가 전날 대화를 읽습니다. 먼저 LLM 없이 신호를 모읍니다: 실패·중지·되묻기로 끝난 답, 비거나 실패한 영역, 싫어요, 반복된 도구 오류, 같은 질문인데 영역 구성이 달랐던 경우. 그다음 LLM이 <span class="hl">세션 전체</span>를 보고 문제 턴과 원인(스킬 선택, 영역 구성, 스킬 결과, 도구, 없는 기능, 데이터 없음, 중단)과 고칠 곳을 골라 Discord로 보냅니다. 다음 턴의 사용자 말("재무 스킬에서 가져오면 되잖아")이 가장 강한 신호라 턴 하나만 보지 않습니다.</p>
+  <p>이 봇은 <span class="hl">보고만 합니다</span>. 스킬 설명, 레이아웃 예시, 코드는 사람이 고치고, 고친 뒤에는 평가 세트로 다른 질문이 무너지지 않았는지 확인합니다.</p>
+
+  <div class="callout">대상이 애매하면("반도체 ETF 구성종목") 하나를 추측하지 않고 후보를 보여 주며 되묻습니다. 멈추면 화면은 바로 끝나고, 답변마다 완료·중지·실패·되묻기 중 어떻게 끝났는지 남습니다. 관리자가 검수한 대화와 설계 예시, 점검 봇이 찾은 약점이 다시 챗봇을 고치는 재료가 됩니다.</div>
 </section>
 
-<!-- ═══════════════ Chapter 8: 종목 스크리너 ═══════════════ -->
-<section class="chapter" data-title="종목 스크리너">
+<!-- ═══════════════ Chapter 8: 기업 분석 ═══════════════ -->
+<section class="chapter" data-title="기업 분석">
   <div class="chapter-num">Chapter 08</div>
+  <h2 class="chapter-title">기업 분석 &mdash; DART와 정기보고서</h2>
+  <div class="chapter-divider"></div>
+
+  <p>"삼성전자 분석해줘"에는 주가 추이와 담은 ETF(이 서비스만의 데이터) 옆에 DART 분기 실적, 최근 공시, 가장 최근 정기보고서를 놓고 해설로 묶습니다. 모두 Airflow가 미리 받아 둔 테이블에서 읽습니다. 수집 ETF가 담지 않은 상장사는 "분석하지 않는 종목"이라고 한 번만 알립니다.</p>
+
+  <h3 class="sub-title">실적 · 밸류에이션 · 유형</h3>
+  <ul>
+    <li><span class="hl">실적</span> &mdash; 분기·연간 매출·영업이익·순이익과 영업이익률, 부채비율. 4분기는 연간에서 3분기 누적을 빼 구하고, 빠진 분기는 0으로 채우지 않고 비웁니다</li>
+    <li><span class="hl">밸류에이션</span> &mdash; 시가총액은 종가 × 상장주식수, 여기에 DART 실적을 붙여 PER(최근 4분기·직전 연도)·PBR·ROE를 직접 계산합니다. 영업현금흐름 − 설비투자로 FCF와 FCF 수익률을, 지금 시가총액을 정당화하려면 FCF가 몇 % 성장해야 하는지 역산 DCF로 냅니다. KIS의 PER·PBR은 대조용으로 함께 보여 줍니다</li>
+    <li><span class="hl">유형 판정</span> &mdash; 지속 성장주, 턴어라운드주, 경기민감·성숙기, 신흥·초기 단계를 연속 성장, 영업이익률, 발생액 품질, 흑자 반등, 영업현금흐름 같은 숫자 기준으로 가립니다. 해자처럼 숫자로 못 보는 기준은 "보고서로 확인할 것"으로 남깁니다</li>
+  </ul>
+
+  <h3 class="sub-title">정기보고서 &mdash; 목차를 보고 골라 읽는다</h3>
+  <p>정기보고서는 한 건이 70만 자에 이릅니다. 앞부분 몇 장만 잘라 요약하면 연구개발비, 직원 수, 최대주주, 배당, 감사의견처럼 요약 틀 밖의 질문에 답할 수 없습니다. 그래서 사람이 보고서를 읽는 방식을 따랐습니다. <span class="hl-purple">목차를 보고, 답이 있을 절을 고르고, 그 절만 읽습니다</span>(PageIndex 방식, 직접 구현).</p>
+  <ul>
+    <li><span class="hl">밤에 색인</span> &mdash; <span class="tech">dart_report_index</span>가 최근 1년 정기보고서 원문을 받아 보관하고, 장·절·주석을 노드로 하는 트리를 만듭니다. DART 원문은 목차가 태그로 정해져 있어 규칙으로 정확히 나눕니다. 표는 병합 셀을 풀어 한 행만 떼어 읽어도 뜻이 통하게 저장합니다</li>
+    <li><span class="hl">노드 요약은 고르기용</span> &mdash; 노드마다 "이 절에 든 항목"을 LLM이 한 줄로 적어 둡니다. 답이 아니라 목차를 읽기 쉽게 하는 표지입니다. 신용등급이 '회사의 개요'에, 연구개발비 비율이 '주요계약 및 연구개발활동'에 있는 것처럼 제목만으로는 짐작하기 어려운 절을 찾게 해 줍니다</li>
+    <li><span class="hl">질문이 오면</span> &mdash; LLM이 목차(제목 + 요약)를 보고 절 1~3개를 고르고, 그 절만 읽어 답합니다. 답 머리에 읽은 절과 DART 원문 링크를 붙여 출처를 확인할 수 있게 합니다. 수치는 원문 단위 그대로 옮깁니다</li>
+    <li><span class="hl">개요</span> &mdash; 무엇을 찾는지 없이 물으면 사업 구조·영업 상황·위험 요인·소송·제재로 정리한 개요를 보여 줍니다. 밤에 미리 만들어 둡니다</li>
+  </ul>
+  <p>삼성전자 보고서 2건에 질문 24개씩을 물었을 때, 목차에 제목만 넣으면 보고서마다 19개, 노드 요약까지 넣으면 24개 모두 정답 절을 골랐습니다. 답의 수치도 원문과 같았고, 질문당 3~9초가 걸립니다.</p>
+
+  <h3 class="sub-title">매출 구성 차트</h3>
+  <p>보고서 표에서 부문·제품·지역·주요 고객별 매출을 LLM이 옮기되, 값과 항목 이름이 원문에 그대로 있을 때만 씁니다. 합계와 맞으면 도넛, 내부거래가 섞여 합이 전체가 아니면 막대로 그립니다. 계획에는 "보고서" 슬롯 하나만 있고, 스킬이 실행하며 매출 구성이 있으면 그 자리를 차트와 요약으로 나눕니다. 무엇이 나올지는 원문을 봐야 알기 때문입니다.</p>
+
+  <div class="callout">정기보고서는 원문 · 구조(목차 트리) · 색인(노드 요약)의 세 층으로 저장합니다. 파서를 고치면 DART를 다시 부르지 않고 보관한 원문으로 트리를 다시 만들고, 내용이 바뀐 노드만 다시 요약합니다.</div>
+</section>
+
+<!-- ═══════════════ Chapter 9: 차트 분석과 매수 의견 ═══════════════ -->
+<section class="chapter" data-title="차트 분석 · 매수 의견">
+  <div class="chapter-num">Chapter 09</div>
+  <h2 class="chapter-title">차트 분석과 매수 의견</h2>
+  <div class="chapter-divider"></div>
+
+  <h3 class="sub-title">차트 분석 &mdash; 대가들의 규칙을 코드로</h3>
+  <p>"주가 분석해줘", "RSI 어때?"에는 봉차트에 이동평균·볼린저 밴드, 거래량, 넘겨 보는 보조지표 칸(MACD·RSI·스토캐스틱)을 그리고, 그 아래에 지표별 강세·약세 신호를 한 줄로 붙입니다. 신호는 LLM이 아니라 이름난 규칙을 옮긴 코드가 정합니다.</p>
+  <ul>
+    <li><span class="hl">추세</span> &mdash; 스탠 와인스타인의 단계 분석(150일선의 기울기와 그 위·아래)과 마크 미너비니의 트렌드 템플릿 충족 수</li>
+    <li><span class="hl">MACD</span> &mdash; 알렉산더 엘더의 삼중 스크린. 교차가 아니라 히스토그램의 기울기를 봅니다</li>
+    <li><span class="hl">RSI</span> &mdash; 앤드루 카드웰의 레인지 시프트. 30·70 고정이 아니라 최근 60거래일이 머무는 범위로 강세·약세를 가립니다</li>
+    <li><span class="hl">스토캐스틱</span> &mdash; 혼자 판정하지 않고, 추세 안에서 "상승 추세 속 눌림"처럼 읽습니다</li>
+  </ul>
+  <p>해설은 지표마다 지금 상태만 씁니다. 지지선·저항선, 앞으로의 방향, 매수·매도 판단은 쓰지 않습니다. 대가들의 규칙도 경험칙이라, 맞는지는 스크리너에서 앞으로 쌓아 채점해 확인합니다.</p>
+
+  <h3 class="sub-title">살까 말까 &mdash; LLM은 판정하고 규칙이 종합한다</h3>
+  <p>"삼성전자 지금 사도 될까?"에는 차트 분석, 분기 실적·밸류에이션·유형 판정, 정기보고서 개요를 놓고, 마지막 영역에서 <span class="hl-purple">세 관점</span>(차트·재무·보고서)마다 긍정~부정 판정과 근거를 냅니다. LLM은 앞 영역의 요약에 있는 사실·수치로만 판정합니다.</p>
+  <p>종합 의견(사 볼 만하다 · 지켜본다 · 사지 않는 편이 낫다)은 LLM이 아니라 <span class="hl">규칙</span>이 정합니다. 관점 평균이 +1 이상이고 부정인 관점이 없으면 사 볼 만하다, −1 이하면 사지 않는 편이 낫다, 그 사이나 부정이 하나라도 있으면 지켜봅니다. 네 유형 어디에도 맞지 않는 종목은 관점과 상관없이 사지 않습니다. 같은 판정이면 늘 같은 종합이 나오고, 왜 그 종합인지 규칙으로 설명할 수 있습니다.</p>
+
+  <h3 class="sub-title">주간 매수 의견</h3>
+  <p>토요일 아침에는 ETF가 담은 주식 전체(약 570종목)에 같은 판정을 돌립니다. '사 볼 만하다' 중 점수가 높은 10개를 회사 한 줄 소개, 관점별 판정, 유형과 함께 Discord로 보내고, 지난주에 없던 종목에는 🆕를 붙입니다. 판정한 종목은 바로 저장해 백엔드가 중간에 다시 떠도 이어서 돌고, 한 주에 한 번만 보냅니다.</p>
+
+  <div class="callout">매수 의견은 이 서비스가 모은 데이터(시세·DART 실적·정기보고서)를 정해진 관점으로 읽은 참고 의견이지 투자 권유가 아닙니다. 화면과 알림 모두에 그렇게 밝힙니다.</div>
+</section>
+
+<!-- ═══════════════ Chapter 10: 종목 스크리너 ═══════════════ -->
+<section class="chapter" data-title="종목 스크리너">
+  <div class="chapter-num">Chapter 10</div>
   <h2 class="chapter-title">종목 스크리너 &mdash; 고르고, 쌓고, 채점한다</h2>
   <div class="chapter-divider"></div>
 
@@ -628,7 +684,7 @@ ORDER BY similarity DESC LIMIT 5</pre>
   <h3 class="sub-title">노드</h3>
   <ul>
     <li><span class="hl-blue">대상 종목</span> &mdash; ETF가 담은 전체 종목(559개), 특정 ETF의 구성종목, 내 포트폴리오가 ETF로 실제 담은 종목, 직접 입력</li>
-    <li><span class="hl-blue">차트 필터</span> &mdash; 이평 정배열, 고가 대비 위치, 20일 수익률, 거래량 배수, RSI, 간이 VCP</li>
+    <li><span class="hl-blue">차트 필터</span> &mdash; 이평 정배열, 고가 대비 위치, 20일 수익률, 거래량 배수, RSI, 간이 VCP, 그리고 "언제 시작됐나"를 묻는 조건: 최근 N거래일 안의 MACD·스토캐스틱 골든크로스(과매도에서 난 교차만 고를 수 있다), 볼린저 %B 범위. 지표는 챗봇 차트 분석과 같은 함수입니다</li>
     <li><span class="hl-blue">ETF 신호 필터</span> &mdash; 담은 ETF 수, 최근 공시일에 액티브 ETF가 새로 편입하거나 비중을 늘린 수. 이 서비스가 매일 쌓는 데이터라 다른 스크리너에는 없는 조건입니다</li>
     <li><span class="hl-purple">AI 분석</span> &mdash; 계산된 지표만 받아 종목마다 3문장으로 근거를 정리합니다. 매수·매도 권유와 예측은 쓰지 않습니다</li>
   </ul>
@@ -637,7 +693,7 @@ ORDER BY similarity DESC LIMIT 5</pre>
   <p>조건이 쓸모 있는지 보려면 백테스트를 떠올리지만, 구성종목 이력이 없어 "오늘 ETF가 담은 종목"으로 과거를 돌리게 됩니다. 이미 오른 종목만 고르는 <span class="hl">생존 편향</span>입니다. 그래서 저장한 스크리너는 돌릴 때마다 결과에 닿은 종목을 그날 날짜로 남기고, 나중에 채점합니다.</p>
   <ul>
     <li>기록한 날 <span class="hl">다음 거래일 종가</span>에 같은 금액으로 샀다고 봅니다. 장중에 돌렸거나 그날 종가를 보고 골랐어도 미래 값을 쓰지 않습니다</li>
-    <li>5·20·60거래일 뒤 수익률을 KODEX 200과 비교해 초과수익과 적중률(지수보다 많이 오른 종목 비율)을 냅니다</li>
+    <li>5·20·60거래일 뒤 수익률을 KODEX 200과 비교해 초과수익과 적중률(지수보다 많이 오른 종목 비율)을 냅니다. 이긴 종목과 진 종목의 평균 초과수익을 따로 내 손익비를 보므로, 드물게 이기지만 크게 이기는 스크리너도 드러납니다. 거래 비용은 빼지 않습니다</li>
     <li>화면에서 고친 뒤 저장하지 않은 그래프의 결과는 남기지 않습니다. 무엇을 채점하는지 흐려지기 때문입니다</li>
   </ul>
 
@@ -647,9 +703,9 @@ ORDER BY similarity DESC LIMIT 5</pre>
   <div class="callout">숫자는 서버가 계산하고 LLM은 문장만 쓴다는 챗봇의 원칙을 그대로 따릅니다. 시세는 기능을 검증하는 단계라 yfinance에서 받고, 어떤 기간·지표가 필요한지 정해지면 KIS 일봉 수집으로 바꿀 수 있게 시세 공급원을 인터페이스 하나로 감쌌습니다.</div>
 </section>
 
-<!-- ═══════════════ Chapter 9: 포트폴리오 ═══════════════ -->
+<!-- ═══════════════ Chapter 11: 포트폴리오 ═══════════════ -->
 <section class="chapter" data-title="포트폴리오">
-  <div class="chapter-num">Chapter 09</div>
+  <div class="chapter-num">Chapter 11</div>
   <h2 class="chapter-title">포트폴리오 관리 & 대시보드</h2>
   <div class="chapter-divider"></div>
 
@@ -660,9 +716,9 @@ ORDER BY similarity DESC LIMIT 5</pre>
   <div class="callout-green">포트폴리오는 관계형 테이블을 씁니다. CRUD와 트랜잭션 중심 데이터는 관계형, 관계 탐색은 그래프라는 분리를 그대로 따릅니다.</div>
 </section>
 
-<!-- ═══════════════ Chapter 10: 설계 원칙 ═══════════════ -->
+<!-- ═══════════════ Chapter 12: 설계 원칙 ═══════════════ -->
 <section class="chapter" data-title="설계 원칙">
-  <div class="chapter-num">Chapter 10</div>
+  <div class="chapter-num">Chapter 12</div>
   <h2 class="chapter-title">만들며 정한 원칙</h2>
   <div class="chapter-divider"></div>
 
@@ -687,14 +743,24 @@ ORDER BY similarity DESC LIMIT 5</pre>
       <ul>
         <li>사용자, 포트폴리오, 매수 기록</li>
         <li>스냅샷, 챗봇 로그, 비중 변화, 스크리너 기록</li>
-        <li>DART 공시·실적, 보고서 요약 캐시</li>
+        <li>DART 공시·실적·현금흐름, 정기보고서 원문·목차 트리·노드 요약</li>
+        <li>매수 의견 기록</li>
         <li>트랜잭션이 중요한 데이터</li>
       </ul>
     </div>
   </div>
 
   <h3 class="sub-title">LLM은 결정적이지 않다</h3>
-  <p>숫자는 LLM 밖에서 만들고, 한 번 정한 결과(태그, 보고서 요약)는 고정하며, 사람이 정한 값이 자동 결과보다 우선합니다. LLM이 쓴 쿼리는 금지어 목록 대신 <span class="hl">DB가 쓰기를 거부</span>하게 막습니다. LLM이 원문에서 옮긴 숫자는 믿지 않고 <span class="hl">원문에 그대로 있는지 대조</span>해, 하나라도 없으면 그 표를 버립니다.</p>
+  <p>숫자는 LLM 밖에서 만들고, 한 번 정한 결과(태그, 보고서 개요·노드 요약)는 고정하며, 사람이 정한 값이 자동 결과보다 우선합니다. LLM이 쓴 쿼리는 금지어 목록 대신 <span class="hl">DB가 쓰기를 거부</span>하게 막습니다. LLM이 원문에서 옮긴 숫자는 믿지 않고 <span class="hl">원문에 그대로 있는지 대조</span>해, 하나라도 없으면 그 표를 버립니다.</p>
+
+  <h3 class="sub-title">LLM은 고르고 읽고, 규칙이 정한다</h3>
+  <p>LLM에게는 잘하는 일만 맡깁니다. 화면에 무엇을 놓을지 고르고, 목차에서 답이 있는 절을 고르고, 요약을 읽어 관점마다 판정하는 일입니다. 차트 신호와 매수 의견의 종합처럼 "같은 입력이면 같은 답"이어야 하는 결정은 규칙이 합니다. 출력 형식도 모델이 생성하는 단계에서 스키마로 강제해, 형식을 고치느라 재시도하지 않습니다.</p>
+
+  <h3 class="sub-title">긴 문서는 미리 색인한다</h3>
+  <p>질문이 올 때마다 긴 원문을 잘라 읽으면 잘린 곳의 답은 영영 나오지 않고, 처음 묻는 사람은 수십 초를 기다립니다. 보고서는 밤에 목차 트리와 고르기용 요약으로 색인해 두고, 질문이 오면 필요한 절만 읽습니다. 매수 의견이 읽는 개요도 미리 만들어 둡니다.</p>
+
+  <h3 class="sub-title">자동은 보고하고, 사람이 고친다</h3>
+  <p>챗봇 점검 봇은 약점을 찾아 알리기만 하고 스킬·예시·코드를 건드리지 않습니다. 고친 것은 평가 세트로 다른 질문이 무너지지 않았는지 본 뒤 반영합니다.</p>
 
   <h3 class="sub-title">검증은 앞으로 쌓아서</h3>
   <p>과거 데이터가 없는 것을 과거 데이터로 메우지 않습니다. 구성종목처럼 그날만 얻을 수 있는 데이터는 그날부터 쌓고, 스크리너의 쓸모도 백테스트 대신 기록한 날 이후의 실제 수익으로 따집니다.</p>
@@ -703,9 +769,9 @@ ORDER BY similarity DESC LIMIT 5</pre>
   <p>이름 기반 필터는 편리하지만 규칙에 없는 이름은 조용히 새어 나갑니다. 운용사 "기타", 미분류 태그처럼 새는 것을 보여 주는 지표를 주기적으로 확인합니다.</p>
 </section>
 
-<!-- ═══════════════ Chapter 11: 회고 ═══════════════ -->
+<!-- ═══════════════ Chapter 13: 회고 ═══════════════ -->
 <section class="chapter" data-title="회고">
-  <div class="chapter-num">Chapter 11</div>
+  <div class="chapter-num">Chapter 13</div>
   <h2 class="chapter-title">회고 & 마무리</h2>
   <div class="chapter-divider"></div>
 
@@ -739,9 +805,16 @@ ORDER BY similarity DESC LIMIT 5</pre>
 
   <div class="review-card">
     <h4>DART OpenAPI</h4>
-    <div class="review-section"><div class="review-label good">Good</div><p>키 하나로 상장사 공시 목록, 여러 회사의 주요계정, 정기보고서 원문까지 받습니다. 하루 2만 건 한도면 559개 회사를 매일 갱신하고도 남습니다.</p></div>
-    <div class="review-section"><div class="review-label bad">Bad</div><p>원문은 목차만 서식이 정해져 있고 표 모양은 회사마다 달라 규칙으로 파싱하기 어렵습니다. 매출 구성 같은 숫자는 표에서 옮긴 뒤 원문과 대조해야 합니다.</p></div>
-    <div class="review-section"><div class="review-label rec">Recommend</div><p>국내 상장사의 실적·공시를 정형 데이터로 쌓고, 보고서 본문은 필요할 때 읽어 요약하는 용도.</p></div>
+    <div class="review-section"><div class="review-label good">Good</div><p>키 하나로 상장사 공시 목록, 여러 회사의 주요계정·현금흐름, 정기보고서 원문까지 받습니다. 원문 XML은 장·절이 태그로 정해져 있어 목차 트리를 규칙으로 정확히 만들 수 있습니다.</p></div>
+    <div class="review-section"><div class="review-label bad">Bad</div><p>표 모양은 회사마다 달라 병합 셀과 여러 줄 머리말을 풀어야 하고, 매출 구성 같은 숫자는 표에서 옮긴 뒤 원문과 대조해야 합니다. 현금흐름은 회사·보고서마다 한 번씩 불러야 해 처음 채울 때 하루 2만 건 한도를 나눠 씁니다. 정정 공시 중에는 원문을 주지 않는 것도 있습니다.</p></div>
+    <div class="review-section"><div class="review-label rec">Recommend</div><p>국내 상장사의 실적·공시를 정형 데이터로 쌓고, 보고서 원문은 보관해 색인하는 용도.</p></div>
+  </div>
+
+  <div class="review-card">
+    <h4>목차 트리 색인 (PageIndex 방식)</h4>
+    <div class="review-section"><div class="review-label good">Good</div><p>임베딩 검색 없이 목차와 고르기용 요약만으로 질문 24개 모두 정답 절을 골랐습니다. 읽은 절을 밝혀 출처가 분명하고, 요약 틀 밖의 질문에도 답합니다.</p></div>
+    <div class="review-section"><div class="review-label bad">Bad</div><p>노드 요약에 LLM 호출이 많아, 처음 색인은 보고서 수천 건을 2~3일 밤에 나눠 끝냅니다. 같은 LLM을 챗봇과 나눠 써서 동시 수를 높이지 못합니다.</p></div>
+    <div class="review-section"><div class="review-label rec">Recommend</div><p>목차 구조가 분명한 긴 문서(공시, 규정, 매뉴얼)에서 사실을 찾아 답할 때.</p></div>
   </div>
 
   <div class="review-card">

@@ -1,18 +1,14 @@
-"""dart_report_index: 요약 서버 목록과 자리 배분."""
-import sys
+"""report_index(dart_report_index DAG 본문): 요약 서버 목록, 자리 배분, 원문 없는 보고서 처리."""
 import threading
 import time
-from pathlib import Path
 
-import pytest
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "dags"))
+import report_index as mod
+from dart_client import DartError
 
 AI = {"llm_api_base": "http://gateway/v1", "llm_api_key": "k", "llm_model": "dukim-llm"}
 
 
 def test_summary_endpoints_add_extra_servers():
-    mod = pytest.importorskip("dart_report_index")  # airflow 필요
     assert mod.summary_endpoints(AI, extra="") == [
         {"base_url": "http://gateway/v1", "api_key": "k", "model": "dukim-llm", "workers": mod.SUMMARY_WORKERS}]
     extra = mod.summary_endpoints(
@@ -21,7 +17,6 @@ def test_summary_endpoints_add_extra_servers():
 
 
 def test_summary_slots_never_exceed_each_servers_workers(monkeypatch):
-    mod = pytest.importorskip("dart_report_index")
     active, peak, lock = {}, {}, threading.Lock()
 
     class FakeOpenAI:
@@ -90,16 +85,13 @@ class FakeConn:
 
 
 def test_build_trees_marks_filings_without_a_document_missing_and_fetches_the_period(monkeypatch):
-    mod = pytest.importorskip("dart_report_index")
-    import dart_sync_rdb
-    from dart_client import DartError
 
     calls = []
 
     class FakeDart:
         def document(self, rcept_no):
             raise DartError('document.xml: <?xml version="1.0"?><result><status>014</status>'
-                            '<message>파일이 존재하지 않습니다.</message></result>')
+                            '<message>파일이 존재하지 않습니다.</message></result>', status="014")
 
         def disclosures(self, bgn, end, corp_code):
             calls.append((bgn, end, corp_code))
@@ -109,8 +101,8 @@ def test_build_trees_marks_filings_without_a_document_missing_and_fetches_the_pe
     saved = []
     cur = FakeCursor([("20260619000667", "105560", "2025.12", False)], "00688996")
     monkeypatch.setattr(mod, "get_db_connection", lambda: FakeConn(cur))
-    monkeypatch.setattr(dart_sync_rdb, "_client", lambda: FakeDart())
-    monkeypatch.setattr(dart_sync_rdb, "_save_disclosures", lambda c, items, stocks: saved.extend(items) or len(items))
+    monkeypatch.setattr(mod, "get_dart_client", lambda: FakeDart())
+    monkeypatch.setattr(mod, "save_disclosures", lambda c, items, stocks: saved.extend(items) or len(items))
     mod.build_trees()
     assert calls == [("20251231", "20260619", "00688996")]
     assert [i["rcept_no"] for i in saved] == ["20260316000100"]

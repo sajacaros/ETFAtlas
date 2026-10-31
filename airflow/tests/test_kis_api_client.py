@@ -1,13 +1,9 @@
 """kis_api_client 단위 테스트 (HTTP는 가짜 세션으로 대체)."""
-import sys
 from datetime import datetime, timedelta
-from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "dags"))
-
-from kis_api_client import KISApiClient, KISApiError  # noqa: E402
+from kis_api_client import KISApiClient, KISApiError
 
 
 class FakeResponse:
@@ -228,3 +224,44 @@ def test_daily_bars_bring_the_quote_from_output1():
     assert (quote.per, quote.eps) == (None, -120.0)
     client = make_client([{**payload, "output1": {}}])
     assert client.get_daily_bars_with_quote("005930", "20261028", "20261028")[1] is None
+
+
+def test_fetch_etf_master_retries_server_and_network_errors(monkeypatch):
+    import io
+    import zipfile
+    import requests
+    import kis_api_client
+
+    monkeypatch.setattr(kis_api_client.time, "sleep", lambda s: None)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("kospi_code.mst", _master_row("069500", "KODEX 200", "EF").encode("cp949"))
+    ok = FakeResponse(None)
+    ok.content = buf.getvalue()
+    responses = [requests.ConnectionError("reset"), FakeResponse(None, status=503), ok]
+
+    class Session:
+        def get(self, url, timeout):
+            r = responses.pop(0)
+            if isinstance(r, Exception):
+                raise r
+            return r
+
+    assert kis_api_client.fetch_etf_master(Session()) == [("069500", "KODEX 200")]
+    assert responses == []
+
+
+def test_fetch_etf_master_does_not_retry_client_errors(monkeypatch):
+    import kis_api_client
+
+    monkeypatch.setattr(kis_api_client.time, "sleep", lambda s: None)
+    calls = []
+
+    class Session:
+        def get(self, url, timeout):
+            calls.append(url)
+            return FakeResponse(None, status=404)
+
+    with pytest.raises(RuntimeError):  # FakeResponse.raise_for_status
+        kis_api_client.fetch_etf_master(Session())
+    assert len(calls) == 1

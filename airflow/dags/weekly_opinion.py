@@ -5,30 +5,29 @@
 언제 돌지만 정한다 — 그래서 DAG를 꺼 둔 로컬에서는 돌지 않는다.
 
 1. 백엔드 내부 엔드포인트(POST /internal/weekly-opinion/{날짜})로 차례를 시작시킨다.
-2. opinion_runs의 그 날짜 행이 done이 될 때까지 POLL마다 본다. 볼 때마다 다시 부른다 — 이미 돌고 있으면 백엔드가 무시하고,
+2. opinion_runs의 그 날짜 행이 done이 될 때까지 POLL마다 본다(PythonSensor, reschedule — 기다리는 동안 워커 자리를 비운다).
+   볼 때마다 다시 부른다 — 이미 돌고 있으면 백엔드가 무시하고,
    백엔드가 중간에 다시 떠서 30분(STALE) 넘게 소식이 없으면 그 차례를 이어 맡는다(판정한 종목은 건너뛴다).
 
 수동 실행: date(YYYY-MM-DD, 비우면 오늘 KST). 이미 끝난 차례를 다시 돌리려면 opinion_runs의 그 날짜 행을 지운다.
 """
 
-import hashlib
-import hmac
 import logging
 import os
-import time
 from datetime import date, datetime, timedelta
-from zoneinfo import ZoneInfo
 
 import requests
 from airflow.sdk import DAG, Param
-from airflow.providers.standard.operators.python import PythonOperator
+from airflow.providers.standard.sensors.python import PythonSensor
 
-from age_utils import get_db_connection
+from app.utils.encryption import internal_token
+
+from market_calendar import KST
+from rdb import connection
 
 log = logging.getLogger(__name__)
 
-KST = ZoneInfo('Asia/Seoul')
-BACKEND_URL = 'http://backend:8000'
+BACKEND_URL = os.environ.get('BACKEND_URL', 'http://backend:8000')
 TOKEN_PURPOSE = 'weekly_opinion'  # backend routers/internal.py WEEKLY_OPINION
 POLL = 300  # 초
 RUN_HOURS = 6  # 10-31 첫 차례는 572종목에 81분
@@ -56,26 +55,17 @@ dag = DAG(
 )
 
 
-def internal_token() -> str:
-    """backend utils.encryption.internal_token과 같다 (두 컨테이너가 같은 ENCRYPTION_KEY를 받는다)."""
-    return hmac.new(bytes.fromhex(os.environ['ENCRYPTION_KEY']), TOKEN_PURPOSE.encode(), hashlib.sha256).hexdigest()
-
-
 def run_status(run_on: date) -> str | None:
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT status FROM opinion_runs WHERE run_on = %s", (run_on,))
-            row = cur.fetchone()
-        return row[0] if row else None
-    finally:
-        conn.close()
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT status FROM opinion_runs WHERE run_on = %s", (run_on,))
+        row = cur.fetchone()
+    return row[0] if row else None
 
 
 def start(run_on: date) -> None:
     try:
         resp = requests.post(f"{BACKEND_URL}/internal/weekly-opinion/{run_on.isoformat()}",
-                             headers={'X-Internal-Token': internal_token()}, timeout=30)
+                             headers={'X-Internal-Token': internal_token(TOKEN_PURPOSE)}, timeout=30)
         resp.raise_for_status()
         if resp.json().get('started'):
             log.info("Weekly opinion %s started", run_on)
@@ -84,21 +74,28 @@ def start(run_on: date) -> None:
         log.warning("Weekly opinion start failed: %s", e)
 
 
-def run_week(**context):
-    raw = (context['params'].get('date') or '').strip()
-    run_on = date.fromisoformat(raw) if raw else datetime.now(KST).date()
-    deadline = time.monotonic() + RUN_HOURS * 3600
-    while (status := run_status(run_on)) != 'done':
-        if time.monotonic() > deadline:
-            raise RuntimeError(f"Weekly opinion {run_on} not done in {RUN_HOURS}h (status={status})")
-        start(run_on)
-        time.sleep(POLL)
-    log.info("Weekly opinion %s done", run_on)
+def run_date(params) -> date:
+    raw = (params.get('date') or '').strip()
+    return date.fromisoformat(raw) if raw else datetime.now(KST).date()
 
 
-PythonOperator(
+def week_done(**context) -> bool:
+    """끝났으면 True. 아니면 시작(또는 이어 맡기)을 부르고 False — POLL 뒤에 다시 본다."""
+    run_on = run_date(context['params'])
+    status = run_status(run_on)
+    if status == 'done':
+        log.info("Weekly opinion %s done", run_on)
+        return True
+    log.info("Weekly opinion %s status=%s", run_on, status)
+    start(run_on)
+    return False
+
+
+PythonSensor(
     task_id='run_week',
-    python_callable=run_week,
-    execution_timeout=timedelta(hours=RUN_HOURS, minutes=30),
+    python_callable=week_done,
+    mode='reschedule',
+    poke_interval=POLL,
+    timeout=RUN_HOURS * 3600,  # 넘으면 실패 — 백엔드 로그와 opinion_runs를 본다
     dag=dag,
 )

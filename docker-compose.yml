@@ -116,6 +116,7 @@ services:
       - -c
       - |
         airflow db migrate &&
+        airflow pools set age_write 1 "AGE 그래프 쓰기 직렬화 (Price 노드 중복 방지)" &&
         echo '{"${AIRFLOW_USER:-admin}": "${AIRFLOW_PASSWORD:-admin}"}' > /opt/airflow/auth/passwords.json &&
         echo "airflow init done"
     restart: "no"

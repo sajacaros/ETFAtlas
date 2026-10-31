@@ -4,7 +4,9 @@ DART는 오류도 HTTP 200에 status 코드로 알린다: 000 정상, 013 데이
 일일 한도(키당 2만 건)가 넉넉해서 호출 간격만 둔다.
 """
 import io
+import json
 import logging
+import re
 import time
 import xml.etree.ElementTree as ET
 import zipfile
@@ -38,8 +40,29 @@ CASH_FLOW_ACCOUNTS = {
 ANNUAL, Q1 = "11011", "11013"
 
 
+RETRY_HTTP_STATUS = 429  # 그 밖의 4xx(키·요청 오류)는 다시 보내도 같다
+_STATUS_RE = re.compile(rb"<status>\s*(\w+)\s*</status>")
+
+
 class DartError(Exception):
-    pass
+    """status: DART 상태 코드(예: '014' 파일 없음, 오류 본문에서 읽었을 때), http_status: HTTP 상태 코드(HTTP 오류일 때)."""
+
+    def __init__(self, message: str, status: Optional[str] = None, http_status: Optional[int] = None):
+        super().__init__(message)
+        self.status = status
+        self.http_status = http_status
+
+
+def error_status(body: bytes) -> Optional[str]:
+    """zip 대신 온 오류 본문(XML 또는 JSON)의 DART 상태 코드."""
+    match = _STATUS_RE.search(body)
+    if match:
+        return match.group(1).decode()
+    try:
+        status = json.loads(body).get("status")
+    except (ValueError, AttributeError):
+        return None
+    return str(status) if status is not None else None
 
 
 def parse_amount(raw: Optional[str]) -> Optional[int]:
@@ -164,18 +187,26 @@ class DartClient:
     def _get(self, path: str, params: dict, raw: bool = False):
         params = {"crtfc_key": self.api_key, **params}
         for attempt in range(MAX_RETRIES):
+            last = attempt == MAX_RETRIES - 1
             self._throttle()
+            # 예외 메시지엔 요청 주소(키 포함)가 들어가므로 종류·상태코드만 남긴다
             try:
                 res = self.session.get(f"{self.base_url}/{path}", params=params, timeout=30)
-                res.raise_for_status()
-            except requests.RequestException as e:
-                if attempt == MAX_RETRIES - 1:
-                    raise DartError(f"{path}: {e}") from e
+            except (requests.ConnectionError, requests.Timeout) as e:
+                if last:
+                    raise DartError(f"{path}: {type(e).__name__}") from None
                 time.sleep(2 ** attempt)
                 continue
+            except requests.RequestException as e:
+                raise DartError(f"{path}: {type(e).__name__}") from None
+            if (res.status_code >= 500 or res.status_code == RETRY_HTTP_STATUS) and not last:
+                time.sleep(2 ** attempt)
+                continue
+            if res.status_code >= 400:
+                raise DartError(f"{path}: HTTP {res.status_code}", http_status=res.status_code)
             if raw:
                 if not res.content.startswith(b"PK"):  # zip 대신 오류 XML/JSON이 왔다
-                    raise DartError(f"{path}: {res.text[:200]}")
+                    raise DartError(f"{path}: {res.text[:200]}", status=error_status(res.content))
                 return res.content
             body = res.json()
             status = body.get("status")
@@ -186,8 +217,8 @@ class DartClient:
             if status == RATE_LIMITED and attempt < MAX_RETRIES - 1:
                 time.sleep(5 * (attempt + 1))
                 continue
-            raise DartError(f"{path}: {status} {body.get('message')}")
-        raise DartError(f"{path}: retries exhausted")
+            raise DartError(f"{path}: {status} {body.get('message')}", status=status)
+        raise DartError(f"{path}: retries exhausted", status=RATE_LIMITED)
 
     def corp_codes(self) -> list[dict]:
         return parse_corp_codes(self._get("corpCode.xml", {}, raw=True))

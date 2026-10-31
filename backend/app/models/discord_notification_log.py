@@ -16,7 +16,10 @@ class DiscordNotificationLog(Base):
     # [{etf_code, etf_name, prev_date, changes: [{stock_code, stock_name, change_type,
     #   previous_weight, current_weight, weight_change}]}]  (weight_change)
     # {rising: [{etf_code, etf_name, return_1d, holdings}], market_return, features: [str]}  (daily_report)
+    # {issues: [...], failed_sessions: [...]}  (chat_review — 예전 행은 issue 목록)
+    # 실패한 발송을 다시 할 때 LLM을 다시 부르지 않고 이 값으로 같은 메시지를 만든다
     items = Column(JSONB, nullable=False)
+    # sent: 보낸 메시지 수, failed: 실패 전까지 보낸 수 (재시도는 그다음 메시지부터 보낸다)
     message_count = Column(Integer, nullable=False)
     error = Column(Text, nullable=True)
     sent_at = Column(DateTime, default=utcnow)

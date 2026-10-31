@@ -15,6 +15,7 @@
 import hashlib
 import io
 import logging
+import os
 import threading
 import time
 import zipfile
@@ -24,6 +25,8 @@ from typing import Callable, Optional, Protocol
 
 import requests
 
+from rdb import get_db_connection
+
 log = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://openapi.koreainvestment.com:9443"  # 실전투자
@@ -32,12 +35,32 @@ MASTER_TAIL_LEN = 227   # 행 끝 고정폭 영역(그룹코드부터) 길이 �
 ETF_GROUP_CODE = "EF"
 
 
+MASTER_RETRIES = 3
+MASTER_RETRY_BACKOFF = 2.0  # 마스터 파일 재시도 대기(초), 시도마다 두 배
+
+
+def _download_master(http, retries: int = MASTER_RETRIES, backoff: float = MASTER_RETRY_BACKOFF) -> bytes:
+    """마스터 파일 zip. 네트워크 오류·5xx만 간격을 늘려 가며 다시 받고, 4xx나 끝내 실패하면 예외를 올린다."""
+    for attempt in range(retries + 1):
+        try:
+            resp = http.get(KOSPI_MASTER_URL, timeout=60)
+        except (requests.ConnectionError, requests.Timeout) as e:
+            if attempt == retries:
+                raise
+            log.warning(f"KIS master download error ({type(e).__name__}), retry {attempt + 1}/{retries}")
+        else:
+            if resp.status_code < 500 or attempt == retries:
+                resp.raise_for_status()
+                return resp.content
+            log.warning(f"KIS master download HTTP {resp.status_code}, retry {attempt + 1}/{retries}")
+        time.sleep(backoff * 2 ** attempt)
+    raise AssertionError("unreachable")
+
+
 def fetch_etf_master(session: Optional[requests.Session] = None) -> list[tuple[str, str]]:
     """KIS 종목 마스터 파일에서 ETF(그룹코드 EF) (단축코드, 한글명) 목록을 반환한다. 인증 불필요."""
-    http = session or requests
-    resp = http.get(KOSPI_MASTER_URL, timeout=60)
-    resp.raise_for_status()
-    with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+    content = _download_master(session or requests)
+    with zipfile.ZipFile(io.BytesIO(content)) as zf:
         text = zf.read(zf.namelist()[0]).decode("cp949")
     etfs = []
     for row in text.splitlines():
@@ -454,9 +477,22 @@ class KISApiClient:
             return 0.0
 
 
+def get_kis_client() -> Optional[KISApiClient]:
+    """환경변수 기반 KIS 클라이언트 (토큰은 kis_tokens 테이블에 캐시). 키가 없으면 None."""
+    app_key = os.environ.get('KIS_APP_KEY', '')
+    app_secret = os.environ.get('KIS_APP_SECRET', '')
+    if not app_key or not app_secret:
+        log.warning("KIS_APP_KEY/KIS_APP_SECRET not set")
+        return None
+    return KISApiClient(
+        app_key, app_secret,
+        base_url=os.environ.get('KIS_BASE_URL') or DEFAULT_BASE_URL,
+        token_cache=PostgresTokenCache(get_db_connection),
+    )
+
+
 if __name__ == "__main__":
     # 스모크 테스트: KIS_APP_KEY=... KIS_APP_SECRET=... python kis_api_client.py 069500
-    import os
     import sys
 
     logging.basicConfig(level=logging.INFO)
@@ -468,3 +504,4 @@ if __name__ == "__main__":
     for c in client.get_etf_components(sys.argv[1] if len(sys.argv) > 1 else "069500")[:15]:
         print(f"{c.stock_code} {c.stock_name:<20} weight={c.weight:6.2f}% value={c.value:>15,} "
               f"price={c.price:>10,} shares~{c.shares:,}")
+

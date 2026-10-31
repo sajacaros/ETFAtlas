@@ -5,15 +5,16 @@ Realtime Price Collection DAG
 - 거래일 + 장중(09:00~15:30) 여부를 체크하여 불필요한 실행 방지
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from decimal import Decimal
 from airflow.sdk import DAG
 from airflow.providers.standard.operators.python import PythonOperator, ShortCircuitOperator
 import logging
 
-log = logging.getLogger(__name__)
+from market_calendar import KST, is_market_open
+from rdb import get_db_connection
 
-KST = timezone(timedelta(hours=9))
+log = logging.getLogger(__name__)
 
 default_args = {
     'owner': 'etf-atlas',
@@ -34,40 +35,6 @@ dag = DAG(
 )
 
 
-def get_db_connection():
-    import psycopg2
-    import os
-
-    db_url = os.environ.get(
-        'DATABASE_URL',
-        'postgresql://postgres:postgres@db:5432/etf_atlas'
-    )
-
-    if db_url.startswith('postgresql://'):
-        db_url = db_url.replace('postgresql://', '')
-
-    if '@' in db_url:
-        auth, host_db = db_url.split('@')
-        user, password = auth.split(':')
-        host_port, database = host_db.split('/')
-        if ':' in host_port:
-            host, port = host_port.split(':')
-        else:
-            host = host_port
-            port = 5432
-    else:
-        user = 'postgres'
-        password = 'postgres'
-        host = 'db'
-        port = 5432
-        database = 'etf_atlas'
-
-    return psycopg2.connect(
-        host=host, port=int(port), database=database,
-        user=user, password=password
-    )
-
-
 def check_market_open(**context):
     """오늘 가격 수집이 필요한지 확인.
     1) 휴장일이면 → 스킵 (KIS 국내휴장일조회, market_calendar에 하루 1회 캐시)
@@ -80,8 +47,6 @@ def check_market_open(**context):
     today_iso = now_kst.date().isoformat()
 
     # 1) 거래일 확인
-    from age_utils import is_market_open
-
     is_open = is_market_open(now_kst.date())
     if is_open is False:
         log.info(f"{today_str} is not a trading day. Skipping.")

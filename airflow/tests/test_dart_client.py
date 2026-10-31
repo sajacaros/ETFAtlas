@@ -1,15 +1,12 @@
 """dart_client 단위 테스트 (HTTP는 가짜 세션으로 대체)."""
 import io
-import sys
 import zipfile
-from pathlib import Path
 
 import pytest
+import requests
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "dags"))
-
-import dart_client  # noqa: E402
-from dart_client import (DartClient, DartError, cash_flow_targets, parse_amount, parse_cash_flow_rows,  # noqa: E402
+import dart_client
+from dart_client import (DartClient, DartError, cash_flow_targets, parse_amount, parse_cash_flow_rows,
                          parse_corp_codes, parse_financial_rows)
 
 
@@ -89,10 +86,11 @@ def test_cash_flow_targets_pick_consolidated_skip_done_and_go_newest_first():
 
 
 class FakeResponse:
-    def __init__(self, payload=None, content=b""):
+    def __init__(self, payload=None, content=b"", status_code=200):
         self._payload = payload
         self.content = content
-        self.text = str(payload)
+        self.text = content.decode(errors="replace") if content else str(payload)
+        self.status_code = status_code
 
     def json(self):
         return self._payload
@@ -108,7 +106,10 @@ class FakeSession:
 
     def get(self, url, params, timeout):
         self.params.append(params)
-        return self.responses.pop(0)
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 @pytest.fixture(autouse=True)
@@ -148,5 +149,43 @@ def test_document_returns_the_report_zip_and_rejects_an_error():
     client = _client([FakeResponse(content=b"PK\x03\x04zip")])
     assert client.document("20260814000200") == b"PK\x03\x04zip"
     assert client.session.params[0]["rcept_no"] == "20260814000200"
-    with pytest.raises(DartError):
+    with pytest.raises(DartError) as e:
         _client([FakeResponse(content='{"status":"014","message":"파일이 존재하지 않습니다"}'.encode())]).document("1")
+    assert e.value.status == "014"
+
+
+def test_document_error_xml_carries_the_dart_status():
+    body = '<?xml version="1.0"?><result><status>014</status><message>파일이 존재하지 않습니다.</message></result>'
+    with pytest.raises(DartError) as e:
+        _client([FakeResponse(content=body.encode())]).document("1")
+    assert e.value.status == "014"
+
+
+def test_api_status_errors_carry_the_status():
+    with pytest.raises(DartError) as e:
+        _client([FakeResponse({"status": "010", "message": "등록되지 않은 키"})]).financials(["1"], 2026, "11013")
+    assert e.value.status == "010"
+
+
+def test_client_errors_are_not_retried():
+    client = _client([FakeResponse(status_code=404), FakeResponse({"status": "000", "list": []})])
+    with pytest.raises(DartError) as e:
+        client.financials(["1"], 2026, "11013")
+    assert e.value.http_status == 404 and len(client.session.params) == 1
+    assert "key" not in str(e.value)  # 요청 주소(키)를 남기지 않는다
+
+
+@pytest.mark.parametrize("first", [
+    FakeResponse(status_code=503), FakeResponse(status_code=429), requests.ConnectionError("down"),
+])
+def test_server_errors_rate_limits_and_network_errors_are_retried(first):
+    client = _client([first, FakeResponse({"status": "000", "list": [{"x": 1}]})])
+    assert client.financials(["1"], 2026, "11013") == [{"x": 1}]
+    assert len(client.session.params) == 2
+
+
+def test_server_errors_give_up_after_the_retries():
+    client = _client([FakeResponse(status_code=500)] * dart_client.MAX_RETRIES)
+    with pytest.raises(DartError) as e:
+        client.financials(["1"], 2026, "11013")
+    assert e.value.http_status == 500 and len(client.session.params) == dart_client.MAX_RETRIES

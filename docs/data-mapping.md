@@ -46,7 +46,7 @@
 
 ### 필터링 로직
 
-`airflow/dags/age_utils.py` (요약). `EXCLUDE_KEYWORDS`, `EXCLUDE_PATTERNS`, `FOREIGN_NAME_KEYWORDS`, `MIN_AUM`은 모듈 상수다. `EXCLUDE_PATTERNS`는 부분 문자열로는 오탐이 나는 대상용 정규식이다(단어 첫머리의 `은` — `은행`은 제외).
+`airflow/dags/universe.py` (요약). `EXCLUDE_KEYWORDS`, `EXCLUDE_PATTERNS`, `FOREIGN_NAME_KEYWORDS`, `MIN_AUM`은 모듈 상수다. `EXCLUDE_PATTERNS`는 부분 문자열로는 오탐이 나는 대상용 정규식이다(단어 첫머리의 `은` — `은행`은 제외).
 
 ```python
 MIN_AUM = 500 * 100_000_000  # 500억
@@ -189,7 +189,7 @@ params: FID_COND_MRKT_DIV_CODE=J, FID_INPUT_ISCD={ETF코드}, FID_COND_SCR_DIV_C
 
 ### 저장 로직
 
-`age_utils.collect_holdings(etf_codes, bd)` (요약):
+`collect_holdings.collect_holdings(etf_codes, bd)` (요약):
 
 ```python
 for ticker in remaining_etfs:              # 같은 날짜 HOLDS가 이미 있는 ETF는 제외

@@ -98,12 +98,12 @@ SQLAlchemy를 통해 실행한다. 콜론 이스케이프 + 파라미터 수동 
 ```python
 class GraphService:
     def execute_cypher(self, query: str, params: Dict = None) -> List[Dict]:
-        # 1) $param → 실제 값으로 치환
+        # 1) $param → Cypher 리터럴로 치환 (app/utils/cypher.py — airflow와 같은 규칙)
         # 2) 콜론 이스케이프 (:ETF → \:ETF) — SQLAlchemy 바인드 파라미터 충돌 방지
         # 3) RETURN은 반드시 단일 맵으로 감싸기: RETURN {key1: val1, key2: val2}
 ```
 
-### DAG 실행 (age_utils.py)
+### DAG 실행 (age_db.py)
 
 psycopg2 커서로 직접 실행한다. AGE 버그로 인해 `MERGE`와 `SET`을 분리하여 2단계로 수행:
 

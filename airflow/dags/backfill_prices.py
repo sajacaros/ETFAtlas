@@ -8,6 +8,7 @@
 - 이미 있는 (코드, 날짜)는 건드리지 않으므로 여러 번 돌려도 된다
 - 최근 PRICE_REFILL_BUSINESS_DAYS 영업일은 정기 수집이 쓰는 범위라 빼고 채운다 (같은 날 Price 중복 방지)
 - 끝나면 ETF 수익률(return_1d/1w/1m)을 다시 계산한다
+- AGE에 쓰는 태스크는 pool age_write(슬롯 1)로 정기 수집과 동시에 돌지 않는다
 """
 
 import logging
@@ -16,9 +17,9 @@ from datetime import datetime, timedelta
 from airflow.sdk import DAG, Param
 from airflow.providers.standard.operators.python import PythonOperator
 
-from age_utils import (
-    backfill_price_days, collect_stock_prices_for_dates, fill_missing_etf_prices, update_etf_returns,
-)
+from age_db import AGE_WRITE_POOL
+from collect_prices import backfill_price_days, collect_stock_prices_for_dates, fill_missing_etf_prices
+from returns import update_etf_returns
 
 log = logging.getLogger(__name__)
 
@@ -61,9 +62,9 @@ def backfill_stock_prices(**context):
 
 t_plan = PythonOperator(task_id='plan_days', python_callable=plan_days, dag=dag)
 t_etf = PythonOperator(task_id='backfill_etf_prices', python_callable=backfill_etf_prices,
-                       execution_timeout=timedelta(hours=2), dag=dag)
+                       execution_timeout=timedelta(hours=2), pool=AGE_WRITE_POOL, dag=dag)
 t_stock = PythonOperator(task_id='backfill_stock_prices', python_callable=backfill_stock_prices,
-                         execution_timeout=timedelta(hours=3), dag=dag)
-t_returns = PythonOperator(task_id='update_returns', python_callable=update_etf_returns, dag=dag)
+                         execution_timeout=timedelta(hours=3), pool=AGE_WRITE_POOL, dag=dag)
+t_returns = PythonOperator(task_id='update_returns', python_callable=update_etf_returns, pool=AGE_WRITE_POOL, dag=dag)
 
 t_plan >> t_etf >> t_stock >> t_returns

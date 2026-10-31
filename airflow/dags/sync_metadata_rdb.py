@@ -12,6 +12,9 @@ from airflow.providers.standard.operators.python import PythonOperator
 from airflow.providers.standard.operators.empty import EmptyOperator
 import logging
 
+from kis_api_client import fetch_etf_master as fetch
+from rdb import get_db_connection
+
 log = logging.getLogger(__name__)
 
 default_args = {
@@ -33,56 +36,14 @@ dag = DAG(
 )
 
 
-def get_db_connection():
-    """Get database connection"""
-    import psycopg2
-    import os
-
-    db_url = os.environ.get(
-        'DATABASE_URL',
-        'postgresql://postgres:postgres@db:5432/etf_atlas'
-    )
-
-    if db_url.startswith('postgresql://'):
-        db_url = db_url.replace('postgresql://', '')
-
-    if '@' in db_url:
-        auth, host_db = db_url.split('@')
-        user, password = auth.split(':')
-        host_port, database = host_db.split('/')
-        if ':' in host_port:
-            host, port = host_port.split(':')
-        else:
-            host = host_port
-            port = 5432
-    else:
-        user = 'postgres'
-        password = 'postgres'
-        host = 'db'
-        port = 5432
-        database = 'etf_atlas'
-
-    conn = psycopg2.connect(
-        host=host,
-        port=int(port),
-        database=database,
-        user=user,
-        password=password
-    )
-    return conn
-
-
 def fetch_etf_master(**context):
     """KIS 종목 마스터 파일에서 전체 ETF 목록 조회 (code + name, 인증 불필요)"""
-    from kis_api_client import fetch_etf_master as fetch
-
-    try:
-        etfs = fetch()
-        log.info(f"Fetched {len(etfs)} ETFs from KIS master file")
-        return [{'code': code, 'name': name} for code, name in etfs]
-    except Exception as e:
-        log.error(f"Failed to fetch KIS master file: {e}")
-        return []
+    # 실패를 빈 목록으로 넘기면 동기화를 조용히 건너뛰므로 예외를 그대로 올려 태스크 재시도에 맡긴다
+    etfs = fetch()
+    if not etfs:
+        raise RuntimeError("KIS master file has no ETFs")
+    log.info(f"Fetched {len(etfs)} ETFs from KIS master file")
+    return [{'code': code, 'name': name} for code, name in etfs]
 
 
 def sync_etfs_to_rdb(**context):
@@ -99,6 +60,8 @@ def sync_etfs_to_rdb(**context):
 
     try:
         for item in etf_dicts:
+            # 한 행이 실패해도 트랜잭션 전체가 abort되지 않도록 행마다 SAVEPOINT로 감싼다
+            cur.execute("SAVEPOINT etf_row")
             try:
                 cur.execute("""
                     INSERT INTO etfs (code, name, updated_at)
@@ -107,10 +70,11 @@ def sync_etfs_to_rdb(**context):
                         name = EXCLUDED.name,
                         updated_at = CURRENT_TIMESTAMP
                 """, (item['code'], item['name']))
+                cur.execute("RELEASE SAVEPOINT etf_row")
                 success_count += 1
             except Exception as e:
+                cur.execute("ROLLBACK TO SAVEPOINT etf_row")
                 log.warning(f"Failed to sync ETF {item.get('code', 'unknown')}: {e}")
-                continue
 
         conn.commit()
         log.info(f"Synced {success_count} ETFs to RDB etfs table (code + name only)")

@@ -10,6 +10,12 @@ import networkx as nx
 from pyvis.network import Network
 import tempfile
 import os
+import sys
+from pathlib import Path
+
+# backend의 Cypher 치환 함수(app.utils.cypher)를 같이 쓴다 — 표준 라이브러리만 쓰는 모듈이다
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+from app.utils.cypher import bind  # noqa: E402
 
 # 페이지 설정
 st.set_page_config(
@@ -192,20 +198,16 @@ COLORS = {
     "text": "#1e293b",             # 텍스트
 }
 
-# DB 연결 설정
-DB_CONFIG = {
-    "host": os.getenv("DB_HOST", "localhost"),
-    "port": int(os.getenv("DB_PORT", "5432")),
-    "database": os.getenv("DB_NAME", "etf_atlas"),
-    "user": os.getenv("DB_USER", "postgres"),
-    "password": os.getenv("DB_PASSWORD", "postgres"),
-}
+# DB 연결 설정 — backend·airflow와 같은 DATABASE_URL (로컬 docker의 DB는 127.0.0.1:5432)
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/etf_atlas")
 
 
 @st.cache_resource
 def get_connection():
-    """DB 연결 생성"""
-    return psycopg2.connect(**DB_CONFIG)
+    """DB 연결 생성. 화면은 읽기만 하므로 모든 트랜잭션을 읽기 전용으로 연다"""
+    conn = psycopg2.connect(DATABASE_URL)
+    conn.set_session(readonly=True, autocommit=True)
+    return conn
 
 
 def init_age(conn):
@@ -216,15 +218,20 @@ def init_age(conn):
     return cur
 
 
-def execute_cypher(cur, query):
-    """Cypher 쿼리 실행"""
+def execute_cypher(cur, query, params=None, columns="result agtype"):
+    """Cypher 쿼리 실행. params의 $이름 자리는 backend와 같은 규칙(app.utils.cypher)으로 리터럴 치환한다"""
     sql = f"""
         SELECT * FROM cypher('etf_graph', $$
-            {query}
-        $$) as (result agtype);
+            {bind(query, params)}
+        $$) as ({columns});
     """
     cur.execute(sql)
     return cur.fetchall()
+
+
+def text(value):
+    """agtype 문자열 값 → 파이썬 문자열"""
+    return str(value).strip('"') if value else ""
 
 
 def get_etf_count(cur):
@@ -240,8 +247,8 @@ def get_stock_count(cur):
 
 
 def get_holds_count(cur):
-    """HOLDS 엣지 수 조회"""
-    result = execute_cypher(cur, "MATCH ()-[h:HOLDS]->() RETURN count(h)")
+    """현재 보유관계(CURRENT_HOLDS) 수 조회. HOLDS는 날짜별 이력이라 계속 늘어난다"""
+    result = execute_cypher(cur, "MATCH ()-[h:CURRENT_HOLDS]->() RETURN count(h)")
     return int(result[0][0]) if result else 0
 
 
@@ -251,202 +258,112 @@ def get_company_count(cur):
     return int(result[0][0]) if result else 0
 
 
-
 def get_company_list(cur):
     """운용사 목록 조회 (ETF 수 포함)"""
-    query = """
+    results = execute_cypher(cur, """
         MATCH (c:Company)<-[:MANAGED_BY]-(e:ETF)
         RETURN c.name, count(e) as etf_count
         ORDER BY count(e) DESC
-    """
-    sql = f"""
-        SELECT * FROM cypher('etf_graph', $$
-            {query}
-        $$) as (name agtype, etf_count agtype);
-    """
-    cur.execute(sql)
-    results = cur.fetchall()
-
-    data = []
-    for row in results:
-        data.append({
-            "운용사": str(row[0]).strip('"') if row[0] else "",
-            "ETF 수": int(row[1]) if row[1] else 0
-        })
-    return pd.DataFrame(data)
+    """, columns="name agtype, etf_count agtype")
+    return pd.DataFrame([{"운용사": text(row[0]), "ETF 수": int(row[1]) if row[1] else 0} for row in results])
 
 
 def get_etfs_by_company(cur, company_name):
     """특정 운용사의 ETF 목록"""
-    query = f"""
-        MATCH (c:Company {{name: '{company_name}'}})<-[:MANAGED_BY]-(e:ETF)
+    results = execute_cypher(cur, """
+        MATCH (c:Company {name: $company})<-[:MANAGED_BY]-(e:ETF)
         RETURN e.code, e.name
         ORDER BY e.name
-    """
-    sql = f"""
-        SELECT * FROM cypher('etf_graph', $$
-            {query}
-        $$) as (code agtype, name agtype);
-    """
-    cur.execute(sql)
-    results = cur.fetchall()
-
-    data = []
-    for row in results:
-        data.append({
-            "ETF코드": str(row[0]).strip('"') if row[0] else "",
-            "ETF명": str(row[1]).strip('"') if row[1] else ""
-        })
-    return pd.DataFrame(data)
-
+    """, {"company": company_name}, columns="code agtype, name agtype")
+    return pd.DataFrame([{"ETF코드": text(row[0]), "ETF명": text(row[1])} for row in results])
 
 
 def get_etf_list(cur, limit=100):
-    """ETF 목록 조회 (HOLDS 관계가 있는 유니버스 ETF만, AUM 순)"""
-    # 그래프에서 ETF 목록 조회
-    sql_graph = """
-        SELECT * FROM cypher('etf_graph', $$
-            MATCH (e:ETF)-[:HOLDS]->(:Stock)
-            RETURN DISTINCT e.code, e.name
-        $$) as (code agtype, name agtype);
-    """
-    cur.execute(sql_graph)
-    graph_results = cur.fetchall()
-
-    etf_codes = [str(row[0]).strip('"') for row in graph_results]
-    etf_names = {str(row[0]).strip('"'): str(row[1]).strip('"') for row in graph_results}
-
-    if not etf_codes:
+    """ETF 목록 조회 (현재 구성종목이 있는 유니버스 ETF만, 순자산 순). 순자산은 AGE ETF 노드의 net_assets"""
+    results = execute_cypher(cur, """
+        MATCH (e:ETF)-[:CURRENT_HOLDS]->(:Stock)
+        WITH DISTINCT e
+        RETURN e.code, e.name, e.net_assets
+    """, columns="code agtype, name agtype, net_assets agtype")
+    if not results:
         return pd.DataFrame()
 
-    # etfs 테이블에서 net_assets 조회 (AUM 순 정렬)
-    placeholders = ','.join(['%s'] * len(etf_codes))
-    sql_aum = f"""
-        SELECT code, net_assets
-        FROM etfs
-        WHERE code IN ({placeholders})
-    """
-    cur.execute(sql_aum, etf_codes)
-    aum_results = cur.fetchall()
-
-    # AUM 매핑
-    aum_map = {row[0]: row[1] or 0 for row in aum_results}
-
-    # 데이터 생성 및 AUM 순 정렬
-    data = []
-    for code in etf_codes:
-        data.append({
-            "code": code,
-            "name": etf_names.get(code, ""),
-            "aum": aum_map.get(code, 0)
-        })
-
-    df = pd.DataFrame(data)
+    df = pd.DataFrame([{"code": text(row[0]), "name": text(row[1]),
+                        "aum": float(row[2]) if row[2] not in (None, "null") else 0} for row in results])
     df = df.sort_values("aum", ascending=False).head(limit)
     return df[["code", "name"]]
 
 
 def get_stock_list(cur, limit=1000):
-    """Stock 목록 조회 (ETF가 보유한 종목만)"""
-    sql = """
-        SELECT * FROM cypher('etf_graph', $$
-            MATCH (:ETF)-[:HOLDS]->(s:Stock)
-            RETURN DISTINCT s.code, s.name
-            ORDER BY s.name
-            LIMIT %s
-        $$) as (code agtype, name agtype);
-    """
-    cur.execute(sql % limit)
-    results = cur.fetchall()
-
-    data = []
-    for row in results:
-        code = str(row[0]).strip('"') if row[0] else ""
-        name = str(row[1]).strip('"') if row[1] else ""
-        data.append({"code": code, "name": name})
-
-    return pd.DataFrame(data)
+    """Stock 목록 조회 (ETF가 지금 보유한 종목만)"""
+    results = execute_cypher(cur, """
+        MATCH (:ETF)-[:CURRENT_HOLDS]->(s:Stock)
+        WITH DISTINCT s
+        RETURN s.code, s.name
+        ORDER BY s.name
+        LIMIT $limit
+    """, {"limit": limit}, columns="code agtype, name agtype")
+    return pd.DataFrame([{"code": text(row[0]), "name": text(row[1])} for row in results])
 
 
 def get_etf_holdings(cur, etf_code, date=None):
-    """특정 ETF의 구성종목 조회"""
+    """특정 ETF의 구성종목 조회. date(YYYY-MM-DD)가 없으면 현재 구성종목(CURRENT_HOLDS), 있으면 그날의 HOLDS"""
     if date:
-        query = f"""
-            MATCH (e:ETF {{code: '{etf_code}'}})-[h:HOLDS {{date: '{date}'}}]->(s:Stock)
-            RETURN s.code, s.name, h.weight, h.shares
+        query = """
+            MATCH (e:ETF {code: $code})-[h:HOLDS {date: $date}]->(s:Stock)
+            RETURN s.code, s.name, h.weight, h.shares, h.date
             ORDER BY h.weight DESC
         """
     else:
-        query = f"""
-            MATCH (e:ETF {{code: '{etf_code}'}})-[h:HOLDS]->(s:Stock)
+        query = """
+            MATCH (e:ETF {code: $code})-[h:CURRENT_HOLDS]->(s:Stock)
             RETURN s.code, s.name, h.weight, h.shares, h.date
-            ORDER BY h.date DESC, h.weight DESC
-            LIMIT 100
+            ORDER BY h.weight DESC
         """
-
-    sql = f"""
-        SELECT * FROM cypher('etf_graph', $$
-            {query}
-        $$) as (stock_code agtype, stock_name agtype, weight agtype, shares agtype{", date agtype" if not date else ""});
-    """
-    cur.execute(sql)
-    results = cur.fetchall()
+    results = execute_cypher(cur, query, {"code": etf_code, "date": date},
+                             columns="stock_code agtype, stock_name agtype, weight agtype, shares agtype, date agtype")
 
     data = []
     for row in results:
         # NaN 체크를 위해 pd.notna 사용
-        item = {
-            "종목코드": str(row[0]).strip('"') if row[0] else "",
-            "종목명": str(row[1]).strip('"') if row[1] else "",
+        data.append({
+            "종목코드": text(row[0]),
+            "종목명": text(row[1]),
             "비중(%)": float(row[2]) if pd.notna(row[2]) else 0,
             "보유수량": int(row[3]) if pd.notna(row[3]) else 0,
-        }
-        if not date and len(row) > 4:
-            item["기준일"] = str(row[4]).strip('"') if row[4] else ""
-        data.append(item)
-
+            "기준일": text(row[4]),
+        })
     return pd.DataFrame(data)
 
 
 def get_stock_etfs(cur, stock_code):
-    """특정 종목을 보유한 ETF 목록"""
-    query = f"""
-        MATCH (e:ETF)-[h:HOLDS]->(s:Stock {{code: '{stock_code}'}})
+    """특정 종목을 지금 보유한 ETF 목록 (CURRENT_HOLDS)"""
+    results = execute_cypher(cur, """
+        MATCH (e:ETF)-[h:CURRENT_HOLDS]->(s:Stock {code: $code})
         RETURN e.code, e.name, h.weight, h.date
         ORDER BY h.weight DESC
-    """
+    """, {"code": stock_code}, columns="etf_code agtype, etf_name agtype, weight agtype, date agtype")
 
-    sql = f"""
-        SELECT * FROM cypher('etf_graph', $$
-            {query}
-        $$) as (etf_code agtype, etf_name agtype, weight agtype, date agtype);
-    """
-    cur.execute(sql)
-    results = cur.fetchall()
-
-    data = []
-    for row in results:
-        data.append({
-            "ETF코드": str(row[0]).strip('"') if row[0] else "",
-            "ETF명": str(row[1]).strip('"') if row[1] else "",
-            "비중(%)": float(row[2]) if pd.notna(row[2]) else 0,
-            "기준일": str(row[3]).strip('"') if row[3] else "",
-        })
-
-    return pd.DataFrame(data)
+    return pd.DataFrame([{
+        "ETF코드": text(row[0]),
+        "ETF명": text(row[1]),
+        "비중(%)": float(row[2]) if pd.notna(row[2]) else 0,
+        "기준일": text(row[3]),
+    } for row in results])
 
 
 def get_etf_code_name_map(cur):
     """ETF 코드-이름 매핑 조회"""
-    sql = """
-        SELECT * FROM cypher('etf_graph', $$
-            MATCH (e:ETF)
-            RETURN e.code, e.name
-        $$) as (code agtype, name agtype);
-    """
-    cur.execute(sql)
-    results = cur.fetchall()
-    return {str(row[0]).strip('"'): str(row[1]).strip('"') for row in results if row[0]}
+    results = execute_cypher(cur, """
+        MATCH (e:ETF)
+        RETURN e.code, e.name
+    """, columns="code agtype, name agtype")
+    return {text(row[0]): text(row[1]) for row in results if row[0]}
+
+
+def run_custom_cypher(cur, query):
+    """자유 Cypher 실행. 연결이 읽기 전용이라 쓰기 구문(CREATE·SET·DELETE 등)은 DB가 거부한다"""
+    return execute_cypher(cur, query)
 
 
 def create_etf_graph(cur, etf_code, etf_name, limit=20):
@@ -754,7 +671,7 @@ def main():
         cur = init_age(conn)
     except Exception as e:
         st.error(f"❌ DB 연결 실패: {e}")
-        st.info("💡 DB 설정을 확인하세요. 환경변수: DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD")
+        st.info("💡 DB 설정을 확인하세요. 환경변수: DATABASE_URL (예: postgresql://postgres:postgres@localhost:5432/etf_atlas)")
         return
 
     # 사이드바: 통계
@@ -779,8 +696,6 @@ def main():
             st.metric("운용사", f"{company_count:,}")
         with col4:
             st.metric("보유관계", f"{holds_count:,}")
-
-        st.metric("보유관계", f"{holds_count:,}")
 
         st.markdown("---")
         st.markdown("## ⚙️ 표시 설정")
@@ -879,38 +794,38 @@ def main():
 
         st.markdown("#### 🏢 운용사별 ETF")
 
-            # 운용사 목록 조회
-            with st.spinner("운용사 목록 조회 중..."):
-                company_df = get_company_list(cur)
+        # 운용사 목록 조회
+        with st.spinner("운용사 목록 조회 중..."):
+            company_df = get_company_list(cur)
 
-            if company_df.empty:
-                st.info("운용사 데이터가 없습니다.")
-            else:
-                # 운용사 선택
-                company_options = [f"{row['운용사']} ({row['ETF 수']}개)" for _, row in company_df.iterrows()]
-                selected_company = st.selectbox(
-                    "운용사 선택",
-                    company_options,
-                    key="company_select"
+        if company_df.empty:
+            st.info("운용사 데이터가 없습니다.")
+        else:
+            # 운용사 선택
+            company_options = [f"{row['운용사']} ({row['ETF 수']}개)" for _, row in company_df.iterrows()]
+            selected_company = st.selectbox(
+                "운용사 선택",
+                company_options,
+                key="company_select"
+            )
+
+            if selected_company:
+                company_name = selected_company.rsplit(" (", 1)[0]
+
+                # 해당 운용사의 ETF 목록
+                with st.spinner("ETF 목록 조회 중..."):
+                    etf_by_company = get_etfs_by_company(cur, company_name)
+
+                st.markdown(f"**{company_name}** - {len(etf_by_company)}개 ETF")
+                st.dataframe(etf_by_company, use_container_width=True, height=400)
+
+                st.download_button(
+                    "📥 CSV 다운로드",
+                    etf_by_company.to_csv(index=False, encoding='utf-8-sig'),
+                    f"{company_name}_etf_list.csv",
+                    "text/csv",
+                    key="company_download"
                 )
-
-                if selected_company:
-                    company_name = selected_company.rsplit(" (", 1)[0]
-
-                    # 해당 운용사의 ETF 목록
-                    with st.spinner("ETF 목록 조회 중..."):
-                        etf_by_company = get_etfs_by_company(cur, company_name)
-
-                    st.markdown(f"**{company_name}** - {len(etf_by_company)}개 ETF")
-                    st.dataframe(etf_by_company, use_container_width=True, height=400)
-
-                    st.download_button(
-                        "📥 CSV 다운로드",
-                        etf_by_company.to_csv(index=False, encoding='utf-8-sig'),
-                        f"{company_name}_etf_list.csv",
-                        "text/csv",
-                        key="company_download"
-                    )
 
 
     with tab3:
@@ -940,17 +855,13 @@ def main():
 
         elif query_type == "종목 목록":
             with st.spinner("종목 목록 조회 중..."):
-                sql = """
-                    SELECT * FROM cypher('etf_graph', $$
-                        MATCH (s:Stock)
-                        RETURN s.code, s.name
-                        ORDER BY s.code
-                        LIMIT 500
-                    $$) as (code agtype, name agtype);
-                """
-                cur.execute(sql)
-                results = cur.fetchall()
-                data = [{"code": str(r[0]).strip('"'), "name": str(r[1]).strip('"')} for r in results]
+                results = execute_cypher(cur, """
+                    MATCH (s:Stock)
+                    RETURN s.code, s.name
+                    ORDER BY s.code
+                    LIMIT 500
+                """, columns="code agtype, name agtype")
+                data = [{"code": text(r[0]), "name": text(r[1])} for r in results]
                 df = pd.DataFrame(data)
 
             st.markdown(f"**총 {len(df)}개의 종목**")
@@ -966,7 +877,7 @@ def main():
                 )
 
         else:
-            st.warning("⚠️ **주의:** Cypher 쿼리는 읽기 전용으로 사용하세요.")
+            st.info("Cypher 쿼리는 읽기 전용 트랜잭션에서 실행됩니다 (쓰기 구문은 거부됩니다).")
 
             custom_query = st.text_area(
                 "Cypher 쿼리",
@@ -978,13 +889,7 @@ def main():
             if st.button("▶️ 실행", type="primary"):
                 try:
                     with st.spinner("쿼리 실행 중..."):
-                        sql = f"""
-                            SELECT * FROM cypher('etf_graph', $$
-                                {custom_query}
-                            $$) as (result agtype);
-                        """
-                        cur.execute(sql)
-                        results = cur.fetchall()
+                        results = run_custom_cypher(cur, custom_query)
 
                     st.success(f"✅ {len(results)}개의 결과")
                     st.json([str(r[0]) for r in results])

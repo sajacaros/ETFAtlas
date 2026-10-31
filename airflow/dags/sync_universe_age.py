@@ -7,7 +7,8 @@ AGE가 비어 있으면(첫 실행) 최근 거래일 하루만 수집한다 — 
 최근 영업일 몇 날의 빠진 (ETF, 날짜)를 매번 다시 채운다(refill_missing_etf_prices).
 구성종목(HOLDS)은 KIS API가 날짜 지정을 지원하지 않아 항상 최근 거래일 스냅샷만 수집한다.
 16:30 실행은 그날 종가를 받고 일일 리포트(수집 요약·상승 ETF)를 디스코드로 보낸다.
-수집 로직은 age_utils 공용 함수 사용. 태그는 age_tagging DAG에서 부여.
+수집 로직은 라이브러리 모듈(collect_prices·collect_holdings 등)에 있다. 태그는 age_tagging DAG에서 부여.
+AGE에 쓰는 태스크는 pool age_write(슬롯 1)로 다른 DAG(backfill_prices·age_tagging)와 겹치지 않게 돈다.
 """
 
 from datetime import datetime, timedelta
@@ -17,15 +18,17 @@ from airflow.providers.standard.operators.python import PythonOperator
 from airflow.providers.standard.operators.empty import EmptyOperator
 import logging
 
-from age_utils import (
-    get_db_connection, init_age, execute_cypher_batch,
-    get_business_days, last_settled_day, get_last_collected_date, get_etf_codes_from_age,
-    collect_universe_and_prices, refill_missing_etf_prices, refresh_latest_snapshot_values, collect_holdings, compute_weight_changes,
-    collect_stock_prices_for_dates,
-    record_collection_run, send_discord_notification, send_daily_report,
-    update_etf_returns,
-    INDEX_TAG_PATTERNS, RULE_ONLY_TAGS, holdings_target_date,
-)
+from age_db import AGE_WRITE_POOL, age_cursor, get_etf_codes_from_age, get_last_collected_date
+from collect_holdings import collect_holdings, holdings_retry_needed
+from collect_prices import (collect_stock_prices_for_dates, collect_universe_and_prices, refill_missing_etf_prices,
+                            refresh_latest_snapshot_values)
+from daily_report import send_daily_report
+from discord_notice import send_discord_notification
+from market_calendar import dash_date, get_business_days, holdings_target_date, last_settled_day, now_kst
+from rdb import record_collection_run
+from returns import update_etf_returns
+from universe import apply_rule_tags
+from weight_change_calc import compute_weight_changes
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +54,8 @@ dag = DAG(
 )
 
 
+FIRST_RUN_LOOKBACK_DAYS = 10  # 첫 실행에서 최근 거래일을 찾는 기간
+
 # ──────────────────────────────────────────────
 # Task 함수
 # ──────────────────────────────────────────────
@@ -60,7 +65,8 @@ def fetch_trading_dates(**context):
 
     XCom return: 수집 대상 영업일 리스트 (YYYYMMDD)
     """
-    end_date = last_settled_day(datetime.now())
+    now = now_kst()
+    end_date = last_settled_day(now)
 
     last = get_last_collected_date()
     if last:
@@ -69,7 +75,7 @@ def fetch_trading_dates(**context):
         dates = get_business_days(start, end_date)
     else:
         # 첫 실행(빈 AGE): 백필 없이 최근 거래일 하루만 수집
-        start = (datetime.now() - timedelta(days=10)).strftime('%Y%m%d')
+        start = (now - timedelta(days=FIRST_RUN_LOOKBACK_DAYS)).strftime('%Y%m%d')
         dates = get_business_days(start, end_date)[-1:]
         log.info(f"No previous data in AGE. First run collects latest trading day only: {dates}")
 
@@ -103,10 +109,6 @@ def sync_universe_and_prices(**context):
     refill_missing_etf_prices()
 
 
-# 구성종목 조회 실패가 이 비율 이상이면 태스크를 실패시켜 Airflow 재시도로 빠진 ETF만 다시 받는다
-HOLDINGS_RETRY_FAILURE_RATIO = 0.2
-
-
 def sync_holdings(**context):
     """구성종목(KIS)을 HOLDS로 저장. 받은 날짜(YYYYMMDD)를 돌려준다(XCom) — 받지 않았으면 None.
 
@@ -115,7 +117,7 @@ def sync_holdings(**context):
     받은 것만으로 진행한다.
     """
     ti = context['ti']
-    target = holdings_target_date(datetime.now())
+    target = holdings_target_date(now_kst())
     if not target:
         log.info("No holdings to fetch (non-trading day or before 08:35) — skipping holdings")
         return None
@@ -123,9 +125,7 @@ def sync_holdings(**context):
     etf_codes = list(get_etf_codes_from_age())
     failed = collect_holdings(etf_codes, target)
     if failed:
-        ratio = len(failed) / len(etf_codes)
-        last_try = ti.try_number > context['task'].retries
-        if ratio >= HOLDINGS_RETRY_FAILURE_RATIO and not last_try:
+        if holdings_retry_needed(len(failed), len(etf_codes), last_try=ti.try_number > context['task'].retries):
             raise RuntimeError(f"Holdings failed for {len(failed)}/{len(etf_codes)} ETFs — retrying")
         log.warning(f"Giving up holdings for {len(failed)}/{len(etf_codes)} ETFs on {target}: {sorted(failed)}")
     return target
@@ -150,9 +150,7 @@ def sync_weight_changes(**context):
 def _latest_collected_date(ti) -> str | None:
     """이번 실행에서 구성종목을 받은 날짜(YYYY-MM-DD). 수집 기록·알림은 가격이 아니라 구성종목 날짜를 따른다."""
     bd = ti.xcom_pull(task_ids='sync_holdings')
-    if not bd:
-        return None
-    return f"{bd[:4]}-{bd[4:6]}-{bd[6:8]}"
+    return dash_date(bd) if bd else None
 
 
 def record_collection(**context):
@@ -176,12 +174,12 @@ def notify_daily_report(**context):
     """
     ti = context['ti']
     dates = ti.xcom_pull(task_ids='sync_universe_and_prices', key='actual_dates')
-    today = datetime.now().strftime('%Y%m%d')
+    today = now_kst().strftime('%Y%m%d')
     if not dates or dates[-1] != today:
         log.info(f"No closing prices for today ({today}) in this run — skipping daily report")
         return
     new_etfs = ti.xcom_pull(task_ids='sync_universe_and_prices', key='new_etfs')
-    send_daily_report(f"{today[:4]}-{today[4:6]}-{today[6:8]}", new_etfs)
+    send_daily_report(dash_date(today), new_etfs)
 
 
 def sync_returns(**context):
@@ -195,61 +193,34 @@ def sync_returns(**context):
 
 def tag_new_etfs(**context):
     """신규 ETF 룰 기반 태그 부여 (코스피/코스닥)."""
-    import re
-
     ti = context['ti']
     new_etfs = ti.xcom_pull(task_ids='sync_universe_and_prices', key='new_etfs')
     if not new_etfs:
         log.info("No new ETFs to tag")
         return
 
-    conn = get_db_connection()
-    cur = init_age(conn)
-
-    try:
-        tag_items = [{'name': t} for t in RULE_ONLY_TAGS]
-        execute_cypher_batch(cur, """
-            MERGE (t:Tag {name: item.name}) RETURN t
-        """, tag_items)
-
-        tagged_pairs = []
-        for etf in new_etfs:
-            for pattern, tag_name in INDEX_TAG_PATTERNS:
-                if re.search(pattern, etf['name']):
-                    tagged_pairs.append({'code': etf['code'], 'tag_name': tag_name})
-                    break
-
-        if tagged_pairs:
-            execute_cypher_batch(cur, """
-                MATCH (e:ETF {code: item.code})
-                MATCH (t:Tag {name: item.tag_name})
-                MERGE (e)-[:TAGGED]->(t)
-                RETURN 1
-            """, tagged_pairs)
-
+    with age_cursor() as (conn, cur):
+        tagged = apply_rule_tags(cur, new_etfs)
         conn.commit()
-        log.info(f"Tagged {len(tagged_pairs)}/{len(new_etfs)} new ETFs (rule-based)")
-
-    finally:
-        cur.close()
-        conn.close()
+    log.info(f"Tagged {tagged}/{len(new_etfs)} new ETFs (rule-based)")
 
 
 # ──────────────────────────────────────────────
 # DAG 태스크 정의
 # ──────────────────────────────────────────────
 
+# AGE에 쓰는 태스크는 pool=AGE_WRITE_POOL — 백필·태깅 DAG와 동시에 쓰지 않는다
 start = EmptyOperator(task_id='start', dag=dag)
 end = EmptyOperator(task_id='end', dag=dag)
 
 t_dates = PythonOperator(task_id='fetch_trading_dates',
                           python_callable=fetch_trading_dates, dag=dag)
 t_universe = PythonOperator(task_id='sync_universe_and_prices',
-                             python_callable=sync_universe_and_prices, dag=dag)
+                             python_callable=sync_universe_and_prices, pool=AGE_WRITE_POOL, dag=dag)
 t_holdings = PythonOperator(task_id='sync_holdings',
-                             python_callable=sync_holdings, dag=dag)
+                             python_callable=sync_holdings, pool=AGE_WRITE_POOL, dag=dag)
 t_stock_prices = PythonOperator(task_id='sync_stock_prices',
-                                 python_callable=sync_stock_prices, dag=dag)
+                                 python_callable=sync_stock_prices, pool=AGE_WRITE_POOL, dag=dag)
 t_changes = PythonOperator(task_id='sync_weight_changes',
                             python_callable=sync_weight_changes, dag=dag)
 # 비중변화 계산 뒤에 기록해야 웹 알림이 새 계산 결과를 본다. 계산이 실패해도 기록은 한다
@@ -258,9 +229,9 @@ t_record = PythonOperator(task_id='record_collection',
 t_discord = PythonOperator(task_id='notify_discord',
                             python_callable=notify_discord, dag=dag)
 t_returns = PythonOperator(task_id='sync_returns',
-                            python_callable=sync_returns, dag=dag)
+                            python_callable=sync_returns, pool=AGE_WRITE_POOL, dag=dag)
 t_tags = PythonOperator(task_id='tag_new_etfs',
-                         python_callable=tag_new_etfs, dag=dag)
+                         python_callable=tag_new_etfs, pool=AGE_WRITE_POOL, dag=dag)
 # 주식 가격·구성종목이 일부 실패해도 리포트는 보낸다 — 요약에 빠진 수가 드러난다
 t_report = PythonOperator(task_id='notify_daily_report',
                            python_callable=notify_daily_report, trigger_rule='all_done', dag=dag)

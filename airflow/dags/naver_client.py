@@ -56,8 +56,11 @@ def fetch_etf_profile(code: str, session: Optional[requests.Session] = None) -> 
                         headers={"User-Agent": "Mozilla/5.0"})
         resp.raise_for_status()
         data = resp.json()
-    except Exception as e:
+    except (requests.RequestException, ValueError) as e:  # 네트워크·HTTP 오류, JSON이 아닌 응답
         log.warning(f"Failed to fetch ETF profile for {code}: {e}")
+        return None
+    if not isinstance(data, dict):
+        log.warning(f"Unexpected ETF profile response for {code}: {type(data).__name__}")
         return None
 
     profile = {}

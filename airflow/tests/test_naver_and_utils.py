@@ -1,12 +1,12 @@
-"""naver_client / age_utils 순수 함수 테스트."""
-import sys
-from pathlib import Path
-
+"""naver_client와 유니버스·가격·일일 리포트 순수 함수 테스트."""
 import pytest
+import requests
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "dags"))
-
-import naver_client  # noqa: E402
+import collect_prices
+import daily_report
+import naver_client
+import universe
+from market_calendar import last_settled_day, snapshot_is_settled
 
 
 class FakeResp:
@@ -18,7 +18,7 @@ class FakeResp:
 
     def raise_for_status(self):
         if self.status_code >= 400:
-            raise RuntimeError(self.status_code)
+            raise requests.HTTPError(self.status_code)
 
 
 class FakeSession:
@@ -76,8 +76,7 @@ def test_fetch_etf_profile_failure_returns_none():
     ("A005930", False), ("10100", False), ("", False),
 ])
 def test_is_listed_security_code(code, expected):
-    age_utils = pytest.importorskip("age_utils")  # psycopg2 필요
-    assert age_utils.is_listed_security_code(code) is expected
+    assert universe.is_listed_security_code(code) is expected
 
 
 @pytest.mark.parametrize("name,ok", [
@@ -86,30 +85,27 @@ def test_is_listed_security_code(code, expected):
     ("TIGER 200커버드콜", False),
 ])
 def test_passes_universe_name_filter(name, ok):
-    age_utils = pytest.importorskip("age_utils")
-    assert age_utils.passes_universe_name_filter(name) is ok
+    assert universe.passes_universe_name_filter(name) is ok
 
 
 def test_check_new_universe_candidates():
-    age_utils = pytest.importorskip("age_utils")
     items = [
         {"code": "069500", "name": "KODEX 200", "net_assets": 10**13},       # 기존
         {"code": "091160", "name": "KODEX 반도체", "net_assets": 600 * 10**8},  # 신규
         {"code": "091230", "name": "TIGER 반도체", "net_assets": 400 * 10**8},  # 500억 미만
         {"code": "122630", "name": "KODEX 레버리지", "net_assets": 10**13},   # 제외 키워드
     ]
-    result = age_utils.check_new_universe_candidates(items, {"069500"})
+    result = universe.check_new_universe_candidates(items, {"069500"})
     assert [c["code"] for c in result] == ["091160"]
 
 
 def test_find_missing_price_dates_keeps_only_gaps():
-    age_utils = pytest.importorskip("age_utils")
     days = ["20261015", "20261016", "20261017"]
     existing = {
         ("069500", "20261015"), ("069500", "20261016"), ("069500", "20261017"),  # 빠진 날 없음
         ("091160", "20261015"), ("091160", "20261017"),                          # 중간 하루 빠짐
     }
-    result = age_utils.find_missing_price_dates({"069500", "091160", "102110"}, days, existing)
+    result = collect_prices.find_missing_price_dates({"069500", "091160", "102110"}, days, existing)
     assert result == {"091160": ["20261016"], "102110": days}
 
 
@@ -122,8 +118,7 @@ def test_find_missing_price_dates_keeps_only_gaps():
 ])
 def test_last_settled_day(now, expected):
     from datetime import datetime
-    age_utils = pytest.importorskip("age_utils")
-    assert age_utils.last_settled_day(datetime.strptime(now, "%Y-%m-%d %H:%M")) == expected
+    assert last_settled_day(datetime.strptime(now, "%Y-%m-%d %H:%M")) == expected
 
 
 @pytest.mark.parametrize("now, expected", [
@@ -134,8 +129,7 @@ def test_last_settled_day(now, expected):
 ])
 def test_snapshot_is_settled(now, expected):
     from datetime import datetime
-    age_utils = pytest.importorskip("age_utils")
-    assert age_utils.snapshot_is_settled(datetime.strptime(now, "%Y-%m-%d %H:%M")) is expected
+    assert snapshot_is_settled(datetime.strptime(now, "%Y-%m-%d %H:%M")) is expected
 
 
 @pytest.mark.parametrize("name, ok", [
@@ -145,8 +139,7 @@ def test_snapshot_is_settled(now, expected):
     ("TIGER 은행고배당플러스TOP10", True),
 ])
 def test_universe_name_filter_excludes_silver(name, ok):
-    age_utils = pytest.importorskip("age_utils")
-    assert age_utils.passes_universe_name_filter(name) is ok
+    assert universe.passes_universe_name_filter(name) is ok
 
 
 @pytest.mark.parametrize("name, cycle, expected", [
@@ -158,8 +151,7 @@ def test_universe_name_filter_excludes_silver(name, ok):
     ("KODEX 200", None, None),
 ])
 def test_resolve_dividend_cycle(name, cycle, expected):
-    age_utils = pytest.importorskip("age_utils")
-    assert age_utils.resolve_dividend_cycle(name, cycle) == expected
+    assert universe.resolve_dividend_cycle(name, cycle) == expected
 
 
 @pytest.mark.parametrize("name, company", [
@@ -174,12 +166,10 @@ def test_resolve_dividend_cycle(name, cycle, expected):
     ("NEWBRAND 200", "기타"),
 ])
 def test_get_company_from_etf_name(name, company):
-    age_utils = pytest.importorskip("age_utils")
-    assert age_utils.get_company_from_etf_name(name) == company
+    assert universe.get_company_from_etf_name(name) == company
 
 
 def test_diff_etf_profiles_keeps_only_changed_fields():
-    age_utils = pytest.importorskip("age_utils")
     current = {
         "069500": {"code": "069500", "expense_ratio": 0.15, "description": "설명",
                    "base_index": "코스피 200", "listed_date": "2002-10-14"},
@@ -193,41 +183,38 @@ def test_diff_etf_profiles_keeps_only_changed_fields():
                    "listed_date": "2006-06-27"},                               # 보수 인하 + 백필
         "0091P0": {"expense_ratio": 0.5},                                      # 신규
     }
-    assert age_utils.diff_etf_profiles(current, fetched) == {
+    assert universe.diff_etf_profiles(current, fetched) == {
         "091160": {"expense_ratio": 0.09, "description": "반도체", "listed_date": "2006-06-27"},
         "0091P0": {"expense_ratio": 0.5},
     }
 
 
 def test_daily_return():
-    age_utils = pytest.importorskip("age_utils")
     prices = [("2026-10-16", 100.0), ("2026-10-20", 110.0), ("2026-10-21", 99.0)]
-    assert age_utils.daily_return(prices, "2026-10-21") == -10.0
-    assert age_utils.daily_return(prices, "2026-10-20") == 10.0  # 주말을 건너 직전 거래일과 비교
-    assert age_utils.daily_return(prices, "2026-10-16") is None  # 직전 가격 없음
-    assert age_utils.daily_return(prices, "2026-10-22") is None  # 그날 가격 없음
+    assert daily_report.daily_return(prices, "2026-10-21") == -10.0
+    assert daily_report.daily_return(prices, "2026-10-20") == 10.0  # 주말을 건너 직전 거래일과 비교
+    assert daily_report.daily_return(prices, "2026-10-16") is None  # 직전 가격 없음
+    assert daily_report.daily_return(prices, "2026-10-22") is None  # 그날 가격 없음
 
 
 def test_find_rising_etfs_sorted_and_thresholded():
-    age_utils = pytest.importorskip("age_utils")
     prices = {
         "A": [("2026-10-20", 100.0), ("2026-10-21", 103.0)],
         "B": [("2026-10-20", 100.0), ("2026-10-21", 110.0)],
         "C": [("2026-10-20", 100.0), ("2026-10-21", 102.9)],
         "D": [("2026-10-20", 100.0)],  # 그날 가격 없음
     }
-    result = age_utils.find_rising_etfs(prices, {"A": "에이"}, "2026-10-21", 3.0)
+    result = daily_report.find_rising_etfs(prices, {"A": "에이"}, "2026-10-21", 3.0)
     assert [(r["etf_code"], r["etf_name"], r["return_1d"]) for r in result] == [("B", "B", 10.0), ("A", "에이", 3.0)]
 
 
 def test_format_daily_report():
-    age_utils = pytest.importorskip("age_utils")
     rising = [{"etf_code": f"E{i}", "etf_name": f"이티에프{i}", "return_1d": 20.0 - i, "holdings": []} for i in range(12)]
     report = {
         "rising": rising,
         "features": ["반도체 ETF 8개가 SK하이닉스 상승에 함께 올랐다."],
     }
-    header, blocks = age_utils.format_daily_report("2026-10-21", report, 3.0, [{"code": "N", "name": "새"}])
+    header, blocks = daily_report.format_daily_report("2026-10-21", report, 3.0, [{"code": "N", "name": "새"}])
     assert header == "📈 **ETF 일일 리포트** (2026-10-21)"
     assert blocks[0] == "신규 편입: 새(N)"
     assert blocks[1] == "**오늘의 특징**\n• 반도체 ETF 8개가 SK하이닉스 상승에 함께 올랐다."
@@ -236,15 +223,14 @@ def test_format_daily_report():
     assert lines[1] == "1. 이티에프0 (E0) +20.00%"
     assert len(lines) == 11
 
-    _, blocks = age_utils.format_daily_report("2026-10-21", {**report, "rising": rising[:2], "features": []}, 3.0, [])
+    _, blocks = daily_report.format_daily_report("2026-10-21", {**report, "rising": rising[:2], "features": []}, 3.0, [])
     assert blocks[0].split("\n")[0] == "**상승 ETF** (1일 +3.0% 이상 2개)"
 
-    _, blocks = age_utils.format_daily_report("2026-10-21", {**report, "rising": []}, 3.0, [])
+    _, blocks = daily_report.format_daily_report("2026-10-21", {**report, "rising": []}, 3.0, [])
     assert blocks == ["1일 +3.0% 이상 오른 ETF가 없습니다."]
 
 
 def test_backfill_price_days_leaves_recent_days_to_daily_collection(monkeypatch):
-    age_utils = pytest.importorskip("age_utils")
     business = [f"202610{d:02d}" for d in range(1, 24)]  # 23일치 (주말 구분 없이 단순화)
     calls = []
 
@@ -252,16 +238,16 @@ def test_backfill_price_days_leaves_recent_days_to_daily_collection(monkeypatch)
         calls.append((start, end))
         return business
 
-    monkeypatch.setattr(age_utils, "last_settled_day", lambda now: "20261023")
-    monkeypatch.setattr(age_utils, "get_business_days", fake_business_days)
-    days = age_utils.backfill_price_days(30)
+    monkeypatch.setattr(collect_prices, "last_settled_day", lambda now: "20261023")
+    monkeypatch.setattr(collect_prices, "get_business_days", fake_business_days)
+    days = collect_prices.backfill_price_days(30)
     assert calls == [("20260923", "20261023")]
-    assert days == business[:-age_utils.PRICE_REFILL_BUSINESS_DAYS]
+    assert days == business[:-collect_prices.PRICE_REFILL_BUSINESS_DAYS]
 
 
 def test_stock_quote_keeps_kis_ratios_only_when_the_price_is_settled():
     """장중에 돌면 현재가가 마지막 일봉 종가와 달라 PER·PBR이 확정 가격 기준이 아니다 — 상장주수만 남긴다."""
-    from age_utils import stock_quote_item
+    from collect_prices import stock_quote_item
     from kis_api_client import DailyBar, StockQuote
 
     bars = [DailyBar("20261028", 1, 1, 1, 242000, 0, 0.0)]

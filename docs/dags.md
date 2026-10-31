@@ -2,7 +2,8 @@
 
 Airflow 3.3.2 (Python 3.14, 커스텀 이미지 `docker/airflow/Dockerfile`) 위에서 동작한다.
 DAG은 `airflow.sdk.DAG` + `airflow.providers.standard` 오퍼레이터를 사용하며 스케줄은 `schedule=` 인자로 지정한다.
-AGE 수집 공용 로직은 `airflow/dags/age_utils.py`에 모여 있다.
+공용 로직은 `airflow/dags`의 라이브러리 모듈(`age_db`·`universe`·`market_calendar`·`collect_prices`·`collect_holdings`·`weight_change_calc`·`discord_notice`·`daily_report`·`returns` 등)에 있고, DAG 파일은 태스크 배선만 한다.
+AGE에 쓰는 태스크는 pool `age_write`(슬롯 1)로 하나씩 돈다 — 없으면 그 태스크가 스케줄되지 않는다. `airflow-init`이 만들고, 이미 떠 있는 환경에서는 한 번 직접 만든다: `docker exec etf-atlas-airflow airflow pools set age_write 1 "AGE 그래프 쓰기 직렬화 (Price 노드 중복 방지)"`.
 
 | DAG ID | 파일 | 스케줄 | 저장소 | 역할 |
 |--------|------|--------|--------|------|
@@ -111,7 +112,7 @@ KIS는 과거 구성종목을 주지 않으므로 그날 놓치면 복구할 수
 
 ---
 
-## 공용 수집 함수 (age_utils)
+## 공용 수집 함수 (collect_prices · collect_holdings)
 
 ### collect_universe_and_prices(dates)
 
@@ -348,7 +349,7 @@ WSL 부팅 직후 Airflow 컨테이너가 바인드 마운트가 준비되기 �
 | `EMBEDDING_API_BASE`, `EMBEDDING_API_KEY` | 임베딩용 LiteLLM 프록시 (채팅 모델과 키가 다름) |
 | `EMBEDDING_MODEL` | 임베딩 모델 (기본 `embedding-gemma-300m`, 768차원) |
 
-LLM/임베딩 항목(`LLM_*`, `EMBEDDING_*`)은 관리자 페이지 > AI 탭에서 저장한 값(`ai_settings`)이 우선하고, 비어 있는 항목만 환경변수를 쓴다 (`age_utils.load_ai_config`).
+LLM/임베딩 항목(`LLM_*`, `EMBEDDING_*`)은 관리자 페이지 > AI 탭에서 저장한 값(`ai_settings`)이 우선하고, 비어 있는 항목만 환경변수를 쓴다 (`ai_config.load_ai_config`).
 | `ENCRYPTION_KEY` | 포트폴리오 금액·저장한 API 키 암호화 키 |
 | `DISCORD_WEBHOOK_URL` | (선택) 수집 완료 디스코드 알림 |
 

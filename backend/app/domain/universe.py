@@ -1,6 +1,6 @@
 """ETF Atlas가 무엇을 수집하는지 — 분석할 수 없는 대상을 안내할 때 쓰는 문구.
 
-조건 자체는 수집 DAG에 있다 (airflow/dags/age_utils.py의 MIN_AUM, EXCLUDE_KEYWORDS, FOREIGN_NAME_KEYWORDS).
+조건 자체는 수집 DAG에 있다 (airflow/dags/universe.py의 MIN_AUM, EXCLUDE_KEYWORDS, FOREIGN_NAME_KEYWORDS).
 그쪽을 바꾸면 이 문구도 같이 바꾼다.
 """
 

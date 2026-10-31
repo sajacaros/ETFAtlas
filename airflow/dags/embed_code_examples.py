@@ -12,7 +12,9 @@ from datetime import datetime, timedelta
 from airflow.sdk import DAG
 from airflow.providers.standard.operators.python import PythonOperator
 
-from age_utils import get_db_connection, load_ai_config
+from ai_config import load_ai_config
+from generalize_prompt import GENERALIZE_SYSTEM_PROMPT
+from rdb import get_db_connection
 
 log = logging.getLogger(__name__)
 
@@ -36,9 +38,6 @@ dag = DAG(
     catchup=False,
     tags=["embedding", "manual"],
 )
-
-
-from generalize_prompt import GENERALIZE_SYSTEM_PROMPT
 
 
 def _generalize_questions(client, model, questions):

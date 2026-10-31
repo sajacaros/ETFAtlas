@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, KeyboardEvent } from 'react'
 import {
-  Send, Square, Loader2, MessageCircle, ChevronLeft, ChevronRight, Trash2, Book, BookOpen, Plus, Pencil, Check, X, History, CornerDownRight,
+  ArrowDown, Send, Square, Loader2, MessageCircle, ChevronLeft, ChevronRight, Trash2, Book, BookOpen, Plus, Pencil, Check, X, History, CornerDownRight,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -18,6 +18,7 @@ import { AnswerView } from '@/components/answer/AnswerView'
 import ReactMarkdown from 'react-markdown'
 import { MARKDOWN_PLUGINS } from '@/lib/markdown'
 
+const FOLLOW_GAP = 40  // 맨 아래에서 이만큼(px) 안이면 답변을 따라간다
 const STOPPED_MESSAGE = '요청하신 대로 중지했습니다.'  // 서버가 저장하는 문구와 같게
 
 // 완료·되묻기는 답변 자체로 드러나므로 표시하지 않는다
@@ -94,7 +95,11 @@ export default function ChatPage() {
   const [showSessions, setShowSessions] = useState(false)
   const [sessionsCollapsed, setSessionsCollapsed] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<ChatSessionSummary | null>(null)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const messagesRef = useRef<HTMLDivElement>(null)
+  const messagesContentRef = useRef<HTMLDivElement>(null)
+  // 답변을 따라 맨 아래로 내려가는지 — 사용자가 위로 올리면 끄고, 다시 맨 아래까지 내리면 켠다
+  const followRef = useRef(true)
+  const [following, setFollowing] = useState(true)  // 꺼져 있으면 '아래로' 버튼을 띄운다
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const nextStreamKey = useRef(0)
   // 중지하면 스트림을 화면에서 바로 떼어 낸다 — 서버는 실행 중인 단계를 마치고 저장하므로 연결은 끊지 않는다
@@ -130,11 +135,40 @@ export default function ChatPage() {
     refreshSessions()
   }, [refreshSessions])
 
+  // 즉시 이동한다 — smooth면 애니메이션 도중의 스크롤 이벤트를 사용자가 올린 것으로 읽는다
+  const followToEnd = useCallback(() => {
+    const el = messagesRef.current
+    if (el && followRef.current) el.scrollTop = el.scrollHeight
+  }, [])
+
+  const follow = (on: boolean) => {
+    followRef.current = on
+    setFollowing(on)
+  }
+
+  const onMessagesScroll = () => {
+    const el = messagesRef.current
+    if (el) follow(el.scrollHeight - el.scrollTop - el.clientHeight < FOLLOW_GAP)
+  }
+
+  const jumpToEnd = () => {
+    follow(true)
+    followToEnd()
+  }
+
+  useEffect(followToEnd, [shownMessages, viewedStream, followToEnd])
+
+  // 차트·표는 영역이 끝난 뒤 내용을 따로 받아 그리므로 메시지 상태 없이 높이만 늘어난다
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [shownMessages, viewedStream])
+    const content = messagesContentRef.current
+    if (!content) return
+    const observer = new ResizeObserver(followToEnd)
+    observer.observe(content)
+    return () => observer.disconnect()
+  }, [followToEnd])
 
   const startNewChat = () => {
+    follow(true)
     setSessionId(null)
     setMessages([])
     setIsLoadingSession(false)
@@ -145,6 +179,7 @@ export default function ChatPage() {
   const openSession = async (id: number) => {
     setShowSessions(false)
     if (id === sessionId) return
+    follow(true)
     setSessionId(id)
     if (streams.some((s) => s.sessionId === id)) {
       setIsLoadingSession(false)  // 진행 중인 대화는 화면에 들고 있는 걸 보여준다
@@ -196,6 +231,7 @@ export default function ChatPage() {
     const updateStream = (patch: Partial<ChatStream>) =>
       setStreams((prev) => prev.map((s) => (s.key === key ? { ...s, ...patch } : s)))
 
+    follow(true)
     const userMessage: DisplayMessage = { role: 'user', content: trimmed, sentAt: new Date() }
     let newMessages = [...shownMessages, userMessage]
     setStreams((prev) => [
@@ -382,118 +418,129 @@ export default function ChatPage() {
         )}
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto space-y-4 mb-4">
-          {isLoadingSession && (
-            <div className="flex justify-center py-8 text-muted-foreground">
-              <Loader2 className="w-5 h-5 animate-spin" />
-            </div>
-          )}
+        <div className="relative flex-1 min-h-0 mb-4">
+          <div ref={messagesRef} onScroll={onMessagesScroll} className="h-full overflow-y-auto">
+            <div ref={messagesContentRef} className="min-h-full flex flex-col gap-4">
+              {isLoadingSession && (
+                <div className="flex justify-center py-8 text-muted-foreground">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                </div>
+              )}
 
-          {shownMessages.length === 0 && !viewedStream && !isLoadingSession && (
-            <div className="flex flex-col items-center justify-center h-full gap-6">
-              <p className="text-muted-foreground text-sm">예시 질문을 클릭하거나 직접 입력하세요</p>
-              <div className="flex flex-wrap justify-center gap-2">
-                {EXAMPLE_QUESTIONS.map((q) => (
-                  <button
-                    key={q}
-                    onClick={() => sendMessage(q)}
-                    className="px-3 py-2 text-sm rounded-full border border-border bg-background hover:bg-muted transition-colors"
-                  >
-                    {q}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {!isLoadingSession && shownMessages.map((msg, i) => (
-            <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={msg.answer ? 'w-full' : 'max-w-[80%]'}>
-                {msg.sentAt && (
-                  <div className="mb-1 text-right text-xs text-muted-foreground">{formatSentAt(msg.sentAt)}</div>
-                )}
-                {msg.answer ? (
-                  <AnswerView chatLogId={msg.answer.chatLogId} layout={msg.answer.layout} slots={msg.answer.slots} />
-                ) : (
-                  <Card
-                    className={
-                      msg.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted'
-                    }
-                  >
-                    <CardContent className="p-3 text-sm">
-                      {msg.role === 'user' ? (
-                        <span className="whitespace-pre-wrap">{msg.content}</span>
-                      ) : (
-                        <div className="prose prose-sm dark:prose-invert max-w-none prose-table:text-sm prose-td:px-2 prose-td:py-1 prose-th:px-2 prose-th:py-1 prose-th:text-left">
-                          <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS}>
-                            {msg.content}
-                          </ReactMarkdown>
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                )}
-                {msg.result && RESULT_LABELS[msg.result] && (
-                  <div className={`mt-1 text-xs ${msg.result === 'failed' ? 'text-destructive' : 'text-muted-foreground'}`}>
-                    {RESULT_LABELS[msg.result]}
+              {shownMessages.length === 0 && !viewedStream && !isLoadingSession && (
+                <div className="flex-1 flex flex-col items-center justify-center gap-6">
+                  <p className="text-muted-foreground text-sm">예시 질문을 클릭하거나 직접 입력하세요</p>
+                  <div className="flex flex-wrap justify-center gap-2">
+                    {EXAMPLE_QUESTIONS.map((q) => (
+                      <button
+                        key={q}
+                        onClick={() => sendMessage(q)}
+                        className="px-3 py-2 text-sm rounded-full border border-border bg-background hover:bg-muted transition-colors"
+                      >
+                        {q}
+                      </button>
+                    ))}
                   </div>
-                )}
-                {msg.refinedQuestion && (
-                  <div
-                    className="mt-1 text-xs text-muted-foreground flex items-start justify-end gap-1"
-                    title="이전 대화를 반영해 다시 쓴 질문"
-                  >
-                    <CornerDownRight className="w-3 h-3 mt-0.5 shrink-0" />
-                    <span>{msg.refinedQuestion}</span>
-                    <button
-                      type="button"
-                      className="ml-1 shrink-0 underline underline-offset-2 hover:text-foreground disabled:opacity-50 disabled:no-underline"
-                      onClick={() => sendMessage(msg.content, false)}
-                      disabled={isAnswering || isLoadingSession}
-                      title="다시 쓴 질문이 뜻과 다르면 원래 질문 그대로 다시 묻습니다"
-                    >
-                      원문으로 다시 묻기
-                    </button>
-                  </div>
-                )}
-                {msg.matchedExamples && msg.matchedExamples.length > 0 && (
-                  <MatchedExamplesView examples={msg.matchedExamples} />
-                )}
-                {msg.steps && msg.steps.length > 0 && <StepsView steps={msg.steps} />}
-              </div>
-            </div>
-          ))}
+                </div>
+              )}
 
-          {/* Streaming state */}
-          {viewedStream && !viewedStream.done && (
-            <div className="flex justify-start">
-              <div className={viewedStream.answer ? 'w-full' : 'max-w-[80%]'}>
-                {viewedStream.answer && (
-                  <div className="mb-2">
-                    <AnswerView
-                      chatLogId={viewedStream.answer.chatLogId}
-                      layout={viewedStream.answer.layout}
-                      slots={viewedStream.answer.slots}
-                    />
+              {!isLoadingSession && shownMessages.map((msg, i) => (
+                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={msg.answer ? 'w-full' : 'max-w-[80%]'}>
+                    {msg.sentAt && (
+                      <div className="mb-1 text-right text-xs text-muted-foreground">{formatSentAt(msg.sentAt)}</div>
+                    )}
+                    {msg.answer ? (
+                      <AnswerView chatLogId={msg.answer.chatLogId} layout={msg.answer.layout} slots={msg.answer.slots} />
+                    ) : (
+                      <Card
+                        className={
+                          msg.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted'
+                        }
+                      >
+                        <CardContent className="p-3 text-sm">
+                          {msg.role === 'user' ? (
+                            <span className="whitespace-pre-wrap">{msg.content}</span>
+                          ) : (
+                            <div className="prose prose-sm dark:prose-invert max-w-none prose-table:text-sm prose-td:px-2 prose-td:py-1 prose-th:px-2 prose-th:py-1 prose-th:text-left">
+                              <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS}>
+                                {msg.content}
+                              </ReactMarkdown>
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    )}
+                    {msg.result && RESULT_LABELS[msg.result] && (
+                      <div className={`mt-1 text-xs ${msg.result === 'failed' ? 'text-destructive' : 'text-muted-foreground'}`}>
+                        {RESULT_LABELS[msg.result]}
+                      </div>
+                    )}
+                    {msg.refinedQuestion && (
+                      <div
+                        className="mt-1 text-xs text-muted-foreground flex items-start justify-end gap-1"
+                        title="이전 대화를 반영해 다시 쓴 질문"
+                      >
+                        <CornerDownRight className="w-3 h-3 mt-0.5 shrink-0" />
+                        <span>{msg.refinedQuestion}</span>
+                        <button
+                          type="button"
+                          className="ml-1 shrink-0 underline underline-offset-2 hover:text-foreground disabled:opacity-50 disabled:no-underline"
+                          onClick={() => sendMessage(msg.content, false)}
+                          disabled={isAnswering || isLoadingSession}
+                          title="다시 쓴 질문이 뜻과 다르면 원래 질문 그대로 다시 묻습니다"
+                        >
+                          원문으로 다시 묻기
+                        </button>
+                      </div>
+                    )}
+                    {msg.matchedExamples && msg.matchedExamples.length > 0 && (
+                      <MatchedExamplesView examples={msg.matchedExamples} />
+                    )}
+                    {msg.steps && msg.steps.length > 0 && <StepsView steps={msg.steps} />}
                   </div>
-                )}
-                <Card className="bg-muted">
-                  <CardContent className="p-3 flex items-center gap-2 text-sm text-muted-foreground">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span className="truncate">
-                      {streamingStatus(viewedStream.steps, viewedStream.stage, viewedStream.answer)}
-                    </span>
-                  </CardContent>
-                </Card>
-                {viewedStream.examples.length > 0 && (
-                  <MatchedExamplesView examples={viewedStream.examples} />
-                )}
-                {viewedStream.steps.length > 0 && <StepsView steps={viewedStream.steps} defaultOpen />}
-              </div>
+                </div>
+              ))}
+
+              {/* Streaming state */}
+              {viewedStream && !viewedStream.done && (
+                <div className="flex justify-start">
+                  <div className={viewedStream.answer ? 'w-full' : 'max-w-[80%]'}>
+                    {viewedStream.answer && (
+                      <div className="mb-2">
+                        <AnswerView
+                          chatLogId={viewedStream.answer.chatLogId}
+                          layout={viewedStream.answer.layout}
+                          slots={viewedStream.answer.slots}
+                        />
+                      </div>
+                    )}
+                    <Card className="bg-muted">
+                      <CardContent className="p-3 flex items-center gap-2 text-sm text-muted-foreground">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span className="truncate">
+                          {streamingStatus(viewedStream.steps, viewedStream.stage, viewedStream.answer)}
+                        </span>
+                      </CardContent>
+                    </Card>
+                    {viewedStream.examples.length > 0 && (
+                      <MatchedExamplesView examples={viewedStream.examples} />
+                    )}
+                    {viewedStream.steps.length > 0 && <StepsView steps={viewedStream.steps} defaultOpen />}
+                  </div>
+                </div>
+              )}
+
             </div>
+          </div>
+          {!following && (
+            <Button
+              variant="secondary" size="sm" onClick={jumpToEnd}
+              className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full shadow-md"
+            >
+              <ArrowDown className="w-4 h-4 mr-1" />아래로
+            </Button>
           )}
-
-          <div ref={messagesEndRef} />
         </div>
 
         {/* Input */}

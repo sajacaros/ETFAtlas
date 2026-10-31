@@ -21,7 +21,8 @@ from ....models.dart import ReportNode, StockReport
 from ...content import Source
 from ...entities import UnmanagedStock
 from ...llm import NO_THINKING, build_model
-from ...report_tree import SUMMARY_MIN_CHARS, Block, clip, filed_date, render
+from ...report_tree import (OVERVIEW_PROMPT, SUMMARY_MIN_CHARS, Block, clip, filed_date, overview_entries, overview_prompt,
+                            overview_source, render, segment_notes)
 from . import report_breakdowns
 from .base import Skill, SkillContext, SkillResult, empty, not_found, text_result, unmanaged_stock_result
 from .company_disclosures import DART_VIEWER
@@ -32,10 +33,6 @@ READY = ("tree", "summarized")  # 트리만 있어도 제목으로 고를 수 �
 PICK_MAX = 3
 READ_NODE_CHARS = 12000
 READ_CHARS = 30000
-OVERVIEW_CHAPTERS = ("II.", "IV.", "XI.")
-OVERVIEW_CHARS = 48000
-OVERVIEW_NODE_CHARS = (1500, 5000)  # 노드 하나에 줄 몫 (최소, 최대) — 장이 많아도 뒤쪽 장이 잘려 나가지 않게
-SEGMENT_NOTE = "부문"  # '영업부문 (연결)', '부문별 보고 (연결)' — 회사마다 주석 이름이 다르다
 MIX_SECTIONS = ("매출", "주요 제품")  # 매출 구성 표가 있는 절 (부문 주석과 함께)
 MIX_CHARS = 16000
 _WORD = re.compile(r"[0-9A-Za-z가-힣]{2,}")
@@ -54,21 +51,6 @@ LOOKUP_PROMPT = """당신은 DART 정기보고서에서 찾아 읽은 절로 질
 - 표에서 읽은 값은 어느 기간(열)의 값인지 밝히세요. 표 머리말의 'A / B'는 위 단계 / 아래 단계 머리말입니다.
 - 매수·매도 권유나 투자 의견은 쓰지 마세요.
 - 제목이나 머리말 없이 짧은 글머리표 2~6개로 답하세요."""
-
-OVERVIEW_PROMPT = """당신은 DART 정기보고서 본문을 요약합니다. 아래 '보고서 본문'은 보고서에서 사업의 내용, 경영진단, 투자자 보호 사항, 부문 주석만 뽑은 것입니다.
-- 본문에 있는 사실만 쓰세요. 본문에 없는 수치·전망·평가를 만들지 마세요.
-- 수치는 본문에 적힌 숫자와 단위를 그대로 옮기세요 (예: '1,234,567백만원'). 단위를 조·억원으로 바꾸지 마세요 — 자릿수를 틀리기 쉽습니다. 본문 문장에 이미 '12조 3,456억원'처럼 적힌 값은 그대로 씁니다.
-- 매수·매도 권유나 투자 의견은 쓰지 마세요.
-- 제목(#, ##)이나 머리말 없이 바로 아래 형식으로 시작하세요. 항목마다 2~4개의 짧은 글머리표. 본문에 내용이 없는 항목은 통째로 빼세요.
-
-#### 사업 구조
-(무엇을 팔아 돈을 버는지, 주력 제품·부문. 매출 구성은 따로 차트로 보여 주므로 표의 금액을 모두 옮기지 말고 비중이 큰 것만)
-#### 이번 기간 영업 상황
-(가격·출하·수주·가동률 등 본문이 설명하는 실적 배경, 경영진 설명이 있으면 그 요지)
-#### 위험 요인
-(본문이 밝힌 시장·환율·금리·원재료 등 위험과 대응)
-#### 소송·제재·기준일 이후 주요사항
-(우발부채, 제재, 작성기준일 이후 발생한 주요사항, 진행 중인 공시사항)"""
 
 FOOTER = "\n\n_보고서 본문을 AI가 읽고 정리했습니다. 정확한 내용은 원문을 확인하세요._"
 
@@ -288,13 +270,6 @@ def chart_events(name: str, report: Report, charts: List[Dict[str, Any]], text_p
 
 # --- 매출 구성 ---
 
-def segment_notes(entries: Sequence[Entry]) -> List[Entry]:
-    """재무제표 주석의 부문 정보. 연결이 있으면 연결만."""
-    notes = [e for e in entries if e.path.startswith("III.") and SEGMENT_NOTE in e.title and e.chars >= SUMMARY_MIN_CHARS]
-    consolidated = [e for e in notes if "(연결)" in e.title]
-    return (consolidated or notes)[:1]
-
-
 def mix_sources(entries: Sequence[Entry]) -> List[Entry]:
     business = [e for e in entries if e.path.startswith("II.") and any(k in e.title for k in MIX_SECTIONS)
                 and e.chars >= SUMMARY_MIN_CHARS]
@@ -317,20 +292,6 @@ async def load_breakdowns(ctx: SkillContext, report: Report, entries: Sequence[E
     report.breakdowns = report_breakdowns.dumps(found)
     await asyncio.to_thread(save_report, ctx, report.rcept_no, breakdowns=report.breakdowns)
     return found
-
-
-# --- 개요 ---
-
-def overview_entries(entries: Sequence[Entry]) -> List[Entry]:
-    chapters = [e for e in entries if e.path.startswith(OVERVIEW_CHAPTERS) and e.chars >= SUMMARY_MIN_CHARS]
-    return chapters + segment_notes(entries)
-
-
-def overview_source(picked: Sequence[Entry], blocks: Dict[str, List[Block]]) -> str:
-    low, high = OVERVIEW_NODE_CHARS
-    share = max(low, min(high, OVERVIEW_CHARS // max(len(picked), 1)))
-    return clip("\n\n".join(f"## {e.path}\n{render(blocks[e.node_id], limit=share)}"
-                            for e in picked if e.node_id in blocks), OVERVIEW_CHARS)
 
 
 class CompanyReportSkill(Skill):
@@ -426,7 +387,7 @@ class CompanyReportSkill(Skill):
             return
         yield tagged({"type": "delta", "text": _header(report)})
         summary = ""
-        async for item in stream_answer(ctx, OVERVIEW_PROMPT, f"## 보고서\n{name} {report.report_nm}\n\n## 보고서 본문\n{source}",
+        async for item in stream_answer(ctx, OVERVIEW_PROMPT, overview_prompt(name, report.report_nm, source),
                                         tagged):
             if isinstance(item, str):
                 summary = item

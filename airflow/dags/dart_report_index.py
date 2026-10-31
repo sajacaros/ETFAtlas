@@ -14,6 +14,8 @@ PageIndex 방식: 원문 구조로 목차 트리를 만들고(LLM 없음), 등�
    처음에는 보고서가 수천 건이라 실행당 시간 예산 안에서 종목별 최신 보고서부터 한다. 트리만 있어도 챗봇은 제목으로 고른다.
    REPORT_SUMMARY_ENDPOINTS(환경변수, JSON 목록)에 같은 모델을 띄운 서버를 더 적으면 요약을 나눠 보낸다 (밀린 색인을 빨리 끝낼 때).
 4. prune_reports: 정정본이 색인된 원래 보고서와 1년 지난 보고서(종목마다 최신 1건은 남긴다)를 지운다.
+5. make_overviews: 종목별 최신 보고서(챗봇 company_report가 고르는 것)의 개요(사업 구조·영업 상황·위험 요인·소송)를
+   등록된 LLM으로 만들어 stock_reports.overview에 남긴다. 매수 의견(stock_opinion)이 개요를 읽으므로 질문이 오기 전에 채워 둔다.
 """
 
 from concurrent.futures import ThreadPoolExecutor
@@ -43,6 +45,10 @@ SUMMARY_RETRIES = 1
 # 보고서마다 노드를 다 받은 뒤 다음으로 넘어가면 마지막 몇 개를 기다리는 동안 다른 자리가 논다. 동시 수의 이 배수만큼 노드를 모아 보낸다
 SUMMARY_BATCH_FACTOR = 4
 READY = ('tree', 'summarized')
+# 개요는 보고서당 한 번(입력 최대 4만 8천 자, 출력 글머리표 십여 줄). 처음 수백 건을 채운 뒤로는 새 보고서만이다
+OVERVIEW_MINUTES = 180
+OVERVIEW_TIMEOUT = 300
+OVERVIEW_MAX_TOKENS = 2048
 DART_NO_FILE = '014'  # document.xml: '파일이 존재하지 않습니다'
 
 
@@ -58,7 +64,7 @@ default_args = {
 dag = DAG(
     'dart_report_index',
     default_args=default_args,
-    description='DART 정기보고서 목차 트리 색인 (원문 → 트리 → 등록 LLM 노드 요약)',
+    description='DART 정기보고서 목차 트리 색인 (원문 → 트리 → 등록 LLM 노드 요약 → 최신 보고서 개요)',
     schedule='0 21 * * *',  # 매일 21:00 KST — dart_sync_rdb(평일 19:20)가 공시·주요계정을 받은 뒤. 주말엔 밀린 요약을 한다
     catchup=False,
     max_active_runs=1,
@@ -265,12 +271,16 @@ class SummarySlots:
             for _ in range(e['workers']):
                 self.free.put((client, e['model']))
 
-    def summarize(self, node) -> tuple[str | None, str]:
+    def call(self, fn, *args):
+        """(fn(client, model, *args), model)."""
         client, model = self.free.get()
         try:
-            return _summarize(client, model, node), model
+            return fn(client, model, *args), model
         finally:
             self.free.put((client, model))
+
+    def summarize(self, node) -> tuple[str | None, str]:
+        return self.call(_summarize, node)
 
 
 def _summarize(client, model: str, node) -> str | None:
@@ -374,11 +384,90 @@ def prune_reports(**context):
     log.info("stock_reports 정리: 정정으로 대체 %d건, 1년 지남 %d건", superseded, expired)
 
 
+def _overview(client, model: str, prompt: str) -> str | None:
+    from app.services.report_tree import OVERVIEW_PROMPT
+
+    try:
+        res = client.chat.completions.create(
+            model=model, temperature=0, timeout=OVERVIEW_TIMEOUT, max_tokens=OVERVIEW_MAX_TOKENS,
+            messages=[{'role': 'system', 'content': OVERVIEW_PROMPT}, {'role': 'user', 'content': prompt}],
+            extra_body={'chat_template_kwargs': {'enable_thinking': False}},
+        )
+        return (res.choices[0].message.content or '').strip() or None
+    except Exception as e:
+        log.warning("overview failed: %s", e)
+        return None
+
+
+def overview_queue(cur) -> list[tuple[str, str, str]]:
+    """개요가 없는 종목별 최신 보고서 [(접수번호, 회사 이름, 보고서 이름)]. 고르는 기준은 company_report.pick_report와 같다
+    (색인을 마친 보고서 중 가장 최근 기간, 같은 기간이면 가장 최근 접수)."""
+    cur.execute("""
+        SELECT r.rcept_no, coalesce(c.corp_name, r.stock_code), r.report_nm FROM (
+            SELECT DISTINCT ON (stock_code) rcept_no, stock_code, report_nm, overview FROM stock_reports
+            WHERE status = ANY(%s) ORDER BY stock_code, period DESC NULLS LAST, rcept_no DESC
+        ) r
+        LEFT JOIN LATERAL (SELECT corp_name FROM dart_corps WHERE stock_code = r.stock_code LIMIT 1) c ON true
+        WHERE r.overview IS NULL ORDER BY r.rcept_no DESC
+    """, (list(READY),))
+    return cur.fetchall()
+
+
+def make_overviews(**context):
+    from psycopg2.extras import execute_batch
+    from app.services.report_tree import Block, Node, overview_entries, overview_prompt, overview_source
+
+    conn = get_db_connection()
+    ai = load_ai_config(conn)
+    if not ai['llm_api_key']:
+        log.warning("LLM API key not set (admin page or LLM_API_KEY), skipping report overviews")
+        conn.close()
+        return
+    # 챗봇이 만드는 개요와 같은 모델로 — 노드 요약에 더 붙인 서버(report_summary_endpoints)는 쓰지 않는다
+    slots = SummarySlots(summary_endpoints(ai, extra=''))
+    cur = conn.cursor()
+    deadline = time.monotonic() + OVERVIEW_MINUTES * 60
+    made = failed = 0
+    try:
+        queue = overview_queue(cur)
+        log.info("개요를 만들 보고서 %d건", len(queue))
+        with ThreadPoolExecutor(slots.size) as pool:
+            for start in range(0, len(queue), slots.size):
+                if time.monotonic() > deadline:
+                    log.info("시간 예산(%d분)을 다 써서 멈춥니다 — 남은 %d건은 다음 실행에서", OVERVIEW_MINUTES, len(queue) - start)
+                    break
+                jobs = []  # (접수번호, 프롬프트)
+                for rcept_no, name, report_nm in queue[start:start + slots.size]:
+                    cur.execute("""SELECT node_id, parent_id, seq, level, title, path, blocks FROM report_nodes
+                                   WHERE rcept_no = %s ORDER BY seq""", (rcept_no,))
+                    nodes = [Node(r[0], r[1], r[2], r[3], r[4], r[5], [Block.from_json(b) for b in json.loads(r[6])])
+                             for r in cur.fetchall()]
+                    source = overview_source(overview_entries(nodes), {n.node_id: n.blocks for n in nodes})
+                    if source:
+                        jobs.append((rcept_no, overview_prompt(name, report_nm, source)))
+                    else:
+                        log.info("%s %s: 사업의 내용을 찾지 못해 개요를 건너뜁니다", name, report_nm)
+                results = list(pool.map(lambda job: slots.call(_overview, job[1]), jobs))
+                done = [(text, model, rcept_no) for (rcept_no, _), (text, model) in zip(jobs, results) if text]
+                # 그사이 챗봇이 만들었으면 그것을 둔다
+                execute_batch(cur, "UPDATE stock_reports SET overview = %s, model = %s WHERE rcept_no = %s AND overview IS NULL",
+                              done)
+                conn.commit()
+                made += len(done)
+                failed += len(jobs) - len(done)
+    finally:
+        cur.close()
+        conn.close()
+    log.info("report overviews: %d건 만듦, 실패 %d건 (다음 실행에서 다시)", made, failed)
+
+
 t_queue = PythonOperator(task_id='queue_reports', python_callable=queue_reports, dag=dag)
 t_trees = PythonOperator(task_id='build_trees', python_callable=build_trees, dag=dag,
                          execution_timeout=timedelta(minutes=BUILD_MINUTES + 30))
 t_summaries = PythonOperator(task_id='summarize_nodes', python_callable=summarize_nodes, dag=dag,
                              execution_timeout=timedelta(minutes=SUMMARY_MINUTES + 30))
 t_prune = PythonOperator(task_id='prune_reports', python_callable=prune_reports, dag=dag)
+t_overviews = PythonOperator(task_id='make_overviews', python_callable=make_overviews, dag=dag,
+                             execution_timeout=timedelta(minutes=OVERVIEW_MINUTES + 30))
 
-t_queue >> t_trees >> t_summaries >> t_prune
+t_queue >> t_trees >> t_summaries >> t_prune >> t_overviews

@@ -13,7 +13,7 @@ AGE 수집 공용 로직은 `airflow/dags/age_utils.py`에 모여 있다.
 | `embed_code_examples` | `embed_code_examples.py` | 수동 | RDB (pgvector) | 챗봇 코드·레이아웃 예제 임베딩 |
 | `backfill_prices` | `backfill_prices.py` | 수동 | AGE | ETF·종목 가격 이력 백필 (기본 400일) |
 | `dart_sync_rdb` | `dart_sync_rdb.py` | `20 19 * * 1-5` (평일 19:20 KST) | RDB | 챗봇 기업 분석의 DART 고유번호·공시·주요계정·현금흐름 |
-| `dart_report_index` | `dart_report_index.py` | `0 21 * * *` (매일 21:00 KST) | RDB, LLM | 정기보고서 목차 트리 색인 (원문 → 트리 → 등록 LLM 노드 요약) |
+| `dart_report_index` | `dart_report_index.py` | `0 21 * * *` (매일 21:00 KST) | RDB, LLM | 정기보고서 목차 트리 색인 (원문 → 트리 → 등록 LLM 노드 요약 → 종목별 최신 보고서 개요) |
 
 ### 데이터 소스
 
@@ -281,13 +281,14 @@ sync_corps → [sync_disclosures, sync_financials]
 - **키**: DART 키는 `dart_settings`, LLM은 등록된 설정(`ai_settings`, 없으면 `LLM_API_*` 환경변수). DART 키가 없으면 새 원문은 받지 않고, LLM 키가 없으면 요약을 건너뛴다
 
 ```
-queue_reports → build_trees → summarize_nodes → prune_reports
+queue_reports → build_trees → summarize_nodes → prune_reports → make_overviews
 ```
 
 - `queue_reports`: 그래프 종목의 최근 1년 정기보고서를 `stock_reports`에 `pending`으로 올린다. 접수번호는 `stock_financials`(보고서 코드)와 `stock_disclosures`(공시 제목, 정정 표시)에서 모으고, 같은 종목·기간이면 가장 최근 접수(정정본)만 (`report_tree.latest_reports`). 첨부만 바꾼 공시(`[첨부정정]`·`[첨부추가]` — 본문은 원래 보고서 그대로)와, 접수는 최근이어도 기간이 오래된 정정본(기간 끝 + 92일이 1년 범위 밖)은 올리지 않고 이미 올라 있으면 지운다. `missing` 접수번호는 빼고 고르므로 같은 기간의 그 전 접수가 올라간다.
 - `build_trees`: 원문 zip(`document.xml`)을 받아 `stock_report_docs`에 보관하고 트리를 만들어 `report_nodes`에 쓴다 → `tree`. 종목별 최신 보고서부터, 실행당 90분. 파서 버전(`PARSER_VERSION`)이 오른 보고서는 보관한 원문으로 다시 만들고, 내용이 같은 노드(`content_hash`)는 요약을 이어받는다. 실패하면 `failed`로 남기고 다음 실행에서 다시 한다. 단 DART가 원문을 주지 않는 접수번호(`document.xml` 상태 014 '파일이 존재하지 않습니다' — 정정 공시에서 나온다)는 다시 받아도 같으므로 `missing`으로 두고, 그 회사의 기간 끝~접수일 공시를 DART에서 받아 `stock_disclosures`에 넣는다 (원래 보고서의 접수번호를 몰랐을 때 다음 `queue_reports`가 찾게).
 - `summarize_nodes`: `tree` 보고서의 노드마다 '이 절에 든 항목' 한 줄 요약을 등록된 LLM으로 만든다 (추론 끔, 동시 6개, 노드 입력 8천 자 — 긴 노드는 소제목·표 제목 목록 + 앞부분). 100자 미만 노드, 재무제표 본표, XII 상세표는 요약하지 않는다. 다 되면 `summarized`, 실패한 노드가 있으면 `tree`로 두고 다음 실행에서 남은 노드만. 실행당 600분(21:00부터 밤새) — 처음에는 보고서가 수천 건이라 2~3일에 나눠 끝난다 (보고서당 약 1분). 그 뒤로는 새 보고서만이라 금방 끝난다. 동시 수는 등록 LLM(H100 한 장, FP8) 실측으로 정했다: 4개 대비 8개가 약 1.3배, 16개는 오히려 느리고 응답이 3배 늦어져 챗봇과 나눠 쓰도록 6개. 트리만 있어도 챗봇은 제목으로 고른다. 밀린 색인을 빨리 끝낼 때는 같은 모델을 띄운 서버를 Airflow Variable `report_summary_endpoints`(없으면 환경변수 `REPORT_SUMMARY_ENDPOINTS`)에 JSON 목록으로 적는다 — `[{"base_url": …, "api_key": …, "model": …, "workers": 8}]`. 등록 LLM 6개 자리와 함께 서버마다 workers개 자리를 두고 빈 자리에 노드를 보내므로 빠른 서버가 더 많이 맡는다. Variable은 컨테이너 재시작 없이 바뀌고, 다음 `summarize_nodes` 실행부터 쓴다. 보고서 사이에 자리가 놀지 않게 노드를 동시 수의 4배씩 모아 보낸다.
 - `prune_reports`: 정정본이 색인된 같은 기간의 원래 보고서와, 1년 지난 보고서(종목마다 기간이 가장 최근인 색인본 1건은 남긴다)를 지운다 (원문·노드는 FK CASCADE).
+- `make_overviews`: 종목별 최신 보고서(`company_report.pick_report`와 같은 기준)에 개요(사업 구조·이번 기간 영업 상황·위험 요인·소송·제재)가 없으면 등록된 LLM으로 만들어 `stock_reports.overview`에 남긴다. 입력·프롬프트는 챗봇 `company_report`와 같은 `report_tree.overview_*`. 매수 의견(`stock_opinion`)이 개요를 읽으므로 질문이 오기 전에 채워 둔다. 노드 요약에 더 붙인 서버는 쓰지 않고 등록 LLM만(동시 6개), 실행당 180분. 처음 약 560건을 채운 뒤로는 새 보고서만이다.
 
 ---
 

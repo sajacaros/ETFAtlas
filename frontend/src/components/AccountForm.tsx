@@ -1,5 +1,5 @@
 import { useState, FormEvent } from 'react'
-import axios from 'axios'
+import { getErrorDetail } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -19,12 +19,10 @@ const ERROR_MESSAGES: Record<string, string> = {
 }
 
 function toErrorMessage(err: unknown): string {
-  if (axios.isAxiosError(err)) {
-    const detail = err.response?.data?.detail
-    if (typeof detail === 'string') return ERROR_MESSAGES[detail] ?? detail
-    if (Array.isArray(detail)) {
-      return '아이디는 3~50자의 영문/숫자/._-, 비밀번호는 8자 이상이어야 합니다.'
-    }
+  const detail = getErrorDetail(err)
+  if (typeof detail === 'string') return ERROR_MESSAGES[detail] ?? detail
+  if (Array.isArray(detail)) {
+    return '아이디는 3~50자의 영문/숫자/._-, 비밀번호는 8자 이상이어야 합니다.'
   }
   return '요청을 처리하지 못했습니다. 잠시 후 다시 시도하세요.'
 }

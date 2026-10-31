@@ -1,6 +1,8 @@
 import jsPDF from 'jspdf'
 import 'jspdf-autotable'
 import { accountTypeLabel } from '@/lib/accountType'
+import { formatRate } from '@/lib/format'
+import { toLocalDateString } from '@/lib/date'
 import type { SharedPortfolioDetail, SharedReturnsSummary } from '@/types/api'
 import {
   loadKoreanFont,
@@ -17,18 +19,12 @@ interface SharedPdfParams {
   summary: SharedReturnsSummary | null
 }
 
-function formatReturn(value: number | null): string {
-  if (value === null) return '-'
-  const sign = value >= 0 ? '+' : ''
-  return `${sign}${value.toFixed(2)}%`
-}
-
 export async function generateSharedPdf(params: SharedPdfParams): Promise<void> {
   const { detail, summary } = params
   const doc = new jsPDF('p', 'mm', 'a4')
   await loadKoreanFont(doc)
 
-  const today = new Date().toISOString().slice(0, 10)
+  const today = toLocalDateString()
   let y = addHeader(doc, `${detail.portfolio_name} (${detail.account_types.map(accountTypeLabel).join('·')})`, today)
 
   // 가상 수익률 요약
@@ -39,9 +35,9 @@ export async function generateSharedPdf(params: SharedPdfParams): Promise<void> 
       margin: { left: PAGE_MARGIN, right: PAGE_MARGIN },
       head: [['1주', '1개월', '3개월']],
       body: [[
-        formatReturn(summary.returns_1w),
-        formatReturn(summary.returns_1m),
-        formatReturn(summary.returns_3m),
+        formatRate(summary.returns_1w),
+        formatRate(summary.returns_1m),
+        formatRate(summary.returns_3m),
       ]],
       styles: { font: FONT_NAME, fontSize: 11, halign: 'center', cellPadding: 5 },
       headStyles: { fillColor: COLORS.headerBg, textColor: COLORS.primary, fontStyle: 'normal' },

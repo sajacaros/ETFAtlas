@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { changeColor, formatWon as formatNumber } from '@/lib/format'
 import { ETFLink } from '@/components/ETFInfo'
 import {
   Table,
@@ -28,10 +29,6 @@ interface PortfolioTableProps {
   onUpdateQuantity: (ticker: string, quantity: number, holdingId?: number) => void
   onUpdateAvgPrice: (ticker: string, avgPrice: number, holdingId?: number) => void
   onDeleteTicker: (ticker: string, targetId?: number, holdingId?: number) => void
-}
-
-function formatNumber(n: number): string {
-  return new Intl.NumberFormat('ko-KR').format(Math.round(n))
 }
 
 type SortKey =
@@ -78,8 +75,8 @@ export default function PortfolioTable({
   const [sortKey, setSortKey] = useState<SortKey | null>(null)
   const [sortDir, setSortDir] = useState<SortDir>('asc')
 
-  const targetMap = new Map(targetAllocations.map((t) => [t.ticker, t]))
-  const holdingMap = new Map(holdings.map((h) => [h.ticker, h]))
+  const targetMap = useMemo(() => new Map(targetAllocations.map((t) => [t.ticker, t])), [targetAllocations])
+  const holdingMap = useMemo(() => new Map(holdings.map((h) => [h.ticker, h])), [holdings])
 
   // 편집 모드에서 목표비중 합계를 실시간 반영
   const liveTotalWeight = useMemo(() => {
@@ -93,7 +90,7 @@ export default function PortfolioTable({
       }
       return sum + Number(row.target_weight)
     }, 0)
-  }, [isEditing, totalWeight, rows, targetAllocations, editingWeight])
+  }, [isEditing, totalWeight, rows, targetMap, editingWeight])
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -342,10 +339,7 @@ export default function PortfolioTable({
                   )}
                 </TableCell>
                 {/* 가격 - 현재가 */}
-                <TableCell className={`text-right font-mono ${
-                  row.ticker === 'CASH' || row.price_change_rate == null ? '' :
-                  row.price_change_rate > 0 ? 'text-red-500' : row.price_change_rate < 0 ? 'text-blue-500' : ''
-                }`}>
+                <TableCell className={`text-right font-mono ${row.ticker === 'CASH' ? '' : changeColor(row.price_change_rate)}`}>
                   <div>{formatNumber(row.current_price)}</div>
                   {row.ticker !== 'CASH' && row.price_change_rate != null && (
                     <div className="text-xs opacity-75">
@@ -358,10 +352,7 @@ export default function PortfolioTable({
                 {/* 금액 - 평가 */}
                 <TableCell className="text-right font-mono">{formatNumber(row.holding_amount)}</TableCell>
                 {/* 수익 (금액 / 수익률) */}
-                <TableCell className={`text-right font-mono text-sm ${
-                  row.ticker === 'CASH' || (row.profit_loss_rate == null && row.profit_loss_amount == null) ? '' :
-                  (row.profit_loss_rate ?? 0) > 0 ? 'text-red-500' : (row.profit_loss_rate ?? 0) < 0 ? 'text-blue-500' : ''
-                }`}>
+                <TableCell className={`text-right font-mono text-sm ${row.ticker === 'CASH' ? '' : changeColor(row.profit_loss_rate)}`}>
                   <div>
                     {row.ticker === 'CASH' || row.profit_loss_amount == null
                       ? '-'
@@ -428,10 +419,7 @@ export default function PortfolioTable({
               {formatNumber(totalHoldingAmount)}
             </TableCell>
             {/* 수익 */}
-            <TableCell className={`text-right font-mono font-semibold ${
-              totalProfitLossAmount == null ? '' :
-              totalProfitLossAmount > 0 ? 'text-red-500' : totalProfitLossAmount < 0 ? 'text-blue-500' : ''
-            }`}>
+            <TableCell className={`text-right font-mono font-semibold ${changeColor(totalProfitLossAmount)}`}>
               {totalProfitLossAmount != null
                 ? `${totalProfitLossAmount > 0 ? '+' : ''}${formatNumber(totalProfitLossAmount)}`
                 : '-'}

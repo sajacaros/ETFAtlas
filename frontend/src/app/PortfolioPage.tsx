@@ -1,322 +1,42 @@
-import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
-import { Link } from 'react-router-dom'
-import { useLocation, useNavigate } from 'react-router-dom'
-import { Plus, Trash2, ArrowLeft, RefreshCw, Pencil, Check, BarChart3, Eye, EyeOff, GripVertical, Share2, Copy, Layers } from 'lucide-react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Switch } from '@/components/ui/switch'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog'
+import { useEffect, useState, useRef } from 'react'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
+import { arrayMove } from '@dnd-kit/sortable'
 import { portfolioApi } from '@/lib/api'
-import { copyText } from '@/lib/clipboard'
-import { holdingsMarkdown } from '@/lib/holdingsMarkdown'
-import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/use-toast'
-import type { Portfolio, PortfolioDetail, CalculationResult, CalculationRow, CalculationBase, AccountType, DashboardSummary } from '@/types/api'
-import { AccountTypeBadges, AccountTypePicker } from '@/components/AccountType'
-import { DEFAULT_ACCOUNT_TYPES } from '@/lib/accountType'
-import PortfolioTable from '@/components/PortfolioTable'
-import AddTickerDialog from '@/components/AddTickerDialog'
-import { useAmountVisibility, formatMaskedNumber } from '@/hooks/useAmountVisibility'
-import {
-  DndContext,
-  closestCenter,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  DragEndEvent,
-} from '@dnd-kit/core'
-import {
-  SortableContext,
-  rectSortingStrategy,
-  useSortable,
-  arrayMove,
-} from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
+import { useAsync } from '@/hooks/useAsync'
+import { usePortfolioDraft } from '@/hooks/usePortfolioDraft'
+import type { Portfolio, DashboardSummary } from '@/types/api'
+import PortfolioList from './portfolio/PortfolioList'
+import PortfolioDetailView from './portfolio/PortfolioDetailView'
+import type { NewPortfolioParams } from './portfolio/CreatePortfolioDialog'
 
-function formatNumber(n: number): string {
-  return new Intl.NumberFormat('ko-KR').format(Math.round(n))
-}
-
-function SortablePortfolioCard({
-  portfolio: p,
-  onSelect,
-  onDuplicate,
-  onComposition,
-  onDelete,
-  onToggleSnapshot,
-  onDashboard,
-  amountVisible,
-  formatMaskedNumber: fmn,
-}: {
-  portfolio: Portfolio
-  onSelect: (id: number) => void
-  onDuplicate: (id: number) => void
-  onComposition: (id: number) => void
-  onDelete: (id: number) => void
-  onToggleSnapshot: (id: number, enabled: boolean) => void
-  onDashboard: (id: number) => void
-  amountVisible: boolean
-  formatMaskedNumber: (v: number, visible: boolean) => string
-}) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: p.id })
-
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-  }
-
-  return (
-    <Card
-      ref={setNodeRef}
-      style={style}
-      className="cursor-pointer hover:shadow-md transition-shadow"
-      onClick={() => onSelect(p.id)}
-    >
-      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-        <div className="flex items-center gap-1 min-w-0 flex-1">
-          <button
-            className="cursor-grab active:cursor-grabbing touch-none p-1 -ml-1 text-muted-foreground hover:text-foreground"
-            {...attributes}
-            {...listeners}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <GripVertical className="w-4 h-4" />
-          </button>
-          <CardTitle className="text-lg min-w-0 truncate" title={p.name}>{p.name}</CardTitle>
-          <AccountTypeBadges types={p.account_types} className="ml-1 shrink-0 flex-nowrap" compact />
-        </div>
-        <div className="flex items-center shrink-0 -mr-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 w-8 p-0"
-            title="구성종목 보기"
-            onClick={(e) => {
-              e.stopPropagation()
-              onComposition(p.id)
-            }}
-          >
-            <Layers className="w-4 h-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 w-8 p-0"
-            title="복제"
-            onClick={(e) => {
-              e.stopPropagation()
-              onDuplicate(p.id)
-            }}
-          >
-            <Copy className="w-4 h-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-            title="삭제"
-            onClick={(e) => {
-              e.stopPropagation()
-              onDelete(p.id)
-            }}
-          >
-            <Trash2 className="w-4 h-4" />
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent>
-        {(() => {
-          const hasData = p.snapshot_enabled && p.current_value != null && p.current_value_date
-          return (
-            <div className="space-y-2">
-              {/* 평가금액 */}
-              <div>
-                <p className="text-xs text-muted-foreground">평가금액</p>
-                <p className="text-xl font-bold font-mono">
-                  {hasData ? <>{fmn(p.current_value!, amountVisible)}{amountVisible && '원'}</> : '-'}
-                </p>
-              </div>
-
-              {/* 투자원금 / 수익금 */}
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <p className="text-xs text-muted-foreground">투자원금</p>
-                  <p className="text-sm font-mono">
-                    {!hasData || p.invested_amount == null ? '-' : !amountVisible ? '••••••' : `${formatNumber(p.invested_amount)}원`}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">수익금</p>
-                  {!hasData || p.invested_amount == null ? (
-                    <p className="text-sm font-mono">-</p>
-                  ) : (() => {
-                    const profit = p.current_value! - p.invested_amount!
-                    return (
-                      <p className={`text-sm font-mono ${profit >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
-                        {amountVisible ? `${profit >= 0 ? '+' : ''}${formatNumber(profit)}원` : '••••••'}
-                      </p>
-                    )
-                  })()}
-                </div>
-              </div>
-
-              {/* 수익률 / 전일대비 */}
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <p className="text-xs text-muted-foreground">수익률</p>
-                  <p className={`text-sm font-mono font-semibold ${hasData && p.investment_return_rate != null ? (p.investment_return_rate >= 0 ? 'text-red-500' : 'text-blue-500') : ''}`}>
-                    {!hasData || p.investment_return_rate == null ? '-' : amountVisible ? `${p.investment_return_rate >= 0 ? '+' : ''}${p.investment_return_rate.toFixed(2)}%` : '••••••'}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">전일대비</p>
-                  <p className={`text-sm font-mono font-semibold ${hasData ? ((p.daily_change_rate ?? 0) >= 0 ? 'text-red-500' : 'text-blue-500') : ''}`}>
-                    {!hasData ? '-' : amountVisible ? (
-                      <>
-                        {(p.daily_change_amount ?? 0) >= 0 ? '+' : ''}{formatNumber(p.daily_change_amount ?? 0)}원
-                        <span className="font-normal text-xs ml-0.5">
-                          ({(p.daily_change_rate ?? 0) >= 0 ? '+' : ''}{(p.daily_change_rate ?? 0).toFixed(2)}%)
-                        </span>
-                      </>
-                    ) : '••••••'}
-                  </p>
-                </div>
-              </div>
-            </div>
-          )
-        })()}
-
-        {/* 대시보드 버튼(h-9)이 없어도 높이가 같도록 고정 */}
-        <div className="flex items-center justify-between mt-3 h-9">
-          <div className="flex items-center gap-2">
-            <Switch
-              checked={p.snapshot_enabled}
-              onCheckedChange={(checked) => {
-                onToggleSnapshot(p.id, checked)
-              }}
-              onClick={(e) => e.stopPropagation()}
-            />
-            <span className="text-xs text-muted-foreground">
-              {p.snapshot_enabled ? '스냅샷 활성' : '스냅샷 비활성'}
-            </span>
-          </div>
-          {/* 스냅샷을 끄면 기록이 지워져 대시보드에 보여줄 추이가 없다 */}
-          {p.snapshot_enabled && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={(e) => {
-                e.stopPropagation()
-                onDashboard(p.id)
-              }}
-            >
-              <BarChart3 className="w-4 h-4 mr-1" />
-              대시보드
-            </Button>
-          )}
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
+// /portfolio는 목록, /portfolio/:id는 상세
 export default function PortfolioPage() {
-  const { isAuthenticated } = useAuth()
   const { toast } = useToast()
   const navigate = useNavigate()
   const location = useLocation()
-  const { visible: amountVisible, toggle: toggleAmount } = useAmountVisibility()
+  const { id: idParam } = useParams<{ id: string }>()
+  const selectedId = idParam && /^\d+$/.test(idParam) ? Number(idParam) : null
 
   const [portfolios, setPortfolios] = useState<Portfolio[]>([])
   const [loading, setLoading] = useState(true)
-  const [selectedId, setSelectedId] = useState<number | null>(null)
-  const [detail, setDetail] = useState<PortfolioDetail | null>(null)
-  const [calcResult, setCalcResult] = useState<CalculationResult | null>(null)
-  const [calcLoading, setCalcLoading] = useState(false)
-
-  // Snapshot refresh
-
-  // Create dialog
-  const [createOpen, setCreateOpen] = useState(false)
-  const [newName, setNewName] = useState('')
-  const [newBase, setNewBase] = useState<CalculationBase>('CURRENT_TOTAL')
-  const [newAccountTypes, setNewAccountTypes] = useState<AccountType[]>(DEFAULT_ACCOUNT_TYPES)
-  const [newAmount, setNewAmount] = useState('')
-
-  // Delete confirmation
-  const [deleteTargetId, setDeleteTargetId] = useState<number | null>(null)
-  const [shareOpen, setShareOpen] = useState(false)
-  const [snapshotOffTargetId, setSnapshotOffTargetId] = useState<number | null>(null)
-  const [sharing, setSharing] = useState(false)
-
-  // Total summary
   const [totalSummary, setTotalSummary] = useState<DashboardSummary | null>(null)
-
-  // Edit mode
-  const [isEditing, setIsEditing] = useState(false)
-
-  // Settings editing
-  const [editName, setEditName] = useState('')
-  const [editAmount, setEditAmount] = useState('')
-  const [editCash, setEditCash] = useState('')
-
-  // Batch editing state
-  const [draftCalcBase, setDraftCalcBase] = useState<CalculationBase>('CURRENT_TOTAL')
-  const [draftAccountTypes, setDraftAccountTypes] = useState<AccountType[]>(DEFAULT_ACCOUNT_TYPES)
-  const [addedTickers, setAddedTickers] = useState<{
-    ticker: string; name: string; targetWeight: number; quantity: number; avgPrice?: number
-  }[]>([])
-  const [deletedTickers, setDeletedTickers] = useState<string[]>([])
   const [batchSaving, setBatchSaving] = useState(false)
-  const pendingChangesRef = useRef<{
-    weights: Record<string, number>
-    quantities: Record<string, number>
-    avgPrices: Record<string, number>
-  }>({ weights: {}, quantities: {}, avgPrices: {} })
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
-  )
+  // 상세와 계산 결과는 선택한 id마다 새로 받는다 — 다른 포트폴리오로 옮겨 가면 늦게 온 이전 응답은 버린다
+  // id가 없으면(목록) null을 돌려줘 부르지 않는다
+  const detailState = useAsync(() => (selectedId ? portfolioApi.get(selectedId) : null), [selectedId])
+  const calcState = useAsync(() => (selectedId ? portfolioApi.calculate(selectedId) : null), [selectedId])
+  const detail = detailState.data ?? null
+  const calcResult = calcState.data ?? null
+  const draft = usePortfolioDraft(detail, calcResult)
+  const { sync: syncDraft, end: endEdit } = draft
 
-  const handleDragEnd = async (event: DragEndEvent) => {
-    const { active, over } = event
-    if (!over || active.id === over.id) return
-
-    const oldIndex = portfolios.findIndex((p) => p.id === active.id)
-    const newIndex = portfolios.findIndex((p) => p.id === over.id)
-    const reordered = arrayMove(portfolios, oldIndex, newIndex)
-    setPortfolios(reordered)
-
-    const orders = reordered.map((p, i) => ({ id: p.id, display_order: i }))
-    try {
-      await portfolioApi.reorder(orders)
-    } catch {
-      const data = await portfolioApi.getAll()
-      setPortfolios(data)
-      toast({ title: '순서 변경 실패', variant: 'destructive' })
-    }
-  }
+  // 저장이 끝났을 때 아직 같은 포트폴리오를 보고 있는지 확인한다
+  const selectedIdRef = useRef(selectedId)
+  selectedIdRef.current = selectedId
 
   useEffect(() => {
-    if (!isAuthenticated) return
     const fetchPortfolios = async () => {
       try {
         const data = await portfolioApi.getAll()
@@ -337,82 +57,71 @@ export default function PortfolioPage() {
     }
     fetchPortfolios()
     fetchTotalSummary()
-  }, [isAuthenticated])
-
-  const loadDetail = useCallback(async (id: number) => {
-    try {
-      const d = await portfolioApi.get(id)
-      setDetail(d)
-      setEditName(d.name)
-      setEditAmount(d.target_total_amount ? String(d.target_total_amount) : '')
-      const cashHolding = d.holdings.find((h) => h.ticker === 'CASH')
-      const cashQty = cashHolding ? Math.round(Number(cashHolding.quantity)) : 0
-      setEditCash(cashQty > 0 ? formatNumber(cashQty) : '')
-    } catch {
-      toast({ title: '포트폴리오 로드 실패', variant: 'destructive' })
-    }
-  }, [toast])
-
-  const loadCalc = useCallback(async (id: number) => {
-    setCalcLoading(true)
-    try {
-      const r = await portfolioApi.calculate(id)
-      setCalcResult(r)
-    } catch {
-      console.error('Failed to calculate')
-    } finally {
-      setCalcLoading(false)
-    }
   }, [])
 
-  const clearSelection = useCallback(() => {
-    setSelectedId(null)
-    setDetail(null)
-    setCalcResult(null)
-    setIsEditing(false)
-  }, [])
+  // 다른 포트폴리오로 옮기거나 목록으로 나가면 편집을 버린다
+  useEffect(() => {
+    endEdit()
+  }, [selectedId, endEdit])
+
+  // 상세를 새로 받으면 이름·목표 금액·예수금 입력값을 맞춘다
+  useEffect(() => {
+    if (detail) syncDraft(detail)
+  }, [detail, syncDraft])
 
   useEffect(() => {
-    const handlePopState = () => {
-      clearSelection()
-    }
-    window.addEventListener('popstate', handlePopState)
-    return () => window.removeEventListener('popstate', handlePopState)
-  }, [clearSelection])
+    if (!detailState.error) return
+    toast({ title: '포트폴리오 로드 실패', variant: 'destructive' })
+    navigate('/portfolio', { replace: true })
+  }, [detailState.error, toast, navigate])
 
-  const selectPortfolio = useCallback(async (id: number) => {
-    setSelectedId(id)
-    window.history.pushState({ portfolioId: id }, '')
-    await loadDetail(id)
-    loadCalc(id)
-  }, [loadDetail, loadCalc])
+  useEffect(() => {
+    if (calcState.error) console.error('Failed to calculate')
+  }, [calcState.error])
 
-  // 구성종목 분석에서 저장하고 넘어오면 새 포트폴리오를 바로 연다
+  // 구성종목 분석에서 저장하고 넘어오면(state.selectId) 새 포트폴리오를 바로 연다 — 뒤로 가면 목록이 나오게 목록 위에 쌓는다
   const pendingSelectId = (location.state as { selectId?: number } | null)?.selectId
+  const handledLocationKey = useRef<string | null>(null)
   useEffect(() => {
-    if (loading || !pendingSelectId) return
-    navigate(location.pathname, { replace: true, state: null })
-    if (portfolios.some((p) => p.id === pendingSelectId)) selectPortfolio(pendingSelectId)
-  }, [loading, pendingSelectId, portfolios, navigate, location.pathname, selectPortfolio])
+    if (!pendingSelectId || handledLocationKey.current === location.key) return
+    handledLocationKey.current = location.key
+    navigate('/portfolio', { replace: true, state: null })
+    navigate(`/portfolio/${pendingSelectId}`)
+  }, [pendingSelectId, location.key, navigate])
 
-  const handleCreate = async () => {
-    if (!newName.trim()) return
+  const selectPortfolio = (id: number) => navigate(`/portfolio/${id}`)
+
+  // 목록에서 들어왔으면 뒤로 가기, 주소로 바로 들어왔으면 목록으로
+  const goBack = () => {
+    if (location.key !== 'default') navigate(-1)
+    else navigate('/portfolio')
+  }
+
+  const handleReorder = async (activeId: number, overId: number) => {
+    const oldIndex = portfolios.findIndex((p) => p.id === activeId)
+    const newIndex = portfolios.findIndex((p) => p.id === overId)
+    const reordered = arrayMove(portfolios, oldIndex, newIndex)
+    setPortfolios(reordered)
+
+    const orders = reordered.map((p, i) => ({ id: p.id, display_order: i }))
     try {
-      const p = await portfolioApi.create({
-        name: newName,
-        account_types: newAccountTypes,
-        calculation_base: newBase,
-        target_total_amount: newAmount ? parseFloat(newAmount) : null,
-      })
-      setPortfolios([...portfolios, p])
-      setNewName('')
-      setNewBase('CURRENT_TOTAL')
-      setNewAccountTypes(DEFAULT_ACCOUNT_TYPES)
-      setNewAmount('')
-      setCreateOpen(false)
+      await portfolioApi.reorder(orders)
+    } catch {
+      const data = await portfolioApi.getAll()
+      setPortfolios(data)
+      toast({ title: '순서 변경 실패', variant: 'destructive' })
+    }
+  }
+
+  const handleCreate = async (params: NewPortfolioParams) => {
+    try {
+      const p = await portfolioApi.create(params)
+      setPortfolios((prev) => [...prev, p])
       toast({ title: '포트폴리오가 생성되었습니다' })
+      return true
     } catch {
       toast({ title: '생성 실패', variant: 'destructive' })
+      return false
     }
   }
 
@@ -426,51 +135,14 @@ export default function PortfolioPage() {
     }
   }
 
-  const handleDelete = (id: number) => {
-    setDeleteTargetId(id)
-  }
-
-  const handleShare = async () => {
-    if (!detail) return
-    setSharing(true)
-    try {
-      const res = await portfolioApi.share(detail.id)
-      setShareOpen(false)
-      toast(res.created
-        ? { title: '공유했습니다', description: '공유 포트폴리오에서 볼 수 있습니다' }
-        : { title: '이미 같은 구성으로 공유되어 있습니다', description: '새로 공유하지 않았습니다' })
-    } catch {
-      toast({ title: '공유하지 못했습니다', variant: 'destructive' })
-    } finally {
-      setSharing(false)
-    }
-  }
-
-  const confirmDelete = async () => {
-    if (deleteTargetId === null) return
-    const id = deleteTargetId
-    setDeleteTargetId(null)
+  const handleDelete = async (id: number) => {
     try {
       await portfolioApi.delete(id)
-      setPortfolios(portfolios.filter((p) => p.id !== id))
-      if (selectedId === id) {
-        setSelectedId(null)
-        setDetail(null)
-        setCalcResult(null)
-      }
+      setPortfolios((prev) => prev.filter((p) => p.id !== id))
       toast({ title: '포트폴리오가 삭제되었습니다' })
     } catch {
       toast({ title: '삭제 실패', variant: 'destructive' })
     }
-  }
-
-  const handleToggleSnapshot = async (id: number, enabled: boolean) => {
-    // 끄면 쌓인 기록이 모두 지워지므로 먼저 확인받는다
-    if (!enabled) {
-      setSnapshotOffTargetId(id)
-      return
-    }
-    await applySnapshotToggle(id, true)
   }
 
   const applySnapshotToggle = async (id: number, enabled: boolean) => {
@@ -484,207 +156,25 @@ export default function PortfolioPage() {
     }
   }
 
-  const handleUpdateSettings = async (field: string, value: string) => {
-    if (!selectedId || !detail) return
-    if (isEditing) return // Batch mode: saved on batch save
-    try {
-      const params: Record<string, string | number | null> = {}
-      if (field === 'name') params.name = value
-      if (field === 'target_total_amount') params.target_total_amount = value ? parseFloat(value) : null
-
-      const updated = await portfolioApi.update(selectedId, params)
-      setDetail({ ...detail, ...updated })
-      setPortfolios(portfolios.map((p) => (p.id === selectedId ? { ...p, ...updated } : p)))
-
-      loadCalc(selectedId)
-    } catch {
-      toast({ title: '업데이트 실패', variant: 'destructive' })
-    }
-  }
-
-
-  const handleUpdateCash = async (value: string) => {
-    if (!selectedId) return
-    if (isEditing) return // Batch mode: saved on batch save
-    const amount = parseInt(value.replace(/,/g, '') || '0', 10)
-    try {
-      await portfolioApi.addHolding(selectedId, { ticker: 'CASH', quantity: amount })
-      await loadDetail(selectedId)
-      loadCalc(selectedId)
-    } catch {
-      toast({ title: '예수금 업데이트 실패', variant: 'destructive' })
-    }
-  }
-
-  const handleAddTicker = async (ticker: string, targetWeight: number, quantity: number, avgPrice?: number, name?: string) => {
-    if (!selectedId) return
-    if (isEditing) {
-      setAddedTickers(prev => [...prev, {
-        ticker, name: name || ticker, targetWeight, quantity, avgPrice,
-      }])
-      toast({ title: `${name || ticker} 추가 예정` })
-      return
-    }
-    try {
-      await portfolioApi.addTarget(selectedId, { ticker, target_weight: targetWeight })
-      if (quantity > 0 || avgPrice) {
-        await portfolioApi.addHolding(selectedId, { ticker, quantity, ...(avgPrice ? { avg_price: avgPrice } : {}) })
-      }
-      await loadDetail(selectedId)
-      loadCalc(selectedId)
-      toast({ title: '종목이 추가되었습니다' })
-    } catch {
-      toast({ title: '종목 추가 실패', variant: 'destructive' })
-    }
-  }
-
-  const handleUpdateWeight = async (ticker: string, _targetId: number, weight: number) => {
-    if (!selectedId) return
-    if (isEditing) {
-      pendingChangesRef.current.weights[ticker] = weight
-      return
-    }
-    try {
-      await portfolioApi.updateTarget(selectedId, _targetId, { target_weight: weight })
-      await loadDetail(selectedId)
-      loadCalc(selectedId)
-    } catch {
-      toast({ title: '비중 업데이트 실패', variant: 'destructive' })
-    }
-  }
-
-  const handleUpdateQuantity = async (ticker: string, quantity: number, holdingId?: number) => {
-    if (!selectedId) return
-    if (isEditing) {
-      pendingChangesRef.current.quantities[ticker] = quantity
-      return
-    }
-    try {
-      if (holdingId) {
-        await portfolioApi.updateHolding(selectedId, holdingId, { quantity })
-      } else {
-        await portfolioApi.addHolding(selectedId, { ticker, quantity })
-      }
-      await loadDetail(selectedId)
-      loadCalc(selectedId)
-    } catch {
-      toast({ title: '수량 업데이트 실패', variant: 'destructive' })
-    }
-  }
-
-  const handleUpdateAvgPrice = async (ticker: string, avgPrice: number, holdingId?: number) => {
-    if (!selectedId) return
-    if (isEditing) {
-      pendingChangesRef.current.avgPrices[ticker] = avgPrice
-      return
-    }
-    try {
-      if (holdingId) {
-        await portfolioApi.updateHolding(selectedId, holdingId, { avg_price: avgPrice })
-      } else {
-        await portfolioApi.addHolding(selectedId, { ticker, quantity: 0, avg_price: avgPrice })
-      }
-      await loadDetail(selectedId)
-      loadCalc(selectedId)
-    } catch {
-      toast({ title: '평단가 업데이트 실패', variant: 'destructive' })
-    }
-  }
-
-  const handleDeleteTicker = async (ticker: string, targetId?: number, holdingId?: number) => {
-    if (!selectedId) return
-    if (isEditing) {
-      // Check if newly added ticker
-      const addedIdx = addedTickers.findIndex(a => a.ticker === ticker)
-      if (addedIdx >= 0) {
-        setAddedTickers(prev => prev.filter((_, i) => i !== addedIdx))
-      } else {
-        setDeletedTickers(prev => [...prev, ticker])
-      }
-      delete pendingChangesRef.current.weights[ticker]
-      delete pendingChangesRef.current.quantities[ticker]
-      delete pendingChangesRef.current.avgPrices[ticker]
-      return
-    }
-    try {
-      if (targetId) await portfolioApi.deleteTarget(selectedId, targetId)
-      if (holdingId) await portfolioApi.deleteHolding(selectedId, holdingId)
-      await loadDetail(selectedId)
-      loadCalc(selectedId)
-      toast({ title: '종목이 삭제되었습니다' })
-    } catch {
-      toast({ title: '삭제 실패', variant: 'destructive' })
-    }
-  }
-
-  // Batch edit helpers
-  const enterEditMode = () => {
-    if (!detail) return
-    setDraftCalcBase(detail.calculation_base)
-    setDraftAccountTypes(detail.account_types)
-    setAddedTickers([])
-    setDeletedTickers([])
-    pendingChangesRef.current = { weights: {}, quantities: {}, avgPrices: {} }
-    setIsEditing(true)
+  const handleRefresh = () => {
+    detailState.reload()
+    calcState.reload()
   }
 
   const handleBatchSave = async () => {
-    if (!selectedId || !detail) return
+    if (!detail) return
+    const id = detail.id
     setBatchSaving(true)
     try {
-      const changes = pendingChangesRef.current
-      const deletedSet = new Set(deletedTickers)
-
-      const targets = [
-        ...detail.target_allocations
-          .filter(t => !deletedSet.has(t.ticker))
-          .map(t => ({
-            ticker: t.ticker,
-            target_weight: changes.weights[t.ticker] ?? t.target_weight,
-          })),
-        ...addedTickers.map(a => ({
-          ticker: a.ticker,
-          target_weight: changes.weights[a.ticker] ?? a.targetWeight,
-        })),
-      ]
-
-      const cashAmount = parseInt(editCash.replace(/,/g, '') || '0', 10)
-      const holdings = [
-        ...detail.holdings
-          .filter(h => !deletedSet.has(h.ticker) && h.ticker !== 'CASH')
-          .map(h => ({
-            ticker: h.ticker,
-            quantity: changes.quantities[h.ticker] ?? h.quantity,
-            avg_price: changes.avgPrices[h.ticker] ?? h.avg_price,
-          })),
-        ...addedTickers
-          .filter(a => a.ticker !== 'CASH')
-          .map(a => ({
-            ticker: a.ticker,
-            quantity: changes.quantities[a.ticker] ?? a.quantity,
-            avg_price: changes.avgPrices[a.ticker] ?? a.avgPrice ?? null,
-          })),
-        ...(cashAmount > 0 ? [{ ticker: 'CASH', quantity: cashAmount, avg_price: null as number | null }] : []),
-      ]
-
-      await portfolioApi.batchUpdate(selectedId, {
-        name: editName,
-        account_types: draftAccountTypes,
-        calculation_base: draftCalcBase,
-        target_total_amount: editAmount ? parseFloat(editAmount) : null,
-        targets,
-        holdings,
-      })
-
-      await loadDetail(selectedId)
-      loadCalc(selectedId)
+      const updated = await portfolioApi.batchUpdate(id, draft.buildBatchPayload(detail))
+      if (selectedIdRef.current === id) {
+        detailState.setData(updated)
+        calcState.reload()
+      }
       const data = await portfolioApi.getAll()
       setPortfolios(data)
 
-      setIsEditing(false)
-      setAddedTickers([])
-      setDeletedTickers([])
-      pendingChangesRef.current = { weights: {}, quantities: {}, avgPrices: {} }
+      if (selectedIdRef.current === id) endEdit()
       toast({ title: '변경사항이 저장되었습니다' })
     } catch {
       toast({ title: '저장 실패', variant: 'destructive' })
@@ -693,538 +183,38 @@ export default function PortfolioPage() {
     }
   }
 
-  // Computed display data for editing mode
-  const deletedTickersSet = useMemo(() => new Set(deletedTickers), [deletedTickers])
-
-  const displayedRows = useMemo(() => {
-    if (!calcResult) return []
-    if (!isEditing) return calcResult.rows
-    const rows = calcResult.rows.filter(r => !deletedTickersSet.has(r.ticker))
-    const addedRows: CalculationRow[] = addedTickers.map(a => ({
-      ticker: a.ticker,
-      name: a.name,
-      target_weight: a.targetWeight,
-      current_price: 0,
-      target_amount: 0,
-      target_quantity: 0,
-      holding_quantity: a.quantity,
-      holding_amount: 0,
-      required_quantity: 0,
-      adjustment_amount: 0,
-      status: 'HOLD' as const,
-      avg_price: a.avgPrice ?? null,
-      profit_loss_rate: null,
-      profit_loss_amount: null,
-      price_change_rate: null,
-    }))
-    return [...rows, ...addedRows]
-  }, [isEditing, calcResult, deletedTickersSet, addedTickers])
-
-  const displayedTargetAllocations = useMemo(() => {
-    if (!detail) return []
-    if (!isEditing) return detail.target_allocations
-    const existing = detail.target_allocations.filter(t => !deletedTickersSet.has(t.ticker))
-    const added = addedTickers.map((a, i) => ({
-      id: -(i + 1),
-      portfolio_id: detail.id,
-      ticker: a.ticker,
-      target_weight: a.targetWeight,
-    }))
-    return [...existing, ...added]
-  }, [isEditing, detail, deletedTickersSet, addedTickers])
-
-  const displayedHoldings = useMemo(() => {
-    if (!detail) return []
-    if (!isEditing) return detail.holdings
-    const existing = detail.holdings.filter(h => !deletedTickersSet.has(h.ticker))
-    const added = addedTickers
-      .filter(a => a.quantity > 0 || a.avgPrice)
-      .map((a, i) => ({
-        id: -(i + 1),
-        portfolio_id: detail.id,
-        ticker: a.ticker,
-        quantity: a.quantity,
-        avg_price: a.avgPrice ?? null,
-      }))
-    return [...existing, ...added]
-  }, [isEditing, detail, deletedTickersSet, addedTickers])
-
-  if (!isAuthenticated) {
-    return (
-      <div className="text-center py-12">
-        <h2 className="text-2xl font-bold mb-4">로그인이 필요합니다</h2>
-        <p className="text-muted-foreground mb-6">
-          포트폴리오 기능을 사용하려면 로그인해주세요
-        </p>
-        <Link to="/login">
-          <Button>로그인하기</Button>
-        </Link>
-      </div>
-    )
-  }
-
-  if (loading) {
+  if (loading || (selectedId && detail?.id !== selectedId && detailState.loading)) {
     return <div className="text-center py-12">로딩 중...</div>
   }
 
   // Detail view
-  if (selectedId && detail) {
+  if (selectedId && detail && detail.id === selectedId) {
     return (
-      <div className="space-y-6">
-        <div className="flex items-center gap-4">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => window.history.back()}
-          >
-            <ArrowLeft className="w-4 h-4 mr-1" />
-            목록
-          </Button>
-          {isEditing ? (
-            <Input
-              className="text-xl font-bold border-none shadow-none h-auto py-1 px-2 max-w-xs"
-              value={editName}
-              onChange={(e) => setEditName(e.target.value)}
-              onBlur={() => handleUpdateSettings('name', editName)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  handleUpdateSettings('name', editName)
-                  ;(e.target as HTMLInputElement).blur()
-                }
-              }}
-            />
-          ) : (
-            <h2 className="text-xl font-bold py-1 px-2">{detail.name}</h2>
-          )}
-          {isEditing ? (
-            <AccountTypePicker value={draftAccountTypes} onChange={setDraftAccountTypes} compact />
-          ) : (
-            <AccountTypeBadges types={detail.account_types} />
-          )}
-          <div className="flex items-center gap-2 ml-auto">
-            {calcLoading && <span className="text-sm text-muted-foreground">계산 중...</span>}
-            {isEditing && <AddTickerDialog onAdd={handleAddTicker} />}
-            {!isEditing && (
-              <>
-                <Button variant="outline" size="sm" onClick={() => setShareOpen(true)}>
-                  <Share2 className="w-4 h-4 mr-1" />
-                  공유
-                </Button>
-                <Dialog open={shareOpen} onOpenChange={(open) => { if (!sharing) setShareOpen(open) }}>
-                  <DialogContent className="max-w-sm">
-                    <DialogHeader>
-                      <DialogTitle>포트폴리오 공유</DialogTitle>
-                      <DialogDescription>
-                        '{detail.name}'의 지금 목표 비중을 공유하시겠습니까? 공유한 뒤 포트폴리오를 고쳐도 공유된 내용은 바뀌지 않습니다.
-                      </DialogDescription>
-                    </DialogHeader>
-                    <DialogFooter className="gap-2 sm:gap-0">
-                      <Button variant="outline" onClick={() => setShareOpen(false)} disabled={sharing}>
-                        취소
-                      </Button>
-                      <Button onClick={handleShare} disabled={sharing}>
-                        {sharing ? '공유 중...' : '공유'}
-                      </Button>
-                    </DialogFooter>
-                  </DialogContent>
-                </Dialog>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={!calcResult?.rows.length}
-                  onClick={async () => {
-                    if (!calcResult) return
-                    const markdown = holdingsMarkdown(
-                      calcResult.rows.map((r) => ({ name: r.name, ticker: r.ticker, weight: r.target_weight })),
-                    )
-                    try {
-                      await copyText(markdown)
-                      toast({ title: '구성을 마크다운으로 복사했습니다' })
-                    } catch {
-                      toast({ title: '복사하지 못했습니다', variant: 'destructive' })
-                    }
-                  }}
-                >
-                  <Copy className="w-4 h-4 mr-1" />
-                  복사
-                </Button>
-              </>
-            )}
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={calcLoading}
-              onClick={() => selectedId && Promise.all([loadDetail(selectedId), loadCalc(selectedId)])}
-            >
-              <RefreshCw className={`w-4 h-4 ${calcLoading ? 'animate-spin' : ''}`} />
-            </Button>
-            <Button
-              variant={isEditing ? 'default' : 'outline'}
-              size="sm"
-              disabled={batchSaving}
-              onClick={async () => {
-                if (isEditing) {
-                  await handleBatchSave()
-                } else {
-                  enterEditMode()
-                }
-              }}
-            >
-              {isEditing ? (
-                <>
-                  <Check className="w-4 h-4 mr-1" />
-                  {batchSaving ? '저장 중...' : '편집 완료'}
-                </>
-              ) : (
-                <>
-                  <Pencil className="w-4 h-4 mr-1" />
-                  편집
-                </>
-              )}
-            </Button>
-          </div>
-        </div>
-
-        {/* Summary bar */}
-        {(() => {
-          const p = portfolios.find((pf) => pf.id === selectedId)
-          if (!p || p.current_value == null) return null
-          const profit = p.invested_amount != null ? p.current_value - p.invested_amount : null
-          return (
-            <Card>
-              <CardContent className="py-3">
-                <div className="flex flex-wrap items-center gap-6">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-sm text-muted-foreground">평가금액</span>
-                    <span className="text-lg font-bold font-mono">{formatNumber(p.current_value)}원</span>
-                  </div>
-                  {p.invested_amount != null && (
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm text-muted-foreground">투자원금</span>
-                      <span className="text-sm font-mono">{formatNumber(p.invested_amount)}원</span>
-                    </div>
-                  )}
-                  {profit != null && (
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm text-muted-foreground">수익금</span>
-                      <span className={`text-sm font-mono font-semibold ${profit >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
-                        {profit >= 0 ? '+' : ''}{formatNumber(profit)}원
-                      </span>
-                    </div>
-                  )}
-                  {p.investment_return_rate != null && (
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm text-muted-foreground">수익률</span>
-                      <span className={`text-sm font-mono font-semibold ${p.investment_return_rate >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
-                        {p.investment_return_rate >= 0 ? '+' : ''}{p.investment_return_rate.toFixed(2)}%
-                      </span>
-                    </div>
-                  )}
-                  {p.daily_change_amount != null && (
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm text-muted-foreground">전일대비</span>
-                      <span className={`text-sm font-mono font-semibold ${(p.daily_change_rate ?? 0) >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
-                        {(p.daily_change_amount ?? 0) >= 0 ? '+' : ''}{formatNumber(p.daily_change_amount)}원
-                        <span className="font-normal text-xs ml-0.5">
-                          ({(p.daily_change_rate ?? 0) >= 0 ? '+' : ''}{(p.daily_change_rate ?? 0).toFixed(2)}%)
-                        </span>
-                      </span>
-                    </div>
-                  )}
-                  <div className="flex items-center gap-1.5 ml-auto">
-                    <span className="text-sm text-muted-foreground">예수금</span>
-                    {isEditing ? (
-                      <Input
-                        type="text"
-                        inputMode="numeric"
-                        className="w-32 h-7 text-sm"
-                        value={editCash}
-                        onChange={(e) => {
-                          const raw = e.target.value.replace(/,/g, '')
-                          if (raw === '' || /^\d+$/.test(raw)) {
-                            setEditCash(raw === '' ? '' : formatNumber(parseInt(raw, 10)))
-                          }
-                        }}
-                        onBlur={() => handleUpdateCash(editCash)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            handleUpdateCash(editCash)
-                            ;(e.target as HTMLInputElement).blur()
-                          }
-                        }}
-                        placeholder="예: 500,000"
-                      />
-                    ) : (
-                      <span className="text-sm font-mono">{editCash || '0'}원</span>
-                    )}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          )
-        })()}
-
-
-        {/* Table */}
-        {calcLoading && !calcResult && (
-          <Card>
-            <CardContent className="py-16 text-center">
-              <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-3 text-muted-foreground" />
-              <p className="text-muted-foreground">종목 데이터를 계산하고 있습니다...</p>
-            </CardContent>
-          </Card>
-        )}
-        {calcResult && (
-          <PortfolioTable
-            rows={displayedRows}
-            totalWeight={calcResult.total_weight}
-            weightWarning={calcResult.weight_warning}
-            totalHoldingAmount={calcResult.total_holding_amount}
-            totalAdjustmentAmount={calcResult.total_adjustment_amount}
-            totalProfitLossAmount={calcResult.total_profit_loss_amount}
-            targetAllocations={displayedTargetAllocations}
-            holdings={displayedHoldings}
-            isEditing={isEditing}
-            onUpdateWeight={handleUpdateWeight}
-            onUpdateQuantity={handleUpdateQuantity}
-            onUpdateAvgPrice={handleUpdateAvgPrice}
-            onDeleteTicker={handleDeleteTicker}
-          />
-        )}
-      </div>
+      <PortfolioDetailView
+        detail={detail}
+        portfolio={portfolios.find((pf) => pf.id === selectedId)}
+        calcResult={calcResult}
+        calcLoading={calcState.loading}
+        draft={draft}
+        saving={batchSaving}
+        onBack={goBack}
+        onRefresh={handleRefresh}
+        onSave={handleBatchSave}
+      />
     )
   }
 
-  // 가격 수집 시각은 모든 포트폴리오에 같은 값이라 목록 위에 한 번만 보여준다
-  const priceUpdatedAt = (() => {
-    const raw = portfolios.find((p) => p.current_value_updated_at)?.current_value_updated_at
-    if (!raw) return null
-    const d = new Date(raw + 'Z')  // 서버는 UTC를 시간대 없이 보낸다
-    const pad = (n: number) => String(n).padStart(2, '0')
-    return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
-  })()
-
   // List view
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-4">
-          <h1 className="text-2xl font-bold whitespace-nowrap">포트폴리오</h1>
-          <Button variant="outline" size="sm" onClick={() => navigate('/portfolio/dashboard')}>
-            <BarChart3 className="w-4 h-4 mr-1" />
-            통합 대시보드
-          </Button>
-        </div>
-        <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="w-4 h-4 mr-2" />
-              새 포트폴리오
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>새 포트폴리오 생성</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label>포트폴리오 이름</Label>
-                <Input
-                  placeholder="포트폴리오 이름"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>계좌 유형</Label>
-                <AccountTypePicker value={newAccountTypes} onChange={setNewAccountTypes} />
-              </div>
-              <div className="space-y-2">
-                <Label>계산 기준</Label>
-                <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    variant={newBase === 'CURRENT_TOTAL' ? 'default' : 'outline'}
-                    onClick={() => setNewBase('CURRENT_TOTAL')}
-                    className="flex-1"
-                  >
-                    보유 총액
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={newBase === 'TARGET_AMOUNT' ? 'default' : 'outline'}
-                    onClick={() => setNewBase('TARGET_AMOUNT')}
-                    className="flex-1"
-                  >
-                    목표 금액
-                  </Button>
-                </div>
-              </div>
-              {newBase === 'TARGET_AMOUNT' && (
-                <div className="space-y-2">
-                  <Label>목표 금액</Label>
-                  <Input
-                    type="number"
-                    placeholder="예: 10000000"
-                    value={newAmount}
-                    onChange={(e) => setNewAmount(e.target.value)}
-                  />
-                </div>
-              )}
-              <Button onClick={handleCreate} className="w-full">
-                생성
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-      </div>
-      {priceUpdatedAt && (
-        <p className="text-xs text-muted-foreground -mt-2" title="평가금액 계산에 쓴 ETF 가격을 마지막으로 수집한 시각">
-          가격 기준 {priceUpdatedAt}
-        </p>
-      )}
-
-      {totalSummary && portfolios.length > 0 && (
-        <Card>
-          <CardContent className="py-4">
-            {totalSummary.snapshot_date && (
-              <p className="text-xs text-muted-foreground mb-2">
-                {totalSummary.updated_at && (() => {
-                  const d = new Date(totalSummary.updated_at + (totalSummary.updated_at.endsWith('Z') ? '' : 'Z'))
-                  const mm = String(d.getMonth() + 1).padStart(2, '0')
-                  const dd = String(d.getDate()).padStart(2, '0')
-                  const hh = String(d.getHours()).padStart(2, '0')
-                  const mi = String(d.getMinutes()).padStart(2, '0')
-                  return `기준: ${mm}/${dd} ${hh}:${mi}`
-                })()}
-              </p>
-            )}
-            <div className="flex flex-wrap items-center gap-6">
-              <div>
-                <div className="flex items-center gap-1">
-                  <p className="text-sm text-muted-foreground">
-                    총 평가금액
-                  </p>
-                  <button
-                    onClick={toggleAmount}
-                    className="text-muted-foreground hover:text-foreground transition-colors p-0.5"
-                    aria-label={amountVisible ? '금액 숨기기' : '금액 보기'}
-                  >
-                    {amountVisible ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
-                  </button>
-                </div>
-                <p className="text-2xl font-bold font-mono">
-                  {formatMaskedNumber(totalSummary.current_value, amountVisible)}{amountVisible && '원'}
-                </p>
-              </div>
-              {totalSummary.daily && (
-                <div>
-                  <p className="text-sm text-muted-foreground">전일대비</p>
-                  <p className={`text-lg font-mono font-semibold ${totalSummary.daily.amount >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
-                    {amountVisible ? (
-                      <>
-                        {totalSummary.daily.amount >= 0 ? '+' : ''}{formatNumber(totalSummary.daily.amount)}원
-                        <span className="text-sm ml-1">
-                          ({totalSummary.daily.rate >= 0 ? '+' : ''}{totalSummary.daily.rate.toFixed(2)}%)
-                        </span>
-                      </>
-                    ) : (
-                      '••••••'
-                    )}
-                  </p>
-                </div>
-              )}
-              {totalSummary.ytd && (
-                <div>
-                  <p className="text-sm text-muted-foreground">YTD</p>
-                  <p className={`text-lg font-mono font-semibold ${totalSummary.ytd.amount >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
-                    {totalSummary.ytd.rate >= 0 ? '+' : ''}{totalSummary.ytd.rate.toFixed(2)}%
-                  </p>
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {portfolios.length === 0 ? (
-        <Card>
-          <CardContent className="py-12 text-center">
-            <p className="text-muted-foreground mb-4">아직 포트폴리오가 없습니다</p>
-            <Button onClick={() => setCreateOpen(true)}>
-              <Plus className="w-4 h-4 mr-2" />
-              첫 포트폴리오 만들기
-            </Button>
-          </CardContent>
-        </Card>
-      ) : (
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          <SortableContext items={portfolios.map((p) => p.id)} strategy={rectSortingStrategy}>
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {portfolios.map((p) => (
-                <SortablePortfolioCard
-                  key={p.id}
-                  portfolio={p}
-                  onSelect={selectPortfolio}
-                  onDuplicate={handleDuplicate}
-                  onComposition={(id) => navigate(`/composition?portfolio=${id}`)}
-                  onDelete={handleDelete}
-                  onToggleSnapshot={handleToggleSnapshot}
-                  onDashboard={(id) => navigate(`/portfolio/${id}/dashboard`)}
-                  amountVisible={amountVisible}
-                  formatMaskedNumber={formatMaskedNumber}
-                />
-              ))}
-            </div>
-          </SortableContext>
-        </DndContext>
-      )}
-
-      {/* Delete confirmation dialog */}
-      <Dialog open={deleteTargetId !== null} onOpenChange={(open) => { if (!open) setDeleteTargetId(null) }}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>포트폴리오 삭제</DialogTitle>
-            <DialogDescription>
-              '{portfolios.find((p) => p.id === deleteTargetId)?.name}' 포트폴리오를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setDeleteTargetId(null)}>
-              취소
-            </Button>
-            <Button variant="destructive" onClick={confirmDelete}>
-              삭제
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      <Dialog open={snapshotOffTargetId !== null} onOpenChange={(open) => { if (!open) setSnapshotOffTargetId(null) }}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>스냅샷 끄기</DialogTitle>
-            <DialogDescription>
-              '{portfolios.find((p) => p.id === snapshotOffTargetId)?.name}'의 스냅샷을 끄면 지금까지 쌓인 평가금액 기록이 모두 삭제되고, 대시보드와 통합 대시보드에서도 사라집니다. 다시 켜면 그날부터 새로 쌓입니다. 이 작업은 되돌릴 수 없습니다.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setSnapshotOffTargetId(null)}>
-              취소
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => {
-                const id = snapshotOffTargetId
-                setSnapshotOffTargetId(null)
-                if (id !== null) applySnapshotToggle(id, false)
-              }}
-            >
-              스냅샷 끄기
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+    <PortfolioList
+      portfolios={portfolios}
+      totalSummary={totalSummary}
+      onSelect={selectPortfolio}
+      onCreate={handleCreate}
+      onDuplicate={handleDuplicate}
+      onDelete={handleDelete}
+      onSnapshotToggle={applySnapshotToggle}
+      onReorder={handleReorder}
+    />
   )
 }

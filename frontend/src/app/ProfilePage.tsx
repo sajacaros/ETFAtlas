@@ -1,8 +1,7 @@
 import { useEffect, useState, FormEvent } from 'react'
-import axios from 'axios'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/use-toast'
-import { authApi } from '@/lib/api'
+import { authApi, getErrorDetail } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -99,7 +98,7 @@ function PasswordSection() {
       setPasswordConfirm('')
       toast({ title: '비밀번호를 바꿨습니다', description: '다른 기기의 로그인은 모두 끊겼습니다.' })
     } catch (err) {
-      const detail = axios.isAxiosError(err) ? err.response?.data?.detail : undefined
+      const detail = getErrorDetail(err)
       setError(
         detail === 'Current password is incorrect' ? '현재 비밀번호가 맞지 않습니다.'
           : Array.isArray(detail) ? '새 비밀번호는 8자 이상, 72바이트 이하여야 합니다.'

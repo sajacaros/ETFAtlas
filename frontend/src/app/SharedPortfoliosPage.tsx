@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { sharedApi } from '@/lib/api'
-import { formatDateTime } from '@/lib/utils'
+import { formatDateTime } from '@/lib/date'
 import { ACCOUNT_TYPES } from '@/lib/accountType'
 import { AccountTypeBadges } from '@/components/AccountType'
 import type { AccountType, SharedPortfolioListItem, SharedReturnsSummary } from '@/types/api'

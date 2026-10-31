@@ -20,7 +20,7 @@ import {
 import { generateSharedPdf } from '@/lib/sharedPdf'
 import { copyText } from '@/lib/clipboard'
 import { holdingsMarkdown } from '@/lib/holdingsMarkdown'
-import { formatDateTime } from '@/lib/utils'
+import { formatDateTime } from '@/lib/date'
 import { AccountTypeBadges } from '@/components/AccountType'
 import { useToast } from '@/hooks/use-toast'
 

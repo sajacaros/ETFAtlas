@@ -10,6 +10,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
 import { chatApi, type ChatStage } from '@/lib/api'
+import { parseServerDate } from '@/lib/date'
 import { appendPage, groupByDate, mergeFirstPage, type SessionListState } from '@/lib/sessionPages'
 import type {
   ChatLogResult, ChatSessionDetail, ChatSessionSummary, ChatStep, LayoutNode, MatchedCodeExample, SlotState,
@@ -66,8 +67,7 @@ interface ChatStream {
 
 function toDisplayMessages(detail: ChatSessionDetail): DisplayMessage[] {
   return detail.messages.flatMap((m): DisplayMessage[] => [
-    // created_at은 타임존 없는 UTC라 'Z'를 붙여 읽는다
-    { role: 'user', content: m.question, refinedQuestion: m.refined_question, sentAt: new Date(m.created_at + 'Z') },
+    { role: 'user', content: m.question, refinedQuestion: m.refined_question, sentAt: parseServerDate(m.created_at) },
     {
       role: 'assistant', content: m.answer, steps: m.steps, result: m.result,
       answer: m.layout ? { chatLogId: m.id, layout: m.layout, slots: m.slots } : null,

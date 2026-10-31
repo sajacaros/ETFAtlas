@@ -1,5 +1,5 @@
 import type { DataField, DataRow, ValueFormat } from '@/types/api'
-import { formatKrwAmount, formatNumber } from '@/lib/utils'
+import { formatKrwAmount, formatNumber } from '@/lib/format'
 
 /** 데이터셋의 원시값을 서식 힌트대로 표시한다 (백엔드는 숫자만 보낸다) */
 export function formatValue(value: unknown, format: ValueFormat): string {

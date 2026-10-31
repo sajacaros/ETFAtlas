@@ -4,9 +4,9 @@ import { flowApi } from '@/lib/api'
 import type { FlowPerformance as Performance, FlowScore } from '@/types/api'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
+import { changeColor as tone } from '@/lib/format'
 
 const signed = (v: number | null | undefined, unit = '%p') => (v == null ? '-' : `${v > 0 ? '+' : ''}${v.toFixed(2)}${unit}`)
-const tone = (v: number | null | undefined) => (v == null || v === 0 ? '' : v > 0 ? 'text-red-500' : 'text-blue-500')
 
 function ScoreCell({ score }: { score: FlowScore | null | undefined }) {
   if (!score) return <TableCell className="text-right text-muted-foreground">-</TableCell>

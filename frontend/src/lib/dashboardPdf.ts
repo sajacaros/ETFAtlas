@@ -1,10 +1,10 @@
 import jsPDF from 'jspdf'
 import 'jspdf-autotable'
+import { formatRate, formatWon } from '@/lib/format'
+import { toLocalDateString } from '@/lib/date'
 import type { DashboardSummary, TotalHoldingsResponse, RiskAnalysisResponse } from '@/types/api'
 import {
   loadKoreanFont,
-  formatNumber,
-  formatRate,
   addHeader,
   addSectionTitle,
   addKeyValue,
@@ -28,16 +28,16 @@ export async function generateDashboardPdf(params: DashboardPdfParams): Promise<
   const doc = new jsPDF('p', 'mm', 'a4')
   await loadKoreanFont(doc)
 
-  const today = new Date().toISOString().slice(0, 10)
+  const today = toLocalDateString()
   let y = addHeader(doc, title, today)
 
   // 평가금액
   y = addSectionTitle(doc, '평가금액', y)
-  y = addKeyValue(doc, '현재 평가금액', `${formatNumber(summary.current_value)}원`, y)
+  y = addKeyValue(doc, '현재 평가금액', `${formatWon(summary.current_value)}원`, y)
   if (summary.daily) {
     const dailyColor = getValueColor(summary.daily.rate)
     const sign = summary.daily.amount >= 0 ? '+' : ''
-    y = addKeyValue(doc, '전일 대비', `${sign}${formatNumber(summary.daily.amount)}원 (${formatRate(summary.daily.rate)})`, y, dailyColor)
+    y = addKeyValue(doc, '전일 대비', `${sign}${formatWon(summary.daily.amount)}원 (${formatRate(summary.daily.rate)})`, y, dailyColor)
   }
   y += 4
 
@@ -45,12 +45,12 @@ export async function generateDashboardPdf(params: DashboardPdfParams): Promise<
   if (!isTotal) {
     y = addSectionTitle(doc, '투자 정보', y)
     if (summary.invested_amount != null) {
-      y = addKeyValue(doc, '투자금액', `${formatNumber(summary.invested_amount)}원`, y)
+      y = addKeyValue(doc, '투자금액', `${formatWon(summary.invested_amount)}원`, y)
     }
     if (summary.investment_return) {
       const retColor = getValueColor(summary.investment_return.rate)
       const retSign = summary.investment_return.amount >= 0 ? '+' : ''
-      y = addKeyValue(doc, '투자 수익률', `${retSign}${formatNumber(summary.investment_return.amount)}원 (${formatRate(summary.investment_return.rate)})`, y, retColor)
+      y = addKeyValue(doc, '투자 수익률', `${retSign}${formatWon(summary.investment_return.amount)}원 (${formatRate(summary.investment_return.rate)})`, y, retColor)
     }
     y += 4
   }
@@ -69,7 +69,7 @@ export async function generateDashboardPdf(params: DashboardPdfParams): Promise<
     margin: { left: PAGE_MARGIN, right: PAGE_MARGIN },
     head: [summaryItems.map(s => s.label)],
     body: [
-      summaryItems.map(s => s.item ? `${formatRate(s.item.rate)}\n${s.item.amount >= 0 ? '+' : ''}${formatNumber(s.item.amount)}원` : '-'),
+      summaryItems.map(s => s.item ? `${formatRate(s.item.rate)}\n${s.item.amount >= 0 ? '+' : ''}${formatWon(s.item.amount)}원` : '-'),
     ],
     styles: { font: FONT_NAME, fontSize: 9, halign: 'center', cellPadding: 4 },
     headStyles: { fillColor: COLORS.headerBg, textColor: COLORS.primary, fontStyle: 'normal' },
@@ -105,9 +105,9 @@ export async function generateDashboardPdf(params: DashboardPdfParams): Promise<
       head: [['종목', '수량', '현재가', '평가금액', '비중']],
       body: totalHoldings.holdings.map(h => [
         `${h.name}\n${h.ticker}`,
-        formatNumber(h.quantity),
-        `${formatNumber(h.current_price)}원`,
-        `${formatNumber(h.value)}원`,
+        formatWon(h.quantity),
+        `${formatWon(h.current_price)}원`,
+        `${formatWon(h.value)}원`,
         `${h.weight.toFixed(1)}%`,
       ]),
       styles: { font: FONT_NAME, fontSize: 9, cellPadding: 3 },

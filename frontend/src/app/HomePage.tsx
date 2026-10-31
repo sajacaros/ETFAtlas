@@ -8,31 +8,30 @@ import { Button } from '@/components/ui/button'
 import { etfsApi, tagsApi, watchlistApi } from '@/lib/api'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/use-toast'
-import { formatKrwAmount } from '@/lib/utils'
+import { changeColor, formatKrwAmount, formatRate } from '@/lib/format'
 import { ACTIVE_TAG, PASSIVE_TAG } from '@/components/ETFInfo'
-import type { Tag, Holding } from '@/types/api'
-
-interface ETFCardItem {
-  code: string
-  name: string
-  net_assets?: number | null
-  return_1d?: number | null
-  return_1w?: number | null
-  return_1m?: number | null
-  market_cap_change_1w?: number | null
-  active?: boolean | null
-}
+import type { Tag, Holding, ETFListItem } from '@/types/api'
 
 const PAGE_SIZE = 20
-type PageFetcher = (offset: number) => Promise<ETFCardItem[]>
+type PageFetcher = (offset: number) => Promise<ETFListItem[]>
+
+const FAVORITES_TAG = '즐겨찾기'
+const SORT_TAGS: Record<string, string> = {
+  '시총': 'market_cap',
+  '시총상승률': 'market_cap_change_1w',
+  '1D수익률': 'return_1d',
+  '1주수익률': 'return_1w',
+}
+const isSortTag = (tagName: string) => tagName in SORT_TAGS
+// 시총순으로 액티브/패시브만 모아 본다
+const STYLE_TAGS: Record<string, boolean> = { [ACTIVE_TAG]: true, [PASSIVE_TAG]: false }
+const isStyleTag = (tagName: string) => tagName in STYLE_TAGS
 
 const formatAmount = (value: number) => formatKrwAmount(value, '')
 
-const returnColor = (value: number | null | undefined) =>
-  value == null || value === 0 ? 'text-muted-foreground' : value > 0 ? 'text-red-500' : 'text-blue-500'
+const returnColor = (value: number | null | undefined) => changeColor(value, 'text-muted-foreground')
 
-const formatReturn = (value: number | null | undefined) =>
-  value == null ? '-' : value > 0 ? `+${value.toFixed(1)}%` : `${value.toFixed(1)}%`
+const formatReturn = (value: number | null | undefined) => formatRate(value, 1, false)
 
 function ReturnBadge({ label, value, className = '' }: { label: string; value: number | null | undefined; className?: string }) {
   return (
@@ -52,7 +51,7 @@ function ETFExpandableCard({
   onWatchToggle,
   onActiveClick,
 }: {
-  etf: ETFCardItem
+  etf: ETFListItem
   expanded: boolean
   onToggle: () => void
   holdings: Holding[] | undefined
@@ -183,7 +182,7 @@ export default function HomePage() {
   const [latestDate, setLatestDate] = useState<string | null>(null)
 
   // ETF list (shared between search and tag)
-  const [etfList, setEtfList] = useState<ETFCardItem[]>([])
+  const [etfList, setEtfList] = useState<ETFListItem[]>([])
 
   // Tag state
   const [tags, setTags] = useState<Tag[]>([])
@@ -195,18 +194,6 @@ export default function HomePage() {
   // Shared expand/holdings state
   const [expandedETF, setExpandedETF] = useState<string | null>(null)
   const [holdings, setHoldings] = useState<Record<string, Holding[]>>({})
-
-  const FAVORITES_TAG = '즐겨찾기'
-  const SORT_TAGS: Record<string, string> = {
-    '시총': 'market_cap',
-    '시총상승률': 'market_cap_change_1w',
-    '1D수익률': 'return_1d',
-    '1주수익률': 'return_1w',
-  }
-  const isSortTag = (tagName: string) => tagName in SORT_TAGS
-  // 시총순으로 액티브/패시브만 모아 본다
-  const STYLE_TAGS: Record<string, boolean> = { [ACTIVE_TAG]: true, [PASSIVE_TAG]: false }
-  const isStyleTag = (tagName: string) => tagName in STYLE_TAGS
 
   // 무한 스크롤: 검색·정렬 탭은 PAGE_SIZE씩 이어 받고, 분류 태그·즐겨찾기는 한 번에 전체를 받는다
   const [hasMore, setHasMore] = useState(false)
@@ -273,17 +260,18 @@ export default function HomePage() {
     return () => observer.disconnect()
   }, [hasMore, loading, loadingMore, loadMore])
 
-  const loadSearch = (query: string) =>
-    loadList((offset) => etfsApi.searchUniverse(query, PAGE_SIZE, offset), true)
+  const loadSearch = useCallback((query: string) =>
+    loadList((offset) => etfsApi.searchUniverse(query, PAGE_SIZE, offset), true), [loadList])
 
-  const loadTag = (tagName: string) => {
+  const loadTag = useCallback((tagName: string) => {
     if (tagName === FAVORITES_TAG) return loadList(() => watchlistApi.getETFs(), false)
     if (isSortTag(tagName)) return loadList((offset) => etfsApi.getTop(PAGE_SIZE, SORT_TAGS[tagName], offset), true)
     if (isStyleTag(tagName)) return loadList((offset) => etfsApi.getTop(PAGE_SIZE, 'market_cap', offset, STYLE_TAGS[tagName]), true)
     return loadList(() => tagsApi.getETFs(tagName), false)
-  }
+  }, [loadList])
 
   // Restore state from URL params on mount, or load top ETFs by default
+  // 처음 한 번만 — 이후 searchParams 변경은 화면에서 직접 고른 결과라 다시 불러오지 않는다
   const restoredRef = useRef(false)
   useEffect(() => {
     if (restoredRef.current) return
@@ -299,7 +287,7 @@ export default function HomePage() {
       setSelectedTag('시총')
       loadTag('시총')
     }
-  }, [searchParams])
+  }, [searchParams, loadSearch, loadTag])
 
   useEffect(() => {
     if (!isAuthenticated) return

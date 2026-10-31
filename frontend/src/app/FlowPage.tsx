@@ -151,6 +151,8 @@ function FlowEditor() {
       loadGraph(catalog.templates[0].graph)
       setName(catalog.templates[0].name)
     }
+    // 노드 목록을 받은 직후 한 번만 — 사용자가 노드를 모두 지웠을 때 다시 채우지 않는다
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [catalog])
 
   const addNode = useCallback((spec: FlowNodeSpec, position?: { x: number; y: number }) => {

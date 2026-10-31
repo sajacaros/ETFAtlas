@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { ETFLink } from '@/components/ETFInfo'
 import { useParams, Link } from 'react-router-dom'
 import { ArrowLeft, ChevronDown, ChevronUp, Download } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { portfolioApi } from '@/lib/api'
-import { useAuth } from '@/hooks/useAuth'
-import type { DashboardResponse, DashboardSummaryItem, TotalHoldingsResponse, RiskAnalysisResponse } from '@/types/api'
+import { useAsync } from '@/hooks/useAsync'
+import { changeColor, formatManwon, formatRate, formatWon } from '@/lib/format'
+import { toLocalDateString } from '@/lib/date'
+import type { DashboardSummaryItem } from '@/types/api'
 import RiskAnalysisDialog from '@/components/RiskAnalysisDialog'
 import {
   ComposedChart,
@@ -20,28 +22,6 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 import { generateDashboardPdf } from '@/lib/dashboardPdf'
-
-function formatNumber(n: number): string {
-  return new Intl.NumberFormat('ko-KR').format(Math.round(n))
-}
-
-function formatManwon(n: number): string {
-  const man = Math.floor(Math.abs(n) / 10000)
-  const sign = n < 0 ? '-' : ''
-  if (man >= 10000) {
-    const eok = Math.floor(man / 10000)
-    const rest = man % 10000
-    return rest > 0
-      ? `${sign}${eok}억${new Intl.NumberFormat('ko-KR').format(rest)}만`
-      : `${sign}${eok}억`
-  }
-  return `${sign}${new Intl.NumberFormat('ko-KR').format(man)}만`
-}
-
-function formatRate(rate: number): string {
-  const sign = rate >= 0 ? '+' : ''
-  return `${sign}${rate.toFixed(2)}%`
-}
 
 function SummaryCard({
   title,
@@ -65,8 +45,7 @@ function SummaryCard({
     )
   }
 
-  const isPositive = item.rate >= 0
-  const colorClass = isPositive ? 'text-red-500' : 'text-blue-500'
+  const colorClass = changeColor(item.rate)
 
   return (
     <Card>
@@ -80,7 +59,7 @@ function SummaryCard({
           {formatRate(item.rate)}
         </p>
         <p className={`text-sm ${colorClass}`}>
-          {item.amount >= 0 ? '+' : ''}{formatNumber(item.amount)}원
+          {item.amount >= 0 ? '+' : ''}{formatWon(item.amount)}원
         </p>
       </CardContent>
     </Card>
@@ -89,16 +68,22 @@ function SummaryCard({
 
 export default function PortfolioDashboardPage() {
   const { id } = useParams<{ id: string }>()
-  const { isAuthenticated } = useAuth()
-  const [dashboard, setDashboard] = useState<DashboardResponse | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [totalHoldings, setTotalHoldings] = useState<TotalHoldingsResponse | null>(null)
   const [period, setPeriod] = useState<'1M' | '3M' | '6M' | '1Y' | 'ALL'>('ALL')
   const [chartOpen, setChartOpen] = useState(true)
   const isTotal = !id
-  const [riskData, setRiskData] = useState<RiskAnalysisResponse | null>(null)
   const [riskDialogOpen, setRiskDialogOpen] = useState(false)
   const [pdfLoading, setPdfLoading] = useState(false)
+
+  // 통합·개별 대시보드를 오가면 늦게 온 이전 응답은 버린다
+  const { data: dashboard, loading } = useAsync(
+    () => (isTotal ? portfolioApi.getTotalDashboard() : portfolioApi.getDashboard(Number(id))),
+    [id, isTotal],
+  )
+  const { data: totalHoldings } = useAsync(() => (isTotal ? portfolioApi.getTotalHoldings() : null), [isTotal])
+  const { data: riskData } = useAsync(
+    () => (!isTotal && id ? portfolioApi.getRiskAnalysis(Number(id), '3m') : null),
+    [id, isTotal],
+  )
 
   const handleDownloadPdf = async () => {
     if (!dashboard) return
@@ -118,56 +103,18 @@ export default function PortfolioDashboardPage() {
     }
   }
 
-  useEffect(() => {
-    if (!isAuthenticated) return
-
-    const fetchDashboard = async () => {
-      try {
-        const data = isTotal
-          ? await portfolioApi.getTotalDashboard()
-          : await portfolioApi.getDashboard(Number(id))
-        setDashboard(data)
-      } catch {
-        console.error('Failed to fetch dashboard')
-      } finally {
-        setLoading(false)
-      }
-    }
-    fetchDashboard()
-  }, [isAuthenticated, id, isTotal])
-
-  useEffect(() => {
-    if (!isAuthenticated || !isTotal) return
-
-    const fetchHoldings = async () => {
-      try {
-        const data = await portfolioApi.getTotalHoldings()
-        setTotalHoldings(data)
-      } catch {
-        console.error('Failed to fetch total holdings')
-      }
-    }
-    fetchHoldings()
-  }, [isAuthenticated, isTotal])
-
-  useEffect(() => {
-    if (!isAuthenticated || isTotal || !id) return
-    portfolioApi.getRiskAnalysis(Number(id), '3m')
-      .then(setRiskData)
-      .catch((err) => { console.error('Failed to fetch risk data', err) })
-  }, [isAuthenticated, id, isTotal])
-
   const chartDataWithChange = useMemo(() => {
     const all = dashboard?.chart_data ?? []
     if (all.length === 0) return []
 
     let filtered = all
     if (period !== 'ALL') {
-      const now = new Date(all[all.length - 1].date)
+      // 'YYYY-MM-DD'를 로컬 날짜로 읽고 로컬 날짜로 되돌린다 (toISOString은 UTC라 시간대에 따라 하루 밀린다)
+      const [yy, mm, dd] = all[all.length - 1].date.slice(0, 10).split('-').map(Number)
       const months = { '1M': 1, '3M': 3, '6M': 6, '1Y': 12 }[period]
-      const cutoff = new Date(now)
+      const cutoff = new Date(yy, mm - 1, dd)
       cutoff.setMonth(cutoff.getMonth() - months)
-      const cutoffStr = cutoff.toISOString().slice(0, 10)
+      const cutoffStr = toLocalDateString(cutoff)
       // include one extra point before cutoff for first daily_rate calc
       const startIdx = Math.max(0, all.findIndex((p) => p.date >= cutoffStr) - 1)
       filtered = all.slice(startIdx)
@@ -183,17 +130,6 @@ export default function PortfolioDashboardPage() {
       }
     })
   }, [dashboard?.chart_data, period])
-
-  if (!isAuthenticated) {
-    return (
-      <div className="text-center py-12">
-        <h2 className="text-2xl font-bold mb-4">로그인이 필요합니다</h2>
-        <Link to="/login">
-          <Button>로그인하기</Button>
-        </Link>
-      </div>
-    )
-  }
 
   if (loading) {
     return <div className="text-center py-12">로딩 중...</div>
@@ -245,14 +181,14 @@ export default function PortfolioDashboardPage() {
         <div className="flex-1 flex items-center justify-between border rounded-lg px-5 py-2 bg-card shadow-sm">
           <p className="text-2xl font-bold font-mono">
             <span className="text-sm font-normal text-muted-foreground mr-1">평가금액 :</span>
-            {formatNumber(summary.current_value)}원
+            {formatWon(summary.current_value)}원
           </p>
           {summary.daily && (
             <p
-              className={`text-base font-bold ${summary.daily.rate >= 0 ? 'text-red-500' : 'text-blue-500'}`}
+              className={`text-base font-bold ${changeColor(summary.daily.rate)}`}
             >
               {summary.daily.amount >= 0 ? '+' : ''}
-              {formatNumber(summary.daily.amount)}원 ({formatRate(summary.daily.rate)})
+              {formatWon(summary.daily.amount)}원 ({formatRate(summary.daily.rate)})
             </p>
           )}
         </div>
@@ -276,7 +212,7 @@ export default function PortfolioDashboardPage() {
                 <p className="text-sm text-muted-foreground">투자금액</p>
                 <p className="text-base font-mono">
                   {summary.invested_amount != null
-                    ? `${formatNumber(summary.invested_amount)}원`
+                    ? `${formatWon(summary.invested_amount)}원`
                     : '-'}
                 </p>
               </div>
@@ -284,10 +220,10 @@ export default function PortfolioDashboardPage() {
                 <p className="text-sm text-muted-foreground">투자 수익률</p>
                 {summary.investment_return ? (
                   <p
-                    className={`text-base font-bold ${summary.investment_return.rate >= 0 ? 'text-red-500' : 'text-blue-500'}`}
+                    className={`text-base font-bold ${changeColor(summary.investment_return.rate)}`}
                   >
                     {summary.investment_return.amount >= 0 ? '+' : ''}
-                    {formatNumber(summary.investment_return.amount)}원 (
+                    {formatWon(summary.investment_return.amount)}원 (
                     {formatRate(summary.investment_return.rate)})
                   </p>
                 ) : (
@@ -406,7 +342,7 @@ export default function PortfolioDashboardPage() {
                 />
                 <Tooltip
                   formatter={(value: number, name: string) => {
-                    if (name === 'total_value') return [`${formatNumber(value)}원`, '평가금액']
+                    if (name === 'total_value') return [`${formatWon(value)}원`, '평가금액']
                     const sign = value >= 0 ? '+' : ''
                     return [`${sign}${value.toFixed(2)}%`, '일별 수익률']
                   }}
@@ -466,13 +402,13 @@ export default function PortfolioDashboardPage() {
                         <div className="text-xs text-muted-foreground">{h.ticker}</div>
                       </td>
                       <td className="py-2 text-right font-mono">
-                        {formatNumber(h.quantity)}
+                        {formatWon(h.quantity)}
                       </td>
                       <td className="py-2 text-right font-mono">
-                        {formatNumber(h.current_price)}원
+                        {formatWon(h.current_price)}원
                       </td>
                       <td className="py-2 text-right font-mono">
-                        {formatNumber(h.value)}원
+                        {formatWon(h.value)}원
                       </td>
                       <td className="py-2 text-right">
                         <div className="flex items-center justify-end gap-2">

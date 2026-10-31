@@ -1,4 +1,5 @@
 import type { ChatSessionPage, ChatSessionSummary } from '@/types/api'
+import { parseServerDate } from '@/lib/date'
 
 export interface SessionListState {
   items: ChatSessionSummary[]
@@ -37,7 +38,7 @@ export function groupByDate(items: ChatSessionSummary[], now: Date = new Date())
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
   const day = 24 * 60 * 60 * 1000
   const label = (s: ChatSessionSummary) => {
-    const t = new Date(s.updated_at.endsWith('Z') ? s.updated_at : s.updated_at + 'Z').getTime()  // 서버는 UTC를 시간대 없이 보낸다
+    const t = parseServerDate(s.updated_at).getTime()
     if (t >= today) return '오늘'
     if (t >= today - day) return '어제'
     if (t >= today - 7 * day) return '지난 7일'

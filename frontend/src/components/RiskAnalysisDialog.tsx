@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -7,7 +7,8 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { portfolioApi } from '@/lib/api'
-import type { RiskAnalysisResponse } from '@/types/api'
+import { changeColor } from '@/lib/format'
+import { useAsync } from '@/hooks/useAsync'
 import {
   ResponsiveContainer,
   LineChart,
@@ -39,10 +40,7 @@ function MetricCard({ label, value, suffix = '%', colorBySign = false }: {
       <p className="text-lg font-semibold text-muted-foreground">-</p>
     </div>
   )
-  let colorClass = ''
-  if (colorBySign) {
-    colorClass = value >= 0 ? 'text-red-500' : 'text-blue-500'
-  }
+  const colorClass = colorBySign ? changeColor(value) : ''
   const sign = colorBySign && value >= 0 ? '+' : ''
   return (
     <div className="rounded-lg border p-3 text-center">
@@ -63,20 +61,12 @@ export default function RiskAnalysisDialog({
   onOpenChange: (open: boolean) => void
   portfolioId: number
 }) {
-  const [data, setData] = useState<RiskAnalysisResponse | null>(null)
   const [period, setPeriod] = useState('3m')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!open) return
-    setLoading(true)
-    setError(null)
-    portfolioApi.getRiskAnalysis(portfolioId, period)
-      .then(setData)
-      .catch(() => setError('리스크 데이터를 불러올 수 없습니다'))
-      .finally(() => setLoading(false))
-  }, [open, portfolioId, period])
+  // 기간을 빠르게 바꾸면 늦게 온 이전 기간 응답은 버린다
+  const { data, loading, error } = useAsync(
+    () => (open ? portfolioApi.getRiskAnalysis(portfolioId, period) : null),
+    [open, portfolioId, period],
+  )
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -101,7 +91,7 @@ export default function RiskAnalysisDialog({
         </div>
 
         {loading && <p className="text-center py-8 text-muted-foreground">로딩 중...</p>}
-        {error && <p className="text-center py-8 text-muted-foreground">{error}</p>}
+        {error != null && <p className="text-center py-8 text-muted-foreground">리스크 데이터를 불러올 수 없습니다</p>}
 
         {data && !loading && (
           <div className="space-y-4">

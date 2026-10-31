@@ -43,15 +43,6 @@ async function loadKoreanFont(doc: jsPDF): Promise<void> {
   doc.setFont(FONT_NAME)
 }
 
-function formatNumber(n: number): string {
-  return new Intl.NumberFormat('ko-KR').format(Math.round(n))
-}
-
-function formatRate(rate: number): string {
-  const sign = rate >= 0 ? '+' : ''
-  return `${sign}${rate.toFixed(2)}%`
-}
-
 function addHeader(doc: jsPDF, title: string, date: string): number {
   let y = PAGE_MARGIN
 
@@ -117,8 +108,6 @@ function downloadPdf(doc: jsPDF, filename: string): void {
 
 export {
   loadKoreanFont,
-  formatNumber,
-  formatRate,
   addHeader,
   addSectionTitle,
   addKeyValue,

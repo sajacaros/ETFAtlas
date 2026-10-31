@@ -19,7 +19,8 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { etfsApi } from '@/lib/api'
-import { cn, formatKrwAmount } from '@/lib/utils'
+import { cn } from '@/lib/utils'
+import { changeColor, formatKrwAmount } from '@/lib/format'
 import type { ETF, Holding, Price } from '@/types/api'
 
 const DIVIDEND_CYCLE_LABELS: Record<number, string> = {
@@ -198,7 +199,7 @@ export function ETFInfoCards({ etf, tags, marketCap }: { etf: ETF; tags: string[
               <p className="text-sm font-semibold mt-1">
                 {formatKrwAmount(marketCap.latest)}
                 {marketCap.changeRate != null && (
-                  <span className={`text-xs font-normal ml-1 ${marketCap.changeRate > 0 ? 'text-red-500' : marketCap.changeRate < 0 ? 'text-blue-500' : 'text-muted-foreground'}`}>
+                  <span className={`text-xs font-normal ml-1 ${changeColor(marketCap.changeRate, 'text-muted-foreground')}`}>
                     {marketCap.changeRate > 0 ? '+' : ''}{marketCap.changeRate.toFixed(1)}%
                   </span>
                 )}

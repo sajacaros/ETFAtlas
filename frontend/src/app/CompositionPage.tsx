@@ -136,6 +136,8 @@ export default function CompositionPage() {
     if (!id) return
     setSearchParams({}, { replace: true })
     loadPortfolio(id)
+    // 들어올 때 한 번만 — 주소의 portfolio를 지운 뒤 다시 불러오지 않는다
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const handleSearch = async (value: string) => {
@@ -181,9 +183,11 @@ export default function CompositionPage() {
   }
 
   // 비중을 입력하는 동안 요청이 몰리지 않게 잠깐 기다렸다가 계산한다
+  // 종목·비중이 실제로 바뀔 때만 다시 계산하도록 요청 내용을 문자열 키로 만들어 그 키로 요청한다
   const requestKey = JSON.stringify(activePicks.map((p) => [p.code, parseWeight(p.weight)]))
   useEffect(() => {
-    if (activePicks.length === 0) {
+    const items = (JSON.parse(requestKey) as [string, number][]).map(([code, weight]) => ({ code, weight }))
+    if (items.length === 0) {
       setResult(null)
       setCalcError(false)
       setCalculating(false)
@@ -193,10 +197,7 @@ export default function CompositionPage() {
     const timer = setTimeout(() => {
       setCalculating(true)
       setCalcError(false)
-      etfsApi.getComposition(
-        activePicks.map((p) => ({ code: p.code, weight: parseWeight(p.weight) })),
-        controller.signal,
-      )
+      etfsApi.getComposition(items, controller.signal)
         .then(setResult)
         .catch(() => {
           if (!controller.signal.aborted) setCalcError(true)

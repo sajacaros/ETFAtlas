@@ -1,7 +1,6 @@
 import { useEffect, useState, FormEvent } from 'react'
 import { useParams } from 'react-router-dom'
-import axios from 'axios'
-import { authApi } from '@/lib/api'
+import { authApi, getErrorDetail } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -34,7 +33,7 @@ export default function PasswordResetPage() {
       await authApi.resetPassword(token, password)
       setDone(true)
     } catch (err) {
-      const detail = axios.isAxiosError(err) ? err.response?.data?.detail : undefined
+      const detail = getErrorDetail(err)
       setError(
         Array.isArray(detail) ? '비밀번호는 8자 이상이어야 합니다.'
           : detail === 'Invalid password reset link' ? '재설정 링크가 유효하지 않거나 만료되었습니다. 관리자에게 새 링크를 요청하세요.'

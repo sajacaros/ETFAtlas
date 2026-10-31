@@ -23,128 +23,109 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { etfsApi, watchlistApi } from '@/lib/api'
+import { useAsync } from '@/hooks/useAsync'
 import { ETFInfoCards, ETFLink, computeMarketCap, dividendCycleLabel, componentCountLabel, HoldingsCoverageNote, ManagementBadge } from '@/components/ETFInfo'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/use-toast'
 import type { ETF, Holding, HoldingChange, Price, SimilarETF } from '@/types/api'
+
+// 응답 전 기본값 — 렌더마다 새 배열을 만들면 useMemo가 매번 다시 계산한다
+const EMPTY_HOLDINGS: Holding[] = []
+const EMPTY_PRICES: Price[] = []
+const EMPTY_TAGS: string[] = []
+const EMPTY_SIMILAR: SimilarETF[] = []
+const EMPTY_CHANGES: HoldingChange[] = []
+
+type SortDir = 'asc' | 'desc'
+type SortState<K> = { key: K; dir: SortDir }
+type ChangePeriod = '1d' | '1w' | '1m'
+
+// 같은 열을 다시 누르면 방향만 바꾸고, 다른 열은 내림차순부터
+function nextSort<K>(current: SortState<K>, key: K): SortState<K> {
+  return current.key === key ? { key, dir: current.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'desc' }
+}
+
+function sortRows<T>(rows: T[], { key, dir }: SortState<keyof T>): T[] {
+  return [...rows].sort((a, b) => {
+    const av = a[key] ?? ''
+    const bv = b[key] ?? ''
+    if (typeof av === 'number' && typeof bv === 'number') return dir === 'asc' ? av - bv : bv - av
+    return dir === 'asc' ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av))
+  })
+}
+
+function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
+  return active
+    ? dir === 'asc' ? <ArrowUp className="w-3 h-3 inline ml-1" /> : <ArrowDown className="w-3 h-3 inline ml-1" />
+    : <ArrowUpDown className="w-3 h-3 inline ml-1 opacity-30" />
+}
+
+// 비중 변화(기간별)는 따로 받는다. 하나가 실패해도 나머지는 보여 준다
+async function fetchETFDetail(code: string) {
+  const [etfResult, holdingsResult, pricesResult, tagsResult, similarResult] = await Promise.allSettled([
+    etfsApi.get(code),
+    etfsApi.getHoldings(code),
+    etfsApi.getPrices(code),
+    etfsApi.getTags(code),
+    etfsApi.getSimilar(code),
+  ])
+  const value = <T,>(r: PromiseSettledResult<T>, fallback: T) => (r.status === 'fulfilled' ? r.value : fallback)
+  return {
+    etf: value<ETF | null>(etfResult, null),
+    holdings: value<Holding[]>(holdingsResult, []),
+    prices: value<Price[]>(pricesResult, []),
+    tags: value<string[]>(tagsResult, []),
+    similarEtfs: value<SimilarETF[]>(similarResult, []),
+  }
+}
 
 export default function ETFDetailPage() {
   const { code } = useParams<{ code: string }>()
   const { isAuthenticated } = useAuth()
   const { toast } = useToast()
 
-  const [etf, setEtf] = useState<ETF | null>(null)
-  const [holdings, setHoldings] = useState<Holding[]>([])
-  const [changes, setChanges] = useState<HoldingChange[]>([])
-  const [prices, setPrices] = useState<Price[]>([])
-  const [tags, setTags] = useState<string[]>([])
-  const [loading, setLoading] = useState(true)
-  const [isWatching, setIsWatching] = useState(false)
+  // 다른 ETF로 옮겨 가면 늦게 온 이전 ETF 응답은 버린다 (useAsync)
+  const { data: detail, loading } = useAsync(() => (code ? fetchETFDetail(code) : null), [code])
+  const etf = detail?.etf ?? null
+  const holdings = detail?.holdings ?? EMPTY_HOLDINGS
+  const prices = detail?.prices ?? EMPTY_PRICES
+  const tags = detail?.tags ?? EMPTY_TAGS
+  const similarEtfs = detail?.similarEtfs ?? EMPTY_SIMILAR
+
+  // 비중 변화 기간은 ETF마다 전일부터 — 다른 ETF로 옮기면 저장한 기간을 쓰지 않는다
+  const [periodState, setPeriodState] = useState<{ code?: string; period: ChangePeriod }>({ code, period: '1d' })
+  const changePeriod = periodState.code === code ? periodState.period : '1d'
+  const setChangePeriod = (period: ChangePeriod) => setPeriodState({ code, period })
+  const { data: changes = EMPTY_CHANGES } = useAsync(
+    () => (code ? etfsApi.getChanges(code, changePeriod) : null),
+    [code, changePeriod],
+  )
+
+  // 즐겨찾기 여부 — 토글하면 받은 목록을 직접 고친다
+  const { data: watchCodes, setData: setWatchCodes } = useAsync(
+    () => (code && isAuthenticated ? watchlistApi.getCodes() : null),
+    [code, isAuthenticated],
+  )
+  const isWatching = !!code && !!watchCodes?.includes(code)
   const [watchToggling, setWatchToggling] = useState(false)
-  const [similarEtfs, setSimilarEtfs] = useState<SimilarETF[]>([])
-  const [changePeriod, setChangePeriod] = useState<'1d' | '1w' | '1m'>('1d')
+
   const [priceChartOpen, setPriceChartOpen] = useState(false)
   const [similarOpen, setSimilarOpen] = useState(false)
   const [descriptionOpen, setDescriptionOpen] = useState(false)
 
-  type SortDir = 'asc' | 'desc'
-  const [holdingSort, setHoldingSort] = useState<{ key: keyof Holding; dir: SortDir }>({ key: 'weight', dir: 'desc' })
-  const [changeSort, setChangeSort] = useState<{ key: keyof HoldingChange; dir: SortDir }>({ key: 'current_weight', dir: 'desc' })
-
-  const toggleSort = <T,>(
-    current: { key: T; dir: SortDir },
-    setter: (v: { key: T; dir: SortDir }) => void,
-    key: T,
-  ) => {
-    if (current.key === key) {
-      setter({ key, dir: current.dir === 'asc' ? 'desc' : 'asc' })
-    } else {
-      setter({ key, dir: 'desc' })
-    }
-  }
-
-  const SortIcon = ({ active, dir }: { active: boolean; dir: SortDir }) =>
-    active
-      ? dir === 'asc' ? <ArrowUp className="w-3 h-3 inline ml-1" /> : <ArrowDown className="w-3 h-3 inline ml-1" />
-      : <ArrowUpDown className="w-3 h-3 inline ml-1 opacity-30" />
-
-  const sortedHoldings = useMemo(() => {
-    const sorted = [...holdings]
-    const { key, dir } = holdingSort
-    sorted.sort((a, b) => {
-      const av = a[key] ?? ''
-      const bv = b[key] ?? ''
-      if (typeof av === 'number' && typeof bv === 'number') return dir === 'asc' ? av - bv : bv - av
-      return dir === 'asc' ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av))
-    })
-    return sorted
-  }, [holdings, holdingSort])
-
-  const sortedChanges = useMemo(() => {
-    const sorted = [...changes]
-    const { key, dir } = changeSort
-    sorted.sort((a, b) => {
-      const av = a[key] ?? ''
-      const bv = b[key] ?? ''
-      if (typeof av === 'number' && typeof bv === 'number') return dir === 'asc' ? av - bv : bv - av
-      return dir === 'asc' ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av))
-    })
-    return sorted
-  }, [changes, changeSort])
-
-  const marketCap = useMemo(() => computeMarketCap(prices), [prices])
-
+  // 다른 ETF로 옮기면 접히는 카드는 다시 접는다
   useEffect(() => {
-    if (!code) return
-
-    const fetchData = async () => {
-      setLoading(true)
-      setEtf(null)
-      setHoldings([])
-      setChanges([])
-      setPrices([])
-      setTags([])
-      setSimilarEtfs([])
-      setPriceChartOpen(false)
-      setSimilarOpen(false)
-      setIsWatching(false)
-      try {
-        const [etfResult, holdingsResult, changesResult, pricesResult, tagsResult, similarResult] = await Promise.allSettled([
-          etfsApi.get(code),
-          etfsApi.getHoldings(code),
-          etfsApi.getChanges(code),
-          etfsApi.getPrices(code),
-          etfsApi.getTags(code),
-          etfsApi.getSimilar(code),
-        ])
-        if (etfResult.status === 'fulfilled') setEtf(etfResult.value)
-        if (holdingsResult.status === 'fulfilled') setHoldings(holdingsResult.value)
-        if (changesResult.status === 'fulfilled') setChanges(changesResult.value)
-        if (pricesResult.status === 'fulfilled') setPrices(pricesResult.value)
-        if (tagsResult.status === 'fulfilled') setTags(tagsResult.value)
-        if (similarResult.status === 'fulfilled') setSimilarEtfs(similarResult.value)
-      } catch (error) {
-        console.error('Failed to fetch ETF data:', error)
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    fetchData()
+    setPriceChartOpen(false)
+    setSimilarOpen(false)
   }, [code])
 
-  // Check if current ETF is in user's watchlist
-  useEffect(() => {
-    if (!code || !isAuthenticated) return
-    watchlistApi.getCodes().then((codes) => {
-      setIsWatching(codes.includes(code))
-    }).catch(() => {})
-  }, [code, isAuthenticated])
+  const [holdingSort, setHoldingSort] = useState<SortState<keyof Holding>>({ key: 'weight', dir: 'desc' })
+  const [changeSort, setChangeSort] = useState<SortState<keyof HoldingChange>>({ key: 'current_weight', dir: 'desc' })
 
-  useEffect(() => {
-    if (!code) return
-    etfsApi.getChanges(code, changePeriod).then(setChanges).catch(() => {})
-  }, [code, changePeriod])
+  const sortedHoldings = useMemo(() => sortRows(holdings, holdingSort), [holdings, holdingSort])
+  const sortedChanges = useMemo(() => sortRows(changes, changeSort), [changes, changeSort])
+
+  const marketCap = useMemo(() => computeMarketCap(prices), [prices])
 
   const handleToggleWatch = async () => {
     if (!isAuthenticated) {
@@ -157,11 +138,11 @@ export default function ETFDetailPage() {
     try {
       if (isWatching) {
         await watchlistApi.remove(code)
-        setIsWatching(false)
+        setWatchCodes((prev) => prev?.filter((c) => c !== code))
         toast({ title: '즐겨찾기에서 해제되었습니다' })
       } else {
         await watchlistApi.add(code)
-        setIsWatching(true)
+        setWatchCodes((prev) => [...(prev ?? []), code])
         toast({ title: '즐겨찾기에 추가되었습니다' })
       }
     } catch {
@@ -359,9 +340,9 @@ export default function ETFDetailPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="cursor-pointer select-none" onClick={() => toggleSort(holdingSort, setHoldingSort, 'stock_name')}>종목명<SortIcon active={holdingSort.key === 'stock_name'} dir={holdingSort.dir} /></TableHead>
-                  <TableHead className="cursor-pointer select-none" onClick={() => toggleSort(holdingSort, setHoldingSort, 'stock_code')}>종목코드<SortIcon active={holdingSort.key === 'stock_code'} dir={holdingSort.dir} /></TableHead>
-                  <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort(holdingSort, setHoldingSort, 'weight')}>비중<SortIcon active={holdingSort.key === 'weight'} dir={holdingSort.dir} /></TableHead>
+                  <TableHead className="cursor-pointer select-none" onClick={() => setHoldingSort(nextSort(holdingSort, 'stock_name'))}>종목명<SortIcon active={holdingSort.key === 'stock_name'} dir={holdingSort.dir} /></TableHead>
+                  <TableHead className="cursor-pointer select-none" onClick={() => setHoldingSort(nextSort(holdingSort, 'stock_code'))}>종목코드<SortIcon active={holdingSort.key === 'stock_code'} dir={holdingSort.dir} /></TableHead>
+                  <TableHead className="text-right cursor-pointer select-none" onClick={() => setHoldingSort(nextSort(holdingSort, 'weight'))}>비중<SortIcon active={holdingSort.key === 'weight'} dir={holdingSort.dir} /></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -396,11 +377,11 @@ export default function ETFDetailPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="cursor-pointer select-none" onClick={() => toggleSort(changeSort, setChangeSort, 'stock_name')}>종목명<SortIcon active={changeSort.key === 'stock_name'} dir={changeSort.dir} /></TableHead>
-                  <TableHead className="cursor-pointer select-none" onClick={() => toggleSort(changeSort, setChangeSort, 'change_type')}>변화<SortIcon active={changeSort.key === 'change_type'} dir={changeSort.dir} /></TableHead>
-                  <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort(changeSort, setChangeSort, 'previous_weight')}>이전 비중<SortIcon active={changeSort.key === 'previous_weight'} dir={changeSort.dir} /></TableHead>
-                  <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort(changeSort, setChangeSort, 'current_weight')}>현재 비중<SortIcon active={changeSort.key === 'current_weight'} dir={changeSort.dir} /></TableHead>
-                  <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort(changeSort, setChangeSort, 'weight_change')}>변화량<SortIcon active={changeSort.key === 'weight_change'} dir={changeSort.dir} /></TableHead>
+                  <TableHead className="cursor-pointer select-none" onClick={() => setChangeSort(nextSort(changeSort, 'stock_name'))}>종목명<SortIcon active={changeSort.key === 'stock_name'} dir={changeSort.dir} /></TableHead>
+                  <TableHead className="cursor-pointer select-none" onClick={() => setChangeSort(nextSort(changeSort, 'change_type'))}>변화<SortIcon active={changeSort.key === 'change_type'} dir={changeSort.dir} /></TableHead>
+                  <TableHead className="text-right cursor-pointer select-none" onClick={() => setChangeSort(nextSort(changeSort, 'previous_weight'))}>이전 비중<SortIcon active={changeSort.key === 'previous_weight'} dir={changeSort.dir} /></TableHead>
+                  <TableHead className="text-right cursor-pointer select-none" onClick={() => setChangeSort(nextSort(changeSort, 'current_weight'))}>현재 비중<SortIcon active={changeSort.key === 'current_weight'} dir={changeSort.dir} /></TableHead>
+                  <TableHead className="text-right cursor-pointer select-none" onClick={() => setChangeSort(nextSort(changeSort, 'weight_change'))}>변화량<SortIcon active={changeSort.key === 'weight_change'} dir={changeSort.dir} /></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

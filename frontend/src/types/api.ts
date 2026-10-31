@@ -43,6 +43,14 @@ export interface AdminLayoutExample {
   updated_at: string | null
 }
 
+// 예제 등록·수정 응답 (코드 예제)
+export interface AdminCodeExampleSaved {
+  id: number
+  question: string
+  status: string
+  has_embedding: boolean
+}
+
 export interface AdminLayoutExampleList {
   items: AdminLayoutExample[]
   total: number
@@ -69,6 +77,22 @@ export interface AdminChatLog {
 export interface AdminChatLogList {
   items: AdminChatLog[]
   total: number
+}
+
+export interface AdminChatLogReviewResult {
+  id: number
+  status: string
+}
+
+export interface AdminChatLogEmbedResult {
+  chat_log_id: number
+  code_example_id: number
+  status: string
+}
+
+export interface AdminChatLogWithdrawResult {
+  chat_log_id: number
+  status: string
 }
 
 export interface AdminETFTag {
@@ -295,10 +319,12 @@ export interface Tag {
   etf_count: number
 }
 
-export interface TagETF {
+// ETF 목록 한 줄 (시가총액 순위·검색·즐겨찾기·태그별 목록)
+export interface ETFListItem {
   code: string
   name: string
   net_assets: number | null
+  close_price?: number | null  // 태그별 목록에는 없다
   return_1d: number | null
   return_1w: number | null
   return_1m: number | null
